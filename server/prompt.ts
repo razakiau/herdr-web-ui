@@ -122,6 +122,8 @@ type Responder =
   | "pi-model"
   | "hermes-question"
   | "hermes-input"
+  | "copilot-question"
+  | "copilot-input"
   | "fallback-menu"
   | "fallback-gjc-menu"
   | "fallback-keys";
@@ -1924,6 +1926,8 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // Hermes keeps its status line (and maybe the hint's wrapped tail) under the hint; an answered
   // question leaves the screen, so a hint among the last few lines is the live one
   if (prompt.responder === "hermes-question" || prompt.responder === "hermes-input") return shown.slice(-4).some((line) => HERMES_HINT_RE.test(line));
+  // Copilot closes the form's frame with one rule under its hint; an answered form leaves the screen
+  if (prompt.responder === "copilot-question" || prompt.responder === "copilot-input") return shown.slice(-2).some((line) => COPILOT_ASK_HINT_RE.test(line));
   if (prompt.responder === "codex-menu") return ends(CODEX_CONTINUE_HINT_RE);
   if (prompt.responder === "codex-question") return ends(CODEX_ASK_HINT_RE);
   if (prompt.responder === "codex-async-question") return cleanLines.slice(-4).some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line)) || ends(CODEX_ASYNC_ASK_HINT_RE);
@@ -2229,6 +2233,78 @@ function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
 }
 
 /**
+ * Copilot CLI's ask_user form (1.0.88), one field of an elicitation schema:
+ *
+ *   Copilot needs information.
+ *   Pick a colour?
+ *
+ *   Colour:
+ *   ❯ Red
+ *     Blue
+ *     Other (type your answer)
+ *
+ *   ↑/↓ select · enter accept · ctrl+d decline · esc cancel
+ *
+ * The cursor on Other turns its row into "Other (type your answer below)" and opens the input box
+ * under the form, "❯ Type your answer..." until something is typed there; the text goes there. A field with no choices is a single
+ * `❯` line between two rules. A form of several fields shows a tab row (`[Colour]  Proceed`)
+ * and `tab next` in its hint: each tab is a question of its own that one card cannot answer,
+ * so it stays with the terminal, as does a line someone already started typing on.
+ */
+const COPILOT_ASK_HINT_RE = /^(?:↑\/↓ select · )?enter accept · (?:(?:shift\+)?tab (?:next|prev) · )*ctrl\+d decline · esc cancel$/;
+const COPILOT_ASK_TITLE = "Copilot needs information.";
+const COPILOT_OTHER_RE = /^Other \(type your answer(?: below)?\)$/;
+const COPILOT_EMPTY_LINE = "Type your answer...";
+
+function parseCopilotAsk(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trim());
+  const hintIndex = findLastIndex(lines, (line) => COPILOT_ASK_HINT_RE.test(line));
+  if (hintIndex < 0 || /\btab (?:next|prev)\b/.test(lines[hintIndex]!)) return null;
+  const titleIndex = findLastIndex(lines.slice(0, hintIndex), (line) => line === COPILOT_ASK_TITLE);
+  if (titleIndex < 0) return null;
+  const block = lines.slice(titleIndex + 1, hintIndex).filter((line) => line && !isDivider(line));
+  // the question, then the field's title, then its rows or its line
+  const question = block[0];
+  const field = block[1]?.replace(/:$/, "");
+  const rest = block.slice(2);
+  if (question === undefined || field === undefined) return null;
+  // free text: one `❯` line, empty, between the field's rules
+  if (rest.length === 1 && /^❯\s*$/.test(rest[0]!)) {
+    return finishPrompt("copilot", {
+      kind: "question", title: field, question, body: null,
+      options: [{ label: "Type your answer", description: null }], multi_select: false, custom_option_index: 0,
+    }, { responder: "copilot-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0, rejectWithEscapeIndex: null,
+      customSteps: (text) => [{ text }, ...keySteps([KEY.enter])] });
+  }
+  const rows: { label: string; selected: boolean }[] = [];
+  for (const line of rest) {
+    const row = line.match(/^(❯\s+)?(\S.*)$/);
+    if (row === null) return null;
+    rows.push({ label: row[2]!, selected: row[1] !== undefined });
+  }
+  if (rows.length < 2 || !COPILOT_OTHER_RE.test(rows.at(-1)!.label)) return null;
+  // Other's line is the input box under the form: only its placeholder is a line nobody typed on
+  if (rows.at(-1)!.selected) {
+    const box = lines.slice(hintIndex + 1).find((line) => line && !isDivider(line));
+    if (box?.replace(/^❯\s*/, "") !== COPILOT_EMPTY_LINE) return null;
+  }
+  const selectedIndex = rows.findIndex((row) => row.selected);
+  if (selectedIndex < 0 || rows.filter((row) => row.selected).length !== 1) return null;
+  const choices = rows.slice(0, -1);
+  const other = choices.length;
+  return finishPrompt("copilot", {
+    kind: "question", title: field, question, body: null,
+    options: choices.map((row) => ({ label: row.label, description: null })),
+    multi_select: false, custom_option_index: other,
+  }, {
+    responder: "copilot-question", menuLabels: rows.map((row) => row.label), selectedIndex,
+    checkedOptionIndices: [], customMenuIndex: other, rejectWithEscapeIndex: null,
+    // reaching Other opens its line: the text is typed there, and Enter sends it
+    customSteps: (text) => [...keySteps(navigationKeys(other - selectedIndex)), { text }, ...keySteps([KEY.enter])],
+  });
+}
+
+/**
  * Hermes's clarify question, as its Ink TUI draws it (ui-tui/src/components/prompts.tsx):
  *
  *   ask 1 question
@@ -2341,6 +2417,8 @@ function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null
           ? [parsePiModel(screen), parsePiDialog(screen), ...omo()]
         : agent === "hermes"
           ? [parseHermesClarify(screen)]
+        : agent === "copilot"
+          ? [parseCopilotAsk(screen)]
         : agent === "omo" || agent === ""
           ? omo()
           : [];
@@ -3257,7 +3335,7 @@ async function readKnownPrompt(
   codexHome?: string,
   panes: HerdrPane[] = [],
 ): Promise<{ prompt: InteractivePrompt | null; screen?: string }> {
-  if (!["claude", "omp", "codex", "omo", "pi", "gjc", "hermes", ""].includes(agent)) return { prompt: null };
+  if (!["claude", "omp", "codex", "omo", "pi", "gjc", "hermes", "copilot", ""].includes(agent)) return { prompt: null };
   const screen = await liveScreen(paneId);
   // omo's form reads its text from the session's call, the screen showing where the form stands
   const omoAsks = ["omo", "pi", "claude", ""].includes(agent) && pane.cwd && OMO_FORM_RE.test(screen)

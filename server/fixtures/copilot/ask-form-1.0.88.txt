@@ -1,0 +1,40 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+                                                                                                                       ┃
+ ! Model "fixture-model" is not in the built-in catalog. Using defaults for: prompt tokens                             ┃
+   (COPILOT_PROVIDER_MAX_PROMPT_TOKENS), output tokens (COPILOT_PROVIDER_MAX_OUTPUT_TOKENS). Run  copilot help         ┃
+   providers  for configuration details.                                                                               ┃
+                                                                                                                       ┃
+ ● Tip: /instructions                                                                                                  ┃
+   └ View and toggle custom instruction files                                                                          ┃
+                                                                                                                       ┃
+ ● MCP Servers reloaded: 0 servers connected                                                                           ┃
+                                                                                                                       ┃
+ ❯ FICTIONAL_FREE_PROMPT                                                                                         23:38 ┃
+                                                                                                                       ┃
+ ● FICTIONAL_FREE_ASKING                                                                                               ┃
+                                                                                                                       ┃
+ ● Asked user FICTIONAL_FREE_QUESTION?                                                                             21s ┃
+   └ FICTIONAL FREE ANSWER                                                                                             ┃
+                                                                                                                       ┃
+ ● FICTIONAL_FREE_GOT_IT                                                                                               ┃
+                                                                                                                       ┃
+ ❯ FICTIONAL_FORM_PROMPT                                                                                         23:38 ┃
+                                                                                                                       ┃
+ ● FICTIONAL_FORM_ASKING                                                                                               ┃
+                                                                                                                       ┃
+ ○ Asking user Waiting for response                                                                                 5s ┃
+                                                                                                                       ┃
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Copilot needs information.
+ FICTIONAL_FORM_QUESTION?
+
+ [Colour]  Proceed
+
+ Colour:
+ ❯ FICTIONAL_RED
+   FICTIONAL_BLUE
+   Other (type your answer)
+
+ ↑/↓ select · enter accept · tab next · ctrl+d decline · esc cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
