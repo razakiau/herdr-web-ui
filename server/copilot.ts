@@ -96,6 +96,50 @@ function summaryOf(name: string, fields: Row): string {
   return toolSummary(name, fields);
 }
 
+/**
+ * The images a tool call returned to the model (a screenshot, an image file it viewed). Copilot
+ * keeps their bytes once, in a `session.binary_asset` event their `assetId` names; an image it
+ * left out for size names no asset and has nothing to show.
+ */
+function imagesOf(data: Row): { assetId: string; mimeType: string }[] {
+  const binaries = record(data.result).binaryResultsForLlm;
+  if (!Array.isArray(binaries)) return [];
+  return binaries.flatMap((value) => {
+    const binary = record(value);
+    const assetId = label(binary.assetId);
+    const mimeType = label(binary.mimeType);
+    return binary.type === "image" && assetId !== null && mimeType !== null && mimeType.startsWith("image/") ? [{ assetId, mimeType }] : [];
+  });
+}
+
+/** The ref of a tool's image: `copilot:<call id>:<index among its images>`. */
+export const COPILOT_IMAGE_REF = /^copilot:([A-Za-z0-9_:.-]{1,128}):(\d{1,3})$/;
+
+/** The image a ref names, decoded from the asset event that holds its bytes; null when there is none. */
+export function copilotImage(input: string, ref: string): { mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null {
+  const match = COPILOT_IMAGE_REF.exec(ref);
+  if (match === null) return null;
+  const [, callId, nth] = match;
+  const needle = JSON.stringify(callId);
+  let wanted: { assetId: string; mimeType: string } | null = null;
+  for (const line of input.split("\n")) {
+    if (!line.includes(needle)) continue;
+    const entry = eventOf(line);
+    if (entry === null || fromSubagent(entry) || entry.type !== "tool.execution_complete") continue;
+    const data = record(entry.data);
+    if (data.toolCallId === callId) wanted = imagesOf(data)[Number(nth)] ?? null;
+  }
+  if (wanted === null) return null;
+  const asset = JSON.stringify(wanted.assetId);
+  for (const line of input.split("\n")) {
+    if (!line.includes(asset) || !line.includes('"session.binary_asset"')) continue;
+    const data = record(eventOf(line)?.data);
+    if (data.assetId !== wanted.assetId || typeof data.data !== "string") continue;
+    return { mediaType: wanted.mimeType, bytes: new Uint8Array(Buffer.from(data.data, "base64")) };
+  }
+  return null;
+}
+
 /** What a user.message event shows as the user's prompt, or null when it is no prompt: empty, injected, or a subagent's. */
 function promptOf(entry: Row): string | null {
   if (entry.type !== "user.message" || fromSubagent(entry)) return null;
@@ -182,6 +226,8 @@ export function parseCopilotEvents(input: string): ConversationTurn[] {
       const output = failed ? text(record(data.error).message) || text(record(data.result).content) : text(record(data.result).content);
       trimOutput(part, output, id);
       if (failed) part.error = true;
+      const images = imagesOf(data).map((image, index) => ({ media_type: image.mimeType, ref: `copilot:${id}:${index}` }));
+      if (images.length > 0) part.images = images;
       touch(ts);
       continue;
     }

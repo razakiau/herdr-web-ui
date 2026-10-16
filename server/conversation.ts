@@ -58,7 +58,7 @@ import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, p
 import { trimOutput } from "./tool-output.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
-import { COPILOT_TURN_MARK, copilotOpensTurn, copilotSessionId, copilotToolOutput, copilotTranscript, defaultCopilotHome, parseCopilotEvents } from "./copilot.ts";
+import { COPILOT_IMAGE_REF, COPILOT_TURN_MARK, copilotImage, copilotOpensTurn, copilotSessionId, copilotToolOutput, copilotTranscript, defaultCopilotHome, parseCopilotEvents } from "./copilot.ts";
 
 import { invokedSkill } from "./skill-activity.ts";
 import { agentTaskResult, claudePeerId, claudePeerNotice, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
@@ -1636,7 +1636,7 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
  * image. Codex uses a hash of the native attachment and searches only the bound history.
  */
 export async function conversationImage(paneId: string, ref: string, codexHome?: string, opencodeDb?: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
-  if (!IMAGE_REF.test(ref) && !CODEX_IMAGE_REF.test(ref) && !PI_IMAGE_REF.test(ref) && !OPENCODE_IMAGE_REF.test(ref)) return null;
+  if (!IMAGE_REF.test(ref) && !CODEX_IMAGE_REF.test(ref) && !PI_IMAGE_REF.test(ref) && !OPENCODE_IMAGE_REF.test(ref) && !COPILOT_IMAGE_REF.test(ref)) return null;
   const snapshot = await sessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined || typeof pane.cwd !== "string" || pane.cwd.length === 0) return null;
@@ -1648,6 +1648,11 @@ export async function conversationImage(paneId: string, ref: string, codexHome?:
   rememberPaneRead(paneId, resolved.path);
   if (resolved.source === "codex-transcript") return codexTranscriptImage(codexHistorySegments(resolved.path, resolved.codexHome ?? codexHome), ref, pane.cwd);
   if (resolved.source === "pi-transcript") return piTranscriptImage(resolved.path, ref);
+  if (resolved.source === "copilot-transcript") {
+    let text: string;
+    try { text = readFileSync(resolved.path, "utf8"); } catch { return null; }
+    return copilotImage(text, ref);
+  }
   return resolved.source === "claude-transcript" ? transcriptImage(resolved.path, ref) : null;
 }
 

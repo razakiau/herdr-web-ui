@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
-import { forgetTranscriptState, paneConversation, toolOutput } from "./conversation.ts";
-import { parseCopilotEvents, parseCopilotMetadata } from "./copilot.ts";
+import { conversationImage, forgetTranscriptState, paneConversation, toolOutput } from "./conversation.ts";
+import { copilotImage, parseCopilotEvents, parseCopilotMetadata } from "./copilot.ts";
 import * as herdr from "./herdr/client.ts";
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/copilot/${name}.jsonl`, import.meta.url), "utf8");
@@ -84,6 +84,26 @@ describe("a Copilot session's events as a chat", () => {
       ["run_in_terminal", "printf FICTIONAL", true],
     ]);
     expect(turns[5]!.parts[0]).toEqual({ kind: "thinking", text: "FICTIONAL_NATIVE_REASONING" });
+  });
+
+  it("shows an image a tool returned, by a ref the image route answers, and an image whose bytes Copilot left out by name only", () => {
+    const [view] = tools(parseCopilotEvents(fixture("image"))[1]);
+    expect(view!.images).toEqual([{ media_type: "image/png", ref: "copilot:call_fixture_1_0:0" }]);
+    const omitted = [
+      { type: "user.message", id: "e1", parentId: null, timestamp: "2026-10-01T09:00:00.000Z", data: { content: "go" } },
+      { type: "tool.execution_start", id: "e2", parentId: "e1", timestamp: "2026-10-01T09:00:01.000Z", data: { toolCallId: "call_big", toolName: "view", arguments: { path: "/x.png" } } },
+      { type: "tool.execution_complete", id: "e3", parentId: "e2", timestamp: "2026-10-01T09:00:02.000Z", data: { toolCallId: "call_big", success: true, result: { content: "Viewed", binaryResultsForLlm: [{ type: "image", mimeType: "image/png", byteLength: 9_000_000, omittedReason: "too_large" }, { type: "resource", mimeType: "application/pdf", assetId: "sha256:aa", byteLength: 3 }] } } },
+    ].map((line) => JSON.stringify(line)).join("\n");
+    expect(tools(parseCopilotEvents(omitted)[1])[0]!.images).toBeUndefined();
+  });
+
+  it("decodes the image a ref names from the asset event that holds its bytes", () => {
+    const image = copilotImage(fixture("image"), "copilot:call_fixture_1_0:0")!;
+    expect(image.mediaType).toBe("image/png");
+    expect([...image.bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(image.bytes.length).toBe(82);
+    expect(copilotImage(fixture("image"), "copilot:call_fixture_1_0:1")).toBeNull();
+    expect(copilotImage(fixture("image"), "copilot:call_unknown:0")).toBeNull();
   });
 
   it("leaves out a message the runtime injected, which nobody typed", () => {
@@ -206,6 +226,15 @@ describe("a Copilot pane's chat", () => {
     writeFileSync(join(moved, "session-state", SESSION, "events.jsonl"), fixture("abort"));
     const answer = await paneConversation(pane.pane_id);
     expect(texts(answer.turns)).toEqual(["user: FICTIONAL_PROMPT_STALL"]);
+  });
+
+  it("serves an image a tool returned through the chat's image route", async () => {
+    mkdirSync(join(store(), SESSION), { recursive: true });
+    writeFileSync(join(store(), SESSION, "events.jsonl"), fixture("image"));
+    const image = await conversationImage(pane.pane_id, "copilot:call_fixture_1_0:0");
+    expect(image?.mediaType).toBe("image/png");
+    expect(image?.bytes.length).toBe(82);
+    expect(await conversationImage(pane.pane_id, "copilot:../x:0")).toBeNull();
   });
 
   it("fetches a call's whole output by its id", async () => {

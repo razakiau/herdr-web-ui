@@ -2246,35 +2246,48 @@ function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
  *   ↑/↓ select · enter accept · ctrl+d decline · esc cancel
  *
  * The cursor on Other turns its row into "Other (type your answer below)" and opens the input box
- * under the form, "❯ Type your answer..." until something is typed there; the text goes there. A field with no choices is a single
- * `❯` line between two rules. A form of several fields shows a tab row (`[Colour]  Proceed`)
- * and `tab next` in its hint: each tab is a question of its own that one card cannot answer,
- * so it stays with the terminal, as does a line someone already started typing on.
+ * under the form, "❯ Type your answer..." until something is typed there; the text goes there,
+ * after ctrl+k and ctrl+u empty it of anything typed in the terminal. A field with no choices is
+ * a single `❯` line between two rules, emptied the same way. A form of several fields shows a tab
+ * row (`[Colour]  Proceed`, the open field in brackets): Enter on a field moves to the next one,
+ * and on the last one sends the form (measured on 1.0.88), so each field is a card of its own.
  */
 const COPILOT_ASK_HINT_RE = /^(?:↑\/↓ select · )?enter accept · (?:(?:shift\+)?tab (?:next|prev) · )*ctrl\+d decline · esc cancel$/;
 const COPILOT_ASK_TITLE = "Copilot needs information.";
 const COPILOT_OTHER_RE = /^Other \(type your answer(?: below)?\)$/;
-const COPILOT_EMPTY_LINE = "Type your answer...";
+/** a form's row of fields, the open one in brackets: `[Colour]  Proceed` */
+const COPILOT_TABS_RE = /^(?:\[[^\]]+\]|[^\s[\]][^[\]]*?)(?:\s{2,}(?:\[[^\]]+\]|[^\s[\]][^[\]]*?))+$/;
+/** what is on Copilot's input line is emptied on both sides of the cursor before an answer is typed */
+const copilotTyped = (text: string): AnswerStep[] => [...keySteps(["ctrl+k", "ctrl+u"]), { text }, ...keySteps([KEY.enter])];
 
 function parseCopilotAsk(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trim());
   const hintIndex = findLastIndex(lines, (line) => COPILOT_ASK_HINT_RE.test(line));
-  if (hintIndex < 0 || /\btab (?:next|prev)\b/.test(lines[hintIndex]!)) return null;
+  if (hintIndex < 0) return null;
   const titleIndex = findLastIndex(lines.slice(0, hintIndex), (line) => line === COPILOT_ASK_TITLE);
   if (titleIndex < 0) return null;
   const block = lines.slice(titleIndex + 1, hintIndex).filter((line) => line && !isDivider(line));
-  // the question, then the field's title, then its rows or its line
+  // the question, a form's row of fields, then the field's title, then its rows or its line
   const question = block[0];
-  const field = block[1]?.replace(/:$/, "");
-  const rest = block.slice(2);
-  if (question === undefined || field === undefined) return null;
-  // free text: one `❯` line, empty, between the field's rules
-  if (rest.length === 1 && /^❯\s*$/.test(rest[0]!)) {
+  const tabbed = /\b(?:shift\+)?tab (?:next|prev)\b/.test(lines[hintIndex]!);
+  const tabs = tabbed ? block[1] : undefined;
+  if (tabbed && (tabs === undefined || !COPILOT_TABS_RE.test(tabs))) return null;
+  const names = tabs?.split(/\s{2,}/) ?? [];
+  const fields = names.map((name) => name.replace(/^\[(.*)\]$/, "$1"));
+  const open = names.findIndex((name) => /^\[.*\]$/.test(name));
+  if (tabbed && open < 0) return null;
+  const field = block[tabbed ? 2 : 1]?.replace(/:$/, "");
+  const rest = block.slice(tabbed ? 3 : 2);
+  if (question === undefined || field === undefined || (tabbed && fields[open] !== field)) return null;
+  // where the form stands: part of the id, so each field is a card of its own
+  const body = tabbed ? `Field ${open + 1} of ${fields.length}: ${fields.join(", ")}` : null;
+  // free text: one `❯` line between the field's rules, empty or holding what was typed in the terminal
+  if (rest.length === 1 && /^❯(?:\s|$)/.test(rest[0]!)) {
     return finishPrompt("copilot", {
-      kind: "question", title: field, question, body: null,
+      kind: "question", title: field, question, body,
       options: [{ label: "Type your answer", description: null }], multi_select: false, custom_option_index: 0,
     }, { responder: "copilot-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0, rejectWithEscapeIndex: null,
-      customSteps: (text) => [{ text }, ...keySteps([KEY.enter])] });
+      customSteps: copilotTyped });
   }
   const rows: { label: string; selected: boolean }[] = [];
   for (const line of rest) {
@@ -2283,24 +2296,21 @@ function parseCopilotAsk(screen: string): ParsedPrompt | null {
     rows.push({ label: row[2]!, selected: row[1] !== undefined });
   }
   if (rows.length < 2 || !COPILOT_OTHER_RE.test(rows.at(-1)!.label)) return null;
-  // Other's line is the input box under the form: only its placeholder is a line nobody typed on
-  if (rows.at(-1)!.selected) {
-    const box = lines.slice(hintIndex + 1).find((line) => line && !isDivider(line));
-    if (box?.replace(/^❯\s*/, "") !== COPILOT_EMPTY_LINE) return null;
-  }
+  // Other's line is the input box under the form: it must be there, whatever was typed on it
+  if (rows.at(-1)!.selected && !lines.slice(hintIndex + 1).some((line) => /^❯(?:\s|$)/.test(line))) return null;
   const selectedIndex = rows.findIndex((row) => row.selected);
   if (selectedIndex < 0 || rows.filter((row) => row.selected).length !== 1) return null;
   const choices = rows.slice(0, -1);
   const other = choices.length;
   return finishPrompt("copilot", {
-    kind: "question", title: field, question, body: null,
+    kind: "question", title: field, question, body,
     options: choices.map((row) => ({ label: row.label, description: null })),
     multi_select: false, custom_option_index: other,
   }, {
     responder: "copilot-question", menuLabels: rows.map((row) => row.label), selectedIndex,
     checkedOptionIndices: [], customMenuIndex: other, rejectWithEscapeIndex: null,
     // reaching Other opens its line: the text is typed there, and Enter sends it
-    customSteps: (text) => [...keySteps(navigationKeys(other - selectedIndex)), { text }, ...keySteps([KEY.enter])],
+    customSteps: (text) => [...keySteps(navigationKeys(other - selectedIndex)), ...copilotTyped(text)],
   });
 }
 

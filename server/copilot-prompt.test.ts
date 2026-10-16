@@ -20,12 +20,13 @@ describe("Copilot's ask_user form", () => {
     expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
   });
 
-  it("types an answer of one's own on the Other row's line", () => {
+  it("types an answer of one's own on the Other row's line, emptied first", () => {
     const prompt = parseInteractivePrompt("copilot", screen("choice"))!;
     expect(prompt.custom_option_index).toBe(2);
-    // Other opens its line as soon as the cursor reaches it; Enter then sends the text
+    // Other opens its line as soon as the cursor reaches it; ctrl+k and ctrl+u empty it on both
+    // sides of the cursor (measured on 1.0.88), and Enter then sends the text
     expect(answerKeys(prompt, { custom_text: "FICTIONAL TYPED ANSWER" })).toEqual([
-      { keys: ["down"] }, { keys: ["down"] }, { text: "FICTIONAL TYPED ANSWER" }, { keys: ["enter"] },
+      { keys: ["down"] }, { keys: ["down"] }, { keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "FICTIONAL TYPED ANSWER" }, { keys: ["enter"] },
     ]);
   });
 
@@ -34,22 +35,43 @@ describe("Copilot's ask_user form", () => {
     const other = parseInteractivePrompt("copilot", screen("other"))!;
     expect(other.options.map((option) => option.label)).toEqual(["FICTIONAL_ONE", "FICTIONAL_TWO"]);
     expect(answerKeys(other, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["up"] }, { keys: ["enter"] }]);
-    expect(answerKeys(other, { custom_text: "x" })).toEqual([{ text: "x" }, { keys: ["enter"] }]);
+    expect(answerKeys(other, { custom_text: "x" })).toEqual([{ keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "x" }, { keys: ["enter"] }]);
   });
 
-  it("refuses a line someone already started typing on, which the card would add to", () => {
-    expect(parseInteractivePrompt("copilot", screen("typing"))).toBeNull();
+  it("answers over a line someone already started typing on, which it empties first", () => {
+    const typing = parseInteractivePrompt("copilot", screen("typing"))!;
+    expect(typing.custom_option_index).toBe(2);
+    expect(answerKeys(typing, { custom_text: "mine" })).toEqual([{ keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "mine" }, { keys: ["enter"] }]);
+    // a choice moves off the typed line: the text stays in Copilot's box, and the pick is sent
+    expect(answerKeys(typing, { option_index: 1 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
   });
 
   it("reads a question with no choices as one the user types", () => {
     const prompt = parseInteractivePrompt("copilot", screen("free"))!;
     expect(prompt).toMatchObject({ kind: "question", question: "FICTIONAL_FREE_QUESTION?", title: "Note", custom_option_index: 0 });
-    expect(answerKeys(prompt, { custom_text: "FICTIONAL FREE ANSWER" })).toEqual([{ text: "FICTIONAL FREE ANSWER" }, { keys: ["enter"] }]);
+    expect(answerKeys(prompt, { custom_text: "FICTIONAL FREE ANSWER" })).toEqual([{ keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "FICTIONAL FREE ANSWER" }, { keys: ["enter"] }]);
   });
 
-  it("leaves a form of several fields to the terminal: its tabs cannot be answered one card at a time", () => {
-    expect(parseInteractivePrompt("copilot", screen("form"))).toBeNull();
-    expect(parseInteractivePrompt("copilot", screen("form-tab2"))).toBeNull();
+  it("asks a form of several fields one field at a time, and says how far along it is", () => {
+    // Enter on a field moves to the next one, and on the last one sends the form (measured on 1.0.88)
+    const first = parseInteractivePrompt("copilot", screen("form"))!;
+    expect(first).toMatchObject({ question: "FICTIONAL_FORM_QUESTION?", title: "Colour", body: "Field 1 of 2: Colour, Proceed" });
+    expect(first.options.map((option) => option.label)).toEqual(["FICTIONAL_RED", "FICTIONAL_BLUE"]);
+    expect(answerKeys(first, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    const last = parseInteractivePrompt("copilot", screen("form-last"))!;
+    expect(last).toMatchObject({ title: "Proceed", body: "Field 2 of 2: Colour, Proceed" });
+    expect(last.options.map((option) => option.label)).toEqual(["Yes", "No"]);
+    // the two fields are two cards: an answer to one is never taken for the other
+    expect(last.id).not.toBe(first.id);
+  });
+
+  it("reads no card off a screen that does not hang together", () => {
+    // the tab row names another field than the one shown: a redraw caught half way
+    expect(parseInteractivePrompt("copilot", screen("form").replace("[Colour]  Proceed", " Colour  [Proceed]"))).toBeNull();
+    // the cursor on Other with no input line under the form for the answer to go to
+    const cut = screen("other").split("\n");
+    const box = cut.findIndex((line) => line.startsWith("❯ Type your answer"));
+    expect(parseInteractivePrompt("copilot", cut.slice(0, box).join("\n"))).toBeNull();
   });
 
   it("reads no question once the form has closed", () => {
