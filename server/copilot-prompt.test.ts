@@ -65,6 +65,50 @@ describe("Copilot's ask_user form", () => {
     expect(last.id).not.toBe(first.id);
   });
 
+  it("reads a form whose fields carry a description, the description as the card's body", () => {
+    // a schema with descriptions draws one under each field's title; a free-text field's title has no colon
+    // (Copilot 1.0.88 on a Coder workspace, ZAC-180: both screens read no card before, and the fallback's Escape
+    // cancelled the owner's answer)
+    const first = parseInteractivePrompt("copilot", screen("form-described"))!;
+    // the message is a heading and a paragraph: both are the question
+    expect(first).toMatchObject({ title: "Probe colour (required)",
+      question: "## ZAC-180 reader capture\nAn agent is running this test. Please pick a probe colour. Notes are optional.",
+      body: "Required: choose one colour.\nField 1 of 2: Probe colour (required), Notes (optional)" });
+    expect(first.fallback).toBeUndefined();
+    expect(first.options.map((option) => option.label)).toEqual(["Red", "Green", "Blue"]);
+    expect(answerKeys(first, { option_index: 2 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }]);
+    const last = parseInteractivePrompt("copilot", screen("form-described-last"))!;
+    expect(last).toMatchObject({ title: "Notes (optional)",
+      body: "Optional free text.\nField 2 of 2: Probe colour (required), Notes (optional)" });
+    expect(last.fallback).toBeUndefined();
+    expect(answerKeys(last, { custom_text: "a note" })).toEqual([{ keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "a note" }, { keys: ["enter"] }]);
+    expect(last.id).not.toBe(first.id);
+  });
+
+  it("keeps every row of a choice whose first label ends a sentence, wherever the cursor is", () => {
+    // a label like "Yes, go ahead." is a row, not a description: only a line above the cursor's row can be one
+    const said = screen("choice").replace("FICTIONAL_ONE", "Yes, go ahead.");
+    const down = said.replace(" ❯ Yes, go ahead.\n   FICTIONAL_TWO", "   Yes, go ahead.\n ❯ FICTIONAL_TWO");
+    for (const shown of [said, down]) {
+      const prompt = parseInteractivePrompt("copilot", shown)!;
+      expect(prompt.options.map((option) => option.label)).toEqual(["Yes, go ahead.", "FICTIONAL_TWO"]);
+      expect(prompt.body).toBeNull();
+    }
+    expect(parseInteractivePrompt("copilot", said)!.id).toBe(parseInteractivePrompt("copilot", down)!.id);
+  });
+
+  it("leaves an optional free-text field empty with Enter alone, emptied first", () => {
+    // Enter on an empty line moves on (or sends the form, on the last field); a free-text card whose title says
+    // optional offers that as its first choice, so a card that wants no answer can be passed
+    const last = parseInteractivePrompt("copilot", screen("form-described-last"))!;
+    expect(last.options.map((option) => option.label)).toEqual(["Leave empty", "Type your answer"]);
+    expect(last.custom_option_index).toBe(1);
+    expect(answerKeys(last, { option_index: 0 })).toEqual([{ keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { keys: ["enter"] }]);
+    // a field that does not say optional keeps one way: typing
+    const free = parseInteractivePrompt("copilot", screen("free"))!;
+    expect(free.options.map((option) => option.label)).toEqual(["Type your answer"]);
+  });
+
   it("reads no card off a screen that does not hang together", () => {
     // the tab row names another field than the one shown: a redraw caught half way
     expect(parseInteractivePrompt("copilot", screen("form").replace("[Colour]  Proceed", " Colour  [Proceed]"))).toBeNull();

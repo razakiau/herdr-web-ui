@@ -2261,33 +2261,62 @@ const COPILOT_TABS_RE = /^(?:\[[^\]]+\]|[^\s[\]][^[\]]*?)(?:\s{2,}(?:\[[^\]]+\]|
 const copilotTyped = (text: string): AnswerStep[] => [...keySteps(["ctrl+k", "ctrl+u"]), { text }, ...keySteps([KEY.enter])];
 
 function parseCopilotAsk(screen: string): ParsedPrompt | null {
-  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trim());
+  const raw = screen.replace(ANSI_RE, "").split(/\r?\n/);
+  const lines = raw.map((line) => line.trim());
   const hintIndex = findLastIndex(lines, (line) => COPILOT_ASK_HINT_RE.test(line));
   if (hintIndex < 0) return null;
   const titleIndex = findLastIndex(lines.slice(0, hintIndex), (line) => line === COPILOT_ASK_TITLE);
   if (titleIndex < 0) return null;
-  const block = lines.slice(titleIndex + 1, hintIndex).filter((line) => line && !isDivider(line));
-  // the question, a form's row of fields, then the field's title, then its rows or its line
-  const question = block[0];
+  const kept = raw.slice(titleIndex + 1, hintIndex).map((line) => ({ line: line.trim(), indent: line.length - line.trimStart().length }))
+    .filter(({ line }) => line && !isDivider(line));
+  const block = kept.map(({ line }) => line);
+  // The question (the message, which can take several lines: a heading and a paragraph, 1.0.88), a
+  // form's row of fields, the field's title, a description when the schema gives one, then the
+  // field's rows or its `❯` line. Copilot indents a row under the cursor's mark: "❯ Red" or "  Green",
+  // two columns in from the text above, so the first line that is a row, or the `❯` line, ends what
+  // is text; the title is the last text line, or the one before it when that one is the description
+  const indent = kept[0]?.indent ?? 0;
   const tabbed = /\b(?:shift\+)?tab (?:next|prev)\b/.test(lines[hintIndex]!);
-  const tabs = tabbed ? block[1] : undefined;
-  if (tabbed && (tabs === undefined || !COPILOT_TABS_RE.test(tabs))) return null;
+  // a form's row of fields is indented too when its first field is not the open one ("  Colour  [Proceed]")
+  const isTabs = (line: string) => tabbed && COPILOT_TABS_RE.test(line) && /\[[^\]]+\]/.test(line);
+  const firstRow = kept.findIndex(({ line, indent: at }) => /^❯(?:\s|$)/.test(line) || (at > indent && !isTabs(line)));
+  if (firstRow < 0) return null;
+  const tabsAt = tabbed ? block.findIndex((line, index) => index > 0 && index < firstRow && isTabs(line)) : -1;
+  if (tabbed && tabsAt < 0) return null;
+  // two text lines after the question (or the row of fields): the title and its description. One: the title
+  const after = tabbed ? tabsAt + 1 : -1;
+  const textLines = firstRow - (tabbed ? after : 1);
+  const titleAt = tabbed ? after : firstRow - (textLines >= 2 && /:$/.test(block[firstRow - 2]!) ? 2 : 1);
+  if (titleAt < 1 || titleAt >= firstRow || (tabbed && firstRow - after > 2)) return null;
+  const question = block.slice(0, tabbed ? tabsAt : titleAt).join("\n");
+  const tabs = tabbed ? block[tabsAt] : undefined;
   const names = tabs?.split(/\s{2,}/) ?? [];
   const fields = names.map((name) => name.replace(/^\[(.*)\]$/, "$1"));
   const open = names.findIndex((name) => /^\[.*\]$/.test(name));
   if (tabbed && open < 0) return null;
-  const field = block[tabbed ? 2 : 1]?.replace(/:$/, "");
-  const rest = block.slice(tabbed ? 3 : 2);
-  if (question === undefined || field === undefined || (tabbed && fields[open] !== field)) return null;
+  // a choice field's title ends in a colon, a free-text field's does not ("Notes (optional)")
+  const field = block[titleAt]?.replace(/:$/, "");
+  if (!question || field === undefined || (tabbed && fields[open] !== field)) return null;
+  // the line between the title and the rows, when the field's schema has a description (1.0.88)
+  const description = firstRow - titleAt === 2 ? block[titleAt + 1]! : null;
+  const rest = block.slice(firstRow);
   // where the form stands: part of the id, so each field is a card of its own
-  const body = tabbed ? `Field ${open + 1} of ${fields.length}: ${fields.join(", ")}` : null;
+  const position = tabbed ? `Field ${open + 1} of ${fields.length}: ${fields.join(", ")}` : null;
+  const body = [description, position].filter((part) => part !== null).join("\n") || null;
   // free text: one `❯` line between the field's rules, empty or holding what was typed in the terminal
   if (rest.length === 1 && /^❯(?:\s|$)/.test(rest[0]!)) {
+    // Enter on an empty line passes the field (the next one opens, or the form is sent): a field whose title
+    // says it is optional gets that as a choice of its own, so a card that wants no answer can be left
+    const optional = /\boptional\b/i.test(field);
+    const typedIndex = optional ? 1 : 0;
     return finishPrompt("copilot", {
       kind: "question", title: field, question, body,
-      options: [{ label: "Type your answer", description: null }], multi_select: false, custom_option_index: 0,
-    }, { responder: "copilot-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0, rejectWithEscapeIndex: null,
-      customSteps: copilotTyped });
+      options: [...(optional ? [{ label: "Leave empty", description: null }] : []), { label: "Type your answer", description: null }],
+      multi_select: false, custom_option_index: typedIndex,
+    }, { responder: "copilot-input", menuLabels: [], selectedIndex: typedIndex, checkedOptionIndices: [], customMenuIndex: typedIndex, rejectWithEscapeIndex: null,
+      customSteps: copilotTyped,
+      // the typed option's slot is never read (an option_index there is refused): only Leave empty has steps
+      ...(optional ? { optionSteps: [keySteps(["ctrl+k", "ctrl+u", KEY.enter]), []] } : {}) });
   }
   const rows: { label: string; selected: boolean }[] = [];
   for (const line of rest) {
