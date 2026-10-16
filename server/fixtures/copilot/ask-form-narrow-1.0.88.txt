@@ -1,0 +1,40 @@
+
+ ! Failed to load 1 skill. Run /skills for more ┃
+   details.                                     ┃
+                                                ┃
+ ● Tip: /cwd                                    ┃
+   └ Change working directory or show current   ┃
+     directory                                  ┃
+                                                ┃
+ ● Selected custom agent: Tasksync              ┃
+                                                ┃
+ ❯ ZAC-180 phone check 2. Call ask_user   14:54 ┃
+   ONCE with a form of two fields, each         ┃
+   with a description: a choice field           ┃
+   Probe colour (red, green, blue) and an       ┃
+   OPTIONAL free-text field Notes. After        ┃
+   I answer, reply with one sentence            ┃
+   repeating exactly what came back, then       ┃
+   end your turn.                               ┃
+                                                ┃
+ ○ Asking user Waiting for response      9m 17s ┃
+                                                ┃
+─────────────────────────────────────────────────
+ Copilot needs information.
+ ## ZAC-180 phone check 2
+
+ Pick a probe colour. You can add notes if you
+ want, but they're optional.
+
+ [Probe colour]  Notes
+
+ Probe colour:
+ Choose the colour for the probe.
+ ❯ Red
+   Green
+   Blue
+   Other (type your answer)
+
+ ↑/↓ select · enter accept · tab next · ctrl+d
+ decline · esc cancel
+─────────────────────────────────────────────────

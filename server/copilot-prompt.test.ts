@@ -85,6 +85,18 @@ describe("Copilot's ask_user form", () => {
     expect(last.id).not.toBe(first.id);
   });
 
+  it("reads a form a phone-width pane wrapped, the key hint and the question over two lines", () => {
+    // the terminal lens sizes the pane to the phone (47 columns): Copilot wraps the hint after "ctrl+d" and the
+    // message after "notes if you". Read as two cards before: the fallback, whose keys the chat then showed (ZAC-180)
+    const prompt = parseInteractivePrompt("copilot", screen("form-narrow"))!;
+    expect(prompt).toMatchObject({ title: "Probe colour",
+      question: "## ZAC-180 phone check 2\nPick a probe colour. You can add notes if you want, but they're optional.",
+      body: "Choose the colour for the probe.\nField 1 of 2: Probe colour, Notes" });
+    expect(prompt.fallback).toBeUndefined();
+    expect(prompt.options.map((option) => option.label)).toEqual(["Red", "Green", "Blue"]);
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+  });
+
   it("keeps every row of a choice whose first label ends a sentence, wherever the cursor is", () => {
     // a label like "Yes, go ahead." is a row, not a description: only a line above the cursor's row can be one
     const said = screen("choice").replace("FICTIONAL_ONE", "Yes, go ahead.");

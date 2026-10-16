@@ -1926,8 +1926,15 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // Hermes keeps its status line (and maybe the hint's wrapped tail) under the hint; an answered
   // question leaves the screen, so a hint among the last few lines is the live one
   if (prompt.responder === "hermes-question" || prompt.responder === "hermes-input") return shown.slice(-4).some((line) => HERMES_HINT_RE.test(line));
-  // Copilot closes the form's frame with one rule under its hint; an answered form leaves the screen
-  if (prompt.responder === "copilot-question" || prompt.responder === "copilot-input") return shown.slice(-2).some((line) => COPILOT_ASK_HINT_RE.test(line));
+  // Copilot closes the form's frame with one rule under its hint; an answered form leaves the screen.
+  // The open Other line's input box can follow it (one more line, rules dropped), and a phone-width
+  // pane wraps the hint over up to three lines: a hint that ends among the last two lines is live
+  if (prompt.responder === "copilot-question" || prompt.responder === "copilot-input") {
+    return [1, 2].some((tail) => [1, 2, 3].some((span) => {
+      const end = shown.length - tail + 1;
+      return end - span >= 0 && COPILOT_ASK_HINT_RE.test(shown.slice(end - span, end).join(" "));
+    }));
+  }
   if (prompt.responder === "codex-menu") return ends(CODEX_CONTINUE_HINT_RE);
   if (prompt.responder === "codex-question") return ends(CODEX_ASK_HINT_RE);
   if (prompt.responder === "codex-async-question") return cleanLines.slice(-4).some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line)) || ends(CODEX_ASYNC_ASK_HINT_RE);
@@ -2263,12 +2270,38 @@ const copilotTyped = (text: string): AnswerStep[] => [...keySteps(["ctrl+k", "ct
 function parseCopilotAsk(screen: string): ParsedPrompt | null {
   const raw = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const lines = raw.map((line) => line.trim());
-  const hintIndex = findLastIndex(lines, (line) => COPILOT_ASK_HINT_RE.test(line));
+  // a phone-width pane wraps the hint over up to three lines: where the wrapped hint begins
+  // the wrapped lines are the ones right under it: a blank line or a rule ends the hint (the open Other
+  // line's input box comes after a rule, and must never be read as the hint's tail)
+  const hintSpan = (index: number) => {
+    for (let span = 1; span <= 3; span += 1) {
+      const part = lines.slice(index, index + span);
+      if (part.some((line) => !line || isDivider(line))) return undefined;
+      if (COPILOT_ASK_HINT_RE.test(part.join(" "))) return span;
+    }
+    return undefined;
+  };
+  const hintIndex = findLastIndex(lines, (_, index) => hintSpan(index) !== undefined);
   if (hintIndex < 0) return null;
+  const hintText = lines.slice(hintIndex, hintIndex + hintSpan(hintIndex)!).join(" ");
   const titleIndex = findLastIndex(lines.slice(0, hintIndex), (line) => line === COPILOT_ASK_TITLE);
   if (titleIndex < 0) return null;
-  const kept = raw.slice(titleIndex + 1, hintIndex).map((line) => ({ line: line.trim(), indent: line.length - line.trimStart().length }))
-    .filter(({ line }) => line && !isDivider(line));
+  // a paragraph a narrow pane wraps goes on, at the same indent, on the next line: a blank line, a change
+  // of indent, a line that ends a sentence or a title's colon end it. Its lines are one line of text again,
+  // as a wide pane drew them. Only above the rows: once a row (or the `❯` line) shows, every line is its own
+  const kept: { line: string; indent: number }[] = [];
+  let joinable = false;
+  let inRows = false;
+  for (const rawLine of raw.slice(titleIndex + 1, hintIndex)) {
+    const line = rawLine.trim();
+    if (!line || isDivider(line)) { joinable = false; continue; }
+    const indent = rawLine.length - rawLine.trimStart().length;
+    const previous = kept.at(-1);
+    inRows ||= /^❯(?:\s|$)/.test(line) || (previous !== undefined && indent > kept[0]!.indent);
+    if (!inRows && joinable && previous && previous.indent === indent && !/[:.!?]$/.test(previous.line)) previous.line += ` ${line}`;
+    else kept.push({ line, indent });
+    joinable = true;
+  }
   const block = kept.map(({ line }) => line);
   // The question (the message, which can take several lines: a heading and a paragraph, 1.0.88), a
   // form's row of fields, the field's title, a description when the schema gives one, then the
@@ -2276,7 +2309,7 @@ function parseCopilotAsk(screen: string): ParsedPrompt | null {
   // two columns in from the text above, so the first line that is a row, or the `❯` line, ends what
   // is text; the title is the last text line, or the one before it when that one is the description
   const indent = kept[0]?.indent ?? 0;
-  const tabbed = /\b(?:shift\+)?tab (?:next|prev)\b/.test(lines[hintIndex]!);
+  const tabbed = /\b(?:shift\+)?tab (?:next|prev)\b/.test(hintText);
   // a form's row of fields is indented too when its first field is not the open one ("  Colour  [Proceed]")
   const isTabs = (line: string) => tabbed && COPILOT_TABS_RE.test(line) && /\[[^\]]+\]/.test(line);
   const firstRow = kept.findIndex(({ line, indent: at }) => /^❯(?:\s|$)/.test(line) || (at > indent && !isTabs(line)));
