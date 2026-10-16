@@ -31,6 +31,12 @@ describe("remote bundle sources", () => {
     }
   });
 
+  it("the zhomelab fork never falls back to upstream's remote-v28", async () => {
+    expect(REMOTE_BUNDLE_VERSION).toBe("1001");
+    const source = await bundleManifestSource("linux-x64", { directory: "/nonexistent", manifest: "" });
+    expect(source).toBe("https://github.com/devswha/herdr-web-ui/releases/download/remote-v1001/manifest.json");
+  });
+
   it("keeps explicit manifest configuration ahead of automatic discovery", async () => {
     const local = fixture("darwin-arm64");
     const override = fixture("darwin-arm64");
