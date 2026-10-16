@@ -2,6 +2,7 @@ import type { ConversationPart, ConversationTurn } from "../../shared/protocol.t
 import { turnSkills } from "./skillActivity.ts";
 import { isTodoTool } from "./todos.ts";
 import { t } from "./i18n.ts";
+import { toolVerbKind } from "./toolVerbs.ts";
 
 export type ToolPart = Extract<ConversationPart, { kind: "tool" }>;
 export type ThinkingPart = Extract<ConversationPart, { kind: "thinking" }>;
@@ -58,9 +59,13 @@ export const CATEGORY_LABEL: Record<WorkCategory, [singular: string, plural: str
 };
 
 function categorize(name: string): WorkCategory {
+  // the verb table's tools first: Copilot's view and create name no category by their words
+  const verb = toolVerbKind(name);
+  if (verb !== null) return verb === "read" ? "read" : verb === "run" ? "command" : "edit";
   const lower = name.toLowerCase();
   if (/edit|write|patch|create_file|multiedit/.test(lower)) return "edit";
-  if (/^(read|glob|grep|ls|list|search|find|cat)/.test(lower)) return "read";
+  // VS Code's own searches and listings (copilot_findTextInFiles, copilot_listDirectory) under its prefix
+  if (/^(copilot_)?(read|glob|grep|ls|list|search|find|cat)/.test(lower)) return "read";
   if (/bash|command|shell|exec|eval|run/.test(lower)) return "command";
   return "other";
 }

@@ -49,41 +49,112 @@ describe("a Copilot session's events as a chat", () => {
     expect(texts(turns)).toEqual(["user: FICTIONAL_PROMPT_ERROR", "assistant: Error: 400 FICTIONAL_UPSTREAM_ERROR"]);
   });
 
-  it("shows a question asked with ask_user, and the answer once it is given", () => {
-    const waiting = tools(parseCopilotEvents(fixture("ask-waiting"))[1]);
-    expect(waiting).toHaveLength(1);
-    expect(waiting[0]).toMatchObject({ name: "ask_user", summary: "FICTIONAL_QUESTION?", output: "" });
+  it("shows a question asked with ask_user as what the agent said, and the answer as the user's reply", () => {
+    // waiting: the question is the turn's last words, the card under it takes the answer
+    const waiting = parseCopilotEvents(fixture("ask-waiting"));
+    expect(texts(waiting)).toEqual(["user: FICTIONAL_PROMPT_ASK", "assistant: FICTIONAL_ASKING", "assistant: FICTIONAL_QUESTION?"]);
+    expect(tools(waiting[1])).toEqual([]);
     const answered = parseCopilotEvents(fixture("ask-answered"));
-    const [ask] = tools(answered[1]);
-    expect(ask).toMatchObject({ name: "ask_user", summary: "FICTIONAL_QUESTION?", output: "User responded: FICTIONAL_BLUE" });
     expect(texts(answered)).toEqual([
-      "user: FICTIONAL_PROMPT_ASK", "assistant: FICTIONAL_ASKING", "assistant: FICTIONAL_GOT_ANSWER",
+      "user: FICTIONAL_PROMPT_ASK", "assistant: FICTIONAL_ASKING", "assistant: FICTIONAL_QUESTION?",
+      "user: FICTIONAL_BLUE", "assistant: FICTIONAL_GOT_ANSWER",
       "user: FICTIONAL_PROMPT_LONG", "assistant: FICTIONAL_SECOND_REPLY", "assistant: FICTIONAL_AFTER_ABORT",
     ]);
+    // the reply is stamped when it was given
+    expect(answered[2]!.ts).not.toBe(answered[1]!.ts);
+  });
+
+  it("answers a form as Copilot recorded it, field by field", () => {
+    const lines = [
+      { type: "user.message", id: "e1", parentId: null, timestamp: "2026-10-01T09:00:00.000Z", data: { content: "go" } },
+      { type: "tool.execution_start", id: "e2", parentId: "e1", timestamp: "2026-10-01T09:00:01.000Z", data: { toolCallId: "c1", toolName: "ask_user", arguments: { message: "Set up?", requestedSchema: { properties: { colour: { type: "string" }, ok: { type: "boolean" } } } } } },
+      { type: "tool.execution_complete", id: "e3", parentId: "e2", timestamp: "2026-10-01T09:00:09.000Z", data: { toolCallId: "c1", success: true, result: { content: "User responded: colour=FICTIONAL_BLUE, ok=false" } } },
+    ].map((line) => JSON.stringify(line)).join("\n");
+    expect(texts(parseCopilotEvents(lines))).toEqual(["user: go", "assistant: Set up?", "user: colour=FICTIONAL_BLUE, ok=false"]);
+  });
+
+  it("says what came of a question nobody answered: declined, cancelled, or refused by Copilot", () => {
+    const turns = parseCopilotEvents(fixture("ask-outcomes"));
+    expect(texts(turns)).toEqual([
+      "user: FICTIONAL_DECLINE_PROMPT", "assistant: FICTIONAL_ASKING_ONE", "assistant: FICTIONAL_DECLINE_QUESTION?", "assistant: FICTIONAL_AFTER_DECLINE",
+      "user: FICTIONAL_CANCEL_PROMPT", "assistant: FICTIONAL_ASKING_TWO", "assistant: FICTIONAL_CANCEL_QUESTION?", "assistant: FICTIONAL_AFTER_CANCEL",
+      "user: FICTIONAL_FREE_PROMPT", "assistant: FICTIONAL_ASKING_THREE", "assistant: FICTIONAL_FREE_QUESTION?", "assistant: FICTIONAL_AFTER_FREE",
+      "user: FICTIONAL FREE ANSWER", "assistant: FICTIONAL_AFTER_FREE",
+    ]);
+    const rows = [1, 3, 5].map((index) => tools(turns[index])).map(([row]) => [row!.name, row!.summary.slice(0, 40), row!.error ?? false]);
+    expect(rows).toEqual([
+      ["ask_user", "The user is not available to respond and", false],
+      ["ask_user", "User cancelled the request.", false],
+      ["ask_user", "This session uses the structured ask_use", true],
+    ]);
+    // the row comes after the question it closes, so the question stays where it was asked
+    expect(turns[1]!.parts.map((part) => part.kind)).toEqual(["text", "text", "tool", "text"]);
+  });
+
+  it("reads TaskSync's answers in a moved chat, without the note TaskSync adds to the first one", () => {
+    const answer = (content: unknown): string[] => texts(parseCopilotEvents([
+      { type: "user.message", id: "e1", parentId: null, timestamp: "2026-10-01T09:00:00.000Z", data: { content: "go" } },
+      { type: "tool.execution_start", id: "e2", parentId: "e1", timestamp: "2026-10-01T09:00:01.000Z", data: { toolCallId: "c1", toolName: "ask_user", arguments: { question: "Next?", session_id: "auto" } } },
+      { type: "tool.execution_complete", id: "e3", parentId: "e2", timestamp: "2026-10-01T09:00:09.000Z", data: { toolCallId: "c1", success: true, result: { content: JSON.stringify(content) } } },
+    ].map((line) => JSON.stringify(line)).join("\n"))).slice(2);
+    expect(answer({ response: "FICTIONAL_REPLY", session_id: "1" })).toEqual(["user: FICTIONAL_REPLY"]);
+    expect(answer({ response: "FICTIONAL_REPLY", session_id: "1", attachmentCount: 1 })).toEqual(["user: FICTIONAL_REPLY"]);
+    const note = 'TaskSync assigned session_id "1". Normal chat is invisible here. Use this exact session_id on every ask_user call.';
+    expect(answer({ response: `FICTIONAL_REPLY\n\n${note}`, session_id: "1", directive: { kind: "bootstrap", reason: "auto_assigned_session", action: "call_ask_user_again", session_id: "1" } })).toEqual(["user: FICTIONAL_REPLY"]);
+    // the same words with no directive are the user's own
+    expect(answer({ response: `FICTIONAL_REPLY\n\n${note}`, session_id: "1" })).toEqual([`user: FICTIONAL_REPLY\n\n${note}`]);
+    // no reply in it: a row says what came back
+    expect(answer({ response: "  ", session_id: "1" })).toEqual([]);
+  });
+
+  it("takes no answer from a call that failed, nor from one asked before the context was cleared", () => {
+    const start = { type: "tool.execution_start", id: "e2", parentId: "e1", timestamp: "2026-10-01T09:00:01.000Z", data: { toolCallId: "c1", toolName: "ask_user", arguments: { message: "Next?" } } };
+    const done = (data: Record<string, unknown>) => ({ type: "tool.execution_complete", id: "e4", parentId: "e3", timestamp: "2026-10-01T09:00:09.000Z", data: { toolCallId: "c1", ...data } });
+    const parse = (lines: unknown[]): ConversationTurn[] => parseCopilotEvents([
+      { type: "user.message", id: "e1", parentId: null, timestamp: "2026-10-01T09:00:00.000Z", data: { content: "go" } }, ...lines,
+    ].map((line) => JSON.stringify(line)).join("\n"));
+    const failed = parse([start, done({ success: false, result: { content: "User responded: FICTIONAL_BLUE" } })]);
+    expect(texts(failed)).toEqual(["user: go", "assistant: Next?"]);
+    expect(tools(failed[1])[0]).toMatchObject({ name: "ask_user", error: true });
+    const cleared = parse([start, { type: "session.context_cleared", id: "e3", parentId: "e2", timestamp: "2026-10-01T09:00:05.000Z", data: {} }, done({ success: true, result: { content: "User responded: FICTIONAL_BLUE" } })]);
+    expect(cleared).toEqual([]);
   });
 
   it("ends an interrupted turn where it stopped, and the next prompt opens a new one", () => {
     const turns = parseCopilotEvents(fixture("abort"));
     expect(turns.map((turn) => turn.role)).toEqual(["user"]);
     const moved = parseCopilotEvents(fixture("migrated"));
-    expect(moved[1]!.parts.some((part) => part.kind === "notice")).toBe(false);
-    expect(moved[2]).toMatchObject({ role: "user", parts: [{ kind: "text", text: "FICTIONAL_MOVED_SECOND" }] });
+    expect(moved[3]!.parts.some((part) => part.kind === "notice")).toBe(false);
+    expect(moved[4]).toMatchObject({ role: "user", parts: [{ kind: "text", text: "FICTIONAL_MOVED_SECOND" }] });
   });
 
   it("reads a chat moved from VS Code's Local harness, and what was said after the move", () => {
     const turns = parseCopilotEvents(fixture("migrated"));
+    // the Local harness's ask_user names its question `question`, the CLI's `message`; TaskSync answers in JSON
     expect(texts(turns)).toEqual([
-      "user: FICTIONAL_MOVED_PROMPT", "assistant: FICTIONAL_MOVED_REPLY",
+      "user: FICTIONAL_MOVED_PROMPT", "assistant: FICTIONAL_MOVED_QUESTION?", "user: FICTIONAL_MOVED_ANSWER", "assistant: FICTIONAL_MOVED_REPLY",
       "user: FICTIONAL_MOVED_SECOND", "assistant: FICTIONAL_MOVED_SECOND_REPLY",
       "user: FICTIONAL_NATIVE_AFTER_MOVE", "assistant: FICTIONAL_NATIVE_REPLY",
     ]);
-    const moved = turns[1]!;
-    // the Local harness's ask_user names its question `question`, the CLI's `message`
-    expect(tools(moved).map((tool) => [tool.name, tool.summary, tool.error ?? false])).toEqual([
-      ["ask_user", "FICTIONAL_MOVED_QUESTION?", false],
+    expect(tools(turns[3]).map((tool) => [tool.name, tool.summary, tool.error ?? false])).toEqual([
       ["run_in_terminal", "printf FICTIONAL", true],
     ]);
-    expect(turns[5]!.parts[0]).toEqual({ kind: "thinking", text: "FICTIONAL_NATIVE_REASONING" });
+    expect(turns[7]!.parts[0]).toEqual({ kind: "thinking", text: "FICTIONAL_NATIVE_REASONING" });
+  });
+
+  it("sums up VS Code's own tools in a moved chat by the file or query they acted on", () => {
+    const summaries = (calls: [string, Record<string, unknown>][]): string[] => tools(parseCopilotEvents([
+      { type: "user.message", id: "e0", parentId: null, timestamp: "2026-10-01T09:00:00.000Z", data: { content: "go" } },
+      ...calls.map(([toolName, args], index) => ({ type: "tool.execution_start", id: `e${index + 1}`, parentId: "e0", timestamp: "2026-10-01T09:00:01.000Z", data: { toolCallId: `c${index}`, toolName, arguments: args } })),
+    ].map((line) => JSON.stringify(line)).join("\n"))[1]).map((row) => row.summary);
+    expect(summaries([
+      ["copilot_readFile", { filePath: "/w/src/a.ts", startLine: 1, endLine: 40 }],
+      ["copilot_replaceString", { filePath: "/w/src/a.ts", oldString: "a", newString: "b" }],
+      ["copilot_multiReplaceString", { explanation: "Rename", replacements: [{ filePath: "/w/a.ts" }, { filePath: "/w/b.ts" }, { filePath: "/w/a.ts" }] }],
+      ["copilot_findTextInFiles", { query: "TODO", isRegexp: false }],
+      ["copilot_listDirectory", { path: "/w/src" }],
+      ["copilot_fetchWebPage", { urls: ["https://example.test"] }],
+    ])).toEqual(["/w/src/a.ts", "/w/src/a.ts", "/w/a.ts, /w/b.ts", "TODO", "/w/src", "copilot_fetchWebPage"]);
   });
 
   it("shows an image a tool returned, by a ref the image route answers, and an image whose bytes Copilot left out by name only", () => {

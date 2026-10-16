@@ -80,6 +80,12 @@ describe("workSummary", () => {
     expect(workSummary([tool("Edit"), tool("Write"), tool("read"), tool("Bash"), tool("WebFetch")])).toBe("2 edits · 1 file read · 1 command · 1 other tool");
   });
 
+  it("counts Copilot's reads, searches, edits and commands as what they are", () => {
+    expect(workSummary([tool("view"), tool("copilot_readFile"), tool("copilot_findTextInFiles"), tool("copilot_listDirectory"), tool("copilot_findFiles")])).toBe("5 file reads");
+    expect(workSummary([tool("create"), tool("copilot_replaceString"), tool("copilot_multiReplaceString"), tool("copilot_createFile")])).toBe("4 edits");
+    expect(workSummary([tool("run_in_terminal"), tool("ask_user"), tool("copilot_fetchWebPage")])).toBe("1 command · 2 other tools");
+  });
+
   it("is empty for reasoning and prose alone", () => {
     expect(workSummary([thinking("x"), text("y")])).toBe("");
   });

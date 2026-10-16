@@ -85,15 +85,50 @@ function argumentsOf(value: unknown): { input: string; fields: Row } {
   return { input: JSON.stringify(value, null, 2), fields: record(value) };
 }
 
-/** What a collapsed call says: the question an ask_user call asked, else the usual summary. */
+/**
+ * What a collapsed call says. VS Code's own tools (in a moved chat) name a file `filePath`, edit
+ * several files at once in `replacements`, and search by `query`; the shared summary knows none of
+ * them. Its run_in_terminal explains a command in `explanation`, never a `description`.
+ */
 function summaryOf(name: string, fields: Row): string {
-  // the CLI's ask_user names its question `message`; VS Code's Local harness named it `question`
-  if (name === "ask_user") {
-    const asked = label(fields.message) ?? label(fields.question);
-    if (asked !== null) return asked.slice(0, 120);
+  const file = label(fields.filePath);
+  if (file !== null) return file.slice(0, 120);
+  if (Array.isArray(fields.replacements)) {
+    const files = [...new Set(fields.replacements.map((item) => label(record(item).filePath)).filter((path) => path !== null))];
+    if (files.length > 0) return files.join(", ").slice(0, 120);
   }
-  // VS Code's run_in_terminal explains a command in `explanation`, never a `description`
-  return toolSummary(name, fields);
+  const summary = toolSummary(name, fields);
+  const query = label(fields.query);
+  return summary === name && query !== null ? query.slice(0, 120) : summary;
+}
+
+/** The question an ask_user call asks: the CLI names it `message`, VS Code's Local harness `question`. */
+const questionOf = (name: string, fields: Row): string | null =>
+  name === "ask_user" ? label(fields.message) ?? label(fields.question) : null;
+
+/** The CLI's record of an answer (1.0.88): "User responded: FICTIONAL_BLUE", a form's "colour=…, ok=…". */
+const CLI_REPLY = "User responded: ";
+
+/**
+ * TaskSync (the VS Code extension behind the Local harness's ask_user) adds a note for the agent
+ * after the first answer of a session, and marks that answer with a `directive`. The note is
+ * TaskSync's, not the user's: measured on the owner's 1044 moved questions, it starts the same way
+ * every time, after a blank line.
+ */
+const TASKSYNC_NOTE = /\n\n?TaskSync assigned session_id "[^"]*"\. [\s\S]*$/;
+
+/**
+ * What the user replied to an ask_user call, or null when no reply came back: a decline ("The user
+ * is not available…"), a cancel, an empty answer, an error. Those stay a row that says so.
+ */
+function replyOf(content: string): string | null {
+  if (content.startsWith(CLI_REPLY)) return label(content.slice(CLI_REPLY.length));
+  if (!content.startsWith("{")) return null;
+  let answer: Row;
+  try { answer = record(JSON.parse(content)); } catch { return null; }
+  if (typeof answer.response !== "string") return null;
+  const said = answer.directive !== undefined ? answer.response.replace(TASKSYNC_NOTE, "") : answer.response;
+  return said.trim() ? said : null;
 }
 
 /**
@@ -163,6 +198,8 @@ export function copilotOpensTurn(line: string): boolean {
 export function parseCopilotEvents(input: string): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   const pending = new Map<string, ToolPart>();
+  /** ask_user calls still open: shown as the question until the answer, which replaces a row */
+  const asking = new Map<string, { name: string; input: string }>();
   /** the assistant turn answering the last prompt, until the next one */
   const open: { turn: ConversationTurn | null } = { turn: null };
 
@@ -186,6 +223,7 @@ export function parseCopilotEvents(input: string): ConversationTurn[] {
     if (type === "session.context_cleared") {
       turns.length = 0;
       pending.clear();
+      asking.clear();
       open.turn = null;
       continue;
     }
@@ -212,6 +250,13 @@ export function parseCopilotEvents(input: string): ConversationTurn[] {
       const id = text(data.toolCallId);
       const name = label(data.toolName) ?? "tool";
       const { input, fields } = argumentsOf(data.arguments);
+      // a question is what the agent said to the user: it reads as the agent's words, not a tool row
+      const question = questionOf(name, fields);
+      if (question !== null && id) {
+        answer(ts).parts.push({ kind: "text", text: question });
+        asking.set(id, { name, input });
+        continue;
+      }
       const part: ToolPart = { kind: "tool", name, summary: summaryOf(name, fields), input, output: "" };
       answer(ts).parts.push(part);
       if (id) pending.set(id, part);
@@ -219,11 +264,29 @@ export function parseCopilotEvents(input: string): ConversationTurn[] {
     }
     if (type === "tool.execution_complete") {
       const id = text(data.toolCallId);
+      const failed = data.success === false;
+      const output = failed ? text(record(data.error).message) || text(record(data.result).content) : text(record(data.result).content);
+      const asked = asking.get(id);
+      if (asked !== undefined) {
+        asking.delete(id);
+        const reply = failed ? null : replyOf(output);
+        if (reply !== null) {
+          // the user's answer, as if typed: the agent's next words open a turn of their own
+          turns.push({ role: "user", ts, parts: [{ kind: "text", text: reply }] });
+          open.turn = null;
+          continue;
+        }
+        // no answer came back: a row under the question says what did ("User cancelled the request.")
+        const outcome = output.split("\n").find((line) => line.trim())?.trim() ?? "";
+        const part: ToolPart = { kind: "tool", name: asked.name, summary: outcome.slice(0, 120) || asked.name, input: asked.input, output: "" };
+        trimOutput(part, output, id);
+        if (failed) part.error = true;
+        answer(ts).parts.push(part);
+        continue;
+      }
       const part = pending.get(id);
       if (part === undefined) continue;
       pending.delete(id);
-      const failed = data.success === false;
-      const output = failed ? text(record(data.error).message) || text(record(data.result).content) : text(record(data.result).content);
       trimOutput(part, output, id);
       if (failed) part.error = true;
       const images = imagesOf(data).map((image, index) => ({ media_type: image.mimeType, ref: `copilot:${id}:${index}` }));
