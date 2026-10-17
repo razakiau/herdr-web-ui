@@ -28,9 +28,28 @@ export interface PromptCardProps {
   onTypedAnswerDone?(): void;
 }
 
-export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone }: PromptCardProps) {
-  const t = useT();
+export function PromptCard({ paneId, ...props }: PromptCardProps) {
   const { answerPanePrompt } = useMachineApi();
+  const submit = async (choice: PromptChoice): Promise<void> => {
+    await answerPanePrompt({ pane_id: paneId, prompt_id: props.prompt.id, ...choice });
+  };
+  return <PromptCardView {...props} submit={submit} />;
+}
+
+/** One answer as the card gives it: an option, several, or typed words. */
+export type PromptChoice = Omit<PromptAnswer, "pane_id" | "prompt_id">;
+
+/**
+ * The card itself, with whatever sends its answer: a pane's answers go to its prompt route
+ * (PromptCard), a VS Code chat's to its host (VscodeChatView). `submit` rejects with the route's
+ * ApiError; a 409 `prompt_changed` (or 400 `invalid_answer`) says the card was stale.
+ */
+export interface PromptCardViewProps extends Omit<PromptCardProps, "paneId"> {
+  submit(choice: PromptChoice): Promise<void>;
+}
+
+export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone }: PromptCardViewProps) {
+  const t = useT();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
   const [pending, setPending] = useState(false);
@@ -67,7 +86,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
    * Resolves to whether this card is still the one shown: an answer that comes back after another
    * prompt took its place, or after its pane was left, changes nothing there.
    */
-  const answer = async (choice: Omit<PromptAnswer, "pane_id" | "prompt_id">, press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<boolean> => {
+  const answer = async (choice: PromptChoice, press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<boolean> => {
     // read now: the pressed button is disabled while the answer is on its way, and loses the focus
     const fromCard = cardRef.current?.contains(document.activeElement) === true;
     const click = press?.nativeEvent as Partial<PointerEvent> | undefined;
@@ -79,7 +98,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
     setPending(true);
     setError(null);
     try {
-      await answerPanePrompt({ pane_id: paneId, prompt_id: prompt.id, ...choice });
+      await submit(choice);
       if (!shown.current) return false;
       // and read again: the answer took a moment, and the user may have gone on to something else
       const card = cardRef.current;

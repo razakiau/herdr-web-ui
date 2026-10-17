@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Machine } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
-import type { VscodeChatRow, VscodeHostState } from "../../shared/vscode.ts";
+import type { VscodeAgent, VscodeAnswer, VscodeChatRead, VscodeChatRow, VscodeConfirm, VscodeHostState, VscodeModel, VscodeSend } from "../../shared/vscode.ts";
 import { ApiError, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
@@ -83,6 +83,93 @@ export function chatAge(row: VscodeChatRow, now: number, t: Translate): string {
 /** The state chip a chat's row draws, as an agent row's: idle and failed chats say their age instead. */
 export function chatStatus(row: VscodeChatRow): "working" | "blocked" | undefined {
   return row.status === "working" ? "working" : row.status === "asks" ? "blocked" : undefined;
+}
+
+// ─── One chat ────────────────────────────────────────────────────────────────
+
+/** GET vscode/chat: the chat as its PC's host has it; `before` (a read's `cursor`) asks for the turns before. */
+export function fetchVscodeChat(machineId: string, session: string, before?: string): Promise<VscodeChatRead> {
+  const query = new URLSearchParams({ session, ...(before ? { before } : {}) });
+  return getJson<VscodeChatRead>(machinePath(machineId, `vscode/chat?${query.toString()}`));
+}
+
+async function post<T>(machineId: string, path: string, body: unknown): Promise<T> {
+  // once: a failure is the user's to retry (the phone never re-sends on its own)
+  return getJson<T>(machinePath(machineId, path), {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-herdr-machine": "1" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** The models the PC's Copilot offers, and the custom agents enabled in this chat. */
+export function fetchVscodeModels(machineId: string, session: string): Promise<{ models: VscodeModel[]; agents: VscodeAgent[] }> {
+  return getJson(machinePath(machineId, `vscode/models?${new URLSearchParams({ session }).toString()}`));
+}
+
+/** Keeps the bridge subscribed to this chat for its lease (90 s): the screen renews it while it is shown. */
+export async function watchVscodeChat(machineId: string, session: string): Promise<void> {
+  await post(machineId, "vscode/chat/watch", { session });
+}
+
+export function answerVscode(machineId: string, body: VscodeAnswer): Promise<{ ok: true }> {
+  return post(machineId, "vscode/chat/answer", body);
+}
+
+export function confirmVscode(machineId: string, body: VscodeConfirm): Promise<{ ok: true }> {
+  return post(machineId, "vscode/chat/confirm", body);
+}
+
+/** Writes the model into the chat's shared draft, so VS Code's own picker shows it too. */
+export async function setVscodeDraftModel(machineId: string, session: string, model: { id: string; effort?: string }): Promise<void> {
+  await post(machineId, "vscode/chat/draft", { session, model });
+}
+
+/** The model and agent the phone picked for a chat's next message; `agent: null` is "Agent", no custom agent. */
+export interface VscodeChoice { model?: { id: string; effort?: string }; agent?: string | null }
+
+const choiceKey = (machineId: string, session: string): string => `herdr-web-ui:vscode-choice:${machineId}:${session}`;
+
+function storage(): Storage | null {
+  try { return typeof window === "undefined" ? null : window.sessionStorage; } catch { return null; }
+}
+
+/** The phone's pending choice for this chat (sessionStorage): what its next send carries. */
+export function chosenFor(machineId: string, session: string): VscodeChoice {
+  try {
+    const raw = storage()?.getItem(choiceKey(machineId, session));
+    if (!raw) return {};
+    const value = JSON.parse(raw) as VscodeChoice;
+    const choice: VscodeChoice = {};
+    if (value.model && typeof value.model.id === "string") choice.model = typeof value.model.effort === "string" ? { id: value.model.id, effort: value.model.effort } : { id: value.model.id };
+    if (value.agent === null || typeof value.agent === "string") choice.agent = value.agent;
+    return choice;
+  } catch {
+    return {};
+  }
+}
+
+/** Adds a pick to the chat's pending choice. */
+export function choose(machineId: string, session: string, change: VscodeChoice): void {
+  const next = { ...chosenFor(machineId, session), ...change };
+  try { storage()?.setItem(choiceKey(machineId, session), JSON.stringify(next)); } catch { /* the pick holds for this screen only */ }
+}
+
+function clearChoice(machineId: string, session: string): void {
+  try { storage()?.removeItem(choiceKey(machineId, session)); } catch { /* nothing kept */ }
+}
+
+/**
+ * Sends one message, with the chat's pending model and agent (agent null goes as null: the host
+ * then uses no custom agent). Sent, the choice is cleared: the chat now holds it as its newest
+ * turn's. Failed, the choice stays, and nothing is retried.
+ */
+export async function sendVscode(machineId: string, body: VscodeSend): Promise<{ queued: boolean }> {
+  const choice = chosenFor(machineId, body.session);
+  const full: VscodeSend = { ...body, ...(choice.model ? { model: choice.model } : {}), ...("agent" in choice ? { agent: choice.agent ?? null } : {}) };
+  const result = await post<{ queued: boolean }>(machineId, "vscode/chat/send", full);
+  clearChoice(machineId, body.session);
+  return result;
 }
 
 // ─── The pushes ──────────────────────────────────────────────────────────────

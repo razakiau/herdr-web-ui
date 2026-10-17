@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
-import { agentsListRows, fetchVscodeChats, fetchVscodeState, hostLine, isVscodeOff } from "./vscodeChats.ts";
+import { agentsListRows, choose, chosenFor, fetchVscodeChats, fetchVscodeState, hostLine, isVscodeOff, sendVscode } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -73,5 +73,65 @@ describe("VS Code chats per PC", () => {
     expect(hostLine({ state: "starting" }, t)).toBe("Starting VS Code's agent host…");
     // a PC that leaves the start to something else waits for the host to come up
     expect(hostLine({ state: "waiting" }, t)).toBe("Starting VS Code's agent host…");
+  });
+});
+
+describe("the phone's model and agent choice", () => {
+  const realFetch = globalThis.fetch;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  let session: Map<string, string>;
+  beforeEach(() => {
+    session = new Map();
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { sessionStorage: {
+        getItem: (key: string) => session.get(key) ?? null,
+        setItem: (key: string, value: string) => { session.set(key, value); },
+        removeItem: (key: string) => { session.delete(key); },
+      } },
+    });
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  const record = (status: number, body: unknown) => {
+    const calls: { url: string; body: unknown }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return calls;
+  };
+
+  it("a choice is kept per chat and cleared after the send that carries it", async () => {
+    expect(chosenFor("desk", "s1")).toEqual({});
+    choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" } });
+    choose("desk", "s1", { agent: "file:///tmp/fictional/agents/Report.agent.md" });
+    expect(chosenFor("desk", "s1")).toEqual({ model: { id: "fictional/model-b", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md" });
+    // another chat, or the same session on another PC, has no choice of its own
+    expect(chosenFor("desk", "s2")).toEqual({});
+    expect(chosenFor("laptop", "s1")).toEqual({});
+    expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(true);
+    // a send that fails keeps it for the user's next tap
+    record(502, { error: { code: "vscode_failed", message: "down" } });
+    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL hello" })).rejects.toThrow();
+    expect(chosenFor("desk", "s1").model?.id).toBe("fictional/model-b");
+    record(200, { queued: false });
+    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL hello" })).toEqual({ queued: false });
+    expect(chosenFor("desk", "s1")).toEqual({});
+    expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(false);
+  });
+
+  it("sendVscode carries the pending model and agent, and agent null is sent as null", async () => {
+    choose("desk", "s1", { model: { id: "fictional/model-a" }, agent: null });
+    const calls = record(200, { queued: true });
+    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL next" })).toEqual({ queued: true });
+    expect(calls).toEqual([{ url: "/api/machines/desk/vscode/chat/send", body: { session: "s1", text: "FICTIONAL next", model: { id: "fictional/model-a" }, agent: null } }]);
+    // nothing pending: the send carries neither, and the chat keeps what it used last
+    calls.length = 0;
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL again" });
+    expect(calls[0]?.body).toEqual({ session: "s1", text: "FICTIONAL again" });
   });
 });

@@ -25,6 +25,7 @@ import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { VscodeChatTarget } from "./components/AgentSidebar.tsx";
+import { VscodeChatView } from "./components/VscodeChatView.tsx";
 import { isVscodeMessage, noteVscodeMessage } from "./lib/vscodeChats.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
@@ -1594,6 +1595,10 @@ export function App() {
                 {/* the tab strip's panel: its id is what each tab's aria-controls points at, one per half.
                     No tabIndex - the terminal (PaneTerminal) and the composer are the focusable things inside it. */}
                 <main className="terminal-host">
+                  {/* a VS Code chat picked in the sidebar takes the pane's place in the active half */}
+                  {active && selectedVscodeChat !== null && selectedVscodeChat.machineId === machineId ? (
+                    <VscodeChatView key={`${selectedVscodeChat.machineId}\n${selectedVscodeChat.session}`} machineId={selectedVscodeChat.machineId} session={selectedVscodeChat.session} />
+                  ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
                     onOpenInHalf={wideScreen ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
@@ -1634,6 +1639,7 @@ export function App() {
                       />
                     </OpenFileContext.Provider>} />
                   </div>
+                  )}
                 </main>
                 </RenderBoundary>
               </div>

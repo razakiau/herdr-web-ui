@@ -607,8 +607,9 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
   return first.length > 96 ? `${first.slice(0, 95)}…` : first;
 }
 
-// a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
+// a turn that did not change keeps its object across polls: skip re-rendering it. Also the VS Code
+// chat's row (VscodeChatView): its parts carry no image or output refs, so paneId "" fetches nothing
+export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);

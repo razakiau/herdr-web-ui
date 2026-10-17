@@ -495,6 +495,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/usage") return json(usageReport(), 200, { "cache-control": "no-store" });
   if (path === "/api/push" || path.startsWith("/api/push/")) return error("push_unavailable", "the demo sends no alerts", 404);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
+  // the demo has no VS Code: its PCs answer as a bridge with the feature off, and draw no group
+  // (scripts/vscode-chats-demo-regression.ts answers a remote PC's chats itself)
+  if (/^\/api\/(?:machines\/[^/]+\/)?vscode\//.test(path)) return error("vscode_off", "VS Code chats are off in the demo", 404);
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 
   if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {
