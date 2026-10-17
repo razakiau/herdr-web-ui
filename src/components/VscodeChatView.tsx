@@ -24,7 +24,7 @@ import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
-  agentName, answerVscode, choose, chosenFor, errorText, confirmVscode, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
+  agentName, answerVscode, choose, chosenFor, coalesced, confirmVscode, errorText, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
   sendVscode, setVscodeDraftModel, settleChoice, watchVscodeChat, type VscodeChoice,
 } from "../lib/vscodeChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -42,7 +42,6 @@ const LOAD_OLDER_PX = 400;
 export interface VscodeChatViewProps { machineId: string; session: string }
 
 interface Row { key: string; beforeUser: boolean; turn: ConversationTurn }
-
 
 type VscodePrompt = NonNullable<VscodeChatRead["prompt"]>;
 
@@ -121,14 +120,16 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     }
   }, [machineId, session, apply]);
 
+  // a push re-reads the chat, one read at a time: pushes during it make exactly one more
+  const reread = useMemo(() => coalesced(read), [read]);
   useEffect(() => {
     void loadChatTimeline().catch(() => undefined);
-    void read();
+    void reread();
     return onVscodeMessage((from, pushed) => {
       if (from !== machineId) return;
-      if (pushed.type === "vscode-chat-changed" ? pushed.session === session : pushed.host.state === "connected") void read();
+      if (pushed.type === "vscode-chat-changed" ? pushed.session === session : pushed.host.state === "connected") void reread();
     });
-  }, [machineId, session, read]);
+  }, [machineId, session, reread]);
 
   // the bridge watches the chat while it is on screen; a closed tab lets the lease run out
   useEffect(() => {
@@ -232,7 +233,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       setQueued(result.queued);
       following.current = true;
       // the pills let a pick go only once the read names it as the chat's last
-      void read();
+      void reread();
     } catch (cause) {
       // once, by the user's tap: the words stay in the box for the next one
       if (mounted.current) setSendError(errorText(cause));
@@ -274,9 +275,9 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       </div></div>
     </div>
     <div className="prompt-dock" aria-live="polite">
-      {chat?.prompt && <VscodePromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={() => void read()} onAnswered={() => {
+      {chat?.prompt && <VscodePromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={() => void reread()} onAnswered={() => {
         setChat((current) => current === null ? current : { ...current, prompt: null });
-        void read();
+        void reread();
       }} />}
     </div>
     <div className="composer vscode-composer" role="group" aria-label={t("Message composer")}>

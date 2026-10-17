@@ -26,7 +26,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { VscodeChatTarget } from "./components/AgentSidebar.tsx";
 import { VscodeChatView } from "./components/VscodeChatView.tsx";
-import { isVscodeMessage, noteVscodeMessage } from "./lib/vscodeChats.ts";
+import { takeVscodeEvent } from "./lib/vscodeChats.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -571,6 +571,9 @@ export function App() {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
+      // a PC's VS Code host or chats changed: its sidebar group and an open chat read them again;
+      // no pane snapshot is touched, so a streaming chat never voids the roster's polls
+      if (takeVscodeEvent(payload, (id) => machinesRef.current.some((m) => m.id === id))) return;
       // A poll started before this event can carry an older roster or pane status.
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
@@ -583,8 +586,6 @@ export function App() {
       const machine = machinesRef.current.find((m) => m.id === payload.machine_id);
       if (!machine) return;
       const message = payload.message;
-      // a PC's VS Code host or chat list changed: its sidebar group reads it again
-      if (isVscodeMessage(message)) { noteVscodeMessage(machine.id, message); return; }
       if (message.type === "pane-status") {
         const key = paneStorageId(machine.id, message.pane_id);
         const previous = statusRef.current.get(key);

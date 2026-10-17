@@ -59,6 +59,12 @@ const UNSUPPORTED_PROTOCOL_VERSION = -32005;
 const BACKOFF_FIRST_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const PROCESS_CLIENT_ID = `herdr-web-${randomBytes(4).toString("hex")}`;
+/**
+ * The shortest gap between two pushes of the same chat (or of the chat list): a streaming reply
+ * changes its chat every few ms, and every push goes to every phone, which then reads the chat.
+ * A change in the window goes out when it ends, so the last state is always pushed.
+ */
+export const PUSH_WINDOW_MS = 300;
 
 // detached: its own session and process group (setsid), so a signal to the bridge's group never
 // reaches VS Code's shared agent host; unref: the bridge does not wait for it
@@ -75,6 +81,36 @@ function coded(error: unknown): VscodeError {
   if (error instanceof RpcError) return new VscodeError("rpc_error", error.code);
   if (error instanceof Error && error.name === "RpcTimeoutError") return new VscodeError("timeout");
   return new VscodeError("connect_failed");
+}
+
+/**
+ * Per key, at most one call per window: the first change goes out at once and opens the window;
+ * changes inside it are held and the latest goes out when it closes, opening the next one.
+ */
+class Coalescer {
+  private readonly windows = new Map<string, { timer: ReturnType<typeof setTimeout>; held: VscodeEvent | null }>();
+  constructor(private readonly emit: (event: VscodeEvent) => void, private readonly ms: number) {}
+
+  push(key: string, event: VscodeEvent): void {
+    const open = this.windows.get(key);
+    if (open) { open.held = event; return; }
+    this.emit(event);
+    this.open(key);
+  }
+
+  private open(key: string): void {
+    const window = { timer: setTimeout(() => {
+      this.windows.delete(key);
+      if (window.held) { this.emit(window.held); this.open(key); }
+    }, this.ms), held: null as VscodeEvent | null };
+    window.timer.unref?.();
+    this.windows.set(key, window);
+  }
+
+  clear(): void {
+    for (const window of this.windows.values()) clearTimeout(window.timer);
+    this.windows.clear();
+  }
 }
 
 interface Watch { count: number; chat: string | null; ready: Promise<void> }
@@ -100,6 +136,7 @@ export class VscodeConnection {
   private stopped = false;
   private wake: () => void = () => {};
   private readonly stopping: Promise<void>;
+  private readonly pushes: Coalescer;
 
   constructor(options: VscodeConnectionOptions) {
     this.options = options;
@@ -110,6 +147,12 @@ export class VscodeConnection {
     this.sleep = options.deps?.sleep ?? Bun.sleep;
     this.current = options.platform === "win32" ? { state: "unsupported" } : { state: "starting" };
     this.stopping = new Promise((resolve) => { this.wake = resolve; });
+    this.pushes = new Coalescer((event) => { if (!this.stopped) this.options.onChange(event); }, PUSH_WINDOW_MS);
+  }
+
+  /** A change of one chat, or of the list: at most one push per PUSH_WINDOW_MS each, the last one always. */
+  private changed(event: VscodeEvent): void {
+    this.pushes.push(event.kind === "chat" ? `chat\n${event.session}` : event.kind, event);
   }
 
   start(): void {
@@ -120,6 +163,7 @@ export class VscodeConnection {
   async stop(): Promise<void> {
     this.stopped = true;
     this.wake();
+    this.pushes.clear();
     await this.live?.client.shutdown();
     await this.running;
   }
@@ -243,7 +287,7 @@ export class VscodeConnection {
       this.sessionList = await this.listAll(client);
       this.setState(this.connectedState(init.protocolVersion));
       connected = true;
-      this.options.onChange({ kind: "chats" });
+      this.changed({ kind: "chats" });
       await this.resubscribe();
     } catch (error) {
       if (error instanceof RpcError && error.code === UNSUPPORTED_PROTOCOL_VERSION) {
@@ -279,7 +323,7 @@ export class VscodeConnection {
     for (const [session, watch] of this.watches) {
       watch.ready = this.subscribeWatch(session, watch);
       try { await watch.ready; } catch { /* the session may be gone on this host; the watch stays empty */ }
-      this.options.onChange({ kind: "chat", session });
+      this.changed({ kind: "chat", session });
     }
   }
 
@@ -355,18 +399,18 @@ export class VscodeConnection {
             continue;
           }
           const session = this.watcherOf(channel);
-          if (session) this.options.onChange({ kind: "chat", session });
+          if (session) this.changed({ kind: "chat", session });
         } else if (event.type === "sessionAdded") {
           const added = event.params.summary;
           this.sessionList = [...this.sessionList.filter((s) => s.resource !== added.resource), added];
-          this.options.onChange({ kind: "chats" });
+          this.changed({ kind: "chats" });
         } else if (event.type === "sessionRemoved") {
           this.sessionList = this.sessionList.filter((s) => s.resource !== event.params.session);
-          this.options.onChange({ kind: "chats" });
+          this.changed({ kind: "chats" });
         } else if (event.type === "sessionSummaryChanged") {
           const { session, changes } = event.params;
           this.sessionList = this.sessionList.map((s) => (s.resource === session ? { ...s, ...changes } : s));
-          this.options.onChange({ kind: "chats" });
+          this.changed({ kind: "chats" });
         }
       } catch {
         // a consumer's onChange or a reducer threw: one event, not the connection

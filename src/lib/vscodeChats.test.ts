@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
-import { agentsListRows, choose, chosenFor, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, sessionForFolder, settleChoice, type VscodeLast } from "./vscodeChats.ts";
+import { readFileSync } from "node:fs";
+import { agentsListRows, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, onVscodeMessage, sessionForFolder, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -265,3 +266,65 @@ describe("the picker's model groups", () => {
     expect(groupModels([model("fictional/model-a")]).map((group) => group.provider)).toEqual(["fictional"]);
   });
 });
+
+describe("the pushes", () => {
+  it("a VS Code event is taken before the pane bookkeeping and goes to the listeners of a known PC only", () => {
+    const heard: string[] = [];
+    const stop = onVscodeMessage((machineId, message) => { heard.push(`${machineId} ${message.type}`); });
+    try {
+      const known = (id: string) => id === "desk";
+      const changed = { type: "machine-message", machine_id: "desk", message: { type: "vscode-chat-changed", session: "s1" } } as const;
+      expect(takeVscodeEvent(changed, known)).toBe(true);
+      expect(takeVscodeEvent({ ...changed, machine_id: "gone" }, known)).toBe(true);
+      expect(takeVscodeEvent({ type: "machine-message", machine_id: "desk", message: { type: "vscode-host", host: { state: "starting" } } }, known)).toBe(true);
+      expect(heard).toEqual(["desk vscode-chat-changed", "desk vscode-host"]);
+      // anything else is the stream's own
+      expect(takeVscodeEvent({ type: "machine-message", machine_id: "desk", message: { type: "session-changed" } as never }, known)).toBe(false);
+      expect(takeVscodeEvent({ type: "machines", machines: [] }, known)).toBe(false);
+    } finally { stop(); }
+  });
+
+  it("App.tsx's event stream hands VS Code events over before it invalidates the pane snapshots", () => {
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const handler = app.slice(app.indexOf('new EventSource("/api/machines/events")'));
+    const taken = handler.indexOf("if (takeVscodeEvent(");
+    const invalidated = handler.indexOf("snapshotRequests.current.invalidate()");
+    expect(taken).toBeGreaterThan(0);
+    expect(invalidated).toBeGreaterThan(taken);
+    expect(handler.slice(taken, handler.indexOf("\n", taken))).toContain(") return;");
+  });
+
+  it("coalesced runs one at a time, and calls during a run make exactly one more", async () => {
+    let runs = 0;
+    let release: () => void = () => undefined;
+    const run = coalesced(() => { runs += 1; return new Promise<void>((resolve) => { release = resolve; }); });
+    const first = run();
+    for (let i = 0; i < 10; i += 1) void run();
+    expect(runs).toBe(1);
+    release();
+    await until(() => runs === 2);
+    release();
+    await first;
+    expect(runs).toBe(2);
+    // idle again: the next call runs at once
+    const next = run();
+    expect(runs).toBe(3);
+    release();
+    await next;
+    // a failed run does not stop the one after it
+    let failures = 0;
+    const flaky = coalesced(async () => { failures += 1; if (failures === 1) throw new Error("FICTIONAL"); });
+    await flaky();
+    expect(failures).toBe(1);
+    await flaky();
+    expect(failures).toBe(2);
+  });
+});
+
+async function until(ready: () => boolean, ms = 2_000): Promise<void> {
+  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
+    if (ready()) return;
+    await Bun.sleep(1);
+  }
+  throw new Error("timed out");
+}
