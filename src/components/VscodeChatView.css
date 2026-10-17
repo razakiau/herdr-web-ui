@@ -1,0 +1,183 @@
+/* A VS Code chat in the pane's place (VscodeChatView.tsx): the chat lens's stack, transcript and
+   composer (ChatView.css, Composer.css), with two pills to press and the picker sheet. */
+.vscode-chat {
+  height: 100%;
+}
+
+.vscode-chat-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: var(--space-3) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.vscode-chat-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the composer's box with no status sentence between its two control groups: the pills take the
+   left group's place and the round button stays on the right */
+.vscode-composer .composer-surface {
+  grid-template-areas:
+    "text text text"
+    "left left right";
+}
+
+.vscode-chat-pills {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* the composer's quiet pill, made a button: it presses, so it has a border to its hover and focus */
+.vscode-chat-pill {
+  flex: 0 1 auto;
+  max-width: 60%;
+  border: var(--hairline) solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.vscode-chat-agent {
+  flex-shrink: 2;
+}
+
+.vscode-chat-pill:hover,
+.vscode-chat-pill[aria-expanded="true"] {
+  border-color: var(--border-strong);
+}
+
+.vscode-chat-pill-caret {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.vscode-chat-status,
+.vscode-chat-error {
+  width: min(100%, var(--chat-w));
+  margin: 0 auto var(--space-2);
+  color: var(--status-working);
+  font-size: var(--fs-xs);
+}
+
+.vscode-chat-error {
+  color: var(--status-blocked);
+}
+
+/* the picker: one column of choices, a bottom sheet on a phone (styles.css .modal) */
+.vscode-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.vscode-picker-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.vscode-picker-label {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.vscode-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.vscode-picker-provider {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vscode-picker-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-height: var(--row-h);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.vscode-picker-option.is-picked {
+  border-color: var(--accent);
+}
+
+.vscode-picker-option-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--fw-medium);
+}
+
+.vscode-picker-option-id {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vscode-picker-check {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--accent);
+}
+
+.vscode-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.vscode-picker-chip {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.vscode-picker-chip.is-picked {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.vscode-picker-note,
+.vscode-picker-state {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vscode-picker-error {
+  margin: 0;
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+}
