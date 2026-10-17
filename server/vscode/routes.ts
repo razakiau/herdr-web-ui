@@ -125,7 +125,8 @@ type Handler = (call: Call) => Promise<Response>;
 interface Call { host: VscodeHost; leases: Leases; url: URL; body: Record<string, unknown> }
 
 const GETS: Record<string, Handler> = {
-  "chats": async ({ host }) => jsonResponse({ chats: rowsFrom(host.summaries()) }),
+  // the connection keeps its last list after a disconnect: a down host says so instead of a stale list
+  "chats": async ({ host }) => { connected(host); return jsonResponse({ chats: rowsFrom(host.summaries()) }); },
   "chat": readChat,
   "models": listModels,
 };
@@ -210,8 +211,10 @@ function connected(host: VscodeHost): void {
 
 const missing = (): never => refuse(jsonResponse({ error: { code: "vscode_chat_missing", message: "no such VS Code chat on this PC" } }, 404));
 
+/** A Copilot CLI session the host knows; another provider's session is not one of these chats, whatever its id. */
 function known(host: VscodeHost, session: string): boolean {
-  return host.summaries().some((summary) => summary.resource === session) || host.mirror().getSession(session) !== undefined;
+  const provider = host.summaries().find((summary) => summary.resource === session)?.provider ?? host.mirror().getSession(session)?.provider;
+  return provider === PROVIDER;
 }
 
 /** Takes or renews the session's lease, so its chat is in the mirror; the chat's channel and state. */
@@ -317,11 +320,17 @@ async function newChat(call: Call): Promise<Response> {
   await call.host.request("createSession", {
     channel: session, provider: PROVIDER, workingDirectories: [pathToFileURL(cwd).href], config: { isolation: "folder" },
   });
-  await call.leases.take(session);
-  const channel = call.host.mirror().getSession(session)?.defaultChat;
-  const chat = call.host.chat(session);
-  if (!channel || !chat) return missing();
-  send(call.host, channel, chat, messageFrom(call.host.mirror().root, words, model, agent));
+  // the session exists from here on: whatever fails next, the phone is told which one, so it opens
+  // that chat (the message still in its composer) instead of retrying into a second, empty one
+  try {
+    await call.leases.take(session);
+    const channel = call.host.mirror().getSession(session)?.defaultChat;
+    const chat = call.host.chat(session);
+    if (!channel || !chat) return jsonResponse({ session, sent: false });
+    send(call.host, channel, chat, messageFrom(call.host.mirror().root, words, model, agent));
+  } catch {
+    return jsonResponse({ session, sent: false });
+  }
   return jsonResponse({ session });
 }
 
