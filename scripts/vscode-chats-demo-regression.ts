@@ -7,18 +7,19 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
 // One fictional VS Code chat on a remote demo PC, at 390 px: the sidebar group, the chat's rows,
-// the question card, the model · effort and agent pills with their sheet, and a send that queues.
+// the question card, the model · effort and agent pills with their sheet, a send that queues, and
+// "+ New VS Code chat" (made and sent, and made with its first message not sent).
 // The roster's `remote` is the fixture's `local` cloned; this patched fetch answers that PC's
 // /api/vscode routes itself and records what the app posts. No live session or VS Code is read.
-// VSCODE_SHOTS=<dir> also saves the chat and the open sheet as screenshots.
+// VSCODE_SHOTS=<dir> also saves the chat, the open sheet and the new-chat sheet as screenshots.
 const SESSION = "fictional-session-1";
 const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
 const app = mkdtempSync(join(tmpdir(), "herdr-vscode-chats-"));
 const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
   const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)};
-  const calls = window.vscodeCalls = { posts: [] };
-  const state = window.vscodeState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [] };
+  const calls = window.vscodeCalls = { posts: [], models: [] };
+  const state = window.vscodeState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const roster = (original) => ["local", "remote"].map((id) => {
@@ -29,7 +30,12 @@ const patch = `(() => {
     return machine;
   });
   const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
-  const read = () => {
+  const read = (session) => {
+    const made = state.created.find((chat) => chat.session === session);
+    if (made) {
+      const turns = made.sent ? [{ role: "user", ts: at(0), parts: [{ kind: "text", text: made.text }] }, { role: "assistant", ts: at(0), parts: [] }] : [];
+      return { session, title: "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, signature: JSON.stringify(made) };
+    }
     const turns = [
       { role: "user", ts: at(9), parts: [{ kind: "text", text: "FICTIONAL look at the build" }] },
       { role: "assistant", ts: at(9), end_ts: at(8), parts: [
@@ -76,8 +82,18 @@ const patch = `(() => {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
       if (path === "/api/vscode/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
-      if (path === "/api/vscode/chats") return json({ chats: [{ session: SESSION, title: "FICTIONAL build chat", status: state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo" }] });
-      if (path === "/api/vscode/chat") return json(read());
+      if (path === "/api/vscode/chats") return json({ chats: [
+        { session: SESSION, title: "FICTIONAL build chat", status: state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo" },
+        { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs" },
+        ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd })),
+      ] });
+      if (path === "/api/vscode/chat") return json(read(url.searchParams.get("session")));
+      if (path === "/api/vscode/chat/new") {
+        const session = "fictional-new-" + (state.created.length + 1);
+        state.created.push({ session, cwd: body.cwd, text: body.text, sent: state.newSent });
+        return json(state.newSent ? { session } : { session, sent: false });
+      }
+      if (path === "/api/vscode/models") calls.models.push(url.searchParams.get("session"));
       if (path === "/api/vscode/models") return json({
         models: [
           { id: "fictional-own", name: "FICTIONAL Own", efforts: null },
@@ -225,8 +241,60 @@ try {
 
         // 6. nothing wider than the phone
         await fits("the busy chat");
-        assert.deepEqual(errors, [], "no render errors");
         console.log("PASS no horizontal overflow at 390 px");
+
+        // 7. "+ New VS Code chat" on the remote PC: a folder chip, a model, the first message, Start chat
+        const newChats = () => posts("/api/machines/remote/vscode/chat/new");
+        const openNewSheet = async () => {
+          await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await page.getByRole("button", { name: "New VS Code chat on Build PC", exact: true }).click();
+          const form = page.getByRole("dialog", { name: "New VS Code chat · Build PC" });
+          await form.waitFor();
+          return form;
+        };
+        assert.equal(await page.getByRole("button", { name: "New VS Code chat on Laptop" }).count(), 0, "a PC without the feature has no new-chat button");
+        let form = await openNewSheet();
+        const folder = form.getByRole("textbox", { name: "Folder" });
+        await folder.fill("");
+        await form.getByRole("button", { name: "Use folder /tmp/fictional-repo", exact: true }).click();
+        assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the chip fills the folder");
+        // the models and agents are the newest chat's in that folder
+        await page.waitForFunction(() => (window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models.length > 0);
+        assert.equal((await page.evaluate(() => (window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models)).at(-1), SESSION, "the pills read the folder's newest chat's models");
+        await form.locator(".vscode-chat-model").click();
+        const picker = page.getByRole("dialog", { name: "Model and agent" });
+        await picker.locator('[data-model="fictional/model-a"]').click();
+        await picker.waitFor({ state: "detached" });
+        assert.match(await form.locator(".vscode-chat-model").textContent() ?? "", /FICTIONAL Model A/);
+        await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL first");
+        await page.waitForFunction(() => {
+          const surface = document.querySelector(".new-vscode-chat");
+          return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
+        });
+        await fits("the new-chat sheet");
+        if (shots) await page.screenshot({ path: join(shots, "task-6-new-chat-sheet-390.png") });
+        await form.getByRole("button", { name: "Start chat", exact: true }).click();
+        const made = page.locator('.vscode-chat[data-vscode-session="fictional-new-1"]');
+        await made.waitFor();
+        await made.locator(".chat-turn-user", { hasText: "FICTIONAL first" }).waitFor();
+        assert.equal(await form.count(), 0, "the sheet closes on the chat made");
+        assert.deepEqual((await newChats()).map((post) => post.body), [{ cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-a" } }], "one chat/new with the folder, the text and the model");
+        console.log("PASS + New VS Code chat posts the folder chip's path and the first message once, and opens the chat made");
+
+        // 7b. made, but its first message did not go: the chat opens with the words in its box, nothing re-sent
+        await page.evaluate(() => { (window as unknown as { vscodeState: { newSent: boolean } }).vscodeState.newSent = false; });
+        const sendsBefore = (await posts("/api/machines/remote/vscode/chat/send")).length;
+        form = await openNewSheet();
+        await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL kept");
+        await form.getByRole("button", { name: "Start chat", exact: true }).click();
+        const kept = page.locator('.vscode-chat[data-vscode-session="fictional-new-2"]');
+        await kept.waitFor();
+        assert.equal(await kept.getByRole("textbox", { name: "Message" }).inputValue(), "FICTIONAL kept", "the unsent first message waits in the composer");
+        assert.equal((await newChats()).length, 2, "exactly one chat/new for this tap: no second chat");
+        assert.equal((await posts("/api/machines/remote/vscode/chat/send")).length, sendsBefore, "nothing is sent on the user's behalf");
+        await fits("the chat made unsent");
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS a chat made with its first message unsent opens with the words in its composer, once");
       } finally { await context.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }

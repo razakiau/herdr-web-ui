@@ -181,3 +181,27 @@
   color: var(--status-blocked);
   font-size: var(--fs-xs);
 }
+
+/* "+ New VS Code chat" (NewVscodeChatSheet.tsx): New workspace's fields, the chat's two pills, and
+   a first message a few lines tall */
+.new-vscode-chat-pills {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.new-vscode-chat-pills .vscode-chat-pill {
+  border-color: var(--border);
+}
+
+.new-vscode-chat-pills .vscode-chat-pill:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.new-vscode-chat-text {
+  height: auto;
+  min-height: calc(var(--control-h) * 2);
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
