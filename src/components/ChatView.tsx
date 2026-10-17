@@ -491,6 +491,8 @@ const IMAGE_MENTION = /(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi;
 function UserImages({ paneId, parts, text }: { paneId: string; parts: ConversationPart[]; text: string }) {
   const t = useT();
   const machineId = useMachineId();
+  // no pane (a VS Code chat's turn): nothing is read through one, not even a mentioned file
+  if (paneId === "") return null;
   const pasted = parts.filter((part): part is Extract<ConversationPart, { kind: "image" }> => part.kind === "image");
   const mentioned = [...new Set([...text.matchAll(IMAGE_MENTION)].map((match) => match[1]!))];
   if (pasted.length === 0 && mentioned.length === 0) return null;
@@ -608,7 +610,8 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it. Also the VS Code
-// chat's row (VscodeChatView): its parts carry no image or output refs, so paneId "" fetches nothing
+// chat's row (VscodeChatView), with paneId "": its parts carry no image or output refs, and
+// UserImages shows no `@image` mention without a pane, so such a row reads no file
 export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
