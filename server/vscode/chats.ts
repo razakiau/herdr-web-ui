@@ -316,12 +316,16 @@ export function readFrom(session: string, title: string, chat: ChatState): Vscod
     model: modelOf(chat),
     agent: newest?.message.agent?.uri ?? null,
     busy: chat.activeTurn !== undefined,
+    message_ids: [
+      ...chat.turns.map((turn) => turn.id), ...(chat.activeTurn ? [chat.activeTurn.id] : []),
+      ...(chat.steeringMessage ? [chat.steeringMessage.id] : []), ...(chat.queuedMessages ?? []).map((pending) => pending.id),
+    ],
   };
   const shape = [
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
-    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent,
+    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids,
   ];
   return { ...read, signature: createHash("sha1").update(JSON.stringify(shape)).digest("hex").slice(0, 16) };
 }

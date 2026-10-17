@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
-import { agentsListRows, attemptFor, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendErrorText, sendVscode, noteVscodeMessage, noteVscodeStreamOpen, onVscodeMessage, sessionForFolder, VscodePcs, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
+import { VSCODE_ATTEMPT_TTL_MS } from "./vscodeChats.ts";
+import { agentsListRows, attemptFor, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, fetchVscodeChat, sendErrorText, sendVscode, noteVscodeMessage, noteVscodeStreamOpen, onVscodeMessage, sessionForFolder, VscodePcs, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -208,6 +209,54 @@ describe("the phone's model and agent choice", () => {
     await sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
     expect(ids(calls)[1]).not.toBe(edited);
     expect(ids(calls)[1]).toMatch(UUID);
+  });
+
+  it("an attempt whose answer was lost is let go once a read shows its id: the same words later are a new message", async () => {
+    let calls = record(502, { error: { code: "bad_gateway", message: "FICTIONAL proxy" } });
+    await expect(sendVscode("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
+    const lost = (calls[0]!.body as { id: string }).id;
+    // the user sees the turn in the chat (it went) and does not retry
+    calls = record(200, { session: "s1", title: "t", status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, signature: "x", message_ids: [crypto.randomUUID(), lost] });
+    await fetchVscodeChat("desk", "s1");
+    expect(session.has("herdr-web-ui:vscode-send:desk:s1")).toBe(false);
+    // later, the same words: a new message, under a new id
+    calls = record(200, { queued: false });
+    await sendVscode("desk", { session: "s1", text: "yes" }, NONE);
+    const next = (calls[0]!.body as { id: string }).id;
+    expect(next).toMatch(UUID);
+    expect(next).not.toBe(lost);
+  });
+
+  it("a read that does not show the attempt's id keeps it for the retry", async () => {
+    let calls = record(502, {});
+    await expect(sendVscode("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
+    const lost = (calls[0]!.body as { id: string }).id;
+    record(200, { session: "s1", title: "t", status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, signature: "x", message_ids: [crypto.randomUUID()] });
+    await fetchVscodeChat("desk", "s1");
+    calls = record(200, { queued: false });
+    await sendVscode("desk", { session: "s1", text: "yes" }, NONE);
+    expect((calls[0]!.body as { id: string }).id).toBe(lost);
+  });
+
+  it("an attempt older than its TTL is not reused: a retry after it mints a new id", async () => {
+    let calls = record(502, {});
+    await expect(sendVscode("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
+    const lost = (calls[0]!.body as { id: string }).id;
+    const key = "herdr-web-ui:vscode-send:desk:s1";
+    const stored = JSON.parse(session.get(key)!) as Record<string, unknown>;
+    session.set(key, JSON.stringify({ ...stored, at: Date.now() - VSCODE_ATTEMPT_TTL_MS - 1 }));
+    calls = record(200, { queued: false });
+    await sendVscode("desk", { session: "s1", text: "yes" }, NONE);
+    expect((calls[0]!.body as { id: string }).id).not.toBe(lost);
+    // an attempt with no time on it (an older bundle's) is not trusted either
+    calls = record(502, {});
+    await expect(sendVscode("desk", { session: "s1", text: "again" }, NONE)).rejects.toThrow();
+    const untimed = (calls[0]!.body as { id: string }).id;
+    session.set(key, JSON.stringify({ key: "again", id: untimed }));
+    calls = record(200, { queued: false });
+    await sendVscode("desk", { session: "s1", text: "again" }, NONE);
+    expect((calls[0]!.body as { id: string }).id).not.toBe(untimed);
+    expect(VSCODE_ATTEMPT_TTL_MS).toBe(10 * 60_000);
   });
 
   it("attemptFor keeps the id for the same key and mints one for another", () => {
