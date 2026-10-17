@@ -89,9 +89,13 @@ export function chatStatus(row: VscodeChatRow): "working" | "blocked" | undefine
 // ─── One chat ────────────────────────────────────────────────────────────────
 
 /** GET vscode/chat: the chat as its PC's host has it; `before` (a read's `cursor`) asks for the turns before. */
-export function fetchVscodeChat(machineId: string, session: string, before?: string): Promise<VscodeChatRead> {
+export async function fetchVscodeChat(machineId: string, session: string, before?: string): Promise<VscodeChatRead> {
   const query = new URLSearchParams({ session, ...(before ? { before } : {}) });
-  return getJson<VscodeChatRead>(machinePath(machineId, `vscode/chat?${query.toString()}`));
+  const read = await getJson<VscodeChatRead>(machinePath(machineId, `vscode/chat?${query.toString()}`));
+  // a send whose answer was lost but that went: its id is the chat's now, never to be reused
+  const attempt = storedAttempt(machineId, session);
+  if (attempt && (read.message_ids ?? []).includes(attempt.id)) dropAttempt(machineId, session, attempt.id);
+  return read;
 }
 
 async function post<T>(machineId: string, path: string, body: unknown): Promise<T> {
@@ -180,6 +184,9 @@ export function keepVscodeDraft(machineId: string, session: string, text: string
 
 const newId = (): string => globalThis.crypto.randomUUID();
 
+/** How long a failed send's id is reused for the same words; a retry after it is a new message. */
+export const VSCODE_ATTEMPT_TTL_MS = 10 * 60_000;
+
 /**
  * The id an attempt goes under: the previous attempt's when it was for the same `key` (the same
  * words sent again after a failure, so the bridge dispatches them once), else a new one.
@@ -190,12 +197,28 @@ export function attemptFor(previous: { key: string; id: string } | null, key: st
 
 const attemptKey = (machineId: string, session: string): string => `herdr-web-ui:vscode-send:${machineId}:${session}`;
 
-function storedAttempt(machineId: string, session: string): { key: string; id: string } | null {
+/**
+ * The chat's failed send whose id a retry of the same words reuses: none once it is older than
+ * VSCODE_ATTEMPT_TTL_MS (or carries no time), so later words that happen to match are a new message.
+ */
+function storedAttempt(machineId: string, session: string, now = Date.now()): { key: string; id: string } | null {
   try {
     const raw = storage()?.getItem(attemptKey(machineId, session));
-    const value = raw ? JSON.parse(raw) as { key?: unknown; id?: unknown } : null;
-    return value && typeof value.key === "string" && typeof value.id === "string" ? { key: value.key, id: value.id } : null;
+    const value = raw ? JSON.parse(raw) as { key?: unknown; id?: unknown; at?: unknown } : null;
+    if (!value || typeof value.key !== "string" || typeof value.id !== "string" || typeof value.at !== "number" || now - value.at > VSCODE_ATTEMPT_TTL_MS) return null;
+    return { key: value.key, id: value.id };
   } catch { return null; }
+}
+
+function keepAttempt(machineId: string, session: string, attempt: { key: string; id: string }): void {
+  try { storage()?.setItem(attemptKey(machineId, session), JSON.stringify({ ...attempt, at: Date.now() })); } catch { /* this attempt only */ }
+}
+
+function dropAttempt(machineId: string, session: string, id: string): void {
+  try {
+    const raw = storage()?.getItem(attemptKey(machineId, session));
+    if (raw && (JSON.parse(raw) as { id?: unknown }).id === id) storage()?.removeItem(attemptKey(machineId, session));
+  } catch { /* nothing kept */ }
 }
 
 /**
@@ -237,13 +260,13 @@ export function carriedChoice(choice: VscodeChoice, last: VscodeLast): Pick<Vsco
 export async function sendVscode(machineId: string, body: Omit<VscodeSend, "id">, last: VscodeLast): Promise<{ queued: boolean }> {
   // the same words again after a failure go under the same id (kept with the draft, so leaving
   // the screen keeps it too); other words, or the next message after a sent one, get a new one
-  const attempt = attemptFor(storedAttempt(machineId, body.session), body.text.trim());
-  try { storage()?.setItem(attemptKey(machineId, body.session), JSON.stringify(attempt)); } catch { /* this attempt only */ }
+  const previous = storedAttempt(machineId, body.session);
+  const attempt = attemptFor(previous, body.text.trim());
+  // the first try's time stands: a retry does not stretch the window it is reused in
+  if (attempt !== previous) keepAttempt(machineId, body.session, attempt);
   const full: VscodeSend = { ...body, id: attempt.id, ...carriedChoice(chosenFor(machineId, body.session), last) };
   const result = await post<{ queued: boolean }>(machineId, "vscode/chat/send", full);
-  if (storedAttempt(machineId, body.session)?.id === attempt.id) {
-    try { storage()?.removeItem(attemptKey(machineId, body.session)); } catch { /* nothing kept */ }
-  }
+  dropAttempt(machineId, body.session, attempt.id);
   if (readVscodeDraft(machineId, body.session).trim() === body.text.trim()) keepVscodeDraft(machineId, body.session, "");
   return result;
 }

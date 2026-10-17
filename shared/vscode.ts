@@ -45,6 +45,11 @@ export interface VscodeChatRead {
   agent: string | null;
   /** a turn is running: a send now queues */
   busy: boolean;
+  /**
+   * The ids the chat holds its messages under: its turns' (past, the loaded page, and the running
+   * one) and its pending messages'. A phone whose send lost its answer sees here that it went.
+   */
+  message_ids: string[];
   /** changes when anything shown changes */
   signature: string;
 }
