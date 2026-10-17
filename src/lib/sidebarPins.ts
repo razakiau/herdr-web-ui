@@ -22,6 +22,19 @@ export function isWorkspacePinKey(key: string): boolean {
   return machineId !== null && key.startsWith(WORKSPACE_MARK, machineId.length + 1);
 }
 
+/** what follows the PC in a VS Code chat's key: herdr's pane ids never start with it either */
+const VSCODE_MARK = "vscode:";
+
+/** A VS Code chat's pin: the PC, then the host's session URI, which pins it on every browser of the server. */
+export function vscodePinKey(machineId: string, session: string): string {
+  return `${machineId}:${VSCODE_MARK}${session}`;
+}
+
+export function isVscodePinKey(key: string): boolean {
+  const machineId = pinMachineId(key);
+  return machineId !== null && key.startsWith(VSCODE_MARK, machineId.length + 1);
+}
+
 /** This PC's pinned workspaces, in pin order. */
 export function pinnedWorkspaceIds(keys: readonly string[], machineId: string): string[] {
   const prefix = workspacePinKey(machineId, "");
@@ -89,11 +102,14 @@ function pinMachineId(key: string): string | null {
   return separator > 0 ? key.slice(0, separator) : null;
 }
 
-/** The agent pins whose pane is gone from a loaded PC leave; workspace pins are the workspace list's to prune. */
+/**
+ * The agent pins whose pane is gone from a loaded PC leave; workspace pins are the workspace list's
+ * to prune, and VS Code chats' are their own: a chat is not a pane, and its PC's list may not be in.
+ */
 export function pruneSidebarPins(keys: readonly string[], liveKeys: ReadonlySet<string>, machines: readonly { id: string; snapshot: object | null }[]): string[] {
   if (machines.length === 0) return [...keys];
   const loading = new Set(machines.filter((machine) => machine.snapshot === null).map((machine) => machine.id));
-  return keys.filter((key) => isWorkspacePinKey(key) || liveKeys.has(key) || (pinMachineId(key) !== null && loading.has(pinMachineId(key)!)));
+  return keys.filter((key) => isWorkspacePinKey(key) || isVscodePinKey(key) || liveKeys.has(key) || (pinMachineId(key) !== null && loading.has(pinMachineId(key)!)));
 }
 
 export interface WorkspaceGroup<W> { workspace: W; children: W[] }

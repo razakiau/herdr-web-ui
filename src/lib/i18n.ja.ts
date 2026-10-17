@@ -1187,4 +1187,20 @@ export const JA: Record<string, string> = {
   "Conversation turns": "会話のターン",
   "Go to turn {n}": "ターン {n} へ移動",
   "Show full message": "メッセージ全体を表示",
+
+  // ---- VS Code chats ----
+  "VS Code chats": "VS Code のチャット",
+  "VS Code chat": "VS Code のチャット",
+  "+ New VS Code chat": "+ 新しい VS Code チャット",
+  "Open VS Code on this PC once to sign the agent host in": "この PC で VS Code を一度開いて、エージェントホストにサインインしてください",
+  "VS Code's agent host speaks a protocol this bridge doesn't (server {version})": "VS Code のエージェントホストは、このブリッジが対応していないプロトコルを使っています (サーバー {version})",
+  "No VS Code server on this PC": "この PC には VS Code サーバーがありません",
+  "VS Code chats are not supported on Windows yet": "VS Code のチャットは Windows ではまだ使えません",
+  "Starting VS Code's agent host…": "VS Code のエージェントホストを起動しています…",
+  "VS Code chats in Agents": "エージェント一覧の VS Code チャット",
+  "Live only": "進行中のみ",
+  "All recent": "最近のすべて",
+  "Live only lists the chats that work, ask or are pinned; each PC's own group lists every chat": "「進行中のみ」は作業中・質問中・ピン留めのチャットだけを表示します。各 PC のグループにはすべてのチャットが表示されます",
+  "Pin chat": "チャットをピン留め",
+  "Unpin chat": "チャットのピン留めを解除",
 };

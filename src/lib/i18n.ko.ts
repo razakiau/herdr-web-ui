@@ -1185,4 +1185,20 @@ export const KO: Record<string, string> = {
   "Conversation turns": "대화 턴",
   "Go to turn {n}": "{n}번째 턴으로 이동",
   "Show full message": "전체 메시지 보기",
+
+  // ---- VS Code chats ----
+  "VS Code chats": "VS Code 채팅",
+  "VS Code chat": "VS Code 채팅",
+  "+ New VS Code chat": "+ 새 VS Code 채팅",
+  "Open VS Code on this PC once to sign the agent host in": "이 PC에서 VS Code를 한 번 열어 에이전트 호스트에 로그인하세요",
+  "VS Code's agent host speaks a protocol this bridge doesn't (server {version})": "VS Code 에이전트 호스트가 이 브리지가 모르는 프로토콜을 씁니다 (서버 {version})",
+  "No VS Code server on this PC": "이 PC에 VS Code 서버가 없습니다",
+  "VS Code chats are not supported on Windows yet": "Windows에서는 아직 VS Code 채팅을 지원하지 않습니다",
+  "Starting VS Code's agent host…": "VS Code 에이전트 호스트를 시작하는 중…",
+  "VS Code chats in Agents": "에이전트 목록의 VS Code 채팅",
+  "Live only": "진행 중만",
+  "All recent": "최근 전체",
+  "Live only lists the chats that work, ask or are pinned; each PC's own group lists every chat": "진행 중만은 작업 중이거나 질문 중이거나 고정된 채팅만 보여 줍니다. 각 PC의 그룹에는 모든 채팅이 나옵니다",
+  "Pin chat": "채팅 고정",
+  "Unpin chat": "채팅 고정 해제",
 };

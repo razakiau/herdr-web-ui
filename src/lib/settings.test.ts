@@ -37,6 +37,17 @@ it("keeps sidebar rows on two lines unless one line was chosen", () => {
   }
 });
 
+it("sanitizeSettings keeps live and recent, and turns anything else into live", () => {
+  expect(DEFAULT_SETTINGS.vscodeChatsInAgents).toBe("live");
+  expect(SETTING_SCOPE.vscodeChatsInAgents).toBe("shared");
+  expect(sanitizeSettings({}).vscodeChatsInAgents).toBe("live");
+  expect(sanitizeSettings({ vscodeChatsInAgents: "recent" }).vscodeChatsInAgents).toBe("recent");
+  expect(sanitizeSettings({ vscodeChatsInAgents: "live" }).vscodeChatsInAgents).toBe("live");
+  for (const vscodeChatsInAgents of [null, "all", "Recent", 1, true]) {
+    expect(sanitizeSettings({ vscodeChatsInAgents }).vscodeChatsInAgents).toBe("live");
+  }
+});
+
 it("draws agent logos in their brand colors unless Mono was chosen", () => {
   expect(DEFAULT_SETTINGS.agentMarks).toBe("color");
   expect(sanitizeSettings({}).agentMarks).toBe("color");

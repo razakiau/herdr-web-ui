@@ -4,12 +4,15 @@ import { ChevronDown, ChevronRight, Ellipsis, Pin, PinOff, Terminal } from "luci
 import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
+import type { VscodeChatRow } from "../../shared/vscode.ts";
 import { useT } from "../lib/i18n.ts";
+import { folderName } from "../lib/paneName.ts";
 import { agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { activityOrder } from "../lib/sidebarOrder.ts";
-import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin } from "../lib/sidebarPins.ts";
+import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin, vscodePinKey } from "../lib/sidebarPins.ts";
+import { agentsListRows, chatAge, chatStatus, useMinuteClock, type VscodePc } from "../lib/vscodeChats.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
 import { RowMenu } from "./RowMenu.tsx";
@@ -36,7 +39,7 @@ interface AgentRowBodyProps {
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, and
  * how it is doing.
  */
-function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, plan, status, pinned }: AgentRowBodyProps) {
+export function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, plan, status, pinned }: AgentRowBodyProps) {
   return <>
     <span className="sidebar-mark" aria-hidden="true">{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
     <span className="agent-copy">
@@ -57,6 +60,53 @@ function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, p
   </>;
 }
 
+/** The VS Code chat a row stands for, and the one the app shows (App.tsx selectedVscodeChat) */
+export interface VscodeChatTarget { machineId: string; session: string }
+
+interface VscodeChatItemProps {
+  machine: Machine;
+  chat: VscodeChatRow;
+  /** the PC's name, when the list names PCs */
+  machineName: string | null;
+  selected: boolean;
+  pinned: boolean;
+  now: number;
+  onSelect(target: VscodeChatTarget): void;
+  onTogglePin(key: string): void;
+}
+
+/**
+ * One VS Code chat, drawn as an agent row (VS Code's mark, its title, its state) with its folder and
+ * when it last changed; its ⋯, or a right-click, pins it with herdr-web's own pins.
+ */
+export function VscodeChatItem({ machine, chat, machineName, selected, pinned, now, onSelect, onTogglePin }: VscodeChatItemProps) {
+  const t = useT();
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const pinKey = vscodePinKey(machine.id, chat.session);
+  const title = chat.title.trim() || t("VS Code chat");
+  const context = [machineName, chat.cwd ? folderName(chat.cwd) : null, chat.status === "error" ? t("Error") : null, chatAge(chat, now, t)].filter(Boolean).join(" · ");
+  const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
+    setMenu(menu ? null : { anchor, point, previousFocus });
+  return <li className={`agent-item vscode-chat-item${selected ? " is-selected" : ""}`} data-machine={machine.id} data-vscode-session={chat.session} data-pin-key={pinKey}
+    onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
+    onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
+    <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, context, chat.cwd].filter(Boolean).join("\n")} onClick={() => onSelect({ machineId: machine.id, session: chat.session })}>
+      <AgentRowBody mark="vscode" markKind="VS Code" title={title} name={null} context={context} status={chatStatus(chat)} pinned={pinned} />
+    </button>
+    <div className="agent-actions">
+      <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menu !== null} onClick={(event) => toggleMenu(event.currentTarget)}>
+        <Ellipsis aria-hidden="true" />
+      </button>
+    </div>
+    {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={title} subtitle={context} onClose={closeMenu} items={[
+      pinned
+        ? { id: "unpin", label: t("Unpin chat"), icon: PinOff, run: () => onTogglePin(pinKey) }
+        : { id: "pin", label: t("Pin chat"), icon: Pin, run: () => onTogglePin(pinKey) },
+    ]} />}
+  </li>;
+}
+
 export interface AgentSidebarProps {
   machines: Machine[];
   selectedMachineId: string;
@@ -64,11 +114,19 @@ export interface AgentSidebarProps {
   /** a PC's state in words, for the tooltip of a row whose PC is not connected */
   stateWord(machine: Machine): string;
   onSelect(machineId: string, paneId: string): void;
+  /** each PC's VS Code chats, for those its bridge has (lib/vscodeChats.ts) */
+  vscode?: ReadonlyMap<string, VscodePc>;
+  selectedVscodeChat?: VscodeChatTarget | null;
+  onSelectVscodeChat?(target: VscodeChatTarget): void;
 }
 
 /** the width under which the sidebar is a drawer (src/styles.css) */
 const DRAWER_QUERY = "(max-width: 768px)";
-interface AgentRow { machine: Machine; entry: SidebarAgent }
+interface AgentRow { machine: Machine; entry: SidebarAgent; chat?: undefined }
+/** a VS Code chat in the Agents list (Settings → VS Code chats in Agents) */
+interface ChatRow { machine: Machine; chat: VscodeChatRow; entry?: undefined }
+type ListRow = AgentRow | ChatRow;
+const rowPinKey = (row: ListRow): string => row.chat ? vscodePinKey(row.machine.id, row.chat.session) : sidebarPinKey(row.machine.id, row.entry.pane.pane_id);
 /** The row whose menu is open, by its pin key: at its ⋯, or at the pointer for a right-click */
 interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; title: string; place: string }
 
@@ -79,7 +137,7 @@ interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: nu
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, onSelect }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, onSelect, vscode, selectedVscodeChat = null, onSelectVscodeChat }: AgentSidebarProps) {
   const t = useT();
   const listId = useId();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
@@ -89,16 +147,22 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const activity = useSidebarActivity();
   // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes)
   const byActivity = settings.agentOrder === "activity";
-  const rows = useMemo(() => machines.flatMap((machine) => {
+  const now = useMinuteClock();
+  const vscodeMode = settings.vscodeChatsInAgents;
+  const rows = useMemo(() => machines.flatMap((machine): ListRow[] => {
     const agents = sidebarAgents(machine.snapshot);
-    return (byActivity ? activityOrder(agents, (entry) => entry.pane, activity.seqs(machine.id)) : agents).map((entry): AgentRow => ({ machine, entry }));
-  }), [machines, byActivity, activity]);
+    const herdr = (byActivity ? activityOrder(agents, (entry) => entry.pane, activity.seqs(machine.id)) : agents).map((entry): AgentRow => ({ machine, entry }));
+    // each PC's VS Code chats follow its herdr agents: the live ones, or the recent ones too
+    const chats = vscode?.get(machine.id)?.chats ?? [];
+    const listed = agentsListRows(chats, vscodeMode, (session) => pinned.includes(vscodePinKey(machine.id, session)), now).map((chat): ChatRow => ({ machine, chat }));
+    return [...herdr, ...listed];
+  }), [machines, byActivity, activity, vscode, vscodeMode, pinned, now]);
   // the pinned rows stand first, in the order they were pinned
-  const split = useMemo(() => splitPinnedRows(rows, pinned, ({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)), [rows, pinned]);
+  const split = useMemo(() => splitPinnedRows(rows, pinned, rowPinKey), [rows, pinned]);
   const togglePin = (key: string): void => {
     // pins of panes gone from this server leave with a change of the user's, never by themselves: the
     // list is shared, and a pane this page has not seen yet (a PC still loading) is not gone
-    const live = new Set(rows.map(({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)));
+    const live = new Set(rows.flatMap((row) => row.entry ? [sidebarPinKey(row.machine.id, row.entry.pane.pane_id)] : []));
     setSidebarPins(toggleSidebarPin(pruneSidebarPins(pinned, live, machines), key));
   };
   // a pin moves the row to the other list, so React draws it anew: the control of the row that had
@@ -119,6 +183,14 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   }, [menu, split]);
   // herdr names a PC only beside another: the rows' line does the same
   const machineName = (machine: Machine): string | null => machines.length > 1 ? machine.name : null;
+
+  const listItem = (row: ListRow) => row.chat
+    ? <VscodeChatItem key={rowPinKey(row)} machine={row.machine} chat={row.chat} machineName={machineName(row.machine)} now={now}
+      selected={selectedVscodeChat?.machineId === row.machine.id && selectedVscodeChat.session === row.chat.session}
+      pinned={pinned.includes(rowPinKey(row))} onSelect={(target) => onSelectVscodeChat?.(target)}
+      // the row moves to the other list: its ⋯ gets the focus back, as an agent row's does
+      onTogglePin={(key) => { refocusPin.current = { key, control: "row-menu-toggle" }; togglePin(key); }} />
+    : agentItem(row);
 
   const agentItem = ({ machine, entry }: AgentRow) => {
     const { pane, workspace, tab, agent, agentLabel } = entry;
@@ -179,8 +251,8 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     </button>
     <div className="agent-list-contents" id={listId} hidden={collapsed}>
       {rows.length === 0 ? <p className="agent-empty" role="status">{t("No agents running")}</p> : <>
-        {split.pinned.length > 0 && <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(agentItem)}</ul>}
-        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
+        {split.pinned.length > 0 && <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(listItem)}</ul>}
+        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(listItem)}</ul>}
       </>}
     </div>
     {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} onClose={closeMenu} items={[
