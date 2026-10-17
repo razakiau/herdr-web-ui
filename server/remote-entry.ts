@@ -95,7 +95,10 @@ try {
   const info = await bridgeIdentity();
   if (info.herdr.protocol < 22) throw new Error("herdr 0.9+ is required; update it explicitly before connecting");
   const token = randomBytes(32).toString("hex");
-  const server = createServer({ port: 0, hostname: "127.0.0.1", token, machines: false, stateDir: descriptor + ".state" });
+  // the switch comes from the connection server (HERDR_WEB_AGENT_HOST=on in the start line); whether
+  // to start VS Code's agent host is this PC's own say (HERDR_WEB_AGENT_HOST_START from its shell)
+  const agentHost = { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
+  const server = createServer({ port: 0, hostname: "127.0.0.1", token, machines: false, stateDir: descriptor + ".state", agentHost });
   const registration = registerBridge(server.port, token);
   const close = () => { registration.close(); server.stop(); setTimeout(() => process.exit(0), 2000); };
   process.on("SIGTERM", close);

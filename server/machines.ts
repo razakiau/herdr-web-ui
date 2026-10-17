@@ -165,7 +165,8 @@ export class MachineManager {
   private autoQueued = new Set<string>();
   private emitTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes)) {
+  /** `agentHost`: the bridges this manager starts show their PC's VS Code chats (HERDR_WEB_AGENT_HOST=on) */
+  constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes), private readonly agentHost = false) {
     this.profileState = new HerdrProfileState(stateDir);
     this.statePath = join(stateDir, "machines.json");
     this.sshDir = join(stateDir, "ssh");
@@ -656,7 +657,7 @@ export class MachineManager {
     if (!descriptor) {
       if (job?.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
       if (job) this.stage(job, "starting", "Starting the remote bridge…");
-      await host.start(ssh, { session, herdrPath, inspection });
+      await host.start(ssh, { session, herdrPath, inspection, agentHost: this.agentHost });
       for (let i = 0; i < 40; i++) {
         if (job?.abort.signal.aborted || this.stopped) throw new Error("Setup cancelled");
         descriptor = (await host.descriptors(ssh)).find((d) => d.socket_path === expectedSocket && d.pid !== stalePid);
