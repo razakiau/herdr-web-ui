@@ -80,6 +80,7 @@ const patch = `(() => {
       if (path === "/api/vscode/chat") return json(read());
       if (path === "/api/vscode/models") return json({
         models: [
+          { id: "fictional-own", name: "FICTIONAL Own", efforts: null },
           { id: "fictional/model-a", name: "FICTIONAL Model A", efforts: null },
           { id: "fictional/model-b", name: "FICTIONAL Model B", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] } },
         ],
@@ -180,6 +181,8 @@ try {
         await modelPill.click();
         const sheet = page.getByRole("dialog", { name: "Model and agent" });
         await sheet.waitFor();
+        await sheet.locator('[data-model="fictional/model-b"]').waitFor();
+        assert.deepEqual(await sheet.locator(".vscode-picker-group .vscode-picker-provider").allTextContents(), ["Copilot", "fictional"], "the host's own models (no provider in the id) stand first, as Copilot");
         await sheet.locator('[data-model="fictional/model-b"]').click();
         await sheet.locator('[data-effort="high"]').click();
         await sheet.waitFor({ state: "detached" });

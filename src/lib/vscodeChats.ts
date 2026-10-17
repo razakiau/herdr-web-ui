@@ -159,17 +159,54 @@ function clearChoice(machineId: string, session: string): void {
   try { storage()?.removeItem(choiceKey(machineId, session)); } catch { /* nothing kept */ }
 }
 
+// ─── The composer's draft ────────────────────────────────────────────────────
+
+const draftKey = (machineId: string, session: string): string => `herdr-web-ui:vscode-draft:${machineId}:${session}`;
+
+/** What the chat's box held when it was last left: its words wait there until sent or cleared. */
+export function readVscodeDraft(machineId: string, session: string): string {
+  try { return storage()?.getItem(draftKey(machineId, session)) ?? ""; } catch { return ""; }
+}
+
+export function keepVscodeDraft(machineId: string, session: string, text: string): void {
+  try {
+    if (text === "") storage()?.removeItem(draftKey(machineId, session));
+    else storage()?.setItem(draftKey(machineId, session), text);
+  } catch { /* the box still holds it */ }
+}
+
+const sameChoice = (a: VscodeChoice, b: VscodeChoice): boolean => JSON.stringify(a) === JSON.stringify(b);
+
 /**
  * Sends one message, with the chat's pending model and agent (agent null goes as null: the host
- * then uses no custom agent). Sent, the choice is cleared: the chat now holds it as its newest
- * turn's. Failed, the choice stays, and nothing is retried.
+ * then uses no custom agent). Failed, nothing changes and nothing is retried. Sent, what it carried
+ * is let go, whether or not the chat is still on screen: the pending choice, unless another pick
+ * replaced it meanwhile, and the stored draft, unless more was typed meanwhile. So a sent message
+ * never comes back in the box to be sent twice, and a pick or words made during the send are kept.
  */
 export async function sendVscode(machineId: string, body: VscodeSend): Promise<{ queued: boolean }> {
   const choice = chosenFor(machineId, body.session);
   const full: VscodeSend = { ...body, ...(choice.model ? { model: choice.model } : {}), ...("agent" in choice ? { agent: choice.agent ?? null } : {}) };
   const result = await post<{ queued: boolean }>(machineId, "vscode/chat/send", full);
-  clearChoice(machineId, body.session);
+  if (sameChoice(chosenFor(machineId, body.session), choice)) clearChoice(machineId, body.session);
+  if (readVscodeDraft(machineId, body.session).trim() === body.text.trim()) keepVscodeDraft(machineId, body.session, "");
   return result;
+}
+
+/**
+ * A chat's models under their provider: the part of the id before its first `/`. An id with none
+ * is one of the host's own Copilot models; that group (provider null) comes first.
+ */
+export function groupModels(models: readonly VscodeModel[]): { provider: string | null; models: VscodeModel[] }[] {
+  const groups = new Map<string | null, VscodeModel[]>();
+  for (const model of models) {
+    const at = model.id.indexOf("/");
+    const provider = at > 0 ? model.id.slice(0, at) : null;
+    groups.set(provider, [...groups.get(provider) ?? [], model]);
+  }
+  const own = groups.get(null);
+  const named = [...groups].filter(([provider]) => provider !== null);
+  return [...(own ? [[null, own] as const] : []), ...named].map(([provider, list]) => ({ provider, models: list }));
 }
 
 // ─── The pushes ──────────────────────────────────────────────────────────────

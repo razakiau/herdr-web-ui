@@ -1206,7 +1206,7 @@ export const JA: Record<string, string> = {
   "Model and agent": "モデルとエージェント",
   "Model": "モデル",
   "Reasoning effort": "推論の強さ",
-  "Other": "その他",
+  "Copilot": "Copilot",
   "This PC's VS Code offers no models": "この PC の VS Code には使えるモデルがありません",
   "VS Code's agent picker does not follow this choice; a message typed in VS Code uses VS Code's agent.": "VS Code のエージェント選択はこの選択に従いません。VS Code で入力したメッセージは VS Code のエージェントを使います。",
   "Model: {model}": "モデル: {model}",

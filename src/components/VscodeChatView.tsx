@@ -25,8 +25,8 @@ import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
-  answerVscode, choose, chosenFor, confirmVscode, fetchVscodeChat, fetchVscodeModels, onVscodeMessage, sendVscode,
-  setVscodeDraftModel, watchVscodeChat, type VscodeChoice,
+  answerVscode, choose, chosenFor, confirmVscode, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
+  sendVscode, setVscodeDraftModel, watchVscodeChat, type VscodeChoice,
 } from "../lib/vscodeChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { Turn } from "./ChatView.tsx";
@@ -43,19 +43,6 @@ const LOAD_OLDER_PX = 400;
 export interface VscodeChatViewProps { machineId: string; session: string }
 
 interface Row { key: string; beforeUser: boolean; turn: ConversationTurn }
-
-const draftKey = (machineId: string, session: string): string => `herdr-web-ui:vscode-draft:${machineId}:${session}`;
-
-function readDraft(machineId: string, session: string): string {
-  try { return window.sessionStorage.getItem(draftKey(machineId, session)) ?? ""; } catch { return ""; }
-}
-
-function keepDraft(machineId: string, session: string, text: string): void {
-  try {
-    if (text === "") window.sessionStorage.removeItem(draftKey(machineId, session));
-    else window.sessionStorage.setItem(draftKey(machineId, session), text);
-  } catch { /* the box still holds it */ }
-}
 
 const message = (cause: unknown): string => cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause);
 
@@ -106,7 +93,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
   const [choice, setChoice] = useState<VscodeChoice>(() => chosenFor(machineId, session));
-  const [text, setText] = useState(() => readDraft(machineId, session));
+  const [text, setText] = useState(() => readVscodeDraft(machineId, session));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
@@ -240,10 +227,11 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setSending(true);
     setSendError(null);
     try {
+      // sent: sendVscode lets the stored draft go even if this screen is gone by now
       const result = await sendVscode(machineId, { session, text: words });
       if (!mounted.current) return;
-      setText("");
-      keepDraft(machineId, session, "");
+      // words typed while it was on its way stay in the box
+      setText((current) => current.trim() === words ? "" : current);
       setChoice(chosenFor(machineId, session));
       setQueued(result.queued);
       following.current = true;
@@ -299,7 +287,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       {sendError !== null && <p className="composer-note vscode-chat-error" role="alert"><span className="composer-note-text">{t("Not sent: {error}", { error: sendError })}</span></p>}
       <div className="composer-surface">
         <textarea className="composer-text" rows={1} value={text} placeholder={t("Message VS Code")} aria-label={t("Message")} spellCheck autoCapitalize="sentences" autoCorrect="on"
-          onChange={(event) => { setText(event.target.value); keepDraft(machineId, session, event.target.value); }}
+          onChange={(event) => { setText(event.target.value); keepVscodeDraft(machineId, session, event.target.value); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && !window.matchMedia?.("(pointer: coarse)").matches) {
               event.preventDefault();
