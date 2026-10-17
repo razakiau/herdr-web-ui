@@ -1192,6 +1192,7 @@ export const KO: Record<string, string> = {
   "+ New VS Code chat": "+ 새 VS Code 채팅",
   "New VS Code chat": "새 VS Code 채팅",
   "New VS Code chat on {name}": "{name}에서 새 VS Code 채팅",
+  "VS Code chats on {name}": "{name}의 VS Code 채팅",
   "Start chat": "채팅 시작",
   "PC": "PC",
   "Folder": "폴더",

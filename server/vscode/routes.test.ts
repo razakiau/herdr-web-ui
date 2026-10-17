@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, Turn } from "@microsoft/agent-host-protocol";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import type { VscodeChatRead, VscodeHostState } from "../../shared/vscode.ts";
+import { descriptorPath, type BridgeDescriptor } from "../bridge.ts";
 import { createServer } from "../index.ts";
+import { handleMachineRequest } from "../machine-api.ts";
+import type { MachineManager } from "../machines.ts";
 import { VscodeConnection, VscodeError } from "./connection.ts";
 import { fakeAgentHost, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
 import { LEASE_MS, vscodeRoute, type LeaseClock, type VscodeHost } from "./routes.ts";
@@ -222,6 +225,73 @@ describe("VS Code routes", () => {
     stopped = true;
     // the connection goes with the server: the fake host sees its socket close
     await until("the connection to close", () => fake.peers() === 0);
+  });
+});
+
+describe("VS Code routes behind a token", () => {
+  it("the bridge token is admitted on /api/vscode/*, directly and through the machine proxy; no token is refused", async () => {
+    const { home, env, entries } = homeWithRegistry();
+    const mac = join(home, "Library", "Application Support", "Code", "agent-host", "local-endpoint", "entries");
+    mkdirSync(mac, { recursive: true });
+    const fake = await fakeAgentHost({ sessions: [summary(1)], states: { [sessionUri(1)]: sessionState(1) }, chats: { [chatUri(1)]: chatState(1) }, models: [MODEL], entryDir: process.platform === "darwin" ? mac : entries });
+    cleanups.push(() => fake.stop());
+    // a bridge whose browsers need a token of their own; the connection server holds only the bridge token
+    const bridge = createServer({
+      port: 0, hostname: "127.0.0.1", token: "FICTIONAL-browser-token", machines: false, registerBridge: true, stateDir: temp(), tailscaleOwner: null, herdrProfiles: async () => [],
+      agentHost: { enabled: true, startHost: false, home, env },
+    });
+    cleanups.push(() => bridge.stop());
+    const registered = JSON.parse(readFileSync(descriptorPath(), "utf8")) as BridgeDescriptor;
+    expect(registered.token).not.toBe("FICTIONAL-browser-token");
+    const endpoint = `http://127.0.0.1:${bridge.port}`;
+    const hostState = async () => (await (await fetch(`${endpoint}/api/vscode/state`, { headers: { authorization: `Bearer ${registered.token}` } })).json() as { host: VscodeHostState }).host.state;
+    for (const deadline = Date.now() + 5_000; await hostState() !== "connected";) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for the bridge's host");
+      await Bun.sleep(10);
+    }
+    expect((await fetch(`${endpoint}/api/vscode/state`)).status).toBe(401);
+    expect((await fetch(`${endpoint}/api/vscode/chats`, { headers: { authorization: "Bearer FICTIONAL-wrong" } })).status).toBe(401);
+    const direct = await fetch(`${endpoint}/api/vscode/chats`, { headers: { authorization: `Bearer ${registered.token}` } });
+    expect(direct.status).toBe(200);
+    expect(((await direct.json()) as { chats: { session: string }[] }).chats.map((row) => row.session)).toEqual([sessionUri(1)]);
+    // the connection server's proxy carries the bridge token, GET and POST
+    const manager = { endpoint: (id: string) => id === "vscode-remote" ? { url: endpoint, token: registered.token } : null, trackTerminal: () => () => {} } as unknown as MachineManager;
+    const state = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/vscode-remote/vscode/state"), manager);
+    expect(state.status).toBe(200);
+    expect(await state.json()).toEqual({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
+    const watched = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/vscode-remote/vscode/chat/watch", {
+      method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ session: sessionUri(1) }),
+    }), manager);
+    expect({ status: watched.status, body: await watched.json() }).toEqual({ status: 200, body: { ok: true } });
+  });
+});
+
+describe("VS Code on shutdown", () => {
+  it("a connection whose stop fails is logged by the error's name, and is no unhandled rejection", async () => {
+    const { home, env } = homeWithRegistry();
+    const server = createServer({
+      port: 0, hostname: "127.0.0.1", token: "", stateDir: temp(), herdrProfiles: async () => [], registerBridge: false, tailscaleOwner: null,
+      agentHost: { enabled: true, startHost: false, home, env },
+    });
+    const realStop = VscodeConnection.prototype.stop;
+    const warned: string[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    const warn = console.warn;
+    process.on("unhandledRejection", onUnhandled);
+    VscodeConnection.prototype.stop = async function () { await realStop.call(this); throw new RangeError("FICTIONAL secret"); };
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    try {
+      server.stop();
+      await until("the log line", () => warned.some((line) => line.startsWith("vscode: stop failed")));
+      await Bun.sleep(0);
+    } finally {
+      VscodeConnection.prototype.stop = realStop;
+      console.warn = warn;
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(warned.filter((line) => line.startsWith("vscode:"))).toEqual(["vscode: stop failed (RangeError)"]);
+    expect(unhandled).toEqual([]);
   });
 });
 

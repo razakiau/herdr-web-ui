@@ -1194,6 +1194,7 @@ export const JA: Record<string, string> = {
   "+ New VS Code chat": "+ 新しい VS Code チャット",
   "New VS Code chat": "新しい VS Code チャット",
   "New VS Code chat on {name}": "{name} で新しい VS Code チャット",
+  "VS Code chats on {name}": "{name} の VS Code チャット",
   "Start chat": "チャットを開始",
   "PC": "PC",
   "Folder": "フォルダー",
