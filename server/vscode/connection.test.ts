@@ -204,6 +204,26 @@ describe("VS Code connection", () => {
     expect(fake).not.toBeNull();
   });
 
+  it("stop() while the host is starting returns at once and leaves the event loop free", async () => {
+    const { home, env } = tempHome();
+    const cli = join(home, ".vscode-server", `code-${"e".repeat(40)}`);
+    mkdirSync(join(home, ".vscode-server"), { recursive: true });
+    await Bun.write(cli, "#!/bin/sh\nexit 0\n");
+    (await import("node:fs")).chmodSync(cli, 0o755);
+    // the spawned host never registers, so startHost polls toward its 30 s deadline
+    const { conn, spawned } = connection({ home, env, deps: { sleep: Bun.sleep, spawn: (argv) => { spawned.push(argv); } } });
+    conn.start();
+    await until("starting", () => conn.state().state === "starting" && spawned.length === 1);
+    const ticks = { count: 0 };
+    const timer = setInterval(() => { ticks.count += 1; }, 1);
+    const began = Date.now();
+    await conn.stop();
+    const took = Date.now() - began;
+    await until("the event loop to run timers", () => ticks.count >= 2, 2_000);
+    clearInterval(timer);
+    expect(took).toBeLessThan(1_000);
+  });
+
   it("no models listed means signed_in false", async () => {
     const { home, env, entries } = tempHome();
     await host(entries, { models: [] });

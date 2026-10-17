@@ -40,19 +40,24 @@ export interface StartHostDeps {
   /** Tests only: an injected clock and sleep, so the deadline test never waits. */
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** True once the caller gave up (the bridge is stopping): the poll ends at once with null. */
+  aborted?: () => boolean;
 }
 
-/** Spawns `agent host` detached, then polls for its registry entry until the deadline: the entry, or null. */
+/** Spawns `agent host` detached, then polls for its registry entry until the deadline or an abort: the entry, or null. */
 export async function startHost(cli: string, deps: StartHostDeps): Promise<HostEntry | null> {
   const now = deps.now ?? Date.now;
   const sleep: (ms: number) => Promise<void> = deps.sleep ?? Bun.sleep;
+  const aborted = deps.aborted ?? (() => false);
   const deadline = now() + (deps.deadlineMs > 0 ? deps.deadlineMs : START_DEADLINE_MS);
+  if (aborted()) return null;
   try {
     deps.spawn([cli, "--cli-data-dir", join(dirname(cli), "cli"), "agent", "host"]);
   } catch {
     return null;
   }
   for (;;) {
+    if (aborted()) return null;
     const entry = deps.poll();
     if (entry) return entry;
     if (now() >= deadline) return null;

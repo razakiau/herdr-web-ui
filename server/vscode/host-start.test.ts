@@ -76,6 +76,19 @@ describe("host start", () => {
     expect(clock).toBeLessThan(1_000 + Math.max(...sleeps) + 1);
   });
 
+  it("startHost stops polling as soon as it is aborted, even when sleep returns at once", async () => {
+    let polls = 0;
+    const found = await startHost("/fictional-home/.vscode-server/code-" + SHA_A, {
+      spawn: () => {},
+      poll: () => { polls += 1; return null; },
+      deadlineMs: 30_000,
+      sleep: async () => {},
+      aborted: () => polls >= 3,
+    });
+    expect(found).toBeNull();
+    expect(polls).toBe(3);
+  });
+
   it("startHost reports a spawn that throws as null, not an exception", async () => {
     const found = await startHost("/fictional-home/.vscode-server/code-" + SHA_A, {
       spawn: () => { throw new Error("spawn failed"); },
