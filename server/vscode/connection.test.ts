@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction } from "@microsoft/agent-host-protocol";
-import { VscodeConnection, type VscodeConnectionOptions, type VscodeEvent } from "./connection.ts";
+import { PUSH_WINDOW_MS, VscodeConnection, type VscodeConnectionOptions, type VscodeEvent } from "./connection.ts";
 import { fakeAgentHost, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
 
 // Stands in for the reconnect backoff (1 s, 2 s, 4 s …) so a restart is seen within a test.
@@ -146,7 +146,7 @@ describe("VS Code connection", () => {
     events.length = 0;
     fake.push(chatUri(1), { type: "chat/activityChanged", activity: "FICTIONAL_activity" } as unknown as StateAction);
     await until("the chat action", () => conn.chat(sessionUri(1))?.activity === "FICTIONAL_activity");
-    expect(events).toContainEqual({ kind: "chat", session: sessionUri(1) });
+    await until("the chat push", () => events.some((e) => e.kind === "chat" && e.session === sessionUri(1)), PUSH_WINDOW_MS * 4);
 
     // a second watcher shares the subscription; only the last release unsubscribes both
     const second = await conn.watch(sessionUri(1));
@@ -171,7 +171,8 @@ describe("VS Code connection", () => {
     events.length = 0;
     fake.push("ahp-root://", { type: "root/sessionAdded", summary: summary(6) });
     await until("six summaries", () => conn.summaries().length === 6);
-    expect(events).toContainEqual({ kind: "chats" });
+    // the list push comes within one window (the connect's own may have just opened one)
+    await until("the list push", () => events.some((e) => e.kind === "chats"), PUSH_WINDOW_MS * 4);
     fake.push("ahp-root://", { type: "root/sessionSummaryChanged", session: sessionUri(6), changes: { title: "FICTIONAL_renamed" } });
     await until("the rename", () => conn.summaries().some((s) => s.title === "FICTIONAL_renamed"));
     fake.push("ahp-root://", { type: "root/sessionRemoved", session: sessionUri(2) });
@@ -272,6 +273,32 @@ describe("VS Code connection", () => {
     for (const text of [...seen, ...events.map((e) => JSON.stringify(e)), JSON.stringify(conn.state()), unknown!.message, String(unknown!.stack), gone!.message, String(gone!.stack), JSON.stringify(gone)]) {
       expect(text).not.toContain(fake.token);
     }
+  });
+
+  it("a streaming chat pushes at most once per window, and its last push carries the last delta", async () => {
+    const { home, env, entries } = tempHome();
+    const streaming = { ...chatState(1), status: 8, activeTurn: { id: "turn-live", startedAt: AT, message: { text: "FICTIONAL go", origin: { kind: "user" } }, usage: undefined,
+      responseParts: [{ kind: "markdown", id: "part-1", content: "" }] } } as unknown as ChatState;
+    const fake = await host(entries, { chats: { [chatUri(1)]: streaming } });
+    const content = () => ((conn.chat(sessionUri(1))?.activeTurn?.responseParts[0] as { content?: string } | undefined)?.content ?? "");
+    const pushes: string[] = [];
+    const { conn } = connection({ home, env, onChange: (event) => { if (event.kind === "chat" && event.session === sessionUri(1)) pushes.push(content()); } });
+    conn.start();
+    await until("connected", () => conn.state().state === "connected");
+    await conn.watch(sessionUri(1));
+    pushes.length = 0;
+    const started = Date.now();
+    for (let i = 0; i < 50; i += 1) {
+      fake.push(chatUri(1), { type: "chat/delta", turnId: "turn-live", partId: "part-1", content: "x" } as unknown as StateAction);
+      await Bun.sleep(2);
+    }
+    const streamedMs = Date.now() - started;
+    await until("all 50 deltas mirrored", () => content().length === 50);
+    await until("the trailing push", () => pushes.at(-1)?.length === 50, PUSH_WINDOW_MS * 4);
+    // ~100 ms of deltas, under one window: at most the first change and the trailing one (a
+    // slower machine that streamed for longer gets one more per window it took)
+    expect(pushes.length).toBeLessThanOrEqual(1 + Math.max(1, Math.ceil(streamedMs / PUSH_WINDOW_MS)));
+    expect(pushes.at(-1)).toBe("x".repeat(50));
   });
 
   it("a host restart reconnects, resubscribes the watched chat, and re-sends nothing", async () => {

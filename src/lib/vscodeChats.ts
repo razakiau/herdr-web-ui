@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { Machine } from "../../shared/machines.ts";
+import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import type { VscodeAgent, VscodeAnswer, VscodeChatRead, VscodeChatRow, VscodeConfirm, VscodeHostState, VscodeModel, VscodeNew, VscodeNewResult, VscodeSend } from "../../shared/vscode.ts";
@@ -305,6 +305,36 @@ export function isVscodeMessage(message: ServerMessage): message is VscodeMessag
 /** A PC's VS Code push, from App.tsx's /api/machines/events: the lists that care refetch. */
 export function noteVscodeMessage(machineId: string, message: VscodeMessage): void {
   for (const listener of [...listeners]) listener(machineId, message);
+}
+
+/**
+ * App.tsx's event stream hands every event here first: a PC's VS Code push is taken (true) and
+ * goes to the lists and the chat screen, before the stream's pane-snapshot bookkeeping, which it
+ * must not touch (a chat streaming would otherwise throw away every roster poll).
+ */
+export function takeVscodeEvent(payload: MachineEvent, known: (machineId: string) => boolean): boolean {
+  if (payload.type !== "machine-message" || !isVscodeMessage(payload.message)) return false;
+  if (known(payload.machine_id)) noteVscodeMessage(payload.machine_id, payload.message);
+  return true;
+}
+
+/**
+ * `run`, at most one at a time: a call while one runs makes exactly one more run after it, however
+ * many calls came meanwhile. The chat screen's re-reads on pushes go through this.
+ */
+export function coalesced(run: () => Promise<void>): () => Promise<void> {
+  let running: Promise<void> | null = null;
+  let again = false;
+  const start = (): Promise<void> => {
+    if (running) { again = true; return running; }
+    running = (async () => {
+      try {
+        do { again = false; await run().catch(() => undefined); } while (again);
+      } finally { running = null; }
+    })();
+    return running;
+  };
+  return start;
 }
 
 export function onVscodeMessage(listener: (machineId: string, message: VscodeMessage) => void): () => void {
