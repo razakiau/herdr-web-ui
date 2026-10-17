@@ -363,8 +363,8 @@ describe("VS Code chat routes", () => {
     await until("the turn to end", () => r.conn.chat(sessionUri(1))?.turns.some((turn) => turn.id === id) === true);
     expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: false });
     expect(actions(r.fake, "chat/turnStarted").length).toBe(1);
-    // an id that is no UUID is refused before anything goes
-    for (const bad of [undefined, "", "FICTIONAL-not-a-uuid", 42]) {
+    // an id that is there but no UUID is refused before anything goes
+    for (const bad of ["", "FICTIONAL-not-a-uuid", 42]) {
       const refused = await call(r, "/api/vscode/chat/send", { ...body, id: bad });
       expect({ bad, status: refused.status, code: refused.json.error.code }).toEqual({ bad, status: 400, code: "invalid_id" });
     }
@@ -517,7 +517,35 @@ describe("VS Code chat routes", () => {
     expect(await call(r, "/api/vscode/chat/new", body)).toEqual({ status: 200, json: { session: `copilotcli:/${id}` } });
     expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(1);
     expect(actions(r.fake, "chat/turnStarted").length).toBe(1);
-    expect((await call(r, "/api/vscode/chat/new", { ...body, id: "FICTIONAL" })).json.error.code).toBe("invalid_id");
+    for (const bad of ["", "FICTIONAL-not-a-uuid", 42]) {
+      const refused = await call(r, "/api/vscode/chat/new", { ...body, id: bad });
+      expect({ bad, status: refused.status, code: refused.json.error.code }).toEqual({ bad, status: 400, code: "invalid_id" });
+    }
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(1);
+  });
+
+  it("a send or new chat without an id (an older phone) goes once, under an id the bridge mints", async () => {
+    const r = await rig();
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    expect(await call(r, "/api/vscode/chat/send", { session: sessionUri(1), text: "FICTIONAL no id" })).toEqual({ status: 200, json: { queued: false } });
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length === 1);
+    const turnId = only(r.fake, "chat/turnStarted")["turnId"] as string;
+    expect(turnId).toMatch(UUID);
+    expect(r.conn.chat(sessionUri(1))?.activeTurn?.id).toBe(turnId);
+    const made = await call(r, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL no id either" });
+    expect(made.status).toBe(200);
+    expect(made.json.session).toMatch(/^copilotcli:\/[0-9a-f-]{36}$/);
+    expect(made.json.session.slice("copilotcli:/".length)).toMatch(UUID);
+    await until("the new chat's turn", () => actions(r.fake, "chat/turnStarted").length === 2);
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(1);
+    // two without an id are two: nothing ties them together
+    expect((await call(r, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL no id either" })).json.session).not.toBe(made.json.session);
+  });
+
+  it("a read lists the ids the chat holds its messages under: turns, the running one and the pending ones", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, turns: [turn("t1", "FICTIONAL done")], activeTurn: active(), queuedMessages: [{ id: uuid(77), message: user("FICTIONAL waiting") }] }), [chatUri(2)]: chatState(2) } });
+    expect((await call(r, `/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`)).json.message_ids).toEqual(["t1", "turn-live", uuid(77)]);
+    expect((await call(r, `/api/vscode/chat?session=${encodeURIComponent(sessionUri(2))}`)).json.message_ids).toEqual([]);
   });
 
   it("a new chat asked again whose first message never went answers sent: false, and sends nothing", async () => {
