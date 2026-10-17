@@ -405,7 +405,6 @@ describe("each PC's group (VscodePcs)", () => {
     return urls;
   };
   const ok = (route: string) => ({ status: 200, body: route === "state" ? { host: CONNECTED } : { chats: [row("c1", "idle", 0)] } });
-  const settled = () => Bun.sleep(5);
 
   it("a 502 on a PC's first read shows no group; a later success shows it", async () => {
     let failing = true;
@@ -414,12 +413,12 @@ describe("each PC's group (VscodePcs)", () => {
     const stop = pcs.listen();
     try {
       pcs.setRoster(["desk"]);
-      await settled();
+      await pcs.idle();
       expect(pcs.get().has("desk")).toBe(false);
       // a 504 and a network failure are no "on" either
       serve(() => ({ status: 504, body: { error: { code: "timeout", message: "FICTIONAL slow" } } }));
       pcs.resume();
-      await settled();
+      await pcs.idle();
       expect(pcs.get().has("desk")).toBe(false);
       failing = false;
       serve((_, route) => failing ? { status: 502, body: {} } : ok(route));
@@ -429,7 +428,7 @@ describe("each PC's group (VscodePcs)", () => {
       // shown, a transient failure keeps what it shows
       serve(() => ({ status: 502, body: { error: { code: "bad_gateway", message: "FICTIONAL proxy" } } }));
       pcs.resume();
-      await settled();
+      await pcs.idle();
       expect(pcs.get().get("desk")?.chats.map((r) => r.session)).toEqual(["c1"]);
     } finally { stop(); }
   });
@@ -445,12 +444,12 @@ describe("each PC's group (VscodePcs)", () => {
     // the state read failing with the host down still makes the group
     const urls = serve((machine) => machine === "desk" ? { status: 503, body: { error: { code: "vscode_host", message: "down" }, host: { state: "starting" } } } : { status: 404, body: { error: { code: "vscode_off", message: "off" } } });
     pcs.setRoster(["desk", "laptop"]);
-    await settled();
+    await pcs.idle();
     expect(pcs.get().has("desk")).toBe(true);
     expect(pcs.get().has("laptop")).toBe(false);
     urls.length = 0;
     pcs.resume();
-    await settled();
+    await pcs.idle();
     expect(urls.some((url) => url.includes("/laptop/"))).toBe(false);
   });
 
@@ -465,7 +464,7 @@ describe("each PC's group (VscodePcs)", () => {
       // hidden: nothing
       page.visibilityState = "hidden";
       page.dispatchEvent(new Event("visibilitychange"));
-      await settled();
+      await pcs.idle();
       expect(urls).toEqual([]);
       page.visibilityState = "visible";
       page.dispatchEvent(new Event("visibilitychange"));
@@ -477,7 +476,7 @@ describe("each PC's group (VscodePcs)", () => {
       // a list push reads it too; one chat's change does not
       urls.length = 0;
       noteVscodeMessage("desk", { type: "vscode-chat-changed", session: "c1" });
-      await settled();
+      await pcs.idle();
       expect(urls).toEqual([]);
       noteVscodeMessage("desk", { type: "vscode-chat-changed", session: null });
       await until(() => urls.length === 2);
@@ -486,7 +485,7 @@ describe("each PC's group (VscodePcs)", () => {
     urls.length = 0;
     noteVscodeStreamOpen();
     page.dispatchEvent(new Event("visibilitychange"));
-    await settled();
+    await pcs.idle();
     expect(urls).toEqual([]);
   });
 });

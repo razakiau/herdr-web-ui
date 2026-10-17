@@ -444,8 +444,14 @@ export class VscodePcs {
   private readonly off = new Set<string>();
   private readonly generation = new Map<string, number>();
   private readonly listeners = new Set<() => void>();
+  private readonly reads = new Set<Promise<void>>();
 
   readonly get = (): ReadonlyMap<string, VscodePc> => this.pcs;
+
+  /** Settles once every read started so far has (tests wait on this rather than on time). */
+  async idle(): Promise<void> {
+    while (this.reads.size > 0) await Promise.all([...this.reads]);
+  }
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -486,7 +492,7 @@ export class VscodePcs {
     const turn = (this.generation.get(machineId) ?? 0) + 1;
     this.generation.set(machineId, turn);
     if (host) this.set(withPc(this.pcs, machineId, { host, chats: this.pcs.get(machineId)?.chats ?? [] }));
-    void Promise.allSettled([host ? Promise.resolve(host) : fetchVscodeState(machineId), fetchVscodeChats(machineId)]).then(([state, chats]) => {
+    const read = Promise.allSettled([host ? Promise.resolve(host) : fetchVscodeState(machineId), fetchVscodeChats(machineId)]).then(([state, chats]) => {
       if (this.generation.get(machineId) !== turn || !this.online.includes(machineId)) return;
       if ((state.status === "rejected" && isVscodeOff(state.reason)) || (chats.status === "rejected" && isVscodeOff(chats.reason))) {
         this.off.add(machineId);
@@ -503,6 +509,8 @@ export class VscodePcs {
       const nextChats = chats.status === "fulfilled" ? newestFirst(chats.value) : down ? [] : previous?.chats ?? [];
       this.set(withPc(this.pcs, machineId, { host: nextHost, chats: nextChats }));
     });
+    this.reads.add(read);
+    void read.finally(() => this.reads.delete(read));
   }
 
   private set(next: ReadonlyMap<string, VscodePc>): void {
