@@ -2,9 +2,10 @@
  * Each PC's VS Code chats, for the sidebar: the list its bridge reads from VS Code's agent host
  * (server/vscode), and the host's state. A PC whose bridge has the feature off (404 `vscode_off`)
  * has no group and is not asked again until the roster changes; the pushes (`vscode-host`,
- * `vscode-chat-changed`) that App.tsx hands to noteVscodeMessage refetch a PC's list.
+ * `vscode-chat-changed`) that App.tsx hands to noteVscodeMessage refetch a PC's list, and so do the
+ * page coming back on screen and the app's event stream reopening (onVscodeResume).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
@@ -337,6 +338,25 @@ export function coalesced(run: () => Promise<void>): () => Promise<void> {
   return start;
 }
 
+const resumeListeners = new Set<() => void>();
+
+/** App.tsx's event stream opened (or reopened after a drop): pushes may have been missed meanwhile. */
+export function noteVscodeStreamOpen(): void {
+  for (const listener of [...resumeListeners]) listener();
+}
+
+/**
+ * Calls `listener` when what is shown may be stale: the page is shown again (a phone back from
+ * the background) or the app's event stream (re)opened. The lists and the open chat read again.
+ */
+export function onVscodeResume(listener: () => void): () => void {
+  resumeListeners.add(listener);
+  const shown = (): void => { if (document.visibilityState === "visible") listener(); };
+  const page = typeof document === "undefined" ? null : document;
+  page?.addEventListener("visibilitychange", shown);
+  return () => { resumeListeners.delete(listener); page?.removeEventListener("visibilitychange", shown); };
+}
+
 export function onVscodeMessage(listener: (machineId: string, message: VscodeMessage) => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
@@ -357,60 +377,105 @@ export function useMinuteClock(): number {
   return now;
 }
 
+/** A read failure that says the PC's bridge has the feature on and its host is down: it still gets a group. */
+function hostDownError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 503 && error.code === "vscode_host";
+}
+
 /**
- * The VS Code chats of every connected PC whose bridge has them. A PC that answers `vscode_off` is
- * left out until the roster changes (or it pushes a host state, which says it has the feature).
+ * The PCs' groups, kept outside React so the rules are testable: which PC gets a group, when each
+ * is read again, and that a later read supersedes an earlier one still in flight.
+ *
+ * - A PC gets a group only when its host state reads, or its bridge says its host is down (503
+ *   `vscode_host`). `vscode_off` (404) and any other failure (502, 504, a network error) give it
+ *   none: off stays off through a transient error. A PC already shown keeps what it shows.
+ * - A PC that said `vscode_off` is asked again on the next roster change, or when it pushes a
+ *   host state (which says it has the feature).
+ * - Every other online PC is read again on its list pushes, and on `resume()`: the page shown
+ *   again, or the app's event stream (re)opened, after which any push may have been missed.
  */
-export function useVscodeChats(machines: readonly Machine[]): ReadonlyMap<string, VscodePc> {
-  const [pcs, setPcs] = useState<ReadonlyMap<string, VscodePc>>(() => new Map());
-  const online = useMemo(() => machines.filter((machine) => machine.state === "connected").map((machine) => machine.id), [machines]);
-  const roster = online.join("\n");
-  const off = useRef(new Set<string>());
-  // a later read of a PC supersedes an earlier one still in flight
-  const generation = useRef(new Map<string, number>());
-  const onlineRef = useRef(online);
-  onlineRef.current = online;
+export class VscodePcs {
+  private pcs: ReadonlyMap<string, VscodePc> = new Map();
+  private online: readonly string[] = [];
+  private readonly off = new Set<string>();
+  private readonly generation = new Map<string, number>();
+  private readonly listeners = new Set<() => void>();
 
-  const refresh = useRef((machineId: string, host?: VscodeHostState): void => {
-    const turn = (generation.current.get(machineId) ?? 0) + 1;
-    generation.current.set(machineId, turn);
-    if (host) setPcs((current) => withPc(current, machineId, { host, chats: current.get(machineId)?.chats ?? [] }));
-    void Promise.allSettled([host ? Promise.resolve(host) : fetchVscodeState(machineId), fetchVscodeChats(machineId)]).then(([state, chats]) => {
-      if (generation.current.get(machineId) !== turn || !onlineRef.current.includes(machineId)) return;
-      if ((state.status === "rejected" && isVscodeOff(state.reason)) || (chats.status === "rejected" && isVscodeOff(chats.reason))) {
-        off.current.add(machineId);
-        setPcs((current) => withoutPc(current, machineId));
-        return;
-      }
-      setPcs((current) => {
-        const previous = current.get(machineId);
-        const nextHost = state.status === "fulfilled" ? state.value : previous?.host ?? null;
-        // a host that is down (503) has no list; any other failure keeps what was shown
-        const down = chats.status === "rejected" && chats.reason instanceof ApiError && chats.reason.status === 503;
-        const nextChats = chats.status === "fulfilled" ? newestFirst(chats.value) : down ? [] : previous?.chats ?? [];
-        return withPc(current, machineId, { host: nextHost, chats: nextChats });
-      });
-    });
-  });
+  readonly get = (): ReadonlyMap<string, VscodePc> => this.pcs;
 
-  useEffect(() => {
-    // a new roster asks every PC again, the ones that said off too
-    off.current.clear();
-    setPcs((current) => new Map([...current].filter(([id]) => online.includes(id))));
-    for (const id of online) refresh.current(id);
-  }, [roster]); // eslint-disable-line react-hooks/exhaustive-deps
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
 
-  useEffect(() => onVscodeMessage((machineId, message) => {
-    if (!onlineRef.current.includes(machineId)) return;
+  /** A new roster asks every online PC again, the ones that said off too. */
+  setRoster(online: readonly string[]): void {
+    this.online = online;
+    this.off.clear();
+    this.set(new Map([...this.pcs].filter(([id]) => online.includes(id))));
+    for (const id of online) this.refresh(id);
+  }
+
+  /** Reads every online PC again but the ones that said off. */
+  resume(): void {
+    for (const id of this.online) if (!this.off.has(id)) this.refresh(id);
+  }
+
+  message(machineId: string, message: VscodeMessage): void {
+    if (!this.online.includes(machineId)) return;
     if (message.type === "vscode-host") {
-      off.current.delete(machineId);
-      refresh.current(machineId, message.host);
+      this.off.delete(machineId);
+      this.refresh(machineId, message.host);
       return;
     }
     // one chat's change is the chat screen's; its row's state comes with a list change
-    if (message.session === null && !off.current.has(machineId)) refresh.current(machineId);
-  }), []);
+    if (message.session === null && !this.off.has(machineId)) this.refresh(machineId);
+  }
 
+  /** The pushes and resume() wired up, until the returned function is called. */
+  listen(): () => void {
+    const stops = [onVscodeMessage((machineId, message) => this.message(machineId, message)), onVscodeResume(() => this.resume())];
+    return () => { for (const stop of stops) stop(); };
+  }
+
+  refresh(machineId: string, host?: VscodeHostState): void {
+    const turn = (this.generation.get(machineId) ?? 0) + 1;
+    this.generation.set(machineId, turn);
+    if (host) this.set(withPc(this.pcs, machineId, { host, chats: this.pcs.get(machineId)?.chats ?? [] }));
+    void Promise.allSettled([host ? Promise.resolve(host) : fetchVscodeState(machineId), fetchVscodeChats(machineId)]).then(([state, chats]) => {
+      if (this.generation.get(machineId) !== turn || !this.online.includes(machineId)) return;
+      if ((state.status === "rejected" && isVscodeOff(state.reason)) || (chats.status === "rejected" && isVscodeOff(chats.reason))) {
+        this.off.add(machineId);
+        this.set(withoutPc(this.pcs, machineId));
+        return;
+      }
+      const previous = this.pcs.get(machineId);
+      const on = state.status === "fulfilled" || hostDownError(state.reason) || hostDownError(chats.status === "rejected" ? chats.reason : null);
+      // a PC not shown yet whose bridge could not say the feature is on gets no group
+      if (!on && !previous) return;
+      const nextHost = state.status === "fulfilled" ? state.value : previous?.host ?? null;
+      // a host that is down (503) has no list; any other failure keeps what was shown
+      const down = chats.status === "rejected" && chats.reason instanceof ApiError && chats.reason.status === 503;
+      const nextChats = chats.status === "fulfilled" ? newestFirst(chats.value) : down ? [] : previous?.chats ?? [];
+      this.set(withPc(this.pcs, machineId, { host: nextHost, chats: nextChats }));
+    });
+  }
+
+  private set(next: ReadonlyMap<string, VscodePc>): void {
+    if (next === this.pcs) return;
+    this.pcs = next;
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+/** The VS Code chats of every connected PC whose bridge has them (VscodePcs, in React). */
+export function useVscodeChats(machines: readonly Machine[]): ReadonlyMap<string, VscodePc> {
+  const [tracker] = useState(() => new VscodePcs());
+  const pcs = useSyncExternalStore(tracker.subscribe, tracker.get);
+  const online = useMemo(() => machines.filter((machine) => machine.state === "connected").map((machine) => machine.id), [machines]);
+  const roster = online.join("\n");
+  useEffect(() => { tracker.setRoster(online); }, [roster]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => tracker.listen(), [tracker]);
   return pcs;
 }
 
