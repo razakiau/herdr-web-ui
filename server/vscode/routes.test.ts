@@ -284,6 +284,7 @@ describe("VS Code on shutdown", () => {
     try {
       server.stop();
       await until("the log line", () => warned.some((line) => line.startsWith("vscode: stop failed")));
+      // fixed wait: one turn of the event loop, for an unhandled rejection to be reported if there is one
       await Bun.sleep(0);
     } finally {
       VscodeConnection.prototype.stop = realStop;
