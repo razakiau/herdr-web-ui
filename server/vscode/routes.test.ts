@@ -6,7 +6,7 @@ import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAc
 import type { ServerMessage } from "../../shared/protocol.ts";
 import type { VscodeChatRead, VscodeHostState } from "../../shared/vscode.ts";
 import { createServer } from "../index.ts";
-import { VscodeConnection } from "./connection.ts";
+import { VscodeConnection, VscodeError } from "./connection.ts";
 import { fakeAgentHost, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
 import { LEASE_MS, vscodeRoute, type LeaseClock, type VscodeHost } from "./routes.ts";
 
@@ -93,7 +93,7 @@ interface Rig { fake: FakeAgentHost; conn: VscodeConnection; clock: ReturnType<t
 
 /** Every route call in this file goes through here: its response never carries the host's token. */
 const tokens: string[] = [];
-async function call(rig: Pick<Rig, "conn" | "clock">, path: string, body?: unknown): Promise<{ status: number; json: any }> {
+async function call(rig: { conn: VscodeHost; clock: LeaseClock }, path: string, body?: unknown): Promise<{ status: number; json: any }> {
   const request = body === undefined
     ? get(path)
     : new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -402,6 +402,7 @@ describe("VS Code chat routes", () => {
     const down = { conn: connectionAt(home, env), clock: manualClock() };
     await until("the connection to wait", () => down.conn.state().state === "waiting");
     for (const [path, body] of [
+      ["/api/vscode/chats", undefined],
       [`/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`, undefined],
       ["/api/vscode/chat/send", { session: sessionUri(1), text: "FICTIONAL nobody home" }],
       ["/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL nobody home" }],
@@ -410,6 +411,54 @@ describe("VS Code chat routes", () => {
       const answer = await call(down, path, body);
       expect({ path, status: answer.status, code: answer.json.error.code, host: answer.json.host }).toEqual({ path, status: 503, code: "vscode_host", host: { state: "waiting" } });
     }
+  });
+
+  it("a session of another provider is unknown to every chat route, whatever its id", async () => {
+    const other = "claude:/fictional-other";
+    const r = await rig({
+      sessions: [summary(1), { ...summary(2), resource: other, provider: "claude" }],
+      states: { [sessionUri(1)]: sessionState(1), [other]: { ...sessionState(2), provider: "claude" } as SessionState },
+    });
+    const q = `session=${encodeURIComponent(other)}`;
+    for (const [path, body] of [
+      [`/api/vscode/chat?${q}`, undefined], [`/api/vscode/models?${q}`, undefined],
+      ["/api/vscode/chat/watch", { session: other }], ["/api/vscode/chat/send", { session: other, text: "FICTIONAL elsewhere" }],
+      ["/api/vscode/chat/answer", { session: other, request_id: "req-1", question_id: "q-color", option_ids: ["red"] }],
+      ["/api/vscode/chat/confirm", { session: other, turn_id: "t", tool_call_id: "c", approved: true }],
+      ["/api/vscode/chat/draft", { session: other, model: { id: "fictional/model-a" } }],
+    ] as const) {
+      const answer = await call(r, path, body);
+      expect({ path, status: answer.status, code: answer.json.error?.code }).toEqual({ path, status: 404, code: "vscode_chat_missing" });
+    }
+    expect(r.fake.requests.filter((entry) => entry.method === "subscribe" && (entry.params as { channel: string }).channel === other)).toEqual([]);
+    expect(r.fake.dispatched.filter((entry) => entry.channel !== "ahp-root://")).toEqual([]);
+    // the Copilot CLI session beside it still answers
+    expect((await call(r, `/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`)).status).toBe(200);
+  });
+
+  it("a new chat whose first message fails after creation answers its session with sent: false", async () => {
+    const r = await rig();
+    // the real connection, but every dispatch fails: createSession and the watch succeed, the send does not
+    const conn = r.conn;
+    const noSend: VscodeHost = {
+      state: () => conn.state(), mirror: () => conn.mirror(), summaries: () => conn.summaries(), chat: (s) => conn.chat(s),
+      watch: (s) => conn.watch(s), request: (method, params) => conn.request(method, params),
+      dispatch: () => { throw new VscodeError("not_connected"); },
+    };
+    const made = await call({ conn: noSend, clock: r.clock }, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL lost?" });
+    expect(made.status).toBe(200);
+    expect(made.json).toEqual({ session: expect.stringMatching(/^copilotcli:\/[0-9a-f-]{36}$/), sent: false });
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession").map((entry) => (entry.params as { channel: string }).channel)).toEqual([made.json.session]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    // the watch failing after creation says the same
+    const noWatch: VscodeHost = { ...noSend, dispatch: (channel, action) => conn.dispatch(channel, action), watch: () => Promise.reject(new VscodeError("timeout")) };
+    const second = await call({ conn: noWatch, clock: manualClock() }, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL lost again?" });
+    expect(second).toEqual({ status: 200, json: { session: expect.stringMatching(/^copilotcli:\//), sent: false } });
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(2);
+    // a new chat that sends answers its session alone
+    const sent = await call(r, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL sent" });
+    expect(Object.keys(sent.json)).toEqual(["session"]);
+    await until("the first turn", () => actions(r.fake, "chat/turnStarted").length === 1);
   });
 
   it("a watch lease keeps the chat subscribed and its expiry unsubscribes", async () => {
