@@ -32,7 +32,7 @@ const get = (path: string) => new Request(`http://127.0.0.1${path}`);
 /** A host that only has a state: every other call fails the test. */
 function stub(state: () => VscodeHostState): VscodeHost {
   const no = (): never => { throw new Error("the stub host has only a state"); };
-  return { state, mirror: no, summaries: no, chat: no, watch: no, request: no, dispatch: no };
+  return { state, mirror: no, summaries: no, chat: no, watch: no, watching: no, request: no, dispatch: no };
 }
 
 // ─── Against a fake agent host, through a real VscodeConnection ─────────────
@@ -89,7 +89,7 @@ function manualClock(): LeaseClock & { advance(ms: number): void } {
   };
 }
 
-interface Rig { fake: FakeAgentHost; conn: VscodeConnection; clock: ReturnType<typeof manualClock> }
+interface Rig { fake: FakeAgentHost; conn: VscodeConnection; clock: ReturnType<typeof manualClock>; entries: string }
 
 /** Every route call in this file goes through here: its response never carries the host's token. */
 const tokens: string[] = [];
@@ -135,7 +135,7 @@ async function rig(overrides: Partial<FakeAgentHostSeed> = {}): Promise<Rig> {
   tokens.push(fake.token);
   const conn = connectionAt(home, env);
   await until("the connection", () => conn.state().state === "connected");
-  return { fake, conn, clock: manualClock() };
+  return { fake, conn, clock: manualClock(), entries };
 }
 
 const actions = (fake: FakeAgentHost, type: string) => fake.dispatched.filter((entry) => entry.action.type === type);
@@ -459,7 +459,7 @@ describe("VS Code chat routes", () => {
     const conn = r.conn;
     const noSend: VscodeHost = {
       state: () => conn.state(), mirror: () => conn.mirror(), summaries: () => conn.summaries(), chat: (s) => conn.chat(s),
-      watch: (s) => conn.watch(s), request: (method, params) => conn.request(method, params),
+      watch: (s) => conn.watch(s), watching: (s) => conn.watching(s), request: (method, params) => conn.request(method, params),
       dispatch: () => { throw new VscodeError("not_connected"); },
     };
     const made = await call({ conn: noSend, clock: r.clock }, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL lost?" });
@@ -497,6 +497,32 @@ describe("VS Code chat routes", () => {
     // a read takes the lease again
     expect((await call(r, `/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`)).status).toBe(200);
     expect(r.conn.chat(sessionUri(1))).toBeDefined();
+  });
+
+  it("a resubscribe that fails after a reconnect drops the watch, and the next read subscribes again", async () => {
+    const r = await rig();
+    const path = `/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`;
+    expect((await call(r, path)).status).toBe(200);
+    // the host restarts, and the new one fails the first resubscribe of this session
+    await r.fake.stop();
+    await until("the drop", () => r.conn.state().state !== "connected");
+    const entries = r.entries;
+    const second = await fakeAgentHost({
+      sessions: [summary(1), summary(2)], states: { [sessionUri(1)]: sessionState(1), [sessionUri(2)]: sessionState(2) },
+      chats: { [chatUri(1)]: chatState(1), [chatUri(2)]: chatState(2) }, models: [MODEL], entryDir: entries, failSubscribes: { [sessionUri(1)]: 1 },
+    });
+    cleanups.push(() => second.stop());
+    tokens.push(second.token);
+    await until("reconnected", () => r.conn.state().state === "connected");
+    const subscribes = () => second.requests.filter((entry) => entry.method === "subscribe" && (entry.params as { channel: string }).channel === sessionUri(1)).length;
+    await until("the failed resubscribe", () => subscribes() === 1 && !r.conn.watching(sessionUri(1)));
+    // the phone's lease is still held: its renewal (or next read) subscribes again and reads the chat
+    expect((await call(r, "/api/vscode/chat/watch", { session: sessionUri(1) })).json).toEqual({ ok: true });
+    expect(subscribes()).toBe(2);
+    const read = await call(r, path);
+    expect({ status: read.status, session: read.json.session }).toEqual({ status: 200, session: sessionUri(1) });
+    // nothing was re-sent: only the watch's active-client mark
+    expect(second.dispatched.map((entry) => String(entry.action.type))).toEqual(["session/activeClientSet"]);
   });
 
   it("no route response carries the host's token", async () => {

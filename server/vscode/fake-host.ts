@@ -37,6 +37,8 @@ export interface FakeAgentHostSeed {
   refuse?: string;
   /** Write this host's own `standalone` registry entry into this directory. */
   entryDir?: string;
+  /** Per channel: how many of its next subscribes fail (as a host that times out or lost it would). */
+  failSubscribes?: Record<string, number>;
 }
 
 export interface FakeAgentHost {
@@ -62,6 +64,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
   const sessions = seed.sessions.map((summary) => ({ ...summary }));
   const states: Record<string, SessionState> = { ...seed.states };
   const chats: Record<string, ChatState> = { ...seed.chats };
+  const failSubscribes: Record<string, number> = { ...seed.failSubscribes };
   const dispatched: FakeAgentHost["dispatched"] = [];
   const requests: FakeAgentHost["requests"] = [];
   const peers = new Set<ServerWebSocket<Peer>>();
@@ -116,6 +119,8 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
       }
       case "subscribe": {
         const channel = String(params["channel"]);
+        const failing = failSubscribes[channel] ?? 0;
+        if (failing > 0) { failSubscribes[channel] = failing - 1; fail(-32603, `FICTIONAL subscribe failure on ${channel}`); return; }
         const state = states[channel] ?? chats[channel];
         if (!state) { fail(-32008, `no such channel ${channel}`); return; }
         ok({ snapshot: { resource: channel, fromSeq: serverSeq, state } });

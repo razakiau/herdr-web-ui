@@ -318,14 +318,27 @@ export class VscodeConnection {
     return all;
   }
 
-  /** After a reconnect: every watched session and its chat again. Nothing is dispatched but the active-client mark. */
+  /**
+   * After a reconnect: every watched session and its chat again. Nothing is dispatched but the
+   * active-client mark. A resubscribe that fails drops its watch (its holders' releases then do
+   * nothing), so the next watch() of that session subscribes again instead of reading an empty
+   * mirror for as long as a phone keeps renewing its lease; the push makes the phone read now.
+   */
   private async resubscribe(): Promise<void> {
-    for (const [session, watch] of this.watches) {
+    for (const [session, watch] of [...this.watches]) {
       watch.ready = this.subscribeWatch(session, watch);
-      try { await watch.ready; } catch { /* the session may be gone on this host; the watch stays empty */ }
+      try {
+        await watch.ready;
+      } catch {
+        // the session may be gone on this host, or the subscribe timed out
+        if (this.watches.get(session) === watch) this.drop(session, watch);
+      }
       this.changed({ kind: "chat", session });
     }
   }
+
+  /** Whether `session` has a watch now: false once its lease expired or a resubscribe failed. */
+  watching(session: string): boolean { return this.watches.has(session); }
 
   private async subscribeWatch(session: string, watch: Watch): Promise<void> {
     const live = this.live;
