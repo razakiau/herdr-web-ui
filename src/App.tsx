@@ -26,7 +26,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { VscodeChatTarget } from "./components/AgentSidebar.tsx";
 import { VscodeChatView } from "./components/VscodeChatView.tsx";
-import { takeVscodeEvent } from "./lib/vscodeChats.ts";
+import { noteVscodeStreamOpen, takeVscodeEvent } from "./lib/vscodeChats.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -567,6 +567,8 @@ export function App() {
       snapshot: machine.snapshot && { panes: machine.snapshot.panes.map((pane) => ({ pane_id: pane.pane_id, agent_status: alertStatus(pane.agent_status, (pane as HerdrPane).background_wait) })) },
     }));
     const events = new EventSource("/api/machines/events");
+    // opened, or reopened after a drop: a VS Code push may have been missed while it was down
+    events.onopen = () => noteVscodeStreamOpen();
     events.onmessage = (event) => {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }

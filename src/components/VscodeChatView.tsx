@@ -24,7 +24,7 @@ import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
-  agentName, answerVscode, choose, chosenFor, coalesced, confirmVscode, errorText, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
+  agentName, answerVscode, choose, chosenFor, coalesced, confirmVscode, errorText, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, onVscodeResume, readVscodeDraft,
   sendVscode, setVscodeDraftModel, settleChoice, watchVscodeChat, type VscodeChoice,
 } from "../lib/vscodeChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -130,6 +130,8 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       if (pushed.type === "vscode-chat-changed" ? pushed.session === session : pushed.host.state === "connected") void reread();
     });
   }, [machineId, session, reread]);
+  // back on screen, or the event stream reopened: a push may have been missed meanwhile
+  useEffect(() => onVscodeResume(() => { void reread(); }), [reread]);
 
   // the bridge watches the chat while it is on screen; a closed tab lets the lease run out
   useEffect(() => {

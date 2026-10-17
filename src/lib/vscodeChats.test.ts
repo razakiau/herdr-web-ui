@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
 import { readFileSync } from "node:fs";
-import { agentsListRows, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, onVscodeMessage, sessionForFolder, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
+import { agentsListRows, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, noteVscodeMessage, noteVscodeStreamOpen, onVscodeMessage, sessionForFolder, VscodePcs, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -328,3 +328,116 @@ async function until(ready: () => boolean, ms = 2_000): Promise<void> {
   }
   throw new Error("timed out");
 }
+
+describe("each PC's group (VscodePcs)", () => {
+  const realFetch = globalThis.fetch;
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  let page: EventTarget & { visibilityState: string };
+  beforeEach(() => {
+    page = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: page });
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
+    else Reflect.deleteProperty(globalThis, "document");
+  });
+  const CONNECTED = { state: "connected", signed_in: true, protocol: "1.0.0" } as const;
+  /** Each PC answers state and chats as `answer` says at the time of the call; every URL is kept. */
+  const serve = (answer: (machine: string, route: string) => { status: number; body: unknown }) => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      const [, machine, route] = url.match(/^\/api\/machines\/([^/]+)\/vscode\/(.*)$/) ?? [];
+      const { status, body } = answer(machine!, route!);
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return urls;
+  };
+  const ok = (route: string) => ({ status: 200, body: route === "state" ? { host: CONNECTED } : { chats: [row("c1", "idle", 0)] } });
+  const settled = () => Bun.sleep(5);
+
+  it("a 502 on a PC's first read shows no group; a later success shows it", async () => {
+    let failing = true;
+    serve((_, route) => failing ? { status: 502, body: { error: { code: "bad_gateway", message: "FICTIONAL proxy" } } } : ok(route));
+    const pcs = new VscodePcs();
+    const stop = pcs.listen();
+    try {
+      pcs.setRoster(["desk"]);
+      await settled();
+      expect(pcs.get().has("desk")).toBe(false);
+      // a 504 and a network failure are no "on" either
+      serve(() => ({ status: 504, body: { error: { code: "timeout", message: "FICTIONAL slow" } } }));
+      pcs.resume();
+      await settled();
+      expect(pcs.get().has("desk")).toBe(false);
+      failing = false;
+      serve((_, route) => failing ? { status: 502, body: {} } : ok(route));
+      noteVscodeStreamOpen();
+      await until(() => pcs.get().has("desk"));
+      expect(pcs.get().get("desk")).toEqual({ host: CONNECTED, chats: [row("c1", "idle", 0)] });
+      // shown, a transient failure keeps what it shows
+      serve(() => ({ status: 502, body: { error: { code: "bad_gateway", message: "FICTIONAL proxy" } } }));
+      pcs.resume();
+      await settled();
+      expect(pcs.get().get("desk")?.chats.map((r) => r.session)).toEqual(["c1"]);
+    } finally { stop(); }
+  });
+
+  it("a host that is down (503 vscode_host) gets a group; vscode_off gets none and is not asked again until the roster changes", async () => {
+    serve((machine, route) => machine === "desk"
+      ? route === "state" ? { status: 200, body: { host: { state: "no_server" } } } : { status: 503, body: { error: { code: "vscode_host", message: "down" }, host: { state: "no_server" } } }
+      : { status: 404, body: { error: { code: "vscode_off", message: "off" } } });
+    const pcs = new VscodePcs();
+    pcs.setRoster(["desk", "laptop"]);
+    await until(() => pcs.get().has("desk"));
+    expect(pcs.get().get("desk")).toEqual({ host: { state: "no_server" }, chats: [] });
+    // the state read failing with the host down still makes the group
+    const urls = serve((machine) => machine === "desk" ? { status: 503, body: { error: { code: "vscode_host", message: "down" }, host: { state: "starting" } } } : { status: 404, body: { error: { code: "vscode_off", message: "off" } } });
+    pcs.setRoster(["desk", "laptop"]);
+    await settled();
+    expect(pcs.get().has("desk")).toBe(true);
+    expect(pcs.get().has("laptop")).toBe(false);
+    urls.length = 0;
+    pcs.resume();
+    await settled();
+    expect(urls.some((url) => url.includes("/laptop/"))).toBe(false);
+  });
+
+  it("reads every PC's list again when the page is shown again and when the event stream reopens", async () => {
+    const urls = serve((_, route) => ok(route));
+    const pcs = new VscodePcs();
+    const stop = pcs.listen();
+    try {
+      pcs.setRoster(["desk"]);
+      await until(() => pcs.get().has("desk"));
+      urls.length = 0;
+      // hidden: nothing
+      page.visibilityState = "hidden";
+      page.dispatchEvent(new Event("visibilitychange"));
+      await settled();
+      expect(urls).toEqual([]);
+      page.visibilityState = "visible";
+      page.dispatchEvent(new Event("visibilitychange"));
+      await until(() => urls.length === 2);
+      expect(urls.sort()).toEqual(["/api/machines/desk/vscode/chats", "/api/machines/desk/vscode/state"]);
+      urls.length = 0;
+      noteVscodeStreamOpen();
+      await until(() => urls.length === 2);
+      // a list push reads it too; one chat's change does not
+      urls.length = 0;
+      noteVscodeMessage("desk", { type: "vscode-chat-changed", session: "c1" });
+      await settled();
+      expect(urls).toEqual([]);
+      noteVscodeMessage("desk", { type: "vscode-chat-changed", session: null });
+      await until(() => urls.length === 2);
+    } finally { stop(); }
+    // stopped: resumes read nothing
+    urls.length = 0;
+    noteVscodeStreamOpen();
+    page.dispatchEvent(new Event("visibilitychange"));
+    await settled();
+    expect(urls).toEqual([]);
+  });
+});
