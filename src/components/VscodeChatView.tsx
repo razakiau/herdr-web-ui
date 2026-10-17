@@ -25,7 +25,7 @@ import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
   agentName, answerVscode, choose, chosenFor, errorText, confirmVscode, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
-  sendVscode, setVscodeDraftModel, watchVscodeChat, type VscodeChoice,
+  sendVscode, setVscodeDraftModel, settleChoice, watchVscodeChat, type VscodeChoice,
 } from "../lib/vscodeChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { Turn } from "./ChatView.tsx";
@@ -198,6 +198,11 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     void fetchVscodeModels(machineId, session).then((value) => { if (mounted.current) setCatalog((current) => current ?? value); }, () => undefined);
   }, [chat === null, catalog, machineId, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // a pick the chat now uses is the chat's own from here on
+  useEffect(() => {
+    if (chat !== null) setChoice(settleChoice(machineId, session, { model: chat.model, agent: chat.agent }));
+  }, [chat, machineId, session]);
+
   const pickModel = (next: { id: string; effort?: string }): void => {
     choose(machineId, session, { model: next });
     setChoice(chosenFor(machineId, session));
@@ -220,13 +225,13 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setSendError(null);
     try {
       // sent: sendVscode lets the stored draft go even if this screen is gone by now
-      const result = await sendVscode(machineId, { session, text: words });
+      const result = await sendVscode(machineId, { session, text: words }, { model: chat?.model ?? null, agent: chat?.agent ?? null });
       if (!mounted.current) return;
       // words typed while it was on its way stay in the box
       setText((current) => current.trim() === words ? "" : current);
-      setChoice(chosenFor(machineId, session));
       setQueued(result.queued);
       following.current = true;
+      // the pills let a pick go only once the read names it as the chat's last
       void read();
     } catch (cause) {
       // once, by the user's tap: the words stay in the box for the next one

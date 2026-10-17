@@ -236,8 +236,10 @@ try {
         await view.locator(".vscode-chat-status", { hasText: "Queued" }).waitFor();
         const queued = await posts("/api/machines/remote/vscode/chat/send");
         assert.equal(queued.length, 2);
-        assert.deepEqual(queued[1]?.body, { session: SESSION, text: "FICTIONAL later" }, "a send with nothing new picked carries no choice");
-        console.log("PASS a busy chat says it is working, and Send queues the message");
+        assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pills still show model-b · high after the send");
+        assert.match(await view.locator(".vscode-chat-agent").textContent() ?? "", /Report/, "and Report");
+        assert.deepEqual(queued[1]?.body, { session: SESSION, text: "FICTIONAL later", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "the next send carries the model and agent the pills show");
+        console.log("PASS a busy chat says it is working, and Send queues the message with the model and agent the pills show");
 
         // 6. nothing wider than the phone
         await fits("the busy chat");

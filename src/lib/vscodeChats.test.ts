@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
-import { agentsListRows, choose, chosenFor, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, sessionForFolder } from "./vscodeChats.ts";
+import { agentsListRows, choose, chosenFor, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, sessionForFolder, settleChoice, type VscodeLast } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
+const NONE: VscodeLast = { model: null, agent: null };
 const row = (session: string, status: VscodeChatRow["status"], ageMs: number): VscodeChatRow => ({
   session, title: session, status, modified_at: new Date(NOW - ageMs).toISOString(), cwd: "/home/user/project",
 });
@@ -105,7 +106,7 @@ describe("the phone's model and agent choice", () => {
     return calls;
   };
 
-  it("a choice is kept per chat and cleared after the send that carries it", async () => {
+  it("a choice is kept per chat, through a failed send and a sent one, until a read shows the chat uses it", async () => {
     expect(chosenFor("desk", "s1")).toEqual({});
     choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" } });
     choose("desk", "s1", { agent: "file:///tmp/fictional/agents/Report.agent.md" });
@@ -116,11 +117,15 @@ describe("the phone's model and agent choice", () => {
     expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(true);
     // a send that fails keeps it for the user's next tap
     record(502, { error: { code: "vscode_failed", message: "down" } });
-    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL hello" })).rejects.toThrow();
+    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).rejects.toThrow();
     expect(chosenFor("desk", "s1").model?.id).toBe("fictional/model-b");
     record(200, { queued: false });
-    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL hello" })).toEqual({ queued: false });
-    expect(chosenFor("desk", "s1")).toEqual({});
+    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).toEqual({ queued: false });
+    // a read a moment behind (the chat's last is still the old one) keeps it
+    expect(settleChoice("desk", "s1", { model: { id: "fictional/model-a", effort: null }, agent: null }).model?.id).toBe("fictional/model-b");
+    // a read naming only the model as used keeps the whole pick
+    expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: null }).agent).toBe("file:///tmp/fictional/agents/Report.agent.md");
+    expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md" })).toEqual({});
     expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(false);
   });
 
@@ -143,15 +148,35 @@ describe("the phone's model and agent choice", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("sendVscode carries the pending model and agent, and agent null is sent as null", async () => {
-    choose("desk", "s1", { model: { id: "fictional/model-a" }, agent: null });
+  it("every send carries what the pills show: a pick, then the same pick again on the next message", async () => {
+    const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
+    choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT });
+    const calls = record(200, { queued: false });
+    const before: VscodeLast = { model: { id: "fictional/model-a", effort: null }, agent: null };
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL one" }, before);
+    // the read after the send: the chat's last is now the pick, which is let go
+    const after: VscodeLast = { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT };
+    expect(settleChoice("desk", "s1", after)).toEqual({});
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL two" }, after);
+    const carried = { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT };
+    expect(calls.map((each) => each.body)).toEqual([{ session: "s1", text: "FICTIONAL one", ...carried }, { session: "s1", text: "FICTIONAL two", ...carried }]);
+  });
+
+  it("with no pick, every send carries the chat's last model and agent; Agent and no model go as absent", async () => {
+    const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
     const calls = record(200, { queued: true });
-    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL next" })).toEqual({ queued: true });
-    expect(calls).toEqual([{ url: "/api/machines/desk/vscode/chat/send", body: { session: "s1", text: "FICTIONAL next", model: { id: "fictional/model-a" }, agent: null } }]);
-    // nothing pending: the send carries neither, and the chat keeps what it used last
-    calls.length = 0;
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL again" });
-    expect(calls[0]?.body).toEqual({ session: "s1", text: "FICTIONAL again" });
+    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL next" }, { model: { id: "fictional/model-a", effort: "low" }, agent: REPORT })).toEqual({ queued: true });
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL again" }, { model: { id: "fictional/model-a", effort: null }, agent: null });
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL bare" }, NONE);
+    expect(calls.map((each) => each.body)).toEqual([
+      { session: "s1", text: "FICTIONAL next", model: { id: "fictional/model-a", effort: "low" }, agent: REPORT },
+      { session: "s1", text: "FICTIONAL again", model: { id: "fictional/model-a" } },
+      { session: "s1", text: "FICTIONAL bare" },
+    ]);
+    // a pick of "Agent" over a chat that used Report: no agent goes
+    choose("desk", "s1", { agent: null });
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL plain" }, { model: null, agent: REPORT });
+    expect(calls.at(-1)?.body).toEqual({ session: "s1", text: "FICTIONAL plain" });
   });
   // a POST held open until the test lets it answer
   const held = () => {
@@ -167,7 +192,7 @@ describe("the phone's model and agent choice", () => {
   it("a pick made while a send is on its way is kept for the next one", async () => {
     choose("desk", "s1", { model: { id: "fictional/model-a" } });
     const post = held();
-    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL hello" });
+    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL hello" }, NONE);
     choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" } });
     post.resolve();
     await sent;
@@ -182,11 +207,11 @@ describe("the phone's model and agent choice", () => {
     expect(readVscodeDraft("desk", "s2")).toBe("");
     // a failed send keeps it
     record(503, { error: { code: "vscode_host", message: "down" } });
-    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL draft" })).rejects.toThrow();
+    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL draft" }, NONE)).rejects.toThrow();
     expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL draft");
     // the chat left while the send is on its way (no screen clears anything): the sent words do not come back
     const post = held();
-    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL draft" });
+    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL draft" }, NONE);
     post.resolve();
     await sent;
     expect(readVscodeDraft("desk", "s1")).toBe("");
@@ -196,7 +221,7 @@ describe("the phone's model and agent choice", () => {
   it("words typed while a send is on its way stay in the draft", async () => {
     keepVscodeDraft("desk", "s1", "FICTIONAL first");
     const post = held();
-    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL first" });
+    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL first" }, NONE);
     keepVscodeDraft("desk", "s1", "FICTIONAL first and more");
     post.resolve();
     await sent;

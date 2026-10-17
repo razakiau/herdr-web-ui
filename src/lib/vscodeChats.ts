@@ -175,22 +175,45 @@ export function keepVscodeDraft(machineId: string, session: string, text: string
   } catch { /* the box still holds it */ }
 }
 
-const sameChoice = (a: VscodeChoice, b: VscodeChoice): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** What a chat used last, as its read says: the pills show it while the phone has picked nothing. */
+export interface VscodeLast { model: { id: string; effort: string | null } | null; agent: string | null }
 
 /**
- * Sends one message, with the chat's pending model and agent (agent null goes as null: the host
- * then uses no custom agent). Failed, nothing changes and nothing is retried. Sent, what it carried
- * is let go, whether or not the chat is still on screen: the pending choice, unless another pick
- * replaced it meanwhile, and the stored draft, unless more was typed meanwhile. So a sent message
- * never comes back in the box to be sent twice, and a pick or words made during the send are kept.
+ * What a message carries, as the pills show it: the phone's pending pick, else the chat's last
+ * model and agent. Every message carries them, since the host reads an absent model as its
+ * default and an absent agent as none. "Agent" (null) and an unknown model go as absent.
  */
-export async function sendVscode(machineId: string, body: VscodeSend): Promise<{ queued: boolean }> {
-  const choice = chosenFor(machineId, body.session);
-  const full: VscodeSend = { ...body, ...(choice.model ? { model: choice.model } : {}), ...("agent" in choice ? { agent: choice.agent ?? null } : {}) };
+export function carriedChoice(choice: VscodeChoice, last: VscodeLast): Pick<VscodeSend, "model" | "agent"> {
+  const model = choice.model ?? (last.model ? { id: last.model.id, ...(last.model.effort !== null ? { effort: last.model.effort } : {}) } : undefined);
+  const agent = "agent" in choice ? choice.agent ?? null : last.agent;
+  return { ...(model ? { model } : {}), ...(agent !== null ? { agent } : {}) };
+}
+
+/**
+ * Sends one message with what the pills show (carriedChoice). Failed, nothing changes and nothing
+ * is retried. Sent, the stored draft is let go, unless more was typed meanwhile, whether or not the
+ * chat is still on screen: a sent message never comes back in the box to be sent twice. The
+ * pending pick stays until a read shows it as the chat's last (settleChoice), so a queued message,
+ * a read that is a moment behind, or a pick made during the send never lose it.
+ */
+export async function sendVscode(machineId: string, body: VscodeSend, last: VscodeLast): Promise<{ queued: boolean }> {
+  const full: VscodeSend = { ...body, ...carriedChoice(chosenFor(machineId, body.session), last) };
   const result = await post<{ queued: boolean }>(machineId, "vscode/chat/send", full);
-  if (sameChoice(chosenFor(machineId, body.session), choice)) clearChoice(machineId, body.session);
   if (readVscodeDraft(machineId, body.session).trim() === body.text.trim()) keepVscodeDraft(machineId, body.session, "");
   return result;
+}
+
+/**
+ * The chat's pending pick once a read says what the chat used last: a pick the chat now uses is
+ * let go (the pills then show the chat's own, the same values, and follow a change made in VS
+ * Code after it); any other pick stays pending.
+ */
+export function settleChoice(machineId: string, session: string, last: VscodeLast): VscodeChoice {
+  const choice = chosenFor(machineId, session);
+  const modelUsed = choice.model === undefined || (last.model?.id === choice.model.id && last.model.effort === (choice.model.effort ?? null));
+  const agentUsed = !("agent" in choice) || (choice.agent ?? null) === last.agent;
+  if (Object.keys(choice).length > 0 && modelUsed && agentUsed) { clearChoice(machineId, session); return {}; }
+  return choice;
 }
 
 // ─── Words for the screens ───────────────────────────────────────────────────
