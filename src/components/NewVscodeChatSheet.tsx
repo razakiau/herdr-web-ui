@@ -17,9 +17,8 @@ import "./VscodeChatView.css";
 
 import type { Machine } from "../../shared/machines.ts";
 import type { VscodeAgent, VscodeModel } from "../../shared/vscode.ts";
-import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
-import { createVscodeChat, fetchVscodeModels, folderChoices, sessionForFolder, type VscodePc } from "../lib/vscodeChats.ts";
+import { agentName, basename, createVscodeChat, errorText, fetchVscodeModels, folderChoices, sessionForFolder, type VscodePc } from "../lib/vscodeChats.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -35,18 +34,6 @@ export interface NewVscodeChatSheetProps {
   onClose(): void;
   /** the chat made: the app opens it */
   onCreated(target: { machineId: string; session: string }): void;
-}
-
-const errorText = (cause: unknown): string => cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause);
-
-function basename(path: string): string {
-  const trimmed = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  return trimmed.split("/").pop() || path;
-}
-
-function agentName(uri: string): string {
-  const file = decodeURIComponent(uri.split("/").pop() ?? uri);
-  return file.replace(/\.agent\.md$/i, "").replace(/\.md$/i, "") || uri;
 }
 
 export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, onClose, onCreated }: NewVscodeChatSheetProps) {

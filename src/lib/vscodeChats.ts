@@ -193,6 +193,25 @@ export async function sendVscode(machineId: string, body: VscodeSend): Promise<{
   return result;
 }
 
+// ─── Words for the screens ───────────────────────────────────────────────────
+
+/** What a failed request says to the user: the bridge's own message, else the error's. */
+export function errorText(cause: unknown): string {
+  return cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause);
+}
+
+/** An agent's name from its file's uri (`…/Report.agent.md` → Report), for an agent the list does not name. */
+export function agentName(uri: string): string {
+  const file = decodeURIComponent(uri.split("/").pop() ?? uri);
+  return file.replace(/\.agent\.md$/i, "").replace(/\.md$/i, "") || uri;
+}
+
+/** A folder's last name (`/tmp/repo/` → repo), as its chip says it. */
+export function basename(path: string): string {
+  const trimmed = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return trimmed.split("/").pop() || path;
+}
+
 // ─── A new chat ──────────────────────────────────────────────────────────────
 
 const FOLDERS_MAX = 8;

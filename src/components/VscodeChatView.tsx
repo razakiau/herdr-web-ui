@@ -19,13 +19,12 @@ import "./VscodeChatView.css";
 
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import type { VscodeAgent, VscodeChatRead, VscodeModel } from "../../shared/vscode.ts";
-import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
-  answerVscode, choose, chosenFor, confirmVscode, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
+  agentName, answerVscode, choose, chosenFor, errorText, confirmVscode, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, readVscodeDraft,
   sendVscode, setVscodeDraftModel, watchVscodeChat, type VscodeChoice,
 } from "../lib/vscodeChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -44,13 +43,6 @@ export interface VscodeChatViewProps { machineId: string; session: string }
 
 interface Row { key: string; beforeUser: boolean; turn: ConversationTurn }
 
-const message = (cause: unknown): string => cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause);
-
-/** An agent's name from its file's uri (`…/Report.agent.md` → Report), for an agent the list does not name. */
-function agentName(uri: string): string {
-  const file = decodeURIComponent(uri.split("/").pop() ?? uri);
-  return file.replace(/\.agent\.md$/i, "").replace(/\.md$/i, "") || uri;
-}
 
 type VscodePrompt = NonNullable<VscodeChatRead["prompt"]>;
 
@@ -125,7 +117,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       const next = await fetchVscodeChat(machineId, session);
       if (mounted.current && turn === generation.current) apply(next, false);
     } catch (cause) {
-      if (mounted.current && turn === generation.current) setError(message(cause));
+      if (mounted.current && turn === generation.current) setError(errorText(cause));
     }
   }, [machineId, session, apply]);
 
@@ -196,7 +188,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setSheetError(null);
     if (catalog === null) {
       void fetchVscodeModels(machineId, session).then((value) => { if (mounted.current) setCatalog(value); }, (cause: unknown) => {
-        if (mounted.current) { setSheetError(message(cause)); setCatalog({ models: [], agents: [] }); }
+        if (mounted.current) { setSheetError(errorText(cause)); setCatalog({ models: [], agents: [] }); }
       });
     }
   };
@@ -210,7 +202,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     choose(machineId, session, { model: next });
     setChoice(chosenFor(machineId, session));
     setSheetError(null);
-    void setVscodeDraftModel(machineId, session, next).catch((cause: unknown) => { if (mounted.current) setSheetError(message(cause)); });
+    void setVscodeDraftModel(machineId, session, next).catch((cause: unknown) => { if (mounted.current) setSheetError(errorText(cause)); });
     // a model with an effort to pick keeps the sheet open for it
     const entry = catalog?.models.find((each) => each.id === next.id);
     if (!entry?.efforts || next.effort !== undefined) setSheet(null);
@@ -238,7 +230,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       void read();
     } catch (cause) {
       // once, by the user's tap: the words stay in the box for the next one
-      if (mounted.current) setSendError(message(cause));
+      if (mounted.current) setSendError(errorText(cause));
     }
     if (mounted.current) setSending(false);
   };
