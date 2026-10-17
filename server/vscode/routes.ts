@@ -394,7 +394,8 @@ async function answerQuestion(call: Call): Promise<Response> {
   if (currentQuestion(request)?.id !== question.id) gone();
   const answer = submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined));
   const answers = request.answers ?? {};
-  const more = questions.some((each) => each.id !== question.id && each.required === true && answers[each.id]?.state !== ChatInputAnswerState.Submitted);
+  // every step is shown, `required` or not: the form completes on its last unanswered question
+  const more = questions.some((each) => each.id !== question.id && answers[each.id]?.state !== ChatInputAnswerState.Submitted);
   if (more) {
     call.host.dispatch(channel, { type: ActionType.ChatInputAnswerChanged, requestId, questionId: question.id, answer } as StateAction);
   } else {
