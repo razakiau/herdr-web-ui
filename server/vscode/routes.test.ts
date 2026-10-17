@@ -331,6 +331,23 @@ describe("VS Code chat routes", () => {
     expect(actions(r.fake, "chat/inputAnswerChanged").length).toBe(1);
   });
 
+  it("a form whose questions are not required (false or unset) still shows every step: answering one leaves the request open on the next", async () => {
+    for (const required of [false, undefined]) {
+      const optional = (question: Record<string, unknown>) => { const { required: _, ...rest } = question; return required === undefined ? rest : { ...rest, required }; };
+      const r = await rig({ chats: { [chatUri(1)]: asking([optional(COLOR), optional(SIZE)]), [chatUri(2)]: chatState(2) } });
+      const path = `/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`;
+      expect((await call(r, "/api/vscode/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", option_ids: ["red"] })).json).toEqual({ ok: true });
+      await until("step one", () => actions(r.fake, "chat/inputAnswerChanged").length > 0);
+      expect({ required, completed: actions(r.fake, "chat/inputCompleted") }).toEqual({ required, completed: [] });
+      await until("the card to move on", () => r.conn.chat(sessionUri(1))?.activeTurn?.responseParts.some((part) => part.kind === "inputRequest" && part.request.answers?.["q-color"] !== undefined) === true);
+      expect({ required, prompt: ((await call(r, path)).json as VscodeChatRead).prompt?.id }).toEqual({ required, prompt: "req-1:q-size" });
+      // the last unanswered one completes the form, with both answers
+      expect((await call(r, "/api/vscode/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-size", text: "FICTIONAL small" })).json).toEqual({ ok: true });
+      await until("the form", () => actions(r.fake, "chat/inputCompleted").length > 0);
+      expect(Object.keys(only(r.fake, "chat/inputCompleted")["answers"]).sort()).toEqual(["q-color", "q-size"]);
+    }
+  });
+
   it("skip declines with no answers", async () => {
     const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
     expect((await call(r, "/api/vscode/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", skip: true })).json).toEqual({ ok: true });
