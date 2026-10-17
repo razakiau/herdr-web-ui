@@ -13,6 +13,7 @@ import { currentSidebarPins, setSidebarPins, subscribeSidebarPins, toggleSidebar
 import { hostLine, useMinuteClock, useVscodeChats, type VscodePc } from "../lib/vscodeChats.ts";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageMeters } from "./UsageMeters.tsx";
+import { NewVscodeChatSheet } from "./NewVscodeChatSheet.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
 
@@ -40,10 +41,12 @@ export function MachineSidebar(props: Props) {
   const activity = useSidebarActivityState(props.machines);
   // each PC's VS Code chats, for the PCs whose bridge has them (lib/vscodeChats.ts)
   const vscode = useVscodeChats(props.machines);
+  // the PC whose "+ New VS Code chat" is open (NewVscodeChatSheet), over the drawer until the chat is made
+  const [newChatOn, setNewChatOn] = useState<string | null>(null);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
   return <SidebarActivityProvider value={activity}><div className="sidebar-shell">
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} vscode={vscode.get(machine.id)} />)}
+      {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} vscode={vscode.get(machine.id)} onNewVscodeChat={setNewChatOn} />)}
       {!props.machines.length && <p className="tree-state" role="status">{t("Loading PCs…")}</p>}
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect}
@@ -57,10 +60,13 @@ export function MachineSidebar(props: Props) {
         <UsageMeters />
       </div>
     </footer>
+    {newChatOn !== null && vscode.has(newChatOn) && <NewVscodeChatSheet machines={props.machines} pcs={vscode} machineId={newChatOn} onClose={() => setNewChatOn(null)}
+      // the app opens the chat made, and on a phone puts the drawer away as a pick does
+      onCreated={(target) => { setNewChatOn(null); props.onSelectVscodeChat?.(target); }} />}
   </div></SidebarActivityProvider>;
 }
 
-function MachineGroup({ machine, vscode, ...props }: Props & { machine: Machine; vscode: VscodePc | undefined }) {
+function MachineGroup({ machine, vscode, onNewVscodeChat, ...props }: Props & { machine: Machine; vscode: VscodePc | undefined; onNewVscodeChat(machineId: string): void }) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`herdr-web-ui:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [editing, setEditing] = useState(false);
@@ -126,7 +132,7 @@ function MachineGroup({ machine, vscode, ...props }: Props & { machine: Machine;
     {!collapsed && <div className={online ? "" : "machine-offline"} inert={!online}>
       {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions} /></MachineContext.Provider>}
     </div>}
-    {!collapsed && online && vscode && <VscodeChatsGroup machine={machine} pc={vscode} selected={props.selectedVscodeChat ?? null} onSelect={(target) => props.onSelectVscodeChat?.(target)} />}
+    {!collapsed && online && vscode && <VscodeChatsGroup machine={machine} pc={vscode} selected={props.selectedVscodeChat ?? null} onSelect={(target) => props.onSelectVscodeChat?.(target)} onNew={() => onNewVscodeChat(machine.id)} />}
   </section>;
 }
 
@@ -134,7 +140,7 @@ function MachineGroup({ machine, vscode, ...props }: Props & { machine: Machine;
  * A PC's "VS Code chats": what its host needs while it is not ready, every chat of the host (newest
  * first), and "+ New VS Code chat". Only a PC whose bridge has the feature on has the group.
  */
-function VscodeChatsGroup({ machine, pc, selected, onSelect }: { machine: Machine; pc: VscodePc; selected: VscodeChatTarget | null; onSelect(target: VscodeChatTarget): void }) {
+function VscodeChatsGroup({ machine, pc, selected, onSelect, onNew }: { machine: Machine; pc: VscodePc; selected: VscodeChatTarget | null; onSelect(target: VscodeChatTarget): void; onNew(): void }) {
   const t = useT();
   const now = useMinuteClock();
   // the same pins as the Agents list's, shared with the other browsers (lib/preferencesSync.ts)
@@ -151,8 +157,9 @@ function VscodeChatsGroup({ machine, pc, selected, onSelect }: { machine: Machin
         pinned={pinned.includes(vscodePinKey(machine.id, chat.session))}
         onSelect={onSelect} onTogglePin={(key) => setSidebarPins(toggleSidebarPin(currentSidebarPins(), key))} />)}
     </ul>}
-    {/* NewVscodeChatSheet opens from here once it exists */}
-    <button type="button" className="btn btn-ghost vscode-chats-new" disabled>{t("+ New VS Code chat")}</button>
+    {/* a host that is not up cannot make one: the line above says what it needs */}
+    <button type="button" className="btn btn-ghost vscode-chats-new" disabled={pc.host?.state !== "connected"} aria-haspopup="dialog"
+      aria-label={t("New VS Code chat on {name}", { name: machine.name })} onClick={onNew}>{t("+ New VS Code chat")}</button>
   </section>;
 }
 

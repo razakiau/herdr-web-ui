@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Machine } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
-import type { VscodeAgent, VscodeAnswer, VscodeChatRead, VscodeChatRow, VscodeConfirm, VscodeHostState, VscodeModel, VscodeSend } from "../../shared/vscode.ts";
+import type { VscodeAgent, VscodeAnswer, VscodeChatRead, VscodeChatRow, VscodeConfirm, VscodeHostState, VscodeModel, VscodeNew, VscodeNewResult, VscodeSend } from "../../shared/vscode.ts";
 import { ApiError, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
@@ -191,6 +191,48 @@ export async function sendVscode(machineId: string, body: VscodeSend): Promise<{
   if (sameChoice(chosenFor(machineId, body.session), choice)) clearChoice(machineId, body.session);
   if (readVscodeDraft(machineId, body.session).trim() === body.text.trim()) keepVscodeDraft(machineId, body.session, "");
   return result;
+}
+
+// ─── A new chat ──────────────────────────────────────────────────────────────
+
+const FOLDERS_MAX = 8;
+
+/** The folders a new chat on this PC offers as chips: its chats' folders, the newest chat's first, at most 8. */
+export function folderChoices(rows: VscodeChatRow[]): string[] {
+  const folders: string[] = [];
+  for (const row of newestFirst(rows)) {
+    if (row.cwd === null || row.cwd === "" || folders.includes(row.cwd)) continue;
+    folders.push(row.cwd);
+    if (folders.length === FOLDERS_MAX) break;
+  }
+  return folders;
+}
+
+/**
+ * Starts a chat in a folder of the PC with its first message, once (never retried): the session made.
+ * A refusal throws and nothing was made. When the chat was made but its first message did not go
+ * (`sent: false`), the words wait in that chat's composer and the picks in its pending choice, for
+ * the user to send there: the phone never makes another chat nor sends them on its own.
+ */
+export async function createVscodeChat(machineId: string, body: VscodeNew): Promise<string> {
+  const result = await post<VscodeNewResult>(machineId, "vscode/chat/new", body);
+  if (result.sent === false) {
+    keepVscodeDraft(machineId, result.session, body.text);
+    const change: VscodeChoice = {};
+    if (body.model) change.model = body.model;
+    if (body.agent !== undefined) change.agent = body.agent;
+    if (Object.keys(change).length > 0) choose(machineId, result.session, change);
+  }
+  return result.session;
+}
+
+/**
+ * The chat whose models and agents a new chat in `cwd` offers (they are a session's): the newest
+ * chat in that folder, else the PC's newest; null when the PC has none.
+ */
+export function sessionForFolder(rows: VscodeChatRow[], cwd: string): string | null {
+  const newest = newestFirst(rows);
+  return (newest.find((row) => row.cwd === cwd.trim()) ?? newest[0])?.session ?? null;
 }
 
 /**

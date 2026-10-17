@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
-import { agentsListRows, choose, chosenFor, fetchVscodeChats, fetchVscodeState, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode } from "./vscodeChats.ts";
+import { agentsListRows, choose, chosenFor, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, sessionForFolder } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -124,6 +124,25 @@ describe("the phone's model and agent choice", () => {
     expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(false);
   });
 
+  it("createVscodeChat posts once and answers the session; the text and choice wait in the chat when the first message did not go", async () => {
+    const body = { cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-b", effort: "high" }, agent: null };
+    let calls = record(200, { session: "s-new" });
+    expect(await createVscodeChat("desk", body)).toBe("s-new");
+    expect(calls).toEqual([{ url: "/api/machines/desk/vscode/chat/new", body }]);
+    expect(readVscodeDraft("desk", "s-new")).toBe("");
+    expect(chosenFor("desk", "s-new")).toEqual({});
+    // created, but its first message did not go: the chat opens with the words in its box, never re-sent
+    calls = record(200, { session: "s-kept", sent: false });
+    expect(await createVscodeChat("desk", body)).toBe("s-kept");
+    expect(calls).toHaveLength(1);
+    expect(readVscodeDraft("desk", "s-kept")).toBe("FICTIONAL first");
+    expect(chosenFor("desk", "s-kept")).toEqual({ model: { id: "fictional/model-b", effort: "high" }, agent: null });
+    // refused before anything was made: it throws, and nothing is kept anywhere
+    calls = record(503, { error: { code: "vscode_host", message: "FICTIONAL host down" } });
+    await expect(createVscodeChat("desk", { cwd: "/tmp/fictional-repo", text: "FICTIONAL other" })).rejects.toThrow("FICTIONAL host down");
+    expect(calls).toHaveLength(1);
+  });
+
   it("sendVscode carries the pending model and agent, and agent null is sent as null", async () => {
     choose("desk", "s1", { model: { id: "fictional/model-a" }, agent: null });
     const calls = record(200, { queued: true });
@@ -182,6 +201,30 @@ describe("the phone's model and agent choice", () => {
     post.resolve();
     await sent;
     expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL first and more");
+  });
+});
+
+describe("the new chat's folders", () => {
+  it("folderChoices dedupes, orders by newest chat, caps at 8, drops null", () => {
+    const at = (session: string, cwd: string | null, ageMs: number): VscodeChatRow => ({ ...row(session, "idle", ageMs), cwd });
+    const rows = [
+      at("a", "/tmp/fictional/old", 9 * DAY),
+      at("b", "/tmp/fictional/new", 1000),
+      at("c", null, 0),
+      at("d", "/tmp/fictional/old", 2000),
+      at("e", "/tmp/fictional/new", 5 * DAY),
+      ...Array.from({ length: 9 }, (_, i) => at(`f${i}`, `/tmp/fictional/f${i}`, (i + 1) * DAY)),
+    ];
+    expect(folderChoices(rows)).toEqual(["/tmp/fictional/new", "/tmp/fictional/old", "/tmp/fictional/f0", "/tmp/fictional/f1", "/tmp/fictional/f2", "/tmp/fictional/f3", "/tmp/fictional/f4", "/tmp/fictional/f5"]);
+    expect(folderChoices([at("x", null, 0)])).toEqual([]);
+  });
+
+  it("sessionForFolder: the newest chat in the folder, else the PC's newest, else none", () => {
+    const at = (session: string, cwd: string | null, ageMs: number): VscodeChatRow => ({ ...row(session, "idle", ageMs), cwd });
+    const rows = [at("old-in", "/tmp/fictional/a", 3 * DAY), at("new-in", "/tmp/fictional/a", DAY), at("newest", "/tmp/fictional/b", 1000)];
+    expect(sessionForFolder(rows, "/tmp/fictional/a")).toBe("new-in");
+    expect(sessionForFolder(rows, "/tmp/fictional/elsewhere")).toBe("newest");
+    expect(sessionForFolder([], "/tmp/fictional/a")).toBeNull();
   });
 });
 
