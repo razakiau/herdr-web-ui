@@ -26,6 +26,7 @@ export type {
 } from "./herdr-api.generated.ts";
 
 import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { VscodeHostState } from "./vscode.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -1222,6 +1223,10 @@ export type ServerMessage =
   | { type: "watch-end"; pane_id: string }
   /** the answer to a `ping`, with its id; only this frame, for a ping in flight, ends the client's liveness probe */
   | { type: "pong"; id: number }
+  /** where this PC's bridge stands with its VS Code agent host (HERDR_WEB_AGENT_HOST=on only) */
+  | { type: "vscode-host"; host: VscodeHostState }
+  /** a VS Code chat changed; `session` null: the list of chats changed */
+  | { type: "vscode-chat-changed"; session: string | null }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 

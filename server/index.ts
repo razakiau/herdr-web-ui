@@ -115,6 +115,8 @@ import { MAX_LABEL_CHARS } from "../shared/labels.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { bridgeAgentNews, MachineManager } from "./machines.ts";
 import { handleMachineRequest } from "./machine-api.ts";
+import { VscodeConnection } from "./vscode/connection.ts";
+import { vscodeRoute } from "./vscode/routes.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
@@ -502,6 +504,12 @@ export function createServer(
     terminalAttach?: boolean | (() => Promise<boolean>);
     /** whether this runtime can run the PTY sidecar; unset, server/pty/sidecar.ts says. Tests give a runtime without Node or node-pty, while herdr keeps its own answer. */
     sidecar?: boolean;
+    /**
+     * This PC's VS Code chats (server/vscode/): `enabled` defaults to HERDR_WEB_AGENT_HOST=on, `startHost`
+     * to HERDR_WEB_AGENT_HOST_START not `off`. The bridges this server starts get the same switch.
+     * `home` and `env` say where VS Code's agent-host registry is; tests point them at a temp dir.
+     */
+    agentHost?: { enabled: boolean; startHost: boolean; home?: string; env?: Record<string, string | undefined> };
   } = {},
 ): ServerInstance {
   const attachments = new Map<string, PaneAttachment>();
@@ -1191,7 +1199,8 @@ export function createServer(
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
-  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot);
+  const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
+  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, agentHost.enabled);
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
   const bridgeToken = randomBytes(32).toString("hex");
 
@@ -1205,6 +1214,17 @@ export function createServer(
     machines?.localMessage(message);
     for (const client of clients) send(client, message);
   }
+
+  // one connection to this PC's VS Code agent host, only with the switch on; its changes go to
+  // every client, and through machines.localMessage to a connection server's phone
+  const vscode = agentHost.enabled ? new VscodeConnection({
+    home: agentHost.home ?? homedir(),
+    platform: process.platform,
+    env: agentHost.env ?? process.env,
+    startHost: agentHost.startHost,
+    onChange: (event) => broadcastAll(event.kind === "host" ? { type: "vscode-host", host: vscode!.state() } : { type: "vscode-chat-changed", session: event.kind === "chat" ? event.session : null }),
+  }) : null;
+  vscode?.start();
 
   async function terminalInfoFor(paneId: string, timeoutMs?: number): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
     const snapshot = await sessionSnapshot(undefined, timeoutMs);
@@ -1838,7 +1858,7 @@ export function createServer(
       const url = new URL(request.url);
       let { pathname } = url;
       const bridgeAuthorized = isAuthenticated(request, bridgeToken);
-      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws";
+      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname.startsWith("/api/vscode/") || pathname === "/ws";
       const ip = bunServer.requestIP(request);
       const loopback = ip !== null && isLoopbackAddress(ip.address);
       const forwarded = cameThroughProxy(request.headers);
@@ -2858,6 +2878,9 @@ export function createServer(
         }
       }
 
+      const vscodeResponse = vscodeRoute(request, pathname, vscode);
+      if (vscodeResponse) return vscodeResponse;
+
       if (pathname.startsWith("/api/")) {
         return jsonResponse({ error: { code: "not_found", message: `unknown endpoint ${pathname}` } }, 404);
       }
@@ -3625,6 +3648,7 @@ export function createServer(
       clearInterval(waitTimer);
       plans.stop();
       machines?.stop();
+      void vscode?.stop();
       void options.portal?.shutdown();
       registration?.close();
       for (const client of clients) killWatches(client);

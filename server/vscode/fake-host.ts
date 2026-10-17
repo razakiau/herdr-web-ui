@@ -45,6 +45,8 @@ export interface FakeAgentHost {
   dispatched: Array<{ channel: string; action: StateAction }>;
   requests: Array<{ method: string; params: unknown }>;
   push(channel: string, action: StateAction | FakeRootNotice): void;
+  /** How many clients are connected now. */
+  peers(): number;
   stop(): Promise<void>;
 }
 
@@ -189,6 +191,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
       apply(channel, item as StateAction);
       announce(channel, item as StateAction);
     },
+    peers: () => peers.size,
     async stop() {
       if (entryFile) rmSync(entryFile, { force: true });
       await server.stop(true);
