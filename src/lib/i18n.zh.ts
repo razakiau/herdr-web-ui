@@ -1189,4 +1189,20 @@ export const ZH: Record<string, string> = {
   "Conversation turns": "对话轮次",
   "Go to turn {n}": "跳到第 {n} 轮",
   "Show full message": "显示完整消息",
+
+  // ---- VS Code chats ----
+  "VS Code chats": "VS Code 聊天",
+  "VS Code chat": "VS Code 聊天",
+  "+ New VS Code chat": "+ 新建 VS Code 聊天",
+  "Open VS Code on this PC once to sign the agent host in": "请在这台电脑上打开一次 VS Code，让代理主机登录",
+  "VS Code's agent host speaks a protocol this bridge doesn't (server {version})": "VS Code 的代理主机使用了此桥接不支持的协议（服务器 {version}）",
+  "No VS Code server on this PC": "这台电脑上没有 VS Code 服务器",
+  "VS Code chats are not supported on Windows yet": "Windows 暂不支持 VS Code 聊天",
+  "Starting VS Code's agent host…": "正在启动 VS Code 的代理主机…",
+  "VS Code chats in Agents": "代理列表中的 VS Code 聊天",
+  "Live only": "仅进行中",
+  "All recent": "全部最近",
+  "Live only lists the chats that work, ask or are pinned; each PC's own group lists every chat": "“仅进行中”只列出正在工作、正在提问或已固定的聊天；每台电脑的分组列出所有聊天",
+  "Pin chat": "固定聊天",
+  "Unpin chat": "取消固定聊天",
 };

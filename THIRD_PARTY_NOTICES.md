@@ -679,6 +679,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Codicons
+
+The VS Code mark (`vscode`) in `src/components/agentSvgMarks.ts`, which the built client in
+`dist/` carries, is the `vscode` icon of [Codicons](https://github.com/microsoft/vscode-codicons),
+minified with svgo, under the Creative Commons Attribution 4.0 International license
+(https://creativecommons.org/licenses/by/4.0/legalcode). The mark itself belongs to its owner.
+
+```
+Copyright (c) Microsoft Corporation
+```
+
 ## Nerd Fonts Symbols Only
 
 `src/fonts/SymbolsNerdFontMono-Regular.woff2` is Symbols Nerd Font Mono from the
