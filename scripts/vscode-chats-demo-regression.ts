@@ -253,14 +253,25 @@ try {
           return form;
         };
         assert.equal(await page.getByRole("button", { name: "New VS Code chat on Laptop" }).count(), 0, "a PC without the feature has no new-chat button");
+        // the models and agents are a session's: the newest chat in the folder picked, else the PC's newest
+        const modelReads = async (): Promise<string[]> => page.evaluate(() => [...(window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models]);
+        const nextModelRead = async (after: number, what: string): Promise<string | undefined> => {
+          await page.waitForFunction((count) => (window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models.length > count, after, { timeout: 10_000 })
+            .catch(() => assert.fail(`${what}: the sheet read no models after the folder changed`));
+          return (await modelReads())[after];
+        };
+        const readsBefore = (await modelReads()).length;
         let form = await openNewSheet();
         const folder = form.getByRole("textbox", { name: "Folder" });
-        await folder.fill("");
+        assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the newest chat's folder is filled in");
+        assert.equal(await nextModelRead(readsBefore, "the opened sheet"), SESSION, "the pills read the newest chat in /tmp/fictional-repo");
+        // another folder: its own newest chat (older than the PC's newest), not the PC's newest
+        await form.getByRole("button", { name: "Use folder /tmp/fictional-docs", exact: true }).click();
+        assert.equal(await folder.inputValue(), "/tmp/fictional-docs", "the chip fills the folder");
+        assert.equal(await nextModelRead(readsBefore + 1, "/tmp/fictional-docs"), "fictional-session-0", "the pills read the newest chat in /tmp/fictional-docs");
         await form.getByRole("button", { name: "Use folder /tmp/fictional-repo", exact: true }).click();
         assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the chip fills the folder");
-        // the models and agents are the newest chat's in that folder
-        await page.waitForFunction(() => (window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models.length > 0);
-        assert.equal((await page.evaluate(() => (window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models)).at(-1), SESSION, "the pills read the folder's newest chat's models");
+        assert.equal(await nextModelRead(readsBefore + 2, "/tmp/fictional-repo"), SESSION, "back in /tmp/fictional-repo, its newest chat's models");
         await form.locator(".vscode-chat-model").click();
         const picker = page.getByRole("dialog", { name: "Model and agent" });
         await picker.locator('[data-model="fictional/model-a"]').click();
