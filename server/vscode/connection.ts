@@ -37,7 +37,7 @@ export interface VscodeConnectionOptions {
   onChange: (event: VscodeEvent) => void;      // state, chat list, or one chat changed
   clientId?: string;                           // default `herdr-web-<8 hex>`, stable for the process
   deps?: {                                     // tests only; defaults are the real ones
-    spawn?: (argv: string[]) => void;          // default: Bun.spawn(argv, {stdin/stdout/stderr: "ignore"}).unref()
+    spawn?: (argv: string[]) => void;          // default: Bun.spawn(argv, {stdin/stdout/stderr: "ignore", detached: true}).unref()
     alive?: (pid: number) => boolean;          // default: process.kill(pid, 0)
     now?: () => number; sleep?: (ms: number) => Promise<void>;
   };
@@ -60,8 +60,10 @@ const BACKOFF_FIRST_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const PROCESS_CLIENT_ID = `herdr-web-${randomBytes(4).toString("hex")}`;
 
+// detached: its own session and process group (setsid), so a signal to the bridge's group never
+// reaches VS Code's shared agent host; unref: the bridge does not wait for it
 const defaultSpawn = (argv: string[]): void => {
-  Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+  Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true }).unref();
 };
 const defaultAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
@@ -211,7 +213,7 @@ export class VscodeConnection {
     const cli = findServerCli(this.options.home);
     if (!cli) { this.setState({ state: "no_server" }); return null; }
     this.setState({ state: "starting" });
-    return startAgentHost(cli, { spawn: this.spawn, poll, deadlineMs: START_DEADLINE_MS, now: this.now, sleep: (ms) => this.pause(ms) });
+    return startAgentHost(cli, { spawn: this.spawn, poll, deadlineMs: START_DEADLINE_MS, now: this.now, sleep: (ms) => this.pause(ms), aborted: () => this.stopped });
   }
 
   /** One connection's whole life: false when it never got connected, true once it was and has closed. */
