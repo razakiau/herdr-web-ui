@@ -28,6 +28,13 @@ async function until(what: string, ready: () => boolean, ms = 5_000): Promise<vo
 const get = (path: string) => new Request(`http://127.0.0.1${path}`);
 
 describe("VS Code routes", () => {
+  it("the test preload clears HERDR_WEB_AGENT_HOST and HERDR_WEB_AGENT_HOST_START, so no test server reaches this PC's agent host", () => {
+    // scripts/test-herdr.ts: every createServer without agentHost reads these, and a developer's
+    // shell may export them on the very PC whose VS Code agent host the feature talks to
+    expect(process.env["HERDR_WEB_AGENT_HOST"]).toBeUndefined();
+    expect(process.env["HERDR_WEB_AGENT_HOST_START"]).toBeUndefined();
+  });
+
   it("with HERDR_WEB_AGENT_HOST unset every /api/vscode route is 404 vscode_off and no connection starts", async () => {
     const previous = process.env["HERDR_WEB_AGENT_HOST"];
     delete process.env["HERDR_WEB_AGENT_HOST"];
