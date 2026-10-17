@@ -1221,6 +1221,7 @@ export const KO: Record<string, string> = {
   "Queued: it goes out when this turn ends": "대기 중: 이번 턴이 끝나면 보냅니다",
   "VS Code is working on this chat; Send queues the message": "VS Code가 이 채팅에서 작업 중입니다. 보내면 메시지가 대기열에 들어갑니다",
   "Not sent: {error}": "보내지 못했습니다: {error}",
+  "Couldn't confirm it was sent. Send again: it won't go twice.": "보냈는지 확인하지 못했습니다. 다시 보내세요: 두 번 가지 않습니다.",
   "This message can't be shown here.": "이 메시지는 여기에 표시할 수 없습니다.",
   "VS Code chat {title}": "VS Code 채팅 {title}",
 };

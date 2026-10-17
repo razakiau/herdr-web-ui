@@ -176,6 +176,43 @@ export function keepVscodeDraft(machineId: string, session: string, text: string
   } catch { /* the box still holds it */ }
 }
 
+// ─── One id per attempt ──────────────────────────────────────────────────────
+
+const newId = (): string => globalThis.crypto.randomUUID();
+
+/**
+ * The id an attempt goes under: the previous attempt's when it was for the same `key` (the same
+ * words sent again after a failure, so the bridge dispatches them once), else a new one.
+ */
+export function attemptFor(previous: { key: string; id: string } | null, key: string, mint: () => string = newId): { key: string; id: string } {
+  return previous !== null && previous.key === key ? previous : { key, id: mint() };
+}
+
+const attemptKey = (machineId: string, session: string): string => `herdr-web-ui:vscode-send:${machineId}:${session}`;
+
+function storedAttempt(machineId: string, session: string): { key: string; id: string } | null {
+  try {
+    const raw = storage()?.getItem(attemptKey(machineId, session));
+    const value = raw ? JSON.parse(raw) as { key?: unknown; id?: unknown } : null;
+    return value && typeof value.key === "string" && typeof value.id === "string" ? { key: value.key, id: value.id } : null;
+  } catch { return null; }
+}
+
+/**
+ * Whether a failed send or new chat may have gone out anyway: no answer (a network failure), or
+ * the proxy's 502/504. The user is told to send again, which is safe: the same id goes once.
+ */
+export function maybeSent(cause: unknown): boolean {
+  if (cause instanceof ApiError) return cause.status === 502 || cause.status === 504;
+  return cause instanceof TypeError;
+}
+
+/** What a failed send or new chat says (sendErrorText for the chat's composer, which adds "Not sent"). */
+export function sendErrorText(cause: unknown, t: Translate, plain = false): string {
+  if (maybeSent(cause)) return t("Couldn't confirm it was sent. Send again: it won't go twice.");
+  return plain ? errorText(cause) : t("Not sent: {error}", { error: errorText(cause) });
+}
+
 /** What a chat used last, as its read says: the pills show it while the phone has picked nothing. */
 export interface VscodeLast { model: { id: string; effort: string | null } | null; agent: string | null }
 
@@ -197,9 +234,16 @@ export function carriedChoice(choice: VscodeChoice, last: VscodeLast): Pick<Vsco
  * pending pick stays until a read shows it as the chat's last (settleChoice), so a queued message,
  * a read that is a moment behind, or a pick made during the send never lose it.
  */
-export async function sendVscode(machineId: string, body: VscodeSend, last: VscodeLast): Promise<{ queued: boolean }> {
-  const full: VscodeSend = { ...body, ...carriedChoice(chosenFor(machineId, body.session), last) };
+export async function sendVscode(machineId: string, body: Omit<VscodeSend, "id">, last: VscodeLast): Promise<{ queued: boolean }> {
+  // the same words again after a failure go under the same id (kept with the draft, so leaving
+  // the screen keeps it too); other words, or the next message after a sent one, get a new one
+  const attempt = attemptFor(storedAttempt(machineId, body.session), body.text.trim());
+  try { storage()?.setItem(attemptKey(machineId, body.session), JSON.stringify(attempt)); } catch { /* this attempt only */ }
+  const full: VscodeSend = { ...body, id: attempt.id, ...carriedChoice(chosenFor(machineId, body.session), last) };
   const result = await post<{ queued: boolean }>(machineId, "vscode/chat/send", full);
+  if (storedAttempt(machineId, body.session)?.id === attempt.id) {
+    try { storage()?.removeItem(attemptKey(machineId, body.session)); } catch { /* nothing kept */ }
+  }
   if (readVscodeDraft(machineId, body.session).trim() === body.text.trim()) keepVscodeDraft(machineId, body.session, "");
   return result;
 }

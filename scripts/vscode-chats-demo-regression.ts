@@ -19,7 +19,7 @@ const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
   const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)};
   const calls = window.vscodeCalls = { posts: [], models: [] };
-  const state = window.vscodeState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true };
+  const state = window.vscodeState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const roster = (original) => ["local", "remote"].map((id) => {
@@ -105,10 +105,14 @@ const patch = `(() => {
       if (path === "/api/vscode/chat/watch" || path === "/api/vscode/chat/draft" || path === "/api/vscode/chat/confirm") return json({ ok: true });
       if (path === "/api/vscode/chat/answer") { state.answered = true; return json({ ok: true }); }
       if (path === "/api/vscode/chat/send") {
+        // the proxy's 502 after the bridge got it: the message went, the answer did not
+        const lost = state.failNextSend;
+        state.failNextSend = false;
         const queued = state.busy;
         state.sent.push(body.text);
         if (body.model) state.model = { id: body.model.id, effort: body.model.effort ?? null };
         if ("agent" in body) state.agent = body.agent;
+        if (lost) return json({ error: { code: "bad_gateway", message: "FICTIONAL proxy" } }, 502);
         return json({ queued });
       }
       return json({ error: { code: "not_found", message: path } }, 404);
@@ -148,6 +152,14 @@ try {
         page.on("pageerror", (error) => errors.push(error.message));
         page.on("console", (message) => { if (message.type() === "error" && message.text().includes("render failed")) errors.push(message.text()); });
         type Post = { path: string; body: Record<string, unknown> };
+        const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+        // a send's or new chat's body without its id, once the id is checked to be a UUID
+        const bare = (post: Post | undefined): Record<string, unknown> | undefined => {
+          if (!post) return undefined;
+          const { id, ...rest } = post.body;
+          assert.match(String(id), UUID, `${post.path} carries a UUID id`);
+          return rest;
+        };
         const posts = async (path: string): Promise<Post[]> => (await page.evaluate(() => (window as unknown as { vscodeCalls: { posts: Post[] } }).vscodeCalls.posts)).filter((post) => post.path === path);
         const fits = async (what: string) => {
           const width = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -224,7 +236,7 @@ try {
         await view.getByRole("button", { name: "Send message" }).click();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL next" }).waitFor();
         const sends = await posts("/api/machines/remote/vscode/chat/send");
-        assert.deepEqual(sends.map((post) => post.body), [{ session: SESSION, text: "FICTIONAL next", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }], "the send carries the model, its effort and the agent, once");
+        assert.deepEqual(sends.map(bare), [{ session: SESSION, text: "FICTIONAL next", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }], "the send carries the model, its effort and the agent, once");
         assert.equal(await box.inputValue(), "", "a sent message leaves the box");
         console.log("PASS the pills pick model-b · high and Report; the send carries both and the draft the model");
 
@@ -238,8 +250,23 @@ try {
         assert.equal(queued.length, 2);
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pills still show model-b · high after the send");
         assert.match(await view.locator(".vscode-chat-agent").textContent() ?? "", /Report/, "and Report");
-        assert.deepEqual(queued[1]?.body, { session: SESSION, text: "FICTIONAL later", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "the next send carries the model and agent the pills show");
+        assert.deepEqual(bare(queued[1]), { session: SESSION, text: "FICTIONAL later", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "the next send carries the model and agent the pills show");
         console.log("PASS a busy chat says it is working, and Send queues the message with the model and agent the pills show");
+
+        // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
+        await page.evaluate(() => { (window as unknown as { vscodeState: { failNextSend: boolean } }).vscodeState.failNextSend = true; });
+        await box.fill("FICTIONAL maybe");
+        await view.getByRole("button", { name: "Queue message" }).click();
+        await view.getByRole("alert").filter({ hasText: "Couldn't confirm it was sent. Send again: it won't go twice." }).waitFor();
+        assert.equal(await box.inputValue(), "FICTIONAL maybe", "the words stay in the box");
+        await view.getByRole("button", { name: "Queue message" }).click();
+        await view.locator(".vscode-chat-status", { hasText: "Queued" }).waitFor();
+        const retried = (await posts("/api/machines/remote/vscode/chat/send")).slice(2);
+        assert.equal(retried.length, 2);
+        assert.match(String(retried[0]!.body["id"]), UUID);
+        assert.equal(retried[1]!.body["id"], retried[0]!.body["id"], "the retry of the same words reuses the id");
+        assert.notEqual(retried[0]!.body["id"], (await posts("/api/machines/remote/vscode/chat/send"))[1]!.body["id"], "a new message has a new id");
+        console.log("PASS a send whose answer was lost says to send again, and the retry reuses its id");
 
         // 6. nothing wider than the phone
         await fits("the busy chat");
@@ -291,7 +318,7 @@ try {
         await made.waitFor();
         await made.locator(".chat-turn-user", { hasText: "FICTIONAL first" }).waitFor();
         assert.equal(await form.count(), 0, "the sheet closes on the chat made");
-        assert.deepEqual((await newChats()).map((post) => post.body), [{ cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-a" } }], "one chat/new with the folder, the text and the model");
+        assert.deepEqual((await newChats()).map(bare), [{ cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-a" } }], "one chat/new with the folder, the text and the model");
         console.log("PASS + New VS Code chat posts the folder chip's path and the first message once, and opens the chat made");
 
         // 7b. made, but its first message did not go: the chat opens with the words in its box, nothing re-sent

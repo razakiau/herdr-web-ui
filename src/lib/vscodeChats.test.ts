@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
 import { readFileSync } from "node:fs";
-import { agentsListRows, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode, noteVscodeMessage, noteVscodeStreamOpen, onVscodeMessage, sessionForFolder, VscodePcs, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
+import { ApiError } from "./api.ts";
+import { agentsListRows, attemptFor, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendErrorText, sendVscode, noteVscodeMessage, noteVscodeStreamOpen, onVscodeMessage, sessionForFolder, VscodePcs, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
 const NONE: VscodeLast = { model: null, agent: null };
+const withoutId = (body: unknown): unknown => { const { id: _, ...rest } = body as Record<string, unknown>; return rest; };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = (session: string, status: VscodeChatRow["status"], ageMs: number): VscodeChatRow => ({
   session, title: session, status, modified_at: new Date(NOW - ageMs).toISOString(), cwd: "/home/user/project",
 });
@@ -131,7 +134,7 @@ describe("the phone's model and agent choice", () => {
   });
 
   it("createVscodeChat posts once and answers the session; the text and choice wait in the chat when the first message did not go", async () => {
-    const body = { cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-b", effort: "high" }, agent: null };
+    const body = { id: "00000000-0000-4000-8000-000000000001", cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-b", effort: "high" }, agent: null };
     let calls = record(200, { session: "s-new" });
     expect(await createVscodeChat("desk", body)).toBe("s-new");
     expect(calls).toEqual([{ url: "/api/machines/desk/vscode/chat/new", body }]);
@@ -145,7 +148,7 @@ describe("the phone's model and agent choice", () => {
     expect(chosenFor("desk", "s-kept")).toEqual({ model: { id: "fictional/model-b", effort: "high" }, agent: null });
     // refused before anything was made: it throws, and nothing is kept anywhere
     calls = record(503, { error: { code: "vscode_host", message: "FICTIONAL host down" } });
-    await expect(createVscodeChat("desk", { cwd: "/tmp/fictional-repo", text: "FICTIONAL other" })).rejects.toThrow("FICTIONAL host down");
+    await expect(createVscodeChat("desk", { id: "00000000-0000-4000-8000-000000000002", cwd: "/tmp/fictional-repo", text: "FICTIONAL other" })).rejects.toThrow("FICTIONAL host down");
     expect(calls).toHaveLength(1);
   });
 
@@ -160,7 +163,7 @@ describe("the phone's model and agent choice", () => {
     expect(settleChoice("desk", "s1", after)).toEqual({});
     await sendVscode("desk", { session: "s1", text: "FICTIONAL two" }, after);
     const carried = { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT };
-    expect(calls.map((each) => each.body)).toEqual([{ session: "s1", text: "FICTIONAL one", ...carried }, { session: "s1", text: "FICTIONAL two", ...carried }]);
+    expect(calls.map((each) => withoutId(each.body))).toEqual([{ session: "s1", text: "FICTIONAL one", ...carried }, { session: "s1", text: "FICTIONAL two", ...carried }]);
   });
 
   it("with no pick, every send carries the chat's last model and agent; Agent and no model go as absent", async () => {
@@ -169,7 +172,7 @@ describe("the phone's model and agent choice", () => {
     expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL next" }, { model: { id: "fictional/model-a", effort: "low" }, agent: REPORT })).toEqual({ queued: true });
     await sendVscode("desk", { session: "s1", text: "FICTIONAL again" }, { model: { id: "fictional/model-a", effort: null }, agent: null });
     await sendVscode("desk", { session: "s1", text: "FICTIONAL bare" }, NONE);
-    expect(calls.map((each) => each.body)).toEqual([
+    expect(calls.map((each) => withoutId(each.body))).toEqual([
       { session: "s1", text: "FICTIONAL next", model: { id: "fictional/model-a", effort: "low" }, agent: REPORT },
       { session: "s1", text: "FICTIONAL again", model: { id: "fictional/model-a" } },
       { session: "s1", text: "FICTIONAL bare" },
@@ -177,8 +180,54 @@ describe("the phone's model and agent choice", () => {
     // a pick of "Agent" over a chat that used Report: no agent goes
     choose("desk", "s1", { agent: null });
     await sendVscode("desk", { session: "s1", text: "FICTIONAL plain" }, { model: null, agent: REPORT });
-    expect(calls.at(-1)?.body).toEqual({ session: "s1", text: "FICTIONAL plain" });
+    expect(withoutId(calls.at(-1)?.body)).toEqual({ session: "s1", text: "FICTIONAL plain" });
   });
+  it("a retry of the same words reuses the send's id, even after leaving the screen; new words or a sent message mint a new one", async () => {
+    const ids = (calls: { body: unknown }[]) => calls.map((each) => (each.body as { id: string }).id);
+    let calls = record(502, { error: { code: "bad_gateway", message: "FICTIONAL proxy" } });
+    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL once" }, NONE)).rejects.toThrow();
+    await expect(sendVscode("desk", { session: "s1", text: " FICTIONAL once " }, NONE)).rejects.toThrow();
+    const [first, retry] = ids(calls);
+    expect(first).toMatch(UUID);
+    expect(retry).toBe(first);
+    // kept with the chat (sessionStorage), not the screen; another chat has its own
+    expect(session.has("herdr-web-ui:vscode-send:desk:s1")).toBe(true);
+    calls = record(200, { queued: false });
+    await sendVscode("desk", { session: "s2", text: "FICTIONAL once" }, NONE);
+    expect(ids(calls)[0]).not.toBe(first);
+    // changed words: a new id
+    calls = record(502, {});
+    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE)).rejects.toThrow();
+    const edited = ids(calls)[0];
+    expect(edited).not.toBe(first);
+    // sent: the next message, even with the same words, is a new one
+    calls = record(200, { queued: false });
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
+    expect(ids(calls)[0]).toBe(edited);
+    expect(session.has("herdr-web-ui:vscode-send:desk:s1")).toBe(false);
+    await sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
+    expect(ids(calls)[1]).not.toBe(edited);
+    expect(ids(calls)[1]).toMatch(UUID);
+  });
+
+  it("attemptFor keeps the id for the same key and mints one for another", () => {
+    let n = 0;
+    const mint = () => `id-${++n}`;
+    const a = attemptFor(null, "k", mint);
+    expect(attemptFor(a, "k", mint)).toBe(a);
+    expect(attemptFor(a, "other", mint)).toEqual({ key: "other", id: "id-2" });
+  });
+
+  it("a failure that may have gone out says to send again; any other keeps its reason", () => {
+    const t = (key: string, vars?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? `{${name}}`));
+    const unsure = "Couldn't confirm it was sent. Send again: it won't go twice.";
+    expect(sendErrorText(new ApiError("/x", 502, "FICTIONAL proxy", null), t)).toBe(unsure);
+    expect(sendErrorText(new ApiError("/x", 504, "FICTIONAL slow", null), t)).toBe(unsure);
+    expect(sendErrorText(new TypeError("Failed to fetch"), t)).toBe(unsure);
+    expect(sendErrorText(new ApiError("/x", 503, "FICTIONAL host down", "vscode_host"), t)).toBe("Not sent: FICTIONAL host down");
+    expect(sendErrorText(new ApiError("/x", 400, "FICTIONAL bad", "invalid_id"), t, true)).toBe("FICTIONAL bad");
+  });
+
   // a POST held open until the test lets it answer
   const held = () => {
     const calls: unknown[] = [];
@@ -197,7 +246,7 @@ describe("the phone's model and agent choice", () => {
     choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" } });
     post.resolve();
     await sent;
-    expect(post.calls).toEqual([{ session: "s1", text: "FICTIONAL hello", model: { id: "fictional/model-a" } }]);
+    expect(post.calls.map(withoutId)).toEqual([{ session: "s1", text: "FICTIONAL hello", model: { id: "fictional/model-a" } }]);
     expect(chosenFor("desk", "s1")).toEqual({ model: { id: "fictional/model-b", effort: "high" } });
   });
 
