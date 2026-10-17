@@ -3648,7 +3648,8 @@ export function createServer(
       clearInterval(waitTimer);
       plans.stop();
       machines?.stop();
-      void vscode?.stop();
+      // a failed stop must not become an unhandled rejection at shutdown; its name only (never its message)
+      vscode?.stop().catch((error: unknown) => console.warn(`vscode: stop failed (${error instanceof Error ? error.name : typeof error})`));
       void options.portal?.shutdown();
       registration?.close();
       for (const client of clients) killWatches(client);

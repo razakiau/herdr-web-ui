@@ -301,6 +301,36 @@ describe("VS Code connection", () => {
     expect(pushes.at(-1)).toBe("x".repeat(50));
   });
 
+  it("a failure in an event or a push is logged by its error's name, never its message, and the connection goes on", async () => {
+    const { home, env, entries } = tempHome();
+    const live = { ...chatState(1), status: 8, activeTurn: { id: "turn-live", startedAt: AT, message: { text: "FICTIONAL go", origin: { kind: "user" } }, usage: undefined, responseParts: [] } } as unknown as ChatState;
+    const fake = await host(entries, { chats: { [chatUri(1)]: live } });
+    let throwing = false;
+    const { conn } = connection({ home, env, onChange: (event) => { if (throwing && event.kind === "chat") throw new RangeError(`FICTIONAL secret ${fake.token}`); } });
+    conn.start();
+    await until("connected", () => conn.state().state === "connected");
+    await conn.watch(sessionUri(1));
+    const warned: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    try {
+      // the reducer cannot end a turn without its duration: pump() logs it
+      fake.push(chatUri(1), { type: "chat/turnComplete", turnId: "turn-live" } as unknown as StateAction);
+      await until("the event's log line", () => warned.length > 0);
+      expect(warned).toEqual(["vscode: an agent host action event on a watched channel failed (RangeError)"]);
+      // a consumer that throws on a push, sent now or when its window ends
+      throwing = true;
+      fake.push(chatUri(1), { type: "chat/activityChanged", activity: "FICTIONAL_one" } as unknown as StateAction);
+      await until("the push's log line", () => warned.length > 1, PUSH_WINDOW_MS * 4);
+      expect(warned[1]).toBe("vscode: a chat push failed (RangeError)");
+    } finally { console.warn = warn; }
+    expect(warned.join()).not.toContain("FICTIONAL secret");
+    expect(warned.join()).not.toContain(fake.token);
+    throwing = false;
+    fake.push(chatUri(1), { type: "chat/activityChanged", activity: "FICTIONAL_two" } as unknown as StateAction);
+    await until("the next event", () => conn.chat(sessionUri(1))?.activity === "FICTIONAL_two");
+  });
+
   it("a host restart reconnects, resubscribes the watched chat, and re-sends nothing", async () => {
     const { home, env, entries } = tempHome();
     const first = await host(entries);

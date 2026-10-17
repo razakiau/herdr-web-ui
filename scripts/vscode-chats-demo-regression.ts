@@ -171,6 +171,7 @@ try {
         // 1. the sidebar's group under the PC, with VS Code's mark
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
         await page.getByRole("heading", { name: "VS Code chats", exact: true }).first().waitFor();
+        assert.equal(await page.getByRole("region", { name: "VS Code chats on Build PC", exact: true }).count(), 1, "the group's landmark names its PC");
         const row = page.locator(`.vscode-chat-item[data-machine="remote"][data-vscode-session="${SESSION}"]`).first();
         await row.waitFor();
         assert.equal(await row.locator('svg[aria-label="vscode"]').count(), 1, "the chat's row wears VS Code's mark");

@@ -1196,6 +1196,7 @@ export const ZH: Record<string, string> = {
   "+ New VS Code chat": "+ 新建 VS Code 聊天",
   "New VS Code chat": "新建 VS Code 聊天",
   "New VS Code chat on {name}": "在 {name} 上新建 VS Code 聊天",
+  "VS Code chats on {name}": "{name} 上的 VS Code 聊天",
   "Start chat": "开始聊天",
   "PC": "PC",
   "Folder": "文件夹",

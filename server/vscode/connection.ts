@@ -75,6 +75,9 @@ const defaultAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 };
 
+/** An error's name for a log line: never its message, which can carry the host's URL and token. */
+const errorName = (error: unknown): string => error instanceof Error ? error.name : typeof error;
+
 /** A rebuilt error: the package's errors keep the transport's text, which can carry the URL. */
 function coded(error: unknown): VscodeError {
   if (error instanceof VscodeError) return error;
@@ -147,7 +150,11 @@ export class VscodeConnection {
     this.sleep = options.deps?.sleep ?? Bun.sleep;
     this.current = options.platform === "win32" ? { state: "unsupported" } : { state: "starting" };
     this.stopping = new Promise((resolve) => { this.wake = resolve; });
-    this.pushes = new Coalescer((event) => { if (!this.stopped) this.options.onChange(event); }, PUSH_WINDOW_MS);
+    this.pushes = new Coalescer((event) => {
+      if (this.stopped) return;
+      // a push can run from the window's timer: a consumer that throws is logged, never thrown there
+      try { this.options.onChange(event); } catch (error) { console.warn(`vscode: a ${event.kind} push failed (${errorName(error)})`); }
+    }, PUSH_WINDOW_MS);
   }
 
   /** A change of one chat, or of the list: at most one push per PUSH_WINDOW_MS each, the last one always. */
@@ -425,8 +432,10 @@ export class VscodeConnection {
           this.sessionList = this.sessionList.map((s) => (s.resource === session ? { ...s, ...changes } : s));
           this.changed({ kind: "chats" });
         }
-      } catch {
-        // a consumer's onChange or a reducer threw: one event, not the connection
+      } catch (error) {
+        // a reducer threw: one event, not the connection. Its name only: a message can carry the
+        // host's URL
+        console.warn(`vscode: an agent host ${event.type} event on a ${channel === ROOT ? "root" : this.watcherOf(channel) ? "watched" : "other"} channel failed (${errorName(error)})`);
       }
     }
   }

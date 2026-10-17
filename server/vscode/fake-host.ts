@@ -193,7 +193,8 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
     requests,
     push(channel, item) {
       if (NOTICES.has(item.type)) { notice(channel, item as FakeRootNotice); return; }
-      apply(channel, item as StateAction);
+      // an action this fake's own reducer cannot apply is still sent, as a host would
+      try { apply(channel, item as StateAction); } catch { /* the fake's copy stays as it was */ }
       announce(channel, item as StateAction);
     },
     peers: () => peers.size,

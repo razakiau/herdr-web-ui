@@ -146,7 +146,8 @@ function VscodeChatsGroup({ machine, pc, selected, onSelect, onNew }: { machine:
   // the same pins as the Agents list's, shared with the other browsers (lib/preferencesSync.ts)
   const pinned = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const line = pc.host ? hostLine(pc.host, t) : null;
-  return <section className="vscode-chats" aria-label={t("VS Code chats")}>
+  // one landmark per PC: its name tells them apart
+  return <section className="vscode-chats" aria-label={t("VS Code chats on {name}", { name: machine.name })}>
     <h3 className="sidebar-section-label vscode-chats-label">{t("VS Code chats")}</h3>
     {line && <p className="tree-state vscode-chats-state" role="status">{line}</p>}
     {pc.chats.length > 0 && <ul className="agent-list vscode-chats-list">
