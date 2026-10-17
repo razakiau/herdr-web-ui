@@ -13,6 +13,7 @@
  * - A chat stays subscribed while a phone holds its lease (a read or POST /chat/watch, renewed
  *   within LEASE_MS); the lease's expiry releases the watch.
  */
+import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -231,8 +232,13 @@ function agentOf(value: unknown): string | null {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The phone's id for this message (or new chat): a UUID, reused on a retry of the same words. */
+/**
+ * The phone's id for this message (or new chat): a UUID, reused on a retry of the same words. A
+ * request without one (an older phone) gets a fresh one here: it goes, but a retry is not
+ * recognised. An id that is there but no UUID is refused.
+ */
 function idOf(value: unknown): string {
+  if (value === undefined) return randomUUID();
   return text(value) && UUID.test(value) ? value.toLowerCase() : refuse(badRequest("invalid_id", "id must be a UUID"));
 }
 
