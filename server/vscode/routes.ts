@@ -47,6 +47,8 @@ export interface VscodeHost {
   summaries(): SessionSummary[];
   chat(session: string): ChatState | undefined;
   watch(session: string): Promise<() => void>;
+  /** False once the session's watch is gone (a resubscribe after a reconnect failed): a lease takes it again. */
+  watching(session: string): boolean;
   request<M extends keyof CommandMap>(method: M, params: CommandMap[M]["params"]): Promise<CommandMap[M]["result"]>;
   dispatch(channel: string, action: StateAction): void;
 }
@@ -76,6 +78,12 @@ class Leases {
 
   async take(session: string): Promise<void> {
     let lease = this.held.get(session);
+    if (lease && !this.host.watching(session)) {
+      // its watch was dropped under it: the lease goes, and this take subscribes again
+      this.clock.clearTimeout(lease.timer);
+      this.held.delete(session);
+      lease = undefined;
+    }
     if (lease) {
       this.clock.clearTimeout(lease.timer);
     } else {
