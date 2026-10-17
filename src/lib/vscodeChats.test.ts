@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VscodeChatRow } from "../../shared/vscode.ts";
-import { agentsListRows, choose, chosenFor, fetchVscodeChats, fetchVscodeState, hostLine, isVscodeOff, sendVscode } from "./vscodeChats.ts";
+import { agentsListRows, choose, chosenFor, fetchVscodeChats, fetchVscodeState, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, sendVscode } from "./vscodeChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -133,5 +133,67 @@ describe("the phone's model and agent choice", () => {
     calls.length = 0;
     await sendVscode("desk", { session: "s1", text: "FICTIONAL again" });
     expect(calls[0]?.body).toEqual({ session: "s1", text: "FICTIONAL again" });
+  });
+  // a POST held open until the test lets it answer
+  const held = () => {
+    const calls: unknown[] = [];
+    let answer: (response: Response) => void = () => undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)));
+      return new Promise<Response>((resolve) => { answer = resolve; });
+    }) as typeof fetch;
+    return { calls, resolve: () => answer(new Response(JSON.stringify({ queued: false }), { status: 200, headers: { "content-type": "application/json" } })) };
+  };
+
+  it("a pick made while a send is on its way is kept for the next one", async () => {
+    choose("desk", "s1", { model: { id: "fictional/model-a" } });
+    const post = held();
+    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL hello" });
+    choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" } });
+    post.resolve();
+    await sent;
+    expect(post.calls).toEqual([{ session: "s1", text: "FICTIONAL hello", model: { id: "fictional/model-a" } }]);
+    expect(chosenFor("desk", "s1")).toEqual({ model: { id: "fictional/model-b", effort: "high" } });
+  });
+
+  it("the composer's draft is kept per chat and let go by the send that carried it, screen or not", async () => {
+    expect(readVscodeDraft("desk", "s1")).toBe("");
+    keepVscodeDraft("desk", "s1", "FICTIONAL draft");
+    expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL draft");
+    expect(readVscodeDraft("desk", "s2")).toBe("");
+    // a failed send keeps it
+    record(503, { error: { code: "vscode_host", message: "down" } });
+    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL draft" })).rejects.toThrow();
+    expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL draft");
+    // the chat left while the send is on its way (no screen clears anything): the sent words do not come back
+    const post = held();
+    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL draft" });
+    post.resolve();
+    await sent;
+    expect(readVscodeDraft("desk", "s1")).toBe("");
+    expect(session.has("herdr-web-ui:vscode-draft:desk:s1")).toBe(false);
+  });
+
+  it("words typed while a send is on its way stay in the draft", async () => {
+    keepVscodeDraft("desk", "s1", "FICTIONAL first");
+    const post = held();
+    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL first" });
+    keepVscodeDraft("desk", "s1", "FICTIONAL first and more");
+    post.resolve();
+    await sent;
+    expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL first and more");
+  });
+});
+
+describe("the picker's model groups", () => {
+  it("groups by the id's provider, the host's own models first as Copilot (provider null)", () => {
+    const model = (id: string) => ({ id, name: id, efforts: null });
+    const groups = groupModels([model("fictional/model-a"), model("own-1"), model("other/model-c"), model("fictional/model-b"), model("own-2")]);
+    expect(groups.map((group) => [group.provider, group.models.map((each) => each.id)])).toEqual([
+      [null, ["own-1", "own-2"]],
+      ["fictional", ["fictional/model-a", "fictional/model-b"]],
+      ["other", ["other/model-c"]],
+    ]);
+    expect(groupModels([model("fictional/model-a")]).map((group) => group.provider)).toEqual(["fictional"]);
   });
 });

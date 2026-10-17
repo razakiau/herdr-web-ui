@@ -1,6 +1,7 @@
 /**
  * The VS Code chat's model and agent picker: a sheet over the chat (a bottom sheet on a phone).
- * Models are grouped by their provider (the part of the id before its first `/`); a model with a
+ * Models are grouped by their provider (lib/vscodeChats.ts groupModels: the host's own, Copilot,
+ * first); a model with a
  * reasoning-effort choice offers its values as chips. Agents start with "Agent", VS Code's own
  * (no custom agent). A pick is the chat's next message's (lib/vscodeChats.ts `choose`); a model
  * pick is also written into the chat's shared draft, so VS Code's own model picker follows it.
@@ -12,6 +13,7 @@ import { Check, X } from "lucide-react";
 
 import type { VscodeAgent, VscodeModel } from "../../shared/vscode.ts";
 import { useT } from "../lib/i18n.ts";
+import { groupModels } from "../lib/vscodeChats.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -29,24 +31,6 @@ export interface VscodePickerSheetProps {
   onModel(model: { id: string; effort?: string }): void;
   onAgent(agent: string | null): void;
   onClose(): void;
-}
-
-/** The provider a model id names before its first `/`, or null for an id with none. */
-export function modelProvider(id: string): string | null {
-  const at = id.indexOf("/");
-  return at > 0 ? id.slice(0, at) : null;
-}
-
-/** Models grouped by provider, in the order the PC lists them; the ones without a provider last. */
-export function groupModels(models: readonly VscodeModel[]): { provider: string | null; models: VscodeModel[] }[] {
-  const groups = new Map<string | null, VscodeModel[]>();
-  for (const model of models) {
-    const provider = modelProvider(model.id);
-    groups.set(provider, [...groups.get(provider) ?? [], model]);
-  }
-  const named = [...groups].filter(([provider]) => provider !== null);
-  const other = groups.get(null);
-  return [...named, ...(other ? [[null, other] as const] : [])].map(([provider, list]) => ({ provider, models: list }));
 }
 
 export function VscodePickerSheet({ focus, models, agents, model, agent, error, onModel, onAgent, onClose }: VscodePickerSheetProps) {
@@ -85,8 +69,8 @@ export function VscodePickerSheet({ focus, models, agents, model, agent, error, 
             {models === null ? <p className="vscode-picker-state" role="status">{t("Loading…")}</p>
               : models.length === 0 ? <p className="vscode-picker-state">{t("This PC's VS Code offers no models")}</p>
                 : groupModels(models).map((group) => (
-                  <div className="vscode-picker-group" key={group.provider ?? ""} role="group" aria-label={group.provider ?? t("Other")}>
-                    <p className="vscode-picker-provider">{group.provider ?? t("Other")}</p>
+                  <div className="vscode-picker-group" key={group.provider ?? ""} role="group" aria-label={group.provider ?? t("Copilot")}>
+                    <p className="vscode-picker-provider">{group.provider ?? t("Copilot")}</p>
                     {group.models.map((each) => {
                       const picked = each.id === model?.id;
                       return <button key={each.id} type="button" className={`vscode-picker-option${picked ? " is-picked" : ""}`} aria-pressed={picked} data-model={each.id}

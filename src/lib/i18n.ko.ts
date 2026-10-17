@@ -1204,7 +1204,7 @@ export const KO: Record<string, string> = {
   "Model and agent": "모델과 에이전트",
   "Model": "모델",
   "Reasoning effort": "추론 강도",
-  "Other": "기타",
+  "Copilot": "Copilot",
   "This PC's VS Code offers no models": "이 PC의 VS Code에 사용할 수 있는 모델이 없습니다",
   "VS Code's agent picker does not follow this choice; a message typed in VS Code uses VS Code's agent.": "VS Code의 에이전트 선택기는 이 선택을 따르지 않습니다. VS Code에서 입력한 메시지는 VS Code의 에이전트를 사용합니다.",
   "Model: {model}": "모델: {model}",

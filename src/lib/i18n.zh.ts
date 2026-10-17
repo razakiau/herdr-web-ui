@@ -1208,7 +1208,7 @@ export const ZH: Record<string, string> = {
   "Model and agent": "模型和代理",
   "Model": "模型",
   "Reasoning effort": "推理强度",
-  "Other": "其他",
+  "Copilot": "Copilot",
   "This PC's VS Code offers no models": "这台电脑的 VS Code 没有可用的模型",
   "VS Code's agent picker does not follow this choice; a message typed in VS Code uses VS Code's agent.": "VS Code 的代理选择器不会跟随此选择；在 VS Code 中输入的消息使用 VS Code 的代理。",
   "Model: {model}": "模型：{model}",
