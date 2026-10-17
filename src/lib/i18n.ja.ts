@@ -1223,6 +1223,7 @@ export const JA: Record<string, string> = {
   "Queued: it goes out when this turn ends": "キュー済み: このターンが終わると送信されます",
   "VS Code is working on this chat; Send queues the message": "VS Code がこのチャットで作業中です。送信するとメッセージはキューに入ります",
   "Not sent: {error}": "送信できませんでした: {error}",
+  "Couldn't confirm it was sent. Send again: it won't go twice.": "送信できたか確認できませんでした。もう一度送ってください: 二重には送られません。",
   "This message can't be shown here.": "このメッセージはここには表示できません。",
   "VS Code chat {title}": "VS Code チャット {title}",
 };

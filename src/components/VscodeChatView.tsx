@@ -25,7 +25,7 @@ import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
   agentName, answerVscode, choose, chosenFor, coalesced, confirmVscode, errorText, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, onVscodeResume, readVscodeDraft,
-  sendVscode, setVscodeDraftModel, settleChoice, watchVscodeChat, type VscodeChoice,
+  sendErrorText, sendVscode, setVscodeDraftModel, settleChoice, watchVscodeChat, type VscodeChoice,
 } from "../lib/vscodeChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { Turn } from "./ChatView.tsx";
@@ -238,7 +238,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       void reread();
     } catch (cause) {
       // once, by the user's tap: the words stay in the box for the next one
-      if (mounted.current) setSendError(errorText(cause));
+      if (mounted.current) setSendError(sendErrorText(cause, t));
     }
     if (mounted.current) setSending(false);
   };
@@ -284,7 +284,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     </div>
     <div className="composer vscode-composer" role="group" aria-label={t("Message composer")}>
       {statusLine !== null && <p className="vscode-chat-status" role="status" data-status={queued ? "queued" : "working"}>{statusLine}</p>}
-      {sendError !== null && <p className="composer-note vscode-chat-error" role="alert"><span className="composer-note-text">{t("Not sent: {error}", { error: sendError })}</span></p>}
+      {sendError !== null && <p className="composer-note vscode-chat-error" role="alert"><span className="composer-note-text">{sendError}</span></p>}
       <div className="composer-surface">
         <textarea className="composer-text" rows={1} value={text} placeholder={t("Message VS Code")} aria-label={t("Message")} spellCheck autoCapitalize="sentences" autoCorrect="on"
           onChange={(event) => { setText(event.target.value); keepVscodeDraft(machineId, session, event.target.value); }}

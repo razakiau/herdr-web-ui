@@ -18,7 +18,7 @@ import "./VscodeChatView.css";
 import type { Machine } from "../../shared/machines.ts";
 import type { VscodeAgent, VscodeModel } from "../../shared/vscode.ts";
 import { useT } from "../lib/i18n.ts";
-import { agentName, basename, createVscodeChat, errorText, fetchVscodeModels, folderChoices, sessionForFolder, type VscodePc } from "../lib/vscodeChats.ts";
+import { agentName, attemptFor, basename, createVscodeChat, errorText, fetchVscodeModels, folderChoices, sendErrorText, sessionForFolder, type VscodePc } from "../lib/vscodeChats.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -54,6 +54,9 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
   const [error, setError] = useState<string | null>(null);
   // one post per tap: a second tap before the first's render is refused here
   const posting = useRef(false);
+  // the id this sheet's chat goes under: kept while the same PC, folder and words are tried again
+  // after a failure (the bridge then makes the chat once), new when any of them changes
+  const attempt = useRef<{ key: string; id: string } | null>(null);
 
   // the PCs a chat can start on: connected, with a host up (and the one tapped, whatever its host says)
   const offered = machines.filter((machine) => machine.state === "connected" && pcs.has(machine.id) && (machine.id === initialMachine || pcs.get(machine.id)?.host?.state === "connected"));
@@ -110,19 +113,21 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
     posting.current = true;
     setPending(true);
     setError(null);
+    attempt.current = attemptFor(attempt.current, JSON.stringify([machineId, folder, words]));
     try {
       const session = await createVscodeChat(machineId, {
-        cwd: folder, text: words,
+        id: attempt.current.id, cwd: folder, text: words,
         ...(model ? { model } : {}),
         ...(agent !== null ? { agent } : {}),
       });
       posting.current = false;
       onCreated({ machineId, session });
     } catch (cause) {
-      // nothing was made: every field stays for the user's next tap
+      // nothing was made, or it is not known whether it was: every field stays for the user's next
+      // tap, which goes under the same id
       posting.current = false;
       setPending(false);
-      setError(errorText(cause));
+      setError(sendErrorText(cause, t, true));
     }
   };
 

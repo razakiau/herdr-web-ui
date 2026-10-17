@@ -49,11 +49,16 @@ export interface VscodeChatRead {
   signature: string;
 }
 
-export interface VscodeSend { session: string; text: string; model?: { id: string; effort?: string }; agent?: string | null }
+/**
+ * `id`: the phone's UUID for this message, reused when the same words are sent again after a
+ * failure: the bridge dispatches an id once (it becomes the turn's id, or the queued message's).
+ */
+export interface VscodeSend { session: string; id: string; text: string; model?: { id: string; effort?: string }; agent?: string | null }
 export interface VscodeAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true }
 /** `option_id`: the host's confirmation option the user picked, when it offered some. */
 export interface VscodeConfirm { session: string; turn_id: string; tool_call_id: string; approved: boolean; option_id?: string }
-export interface VscodeNew { cwd: string; text: string; model?: { id: string; effort?: string }; agent?: string | null }
+/** `id`: the phone's UUID for this attempt; the chat made is `copilotcli:/<id>`, so a retry makes none. */
+export interface VscodeNew { id: string; cwd: string; text: string; model?: { id: string; effort?: string }; agent?: string | null }
 /**
  * POST /api/vscode/chat/new: the chat made. `sent: false` when it was created but its first message
  * did not go out: open that chat (keep the text in its composer), never create another.

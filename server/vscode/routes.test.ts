@@ -244,7 +244,7 @@ describe("VS Code chat routes", () => {
 
   it("send on an idle chat dispatches one turnStarted with model and agent on the message", async () => {
     const r = await rig();
-    const sent = await call(r, "/api/vscode/chat/send", { session: sessionUri(1), text: "FICTIONAL hello", model: { id: "fictional/model-a", effort: "high" }, agent: REPORT });
+    const sent = await call(r, "/api/vscode/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL hello", model: { id: "fictional/model-a", effort: "high" }, agent: REPORT });
     expect(sent).toEqual({ status: 200, json: { queued: false } });
     await until("the turn to arrive", () => actions(r.fake, "chat/turnStarted").length > 0);
     const started = only(r.fake, "chat/turnStarted");
@@ -260,7 +260,7 @@ describe("VS Code chat routes", () => {
 
   it("agent null omits agent", async () => {
     const r = await rig();
-    expect((await call(r, "/api/vscode/chat/send", { session: sessionUri(1), text: "FICTIONAL plain", agent: null })).json).toEqual({ queued: false });
+    expect((await call(r, "/api/vscode/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL plain", agent: null })).json).toEqual({ queued: false });
     await until("the turn to arrive", () => actions(r.fake, "chat/turnStarted").length > 0);
     const message = only(r.fake, "chat/turnStarted")["message"];
     expect("agent" in message).toBe(false);
@@ -270,13 +270,59 @@ describe("VS Code chat routes", () => {
 
   it("send on a busy chat queues and starts no turn", async () => {
     const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
-    expect((await call(r, "/api/vscode/chat/send", { session: sessionUri(1), text: "FICTIONAL later" })).json).toEqual({ queued: true });
+    expect((await call(r, "/api/vscode/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL later" })).json).toEqual({ queued: true });
     await until("the queued message", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
     const queued = only(r.fake, "chat/pendingMessageSet");
     expect(queued).toMatchObject({ kind: "queued", message: { text: "FICTIONAL later", origin: { kind: "user" } } });
     expect(queued["id"]).toMatch(/^[0-9a-f-]{36}$/);
     expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
     expect((await call(r, `/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`)).json.busy).toBe(true);
+  });
+
+  it("a send's id is its turn's id, and the same id sent again (its answer lost) dispatches nothing", async () => {
+    const r = await rig();
+    const id = crypto.randomUUID();
+    const body = { id, session: sessionUri(1), text: "FICTIONAL once" };
+    expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: false });
+    await until("the turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === id);
+    expect(only(r.fake, "chat/turnStarted")["turnId"]).toBe(id);
+    // the retry, while the turn runs and once it is a past turn
+    expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: false });
+    r.fake.push(chatUri(1), { type: "chat/turnComplete", turnId: id, duration: 10 } as unknown as StateAction);
+    await until("the turn to end", () => r.conn.chat(sessionUri(1))?.turns.some((turn) => turn.id === id) === true);
+    expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: false });
+    expect(actions(r.fake, "chat/turnStarted").length).toBe(1);
+    // an id that is no UUID is refused before anything goes
+    for (const bad of [undefined, "", "FICTIONAL-not-a-uuid", 42]) {
+      const refused = await call(r, "/api/vscode/chat/send", { ...body, id: bad });
+      expect({ bad, status: refused.status, code: refused.json.error.code }).toEqual({ bad, status: 400, code: "invalid_id" });
+    }
+    expect(actions(r.fake, "chat/turnStarted").length).toBe(1);
+  });
+
+  it("a queued send's id is its pending message's, and the same id again queues nothing", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const id = crypto.randomUUID();
+    const body = { id, session: sessionUri(1), text: "FICTIONAL later" };
+    expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: true });
+    await until("the queued message", () => (r.conn.chat(sessionUri(1))?.queuedMessages ?? []).some((pending) => pending.id === id));
+    expect(only(r.fake, "chat/pendingMessageSet")["id"]).toBe(id);
+    expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: true });
+    // the running turn ends and the queued one starts under the host's own turn id: not pending any more
+    r.fake.push(chatUri(1), { type: "chat/turnComplete", turnId: "turn-live", duration: 10 } as unknown as StateAction);
+    r.fake.push(chatUri(1), { type: "chat/turnStarted", turnId: "turn-host", startedAt: AT, message: user("FICTIONAL later"), queuedMessageId: id } as unknown as StateAction);
+    await until("the queued message to start", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === "turn-host" && (r.conn.chat(sessionUri(1))?.queuedMessages ?? []).length === 0);
+    expect((await call(r, "/api/vscode/chat/send", body)).json).toEqual({ queued: false });
+    expect(actions(r.fake, "chat/pendingMessageSet").length).toBe(1);
+    expect(actions(r.fake, "chat/turnStarted").length).toBe(0);
+  });
+
+  it("the mirror alone stops a repeat: a chat that has the id (sent by another bridge) dispatches nothing", async () => {
+    const id = crypto.randomUUID();
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: [turn(id, "FICTIONAL sent elsewhere")] }), [chatUri(2)]: chatState(2, { status: 8, activeTurn: active(), queuedMessages: [{ id: uuid(77), message: user("FICTIONAL waiting") }] }) } });
+    expect((await call(r, "/api/vscode/chat/send", { id, session: sessionUri(1), text: "FICTIONAL sent elsewhere" })).json).toEqual({ queued: false });
+    expect((await call(r, "/api/vscode/chat/send", { id: uuid(77), session: sessionUri(2), text: "FICTIONAL waiting" })).json).toEqual({ queued: true });
+    expect(r.fake.dispatched.filter((entry) => entry.action.type !== "session/activeClientSet")).toEqual([]);
   });
 
   it("a model choice writes draft.model and keeps the other client's draft text", async () => {
@@ -375,7 +421,7 @@ describe("VS Code chat routes", () => {
 
   it("new chat creates with isolation folder and the cwd as a file URI, then sends", async () => {
     const r = await rig();
-    const made = await call(r, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL start here", model: { id: "fictional/model-a", effort: "medium" }, agent: null });
+    const made = await call(r, "/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo", text: "FICTIONAL start here", model: { id: "fictional/model-a", effort: "medium" }, agent: null });
     expect(made.status).toBe(200);
     expect(made.json.session).toMatch(/^copilotcli:\/[0-9a-f-]{36}$/);
     const created = r.fake.requests.filter((entry) => entry.method === "createSession");
@@ -386,7 +432,36 @@ describe("VS Code chat routes", () => {
     expect(first.length).toBe(1);
     expect(first[0]!.channel).toBe(`ahp-chat://default/${Buffer.from(made.json.session).toString("base64")}`);
     expect((first[0]!.action as unknown as { message: unknown }).message).toEqual({ text: "FICTIONAL start here", origin: { kind: "user" }, model: { id: "fictional/model-a", config: { thinkingLevel: "medium" } } });
-    expect((await call(r, "/api/vscode/chat/new", { cwd: "fictional-relative", text: "x" })).status).toBe(400);
+    expect((await call(r, "/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "fictional-relative", text: "x" })).status).toBe(400);
+  });
+
+  it("a new chat's id names its session; the same id again makes nothing and sends nothing", async () => {
+    const r = await rig();
+    const id = crypto.randomUUID();
+    const body = { id, cwd: "/tmp/fictional-repo", text: "FICTIONAL start once" };
+    const made = await call(r, "/api/vscode/chat/new", body);
+    expect(made).toEqual({ status: 200, json: { session: `copilotcli:/${id}` } });
+    await until("the first turn", () => actions(r.fake, "chat/turnStarted").length === 1);
+    expect(only(r.fake, "chat/turnStarted")["turnId"]).toBe(id);
+    expect(await call(r, "/api/vscode/chat/new", body)).toEqual({ status: 200, json: { session: `copilotcli:/${id}` } });
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(1);
+    expect(actions(r.fake, "chat/turnStarted").length).toBe(1);
+    expect((await call(r, "/api/vscode/chat/new", { ...body, id: "FICTIONAL" })).json.error.code).toBe("invalid_id");
+  });
+
+  it("a new chat asked again whose first message never went answers sent: false, and sends nothing", async () => {
+    const id = crypto.randomUUID();
+    const session = `copilotcli:/${id}`;
+    const chat = `ahp-chat://default/${Buffer.from(session).toString("base64")}`;
+    // the host made it (the phone's first answer was lost) and it has no turn
+    const r = await rig({
+      sessions: [summary(1), { ...summary(2), resource: session, defaultChat: chat }],
+      states: { [sessionUri(1)]: sessionState(1), [session]: { ...sessionState(2), defaultChat: chat, chats: [{ resource: chat, title: "", status: 1, modifiedAt: AT }] } as SessionState },
+      chats: { [chatUri(1)]: chatState(1), [chat]: { ...chatState(2), resource: chat } as ChatState },
+    });
+    expect(await call(r, "/api/vscode/chat/new", { id, cwd: "/tmp/fictional-repo", text: "FICTIONAL kept" })).toEqual({ status: 200, json: { session, sent: false } });
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession")).toEqual([]);
+    expect(r.fake.dispatched.filter((entry) => entry.action.type !== "session/activeClientSet")).toEqual([]);
   });
 
   it("before=<cursor> asks fetchTurns with it and returns older turns once", async () => {
@@ -412,7 +487,7 @@ describe("VS Code chat routes", () => {
     const r = await rig();
     const unknown = await call(r, `/api/vscode/chat?session=${encodeURIComponent(sessionUri(9))}`);
     expect({ status: unknown.status, code: unknown.json.error.code }).toEqual({ status: 404, code: "vscode_chat_missing" });
-    const send = await call(r, "/api/vscode/chat/send", { session: sessionUri(9), text: "FICTIONAL nobody" });
+    const send = await call(r, "/api/vscode/chat/send", { id: crypto.randomUUID(), session: sessionUri(9), text: "FICTIONAL nobody" });
     expect({ status: send.status, code: send.json.error.code }).toEqual({ status: 404, code: "vscode_chat_missing" });
     // no host in this home's registry, and starting one is off: the connection waits
     const { home, env } = homeWithRegistry();
@@ -421,8 +496,8 @@ describe("VS Code chat routes", () => {
     for (const [path, body] of [
       ["/api/vscode/chats", undefined],
       [`/api/vscode/chat?session=${encodeURIComponent(sessionUri(1))}`, undefined],
-      ["/api/vscode/chat/send", { session: sessionUri(1), text: "FICTIONAL nobody home" }],
-      ["/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL nobody home" }],
+      ["/api/vscode/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL nobody home" }],
+      ["/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo", text: "FICTIONAL nobody home" }],
       ["/api/vscode/models", undefined],
     ] as const) {
       const answer = await call(down, path, body);
@@ -439,7 +514,7 @@ describe("VS Code chat routes", () => {
     const q = `session=${encodeURIComponent(other)}`;
     for (const [path, body] of [
       [`/api/vscode/chat?${q}`, undefined], [`/api/vscode/models?${q}`, undefined],
-      ["/api/vscode/chat/watch", { session: other }], ["/api/vscode/chat/send", { session: other, text: "FICTIONAL elsewhere" }],
+      ["/api/vscode/chat/watch", { session: other }], ["/api/vscode/chat/send", { id: crypto.randomUUID(), session: other, text: "FICTIONAL elsewhere" }],
       ["/api/vscode/chat/answer", { session: other, request_id: "req-1", question_id: "q-color", option_ids: ["red"] }],
       ["/api/vscode/chat/confirm", { session: other, turn_id: "t", tool_call_id: "c", approved: true }],
       ["/api/vscode/chat/draft", { session: other, model: { id: "fictional/model-a" } }],
@@ -462,18 +537,18 @@ describe("VS Code chat routes", () => {
       watch: (s) => conn.watch(s), watching: (s) => conn.watching(s), request: (method, params) => conn.request(method, params),
       dispatch: () => { throw new VscodeError("not_connected"); },
     };
-    const made = await call({ conn: noSend, clock: r.clock }, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL lost?" });
+    const made = await call({ conn: noSend, clock: r.clock }, "/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo", text: "FICTIONAL lost?" });
     expect(made.status).toBe(200);
     expect(made.json).toEqual({ session: expect.stringMatching(/^copilotcli:\/[0-9a-f-]{36}$/), sent: false });
     expect(r.fake.requests.filter((entry) => entry.method === "createSession").map((entry) => (entry.params as { channel: string }).channel)).toEqual([made.json.session]);
     expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
     // the watch failing after creation says the same
     const noWatch: VscodeHost = { ...noSend, dispatch: (channel, action) => conn.dispatch(channel, action), watch: () => Promise.reject(new VscodeError("timeout")) };
-    const second = await call({ conn: noWatch, clock: manualClock() }, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL lost again?" });
+    const second = await call({ conn: noWatch, clock: manualClock() }, "/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo", text: "FICTIONAL lost again?" });
     expect(second).toEqual({ status: 200, json: { session: expect.stringMatching(/^copilotcli:\//), sent: false } });
     expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(2);
     // a new chat that sends answers its session alone
-    const sent = await call(r, "/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL sent" });
+    const sent = await call(r, "/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo", text: "FICTIONAL sent" });
     expect(Object.keys(sent.json)).toEqual(["session"]);
     await until("the first turn", () => actions(r.fake, "chat/turnStarted").length === 1);
   });
@@ -533,12 +608,12 @@ describe("VS Code chat routes", () => {
     for (const [path, body] of [
       ["/api/vscode/state", undefined], ["/api/vscode/chats", undefined], [`/api/vscode/chat?session=${encodeURIComponent(s)}`, undefined],
       [`/api/vscode/chat?session=${encodeURIComponent(s)}&before=nope`, undefined], [`/api/vscode/models?session=${encodeURIComponent(s)}`, undefined],
-      ["/api/vscode/chat/watch", { session: s }], ["/api/vscode/chat/send", { session: sessionUri(2), text: "FICTIONAL q" }],
+      ["/api/vscode/chat/watch", { session: s }], ["/api/vscode/chat/send", { id: crypto.randomUUID(), session: sessionUri(2), text: "FICTIONAL q" }],
       ["/api/vscode/chat/answer", { session: s, request_id: "req-1", question_id: "q-color", option_ids: ["red"] }],
       ["/api/vscode/chat/confirm", { session: s, turn_id: "x", tool_call_id: "y", approved: true }],
       ["/api/vscode/chat/draft", { session: s, model: { id: "fictional/model-a" } }],
-      ["/api/vscode/chat/new", { cwd: "/tmp/fictional-repo", text: "FICTIONAL new" }],
-      ["/api/vscode/chat/send", { session: "copilotcli:/nope", text: "x" }], ["/api/vscode/nothing", undefined],
+      ["/api/vscode/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo", text: "FICTIONAL new" }],
+      ["/api/vscode/chat/send", { id: crypto.randomUUID(), session: "copilotcli:/nope", text: "x" }], ["/api/vscode/nothing", undefined],
     ] as const) seen.push((await call(r, path, body)).status);
     expect(tokens).toContain(r.fake.token);
     expect(seen.length).toBe(13);

@@ -1225,6 +1225,7 @@ export const ZH: Record<string, string> = {
   "Queued: it goes out when this turn ends": "已排队：本轮结束后发送",
   "VS Code is working on this chat; Send queues the message": "VS Code 正在处理此聊天；发送会将消息加入队列",
   "Not sent: {error}": "未发送：{error}",
+  "Couldn't confirm it was sent. Send again: it won't go twice.": "无法确认是否已发送。请再发送一次：不会重复发送。",
   "This message can't be shown here.": "此消息无法在这里显示。",
   "VS Code chat {title}": "VS Code 聊天 {title}",
 };

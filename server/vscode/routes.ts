@@ -4,13 +4,15 @@
  * connection server reaches a PC's routes through its bridge (MACHINE_PROXY_PATH).
  *
  * Invariants:
- * - A user's message is dispatched once, by its request; nothing here retries a send.
+ * - A user's message is dispatched once, by its request; nothing here retries a send. The phone
+ *   names each message (`id`, a UUID it reuses when the user sends the same words again after a
+ *   failure): a send whose id the chat already has, as a turn or a pending message, dispatches
+ *   nothing and answers as the first did, and so does a new chat whose session already exists.
  * - No response carries the host's token: errors are built from codes (VscodeError), never from a
  *   transport's message.
  * - A chat stays subscribed while a phone holds its lease (a read or POST /chat/watch, renewed
  *   within LEASE_MS); the lease's expiry releases the watch.
  */
-import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -105,6 +107,26 @@ class Leases {
     this.held.delete(session);
     void lease.taking.then((release) => release(), () => {});
   }
+}
+
+/** How many sends a host remembers by id, beside its mirror (a queued message that started since has another id there). */
+const SENT_MAX = 500;
+
+/** The messages this process dispatched, by the phone's id, and their chats. Oldest go first. */
+class Sent {
+  private readonly answered = new Map<string, { session: string }>();
+  get(id: string): { session: string } | undefined { return this.answered.get(id); }
+  has(session: string): boolean { for (const each of this.answered.values()) if (each.session === session) return true; return false; }
+  add(id: string, session: string): void {
+    this.answered.set(id, { session });
+    if (this.answered.size > SENT_MAX) this.answered.delete(this.answered.keys().next().value!);
+  }
+}
+const sentSets = new WeakMap<VscodeHost, Sent>();
+function sentOf(host: VscodeHost): Sent {
+  let sent = sentSets.get(host);
+  if (!sent) { sent = new Sent(); sentSets.set(host, sent); }
+  return sent;
 }
 
 const leaseSets = new WeakMap<VscodeHost, Leases>();
@@ -207,6 +229,13 @@ function agentOf(value: unknown): string | null {
   return text(value) && value !== "" ? value : refuse(badRequest("invalid_agent", "agent must be an agent's uri, or null"));
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The phone's id for this message (or new chat): a UUID, reused on a retry of the same words. */
+function idOf(value: unknown): string {
+  return text(value) && UUID.test(value) ? value.toLowerCase() : refuse(badRequest("invalid_id", "id must be a UUID"));
+}
+
 function messageText(value: unknown): string {
   return text(value) && value.trim() !== "" ? value : refuse(badRequest("missing_text", "text is required"));
 }
@@ -287,12 +316,29 @@ function draftWith(chat: ChatState, model: ModelSelection): StateAction {
   return { type: ActionType.ChatDraftChanged, draft: { ...current, text: current?.text ?? "", origin: { kind: MessageKind.User }, model } } as StateAction;
 }
 
-/** Dispatches `message` once: a new turn on an idle chat, else a queued message. */
-function send(host: VscodeHost, channel: string, chat: ChatState, message: Message): { queued: boolean } {
+/** What the chat already has under `id`: a turn (active or past), a pending message, or nothing. */
+function alreadyHas(chat: ChatState, id: string): { queued: boolean } | null {
+  if (chat.activeTurn?.id === id || chat.turns.some((turn) => turn.id === id)) return { queued: false };
+  if (chat.steeringMessage?.id === id || (chat.queuedMessages ?? []).some((pending) => pending.id === id)) return { queued: true };
+  return null;
+}
+
+/**
+ * Dispatches `message` once under the phone's `id`: a new turn on an idle chat (its turnId), else
+ * a queued message (its id). An id this host already sent, or the chat already has, dispatches
+ * nothing: the answer is the first one's (queued while still pending).
+ */
+function send(host: VscodeHost, session: string, channel: string, chat: ChatState, message: Message, id: string): { queued: boolean } {
+  const had = alreadyHas(chat, id);
+  if (had) return had;
+  // sent by this bridge, and no longer in the chat under its id: a queued message that has since
+  // started its turn (under a turn id of the host's own)
+  if (sentOf(host).get(id)) return { queued: false };
   const queued = chat.activeTurn !== undefined;
   host.dispatch(channel, (queued
-    ? { type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Queued, id: randomUUID(), message }
-    : { type: ActionType.ChatTurnStarted, turnId: randomUUID(), startedAt: new Date().toISOString(), message }) as StateAction);
+    ? { type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Queued, id, message }
+    : { type: ActionType.ChatTurnStarted, turnId: id, startedAt: new Date().toISOString(), message }) as StateAction);
+  sentOf(host).add(id, session);
   if (message.model) {
     // the message is out; a draft that fails to follow must not make the phone think it was not sent
     try { host.dispatch(channel, draftWith(chat, message.model)); } catch { /* the next model choice writes it */ }
@@ -302,11 +348,12 @@ function send(host: VscodeHost, channel: string, chat: ChatState, message: Messa
 
 async function sendMessage(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
+  const id = idOf(call.body["id"]);
   const words = messageText(call.body["text"]);
   const model = modelOf(call.body["model"]);
   const agent = agentOf(call.body["agent"]);
   const { channel, chat } = await watched(call, session);
-  return jsonResponse(send(call.host, channel, chat, messageFrom(call.host.mirror().root, words, model, agent)));
+  return jsonResponse(send(call.host, session, channel, chat, messageFrom(call.host.mirror().root, words, model, agent), id));
 }
 
 async function writeDraft(call: Call): Promise<Response> {
@@ -320,11 +367,14 @@ async function writeDraft(call: Call): Promise<Response> {
 async function newChat(call: Call): Promise<Response> {
   const cwd = call.body["cwd"];
   if (!text(cwd) || !isAbsolute(cwd)) return badRequest("invalid_cwd", "cwd must be an absolute path");
+  const id = idOf(call.body["id"]);
   const words = messageText(call.body["text"]);
   const model = modelOf(call.body["model"]);
   const agent = agentOf(call.body["agent"]);
   connected(call.host);
-  const session = `${PROVIDER}:/${randomUUID()}`;
+  // the phone's id names the session: a retry of a chat already made makes nothing
+  const session = `${PROVIDER}:/${id}`;
+  if (known(call.host, session)) return jsonResponse(await madeBefore(call, session));
   await call.host.request("createSession", {
     channel: session, provider: PROVIDER, workingDirectories: [pathToFileURL(cwd).href], config: { isolation: "folder" },
   });
@@ -335,12 +385,30 @@ async function newChat(call: Call): Promise<Response> {
     const channel = call.host.mirror().getSession(session)?.defaultChat;
     const chat = call.host.chat(session);
     if (!channel || !chat) return jsonResponse({ session, sent: false });
-    send(call.host, channel, chat, messageFrom(call.host.mirror().root, words, model, agent));
-  } catch {
+    send(call.host, session, channel, chat, messageFrom(call.host.mirror().root, words, model, agent), id);
+  } catch (error) {
+    console.warn(`vscode: chat/new made ${session} but its first message did not go (${errorName(error)})`);
     return jsonResponse({ session, sent: false });
   }
   return jsonResponse({ session });
 }
+
+/**
+ * A new chat asked for again (its answer was lost): nothing is made or sent. `sent: false` when the
+ * chat has no turn and no pending message, so the phone keeps the words for the user to send once.
+ */
+async function madeBefore(call: Call, session: string): Promise<{ session: string; sent?: false }> {
+  if (sentOf(call.host).has(session)) return { session };
+  try {
+    await call.leases.take(session);
+    const chat = call.host.chat(session);
+    if (chat && (chat.activeTurn !== undefined || chat.turns.length > 0 || chat.steeringMessage !== undefined || (chat.queuedMessages ?? []).length > 0)) return { session };
+  } catch { /* it cannot be read now: the words stay with the phone */ }
+  return { session, sent: false };
+}
+
+/** An error's name for a log line: never its message, which can carry a transport's URL. */
+const errorName = (error: unknown): string => error instanceof Error ? error.name : typeof error;
 
 // ─── Questions and tool calls ────────────────────────────────────────────────
 
