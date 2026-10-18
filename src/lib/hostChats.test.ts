@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { VscodeChatRow } from "../../shared/vscode.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
-import { VSCODE_ATTEMPT_TTL_MS } from "./vscodeChats.ts";
-import { agentsListRows, attemptFor, choose, chosenFor, coalesced, createVscodeChat, fetchVscodeChats, fetchVscodeState, folderChoices, groupModels, hostLine, isVscodeOff, keepVscodeDraft, readVscodeDraft, fetchVscodeChat, sendErrorText, sendVscode, noteVscodeMessage, noteVscodeStreamOpen, onVscodeMessage, sessionForFolder, VscodePcs, settleChoice, takeVscodeEvent, type VscodeLast } from "./vscodeChats.ts";
+import { HOST_ATTEMPT_TTL_MS } from "./hostChats.ts";
+import { agentsListRows, attemptFor, choose, chosenFor, coalesced, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
-const NONE: VscodeLast = { model: null, agent: null };
+const NONE: HostLast = { model: null, agent: null };
 const withoutId = (body: unknown): unknown => { const { id: _, ...rest } = body as Record<string, unknown>; return rest; };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const row = (session: string, status: VscodeChatRow["status"], ageMs: number): VscodeChatRow => ({
+const row = (session: string, status: HostChatRow["status"], ageMs: number): HostChatRow => ({
   session, title: session, status, modified_at: new Date(NOW - ageMs).toISOString(), cwd: "/home/user/project",
 });
 
-describe("VS Code chats in the Agents list", () => {
+describe("host chats in the Agents list", () => {
   it("agentsListRows live keeps working, asks and pinned only", () => {
     const rows = [row("a", "idle", 1000), row("b", "working", 5000), row("c", "asks", 2 * DAY), row("d", "error", 1000), row("e", "idle", 30 * DAY)];
     const pinned = (session: string) => session === "e";
@@ -40,7 +40,7 @@ describe("VS Code chats in the Agents list", () => {
   });
 });
 
-describe("VS Code chats per PC", () => {
+describe("host chats per PC", () => {
   const realFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = realFetch; });
   const answer = (status: number, body: unknown) => {
@@ -54,31 +54,31 @@ describe("VS Code chats per PC", () => {
 
   it("asks the PC's own bridge for its list and its host", async () => {
     const urls = answer(200, { chats: [row("a", "idle", 0)], host: { state: "starting" } });
-    expect((await fetchVscodeChats("local")).map((r) => r.session)).toEqual(["a"]);
-    expect(await fetchVscodeState("desk")).toEqual({ state: "starting" });
-    expect(urls).toEqual(["/api/vscode/chats", "/api/machines/desk/vscode/state"]);
+    expect((await fetchHostChats("local")).map((r) => r.session)).toEqual(["a"]);
+    expect(await fetchHostState("desk")).toEqual({ state: "starting" });
+    expect(urls).toEqual(["/api/host-chats/chats", "/api/machines/desk/host-chats/state"]);
   });
 
   it("tells a PC without the feature from a down host", async () => {
-    answer(404, { error: { code: "vscode_off", message: "off" } });
-    const off = await fetchVscodeChats("desk").catch((error: unknown) => error);
-    expect(isVscodeOff(off)).toBe(true);
-    answer(503, { error: { code: "vscode_host", message: "down" }, host: { state: "no_server" } });
-    const down = await fetchVscodeChats("desk").catch((error: unknown) => error);
-    expect(isVscodeOff(down)).toBe(false);
+    answer(404, { error: { code: "host_chats_off", message: "off" } });
+    const off = await fetchHostChats("desk").catch((error: unknown) => error);
+    expect(isHostChatsOff(off)).toBe(true);
+    answer(503, { error: { code: "agent_host_down", message: "down" }, host: { state: "no_server" } });
+    const down = await fetchHostChats("desk").catch((error: unknown) => error);
+    expect(isHostChatsOff(down)).toBe(false);
   });
 
   it("says what a host that is not ready needs, and nothing for a signed-in one", () => {
     const t = (key: string, vars?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? `{${name}}`));
     expect(hostLine({ state: "connected", signed_in: true, protocol: "1.0.0" }, t)).toBeNull();
     expect(hostLine({ state: "off" }, t)).toBeNull();
-    expect(hostLine({ state: "connected", signed_in: false, protocol: "1.0.0" }, t)).toBe("Open VS Code on this PC once to sign the agent host in");
-    expect(hostLine({ state: "refused", server_version: "2.0.0" }, t)).toBe("VS Code's agent host speaks a protocol this bridge doesn't (server 2.0.0)");
-    expect(hostLine({ state: "no_server" }, t)).toBe("No VS Code server on this PC");
-    expect(hostLine({ state: "unsupported" }, t)).toBe("VS Code chats are not supported on Windows yet");
-    expect(hostLine({ state: "starting" }, t)).toBe("Starting VS Code's agent host…");
+    expect(hostLine({ state: "connected", signed_in: false, protocol: "1.0.0" }, t)).toBe("The agent host on this PC is not signed in to Copilot");
+    expect(hostLine({ state: "refused", server_version: "2.0.0" }, t)).toBe("The agent host refused this app's protocol (it speaks 2.0.0)");
+    expect(hostLine({ state: "no_server" }, t)).toBe("No agent host on this PC");
+    expect(hostLine({ state: "unsupported" }, t)).toBe("The agent host is not supported on Windows yet");
+    expect(hostLine({ state: "starting" }, t)).toBe("Starting the agent host…");
     // a PC that leaves the start to something else waits for the host to come up
-    expect(hostLine({ state: "waiting" }, t)).toBe("Starting VS Code's agent host…");
+    expect(hostLine({ state: "waiting" }, t)).toBe("Starting the agent host…");
   });
 });
 
@@ -119,37 +119,37 @@ describe("the phone's model and agent choice", () => {
     // another chat, or the same session on another PC, has no choice of its own
     expect(chosenFor("desk", "s2")).toEqual({});
     expect(chosenFor("laptop", "s1")).toEqual({});
-    expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(true);
+    expect(session.has("herdr-web-ui:host-chat-choice:desk:s1")).toBe(true);
     // a send that fails keeps it for the user's next tap
-    record(502, { error: { code: "vscode_failed", message: "down" } });
-    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).rejects.toThrow();
+    record(502, { error: { code: "agent_host_failed", message: "down" } });
+    await expect(sendHost("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).rejects.toThrow();
     expect(chosenFor("desk", "s1").model?.id).toBe("fictional/model-b");
     record(200, { queued: false });
-    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).toEqual({ queued: false });
+    expect(await sendHost("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).toEqual({ queued: false });
     // a read a moment behind (the chat's last is still the old one) keeps it
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-a", effort: null }, agent: null }).model?.id).toBe("fictional/model-b");
     // a read naming only the model as used keeps the whole pick
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: null }).agent).toBe("file:///tmp/fictional/agents/Report.agent.md");
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md" })).toEqual({});
-    expect(session.has("herdr-web-ui:vscode-choice:desk:s1")).toBe(false);
+    expect(session.has("herdr-web-ui:host-chat-choice:desk:s1")).toBe(false);
   });
 
-  it("createVscodeChat posts once and answers the session; the text and choice wait in the chat when the first message did not go", async () => {
+  it("createHostChat posts once and answers the session; the text and choice wait in the chat when the first message did not go", async () => {
     const body = { id: "00000000-0000-4000-8000-000000000001", cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-b", effort: "high" }, agent: null };
     let calls = record(200, { session: "s-new" });
-    expect(await createVscodeChat("desk", body)).toBe("s-new");
-    expect(calls).toEqual([{ url: "/api/machines/desk/vscode/chat/new", body }]);
-    expect(readVscodeDraft("desk", "s-new")).toBe("");
+    expect(await createHostChat("desk", body)).toBe("s-new");
+    expect(calls).toEqual([{ url: "/api/machines/desk/host-chats/chat/new", body }]);
+    expect(readHostDraft("desk", "s-new")).toBe("");
     expect(chosenFor("desk", "s-new")).toEqual({});
     // created, but its first message did not go: the chat opens with the words in its box, never re-sent
     calls = record(200, { session: "s-kept", sent: false });
-    expect(await createVscodeChat("desk", body)).toBe("s-kept");
+    expect(await createHostChat("desk", body)).toBe("s-kept");
     expect(calls).toHaveLength(1);
-    expect(readVscodeDraft("desk", "s-kept")).toBe("FICTIONAL first");
+    expect(readHostDraft("desk", "s-kept")).toBe("FICTIONAL first");
     expect(chosenFor("desk", "s-kept")).toEqual({ model: { id: "fictional/model-b", effort: "high" }, agent: null });
     // refused before anything was made: it throws, and nothing is kept anywhere
-    calls = record(503, { error: { code: "vscode_host", message: "FICTIONAL host down" } });
-    await expect(createVscodeChat("desk", { id: "00000000-0000-4000-8000-000000000002", cwd: "/tmp/fictional-repo", text: "FICTIONAL other" })).rejects.toThrow("FICTIONAL host down");
+    calls = record(503, { error: { code: "agent_host_down", message: "FICTIONAL host down" } });
+    await expect(createHostChat("desk", { id: "00000000-0000-4000-8000-000000000002", cwd: "/tmp/fictional-repo", text: "FICTIONAL other" })).rejects.toThrow("FICTIONAL host down");
     expect(calls).toHaveLength(1);
   });
 
@@ -157,12 +157,12 @@ describe("the phone's model and agent choice", () => {
     const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
     choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT });
     const calls = record(200, { queued: false });
-    const before: VscodeLast = { model: { id: "fictional/model-a", effort: null }, agent: null };
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL one" }, before);
+    const before: HostLast = { model: { id: "fictional/model-a", effort: null }, agent: null };
+    await sendHost("desk", { session: "s1", text: "FICTIONAL one" }, before);
     // the read after the send: the chat's last is now the pick, which is let go
-    const after: VscodeLast = { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT };
+    const after: HostLast = { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT };
     expect(settleChoice("desk", "s1", after)).toEqual({});
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL two" }, after);
+    await sendHost("desk", { session: "s1", text: "FICTIONAL two" }, after);
     const carried = { model: { id: "fictional/model-b", effort: "high" }, agent: REPORT };
     expect(calls.map((each) => withoutId(each.body))).toEqual([{ session: "s1", text: "FICTIONAL one", ...carried }, { session: "s1", text: "FICTIONAL two", ...carried }]);
   });
@@ -170,9 +170,9 @@ describe("the phone's model and agent choice", () => {
   it("with no pick, every send carries the chat's last model and agent; Agent and no model go as absent", async () => {
     const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
     const calls = record(200, { queued: true });
-    expect(await sendVscode("desk", { session: "s1", text: "FICTIONAL next" }, { model: { id: "fictional/model-a", effort: "low" }, agent: REPORT })).toEqual({ queued: true });
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL again" }, { model: { id: "fictional/model-a", effort: null }, agent: null });
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL bare" }, NONE);
+    expect(await sendHost("desk", { session: "s1", text: "FICTIONAL next" }, { model: { id: "fictional/model-a", effort: "low" }, agent: REPORT })).toEqual({ queued: true });
+    await sendHost("desk", { session: "s1", text: "FICTIONAL again" }, { model: { id: "fictional/model-a", effort: null }, agent: null });
+    await sendHost("desk", { session: "s1", text: "FICTIONAL bare" }, NONE);
     expect(calls.map((each) => withoutId(each.body))).toEqual([
       { session: "s1", text: "FICTIONAL next", model: { id: "fictional/model-a", effort: "low" }, agent: REPORT },
       { session: "s1", text: "FICTIONAL again", model: { id: "fictional/model-a" } },
@@ -180,48 +180,48 @@ describe("the phone's model and agent choice", () => {
     ]);
     // a pick of "Agent" over a chat that used Report: no agent goes
     choose("desk", "s1", { agent: null });
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL plain" }, { model: null, agent: REPORT });
+    await sendHost("desk", { session: "s1", text: "FICTIONAL plain" }, { model: null, agent: REPORT });
     expect(withoutId(calls.at(-1)?.body)).toEqual({ session: "s1", text: "FICTIONAL plain" });
   });
   it("a retry of the same words reuses the send's id, even after leaving the screen; new words or a sent message mint a new one", async () => {
     const ids = (calls: { body: unknown }[]) => calls.map((each) => (each.body as { id: string }).id);
     let calls = record(502, { error: { code: "bad_gateway", message: "FICTIONAL proxy" } });
-    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL once" }, NONE)).rejects.toThrow();
-    await expect(sendVscode("desk", { session: "s1", text: " FICTIONAL once " }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: "FICTIONAL once" }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: " FICTIONAL once " }, NONE)).rejects.toThrow();
     const [first, retry] = ids(calls);
     expect(first).toMatch(UUID);
     expect(retry).toBe(first);
     // kept with the chat (sessionStorage), not the screen; another chat has its own
-    expect(session.has("herdr-web-ui:vscode-send:desk:s1")).toBe(true);
+    expect(session.has("herdr-web-ui:host-chat-send:desk:s1")).toBe(true);
     calls = record(200, { queued: false });
-    await sendVscode("desk", { session: "s2", text: "FICTIONAL once" }, NONE);
+    await sendHost("desk", { session: "s2", text: "FICTIONAL once" }, NONE);
     expect(ids(calls)[0]).not.toBe(first);
     // changed words: a new id
     calls = record(502, {});
-    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE)).rejects.toThrow();
     const edited = ids(calls)[0];
     expect(edited).not.toBe(first);
     // sent: the next message, even with the same words, is a new one
     calls = record(200, { queued: false });
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
+    await sendHost("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
     expect(ids(calls)[0]).toBe(edited);
-    expect(session.has("herdr-web-ui:vscode-send:desk:s1")).toBe(false);
-    await sendVscode("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
+    expect(session.has("herdr-web-ui:host-chat-send:desk:s1")).toBe(false);
+    await sendHost("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
     expect(ids(calls)[1]).not.toBe(edited);
     expect(ids(calls)[1]).toMatch(UUID);
   });
 
   it("an attempt whose answer was lost is let go once a read shows its id: the same words later are a new message", async () => {
     let calls = record(502, { error: { code: "bad_gateway", message: "FICTIONAL proxy" } });
-    await expect(sendVscode("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
     const lost = (calls[0]!.body as { id: string }).id;
     // the user sees the turn in the chat (it went) and does not retry
     calls = record(200, { session: "s1", title: "t", status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, signature: "x", message_ids: [crypto.randomUUID(), lost] });
-    await fetchVscodeChat("desk", "s1");
-    expect(session.has("herdr-web-ui:vscode-send:desk:s1")).toBe(false);
+    await fetchHostChat("desk", "s1");
+    expect(session.has("herdr-web-ui:host-chat-send:desk:s1")).toBe(false);
     // later, the same words: a new message, under a new id
     calls = record(200, { queued: false });
-    await sendVscode("desk", { session: "s1", text: "yes" }, NONE);
+    await sendHost("desk", { session: "s1", text: "yes" }, NONE);
     const next = (calls[0]!.body as { id: string }).id;
     expect(next).toMatch(UUID);
     expect(next).not.toBe(lost);
@@ -229,34 +229,34 @@ describe("the phone's model and agent choice", () => {
 
   it("a read that does not show the attempt's id keeps it for the retry", async () => {
     let calls = record(502, {});
-    await expect(sendVscode("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
     const lost = (calls[0]!.body as { id: string }).id;
     record(200, { session: "s1", title: "t", status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, signature: "x", message_ids: [crypto.randomUUID()] });
-    await fetchVscodeChat("desk", "s1");
+    await fetchHostChat("desk", "s1");
     calls = record(200, { queued: false });
-    await sendVscode("desk", { session: "s1", text: "yes" }, NONE);
+    await sendHost("desk", { session: "s1", text: "yes" }, NONE);
     expect((calls[0]!.body as { id: string }).id).toBe(lost);
   });
 
   it("an attempt older than its TTL is not reused: a retry after it mints a new id", async () => {
     let calls = record(502, {});
-    await expect(sendVscode("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
     const lost = (calls[0]!.body as { id: string }).id;
-    const key = "herdr-web-ui:vscode-send:desk:s1";
+    const key = "herdr-web-ui:host-chat-send:desk:s1";
     const stored = JSON.parse(session.get(key)!) as Record<string, unknown>;
-    session.set(key, JSON.stringify({ ...stored, at: Date.now() - VSCODE_ATTEMPT_TTL_MS - 1 }));
+    session.set(key, JSON.stringify({ ...stored, at: Date.now() - HOST_ATTEMPT_TTL_MS - 1 }));
     calls = record(200, { queued: false });
-    await sendVscode("desk", { session: "s1", text: "yes" }, NONE);
+    await sendHost("desk", { session: "s1", text: "yes" }, NONE);
     expect((calls[0]!.body as { id: string }).id).not.toBe(lost);
     // an attempt with no time on it (an older bundle's) is not trusted either
     calls = record(502, {});
-    await expect(sendVscode("desk", { session: "s1", text: "again" }, NONE)).rejects.toThrow();
+    await expect(sendHost("desk", { session: "s1", text: "again" }, NONE)).rejects.toThrow();
     const untimed = (calls[0]!.body as { id: string }).id;
     session.set(key, JSON.stringify({ key: "again", id: untimed }));
     calls = record(200, { queued: false });
-    await sendVscode("desk", { session: "s1", text: "again" }, NONE);
+    await sendHost("desk", { session: "s1", text: "again" }, NONE);
     expect((calls[0]!.body as { id: string }).id).not.toBe(untimed);
-    expect(VSCODE_ATTEMPT_TTL_MS).toBe(10 * 60_000);
+    expect(HOST_ATTEMPT_TTL_MS).toBe(10 * 60_000);
   });
 
   it("attemptFor keeps the id for the same key and mints one for another", () => {
@@ -273,7 +273,7 @@ describe("the phone's model and agent choice", () => {
     expect(sendErrorText(new ApiError("/x", 502, "FICTIONAL proxy", null), t)).toBe(unsure);
     expect(sendErrorText(new ApiError("/x", 504, "FICTIONAL slow", null), t)).toBe(unsure);
     expect(sendErrorText(new TypeError("Failed to fetch"), t)).toBe(unsure);
-    expect(sendErrorText(new ApiError("/x", 503, "FICTIONAL host down", "vscode_host"), t)).toBe("Not sent: FICTIONAL host down");
+    expect(sendErrorText(new ApiError("/x", 503, "FICTIONAL host down", "agent_host_down"), t)).toBe("Not sent: FICTIONAL host down");
     expect(sendErrorText(new ApiError("/x", 400, "FICTIONAL bad", "invalid_id"), t, true)).toBe("FICTIONAL bad");
   });
 
@@ -291,7 +291,7 @@ describe("the phone's model and agent choice", () => {
   it("a pick made while a send is on its way is kept for the next one", async () => {
     choose("desk", "s1", { model: { id: "fictional/model-a" } });
     const post = held();
-    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL hello" }, NONE);
+    const sent = sendHost("desk", { session: "s1", text: "FICTIONAL hello" }, NONE);
     choose("desk", "s1", { model: { id: "fictional/model-b", effort: "high" } });
     post.resolve();
     await sent;
@@ -300,37 +300,37 @@ describe("the phone's model and agent choice", () => {
   });
 
   it("the composer's draft is kept per chat and let go by the send that carried it, screen or not", async () => {
-    expect(readVscodeDraft("desk", "s1")).toBe("");
-    keepVscodeDraft("desk", "s1", "FICTIONAL draft");
-    expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL draft");
-    expect(readVscodeDraft("desk", "s2")).toBe("");
+    expect(readHostDraft("desk", "s1")).toBe("");
+    keepHostDraft("desk", "s1", "FICTIONAL draft");
+    expect(readHostDraft("desk", "s1")).toBe("FICTIONAL draft");
+    expect(readHostDraft("desk", "s2")).toBe("");
     // a failed send keeps it
-    record(503, { error: { code: "vscode_host", message: "down" } });
-    await expect(sendVscode("desk", { session: "s1", text: "FICTIONAL draft" }, NONE)).rejects.toThrow();
-    expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL draft");
+    record(503, { error: { code: "agent_host_down", message: "down" } });
+    await expect(sendHost("desk", { session: "s1", text: "FICTIONAL draft" }, NONE)).rejects.toThrow();
+    expect(readHostDraft("desk", "s1")).toBe("FICTIONAL draft");
     // the chat left while the send is on its way (no screen clears anything): the sent words do not come back
     const post = held();
-    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL draft" }, NONE);
+    const sent = sendHost("desk", { session: "s1", text: "FICTIONAL draft" }, NONE);
     post.resolve();
     await sent;
-    expect(readVscodeDraft("desk", "s1")).toBe("");
-    expect(session.has("herdr-web-ui:vscode-draft:desk:s1")).toBe(false);
+    expect(readHostDraft("desk", "s1")).toBe("");
+    expect(session.has("herdr-web-ui:host-chat-draft:desk:s1")).toBe(false);
   });
 
   it("words typed while a send is on its way stay in the draft", async () => {
-    keepVscodeDraft("desk", "s1", "FICTIONAL first");
+    keepHostDraft("desk", "s1", "FICTIONAL first");
     const post = held();
-    const sent = sendVscode("desk", { session: "s1", text: "FICTIONAL first" }, NONE);
-    keepVscodeDraft("desk", "s1", "FICTIONAL first and more");
+    const sent = sendHost("desk", { session: "s1", text: "FICTIONAL first" }, NONE);
+    keepHostDraft("desk", "s1", "FICTIONAL first and more");
     post.resolve();
     await sent;
-    expect(readVscodeDraft("desk", "s1")).toBe("FICTIONAL first and more");
+    expect(readHostDraft("desk", "s1")).toBe("FICTIONAL first and more");
   });
 });
 
 describe("the new chat's folders", () => {
   it("folderChoices dedupes, orders by newest chat, caps at 8, drops null", () => {
-    const at = (session: string, cwd: string | null, ageMs: number): VscodeChatRow => ({ ...row(session, "idle", ageMs), cwd });
+    const at = (session: string, cwd: string | null, ageMs: number): HostChatRow => ({ ...row(session, "idle", ageMs), cwd });
     const rows = [
       at("a", "/tmp/fictional/old", 9 * DAY),
       at("b", "/tmp/fictional/new", 1000),
@@ -344,7 +344,7 @@ describe("the new chat's folders", () => {
   });
 
   it("sessionForFolder: the newest chat in the folder, else the PC's newest, else none", () => {
-    const at = (session: string, cwd: string | null, ageMs: number): VscodeChatRow => ({ ...row(session, "idle", ageMs), cwd });
+    const at = (session: string, cwd: string | null, ageMs: number): HostChatRow => ({ ...row(session, "idle", ageMs), cwd });
     const rows = [at("old-in", "/tmp/fictional/a", 3 * DAY), at("new-in", "/tmp/fictional/a", DAY), at("newest", "/tmp/fictional/b", 1000)];
     expect(sessionForFolder(rows, "/tmp/fictional/a")).toBe("new-in");
     expect(sessionForFolder(rows, "/tmp/fictional/elsewhere")).toBe("newest");
@@ -354,7 +354,7 @@ describe("the new chat's folders", () => {
 
 describe("the picker's model groups", () => {
   it("groups by the id's provider, the host's own models first as Copilot (provider null)", () => {
-    const model = (id: string) => ({ id, name: id, efforts: null });
+    const model = (id: string) => ({ id, name: id, provider: "copilotcli", efforts: null, context: null });
     const groups = groupModels([model("fictional/model-a"), model("own-1"), model("other/model-c"), model("fictional/model-b"), model("own-2")]);
     expect(groups.map((group) => [group.provider, group.models.map((each) => each.id)])).toEqual([
       [null, ["own-1", "own-2"]],
@@ -366,26 +366,26 @@ describe("the picker's model groups", () => {
 });
 
 describe("the pushes", () => {
-  it("a VS Code event is taken before the pane bookkeeping and goes to the listeners of a known PC only", () => {
+  it("a host chat event is taken before the pane bookkeeping and goes to the listeners of a known PC only", () => {
     const heard: string[] = [];
-    const stop = onVscodeMessage((machineId, message) => { heard.push(`${machineId} ${message.type}`); });
+    const stop = onHostChatMessage((machineId, message) => { heard.push(`${machineId} ${message.type}`); });
     try {
       const known = (id: string) => id === "desk";
-      const changed = { type: "machine-message", machine_id: "desk", message: { type: "vscode-chat-changed", session: "s1" } } as const;
-      expect(takeVscodeEvent(changed, known)).toBe(true);
-      expect(takeVscodeEvent({ ...changed, machine_id: "gone" }, known)).toBe(true);
-      expect(takeVscodeEvent({ type: "machine-message", machine_id: "desk", message: { type: "vscode-host", host: { state: "starting" } } }, known)).toBe(true);
-      expect(heard).toEqual(["desk vscode-chat-changed", "desk vscode-host"]);
+      const changed = { type: "machine-message", machine_id: "desk", message: { type: "host-chat-changed", session: "s1" } } as const;
+      expect(takeHostChatEvent(changed, known)).toBe(true);
+      expect(takeHostChatEvent({ ...changed, machine_id: "gone" }, known)).toBe(true);
+      expect(takeHostChatEvent({ type: "machine-message", machine_id: "desk", message: { type: "host-chat-state", host: { state: "starting" } } }, known)).toBe(true);
+      expect(heard).toEqual(["desk host-chat-changed", "desk host-chat-state"]);
       // anything else is the stream's own
-      expect(takeVscodeEvent({ type: "machine-message", machine_id: "desk", message: { type: "session-changed" } as never }, known)).toBe(false);
-      expect(takeVscodeEvent({ type: "machines", machines: [] }, known)).toBe(false);
+      expect(takeHostChatEvent({ type: "machine-message", machine_id: "desk", message: { type: "session-changed" } as never }, known)).toBe(false);
+      expect(takeHostChatEvent({ type: "machines", machines: [] }, known)).toBe(false);
     } finally { stop(); }
   });
 
-  it("App.tsx's event stream hands VS Code events over before it invalidates the pane snapshots", () => {
+  it("App.tsx's event stream hands host chat events over before it invalidates the pane snapshots", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const handler = app.slice(app.indexOf('new EventSource("/api/machines/events")'));
-    const taken = handler.indexOf("if (takeVscodeEvent(");
+    const taken = handler.indexOf("if (takeHostChatEvent(");
     const invalidated = handler.indexOf("snapshotRequests.current.invalidate()");
     expect(taken).toBeGreaterThan(0);
     expect(invalidated).toBeGreaterThan(taken);
@@ -427,7 +427,7 @@ async function until(ready: () => boolean, ms = 2_000): Promise<void> {
   throw new Error("timed out");
 }
 
-describe("each PC's group (VscodePcs)", () => {
+describe("each PC's group (HostPcs)", () => {
   const realFetch = globalThis.fetch;
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   let page: EventTarget & { visibilityState: string };
@@ -447,7 +447,7 @@ describe("each PC's group (VscodePcs)", () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       urls.push(url);
-      const [, machine, route] = url.match(/^\/api\/machines\/([^/]+)\/vscode\/(.*)$/) ?? [];
+      const [, machine, route] = url.match(/^\/api\/machines\/([^/]+)\/host-chats\/(.*)$/) ?? [];
       const { status, body } = answer(machine!, route!);
       return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
@@ -458,7 +458,7 @@ describe("each PC's group (VscodePcs)", () => {
   it("a 502 on a PC's first read shows no group; a later success shows it", async () => {
     let failing = true;
     serve((_, route) => failing ? { status: 502, body: { error: { code: "bad_gateway", message: "FICTIONAL proxy" } } } : ok(route));
-    const pcs = new VscodePcs();
+    const pcs = new HostPcs();
     const stop = pcs.listen();
     try {
       pcs.setRoster(["desk"]);
@@ -471,7 +471,7 @@ describe("each PC's group (VscodePcs)", () => {
       expect(pcs.get().has("desk")).toBe(false);
       failing = false;
       serve((_, route) => failing ? { status: 502, body: {} } : ok(route));
-      noteVscodeStreamOpen();
+      noteHostChatStreamOpen();
       await until(() => pcs.get().has("desk"));
       expect(pcs.get().get("desk")).toEqual({ host: CONNECTED, chats: [row("c1", "idle", 0)] });
       // shown, a transient failure keeps what it shows
@@ -482,16 +482,16 @@ describe("each PC's group (VscodePcs)", () => {
     } finally { stop(); }
   });
 
-  it("a host that is down (503 vscode_host) gets a group; vscode_off gets none and is not asked again until the roster changes", async () => {
+  it("a host that is down (503 agent_host_down) gets a group; host_chats_off gets none and is not asked again until the roster changes", async () => {
     serve((machine, route) => machine === "desk"
-      ? route === "state" ? { status: 200, body: { host: { state: "no_server" } } } : { status: 503, body: { error: { code: "vscode_host", message: "down" }, host: { state: "no_server" } } }
-      : { status: 404, body: { error: { code: "vscode_off", message: "off" } } });
-    const pcs = new VscodePcs();
+      ? route === "state" ? { status: 200, body: { host: { state: "no_server" } } } : { status: 503, body: { error: { code: "agent_host_down", message: "down" }, host: { state: "no_server" } } }
+      : { status: 404, body: { error: { code: "host_chats_off", message: "off" } } });
+    const pcs = new HostPcs();
     pcs.setRoster(["desk", "laptop"]);
     await until(() => pcs.get().has("desk"));
     expect(pcs.get().get("desk")).toEqual({ host: { state: "no_server" }, chats: [] });
     // the state read failing with the host down still makes the group
-    const urls = serve((machine) => machine === "desk" ? { status: 503, body: { error: { code: "vscode_host", message: "down" }, host: { state: "starting" } } } : { status: 404, body: { error: { code: "vscode_off", message: "off" } } });
+    const urls = serve((machine) => machine === "desk" ? { status: 503, body: { error: { code: "agent_host_down", message: "down" }, host: { state: "starting" } } } : { status: 404, body: { error: { code: "host_chats_off", message: "off" } } });
     pcs.setRoster(["desk", "laptop"]);
     await pcs.idle();
     expect(pcs.get().has("desk")).toBe(true);
@@ -504,7 +504,7 @@ describe("each PC's group (VscodePcs)", () => {
 
   it("reads every PC's list again when the page is shown again and when the event stream reopens", async () => {
     const urls = serve((_, route) => ok(route));
-    const pcs = new VscodePcs();
+    const pcs = new HostPcs();
     const stop = pcs.listen();
     try {
       pcs.setRoster(["desk"]);
@@ -518,21 +518,21 @@ describe("each PC's group (VscodePcs)", () => {
       page.visibilityState = "visible";
       page.dispatchEvent(new Event("visibilitychange"));
       await until(() => urls.length === 2);
-      expect(urls.sort()).toEqual(["/api/machines/desk/vscode/chats", "/api/machines/desk/vscode/state"]);
+      expect(urls.sort()).toEqual(["/api/machines/desk/host-chats/chats", "/api/machines/desk/host-chats/state"]);
       urls.length = 0;
-      noteVscodeStreamOpen();
+      noteHostChatStreamOpen();
       await until(() => urls.length === 2);
       // a list push reads it too; one chat's change does not
       urls.length = 0;
-      noteVscodeMessage("desk", { type: "vscode-chat-changed", session: "c1" });
+      noteHostChatMessage("desk", { type: "host-chat-changed", session: "c1" });
       await pcs.idle();
       expect(urls).toEqual([]);
-      noteVscodeMessage("desk", { type: "vscode-chat-changed", session: null });
+      noteHostChatMessage("desk", { type: "host-chat-changed", session: null });
       await until(() => urls.length === 2);
     } finally { stop(); }
     // stopped: resumes read nothing
     urls.length = 0;
-    noteVscodeStreamOpen();
+    noteHostChatStreamOpen();
     page.dispatchEvent(new Event("visibilitychange"));
     await pcs.idle();
     expect(urls).toEqual([]);

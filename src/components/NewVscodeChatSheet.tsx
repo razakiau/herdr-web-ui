@@ -1,12 +1,12 @@
 /**
- * "+ New VS Code chat": a sheet (a bottom sheet on a phone) that starts a chat in a folder of a PC
- * with its first message. The PC is the one whose button was tapped (another PC with VS Code chats
- * can be picked); its chats' folders are chips (lib/vscodeChats.ts folderChoices) and any absolute
+ * "+ New Copilot chat": a sheet (a bottom sheet on a phone) that starts a chat in a folder of a PC
+ * with its first message. The PC is the one whose button was tapped (another PC with host chats
+ * can be picked); its chats' folders are chips (lib/hostChats.ts folderChoices) and any absolute
  * path can be typed. Models and agents belong to a session, so the pills read them from the newest
  * chat in that folder, else the PC's newest (sessionForFolder); a PC with no chat yet offers only
  * "Agent", and the host uses its default model. "Start chat" posts once: a refusal keeps every field and
  * says why; a chat made opens, and if its first message did not go out, that message waits in its
- * composer (createVscodeChat): nothing is ever sent twice or a second chat made.
+ * composer (createHostChat): nothing is ever sent twice or a second chat made.
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -16,9 +16,9 @@ import "./NewSessionDialog.css";
 import "./VscodeChatView.css";
 
 import type { Machine } from "../../shared/machines.ts";
-import type { VscodeAgent, VscodeModel } from "../../shared/vscode.ts";
+import type { HostAgent, HostModel } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { agentName, attemptFor, basename, createVscodeChat, errorText, fetchVscodeModels, folderChoices, sendErrorText, sessionForFolder, type VscodePc } from "../lib/vscodeChats.ts";
+import { agentName, attemptFor, basename, createHostChat, errorText, fetchHostModels, folderChoices, sendErrorText, sessionForFolder, type HostPc } from "../lib/hostChats.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -26,10 +26,10 @@ import { RecentFolderChips } from "./RecentFolderChips.tsx";
 import { VscodePickerSheet } from "./VscodePickerSheet.tsx";
 
 export interface NewVscodeChatSheetProps {
-  /** the PCs that offer VS Code chats, and each one's chats */
+  /** the PCs that offer host chats, and each one's chats */
   machines: readonly Machine[];
-  pcs: ReadonlyMap<string, VscodePc>;
-  /** the PC whose "+ New VS Code chat" was tapped */
+  pcs: ReadonlyMap<string, HostPc>;
+  /** the PC whose "+ New Copilot chat" was tapped */
   machineId: string;
   onClose(): void;
   /** the chat made: the app opens it */
@@ -47,7 +47,7 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
   const [model, setModel] = useState<{ id: string; effort?: string } | null>(null);
   // null: "Agent", VS Code's own (sent as no agent at all)
   const [agent, setAgent] = useState<string | null>(null);
-  const [catalog, setCatalog] = useState<{ models: VscodeModel[]; agents: VscodeAgent[] } | null>(null);
+  const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [picker, setPicker] = useState<"model" | "agent" | null>(null);
   const [pending, setPending] = useState(false);
@@ -68,7 +68,7 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
     if (source === null) { setCatalog({ models: [], agents: [] }); return; }
     setCatalog(null);
     let live = true;
-    void fetchVscodeModels(machineId, source).then((value) => {
+    void fetchHostModels(machineId, source).then((value) => {
       if (!live) return;
       setCatalog(value);
       // a pick the new list does not offer is dropped, not sent
@@ -115,7 +115,7 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
     setError(null);
     attempt.current = attemptFor(attempt.current, JSON.stringify([machineId, folder, words]));
     try {
-      const session = await createVscodeChat(machineId, {
+      const session = await createHostChat(machineId, {
         id: attempt.current.id, cwd: folder, text: words,
         ...(model ? { model } : {}),
         ...(agent !== null ? { agent } : {}),
@@ -140,10 +140,10 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
 
   return createPortal(
     <div className="modal-scrim new-session-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <form ref={surface} className="modal new-session-modal new-vscode-chat" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}
+      <form ref={surface} className="modal new-session-modal new-host-chat" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}
         onSubmit={(event) => { event.preventDefault(); void start(); }}>
         <header className="modal-header">
-          <h2 className="modal-title" id={`${id}-title`}>{`${t("New VS Code chat")} · ${machineName}`}</h2>
+          <h2 className="modal-title" id={`${id}-title`}>{`${t("New Copilot chat")} · ${machineName}`}</h2>
           <button type="button" className="icon-button" aria-label={t("Close dialog")} disabled={pending} onClick={close}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body">
@@ -165,23 +165,23 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, o
           </div>}
           <div className="field">
             <span className="field-label" id={`${id}-pills`}>{t("Model and agent")}</span>
-            <div className="new-vscode-chat-pills" role="group" aria-labelledby={`${id}-pills`}>
-              <button type="button" className="composer-pill vscode-chat-pill vscode-chat-model" disabled={!pickable} aria-haspopup="dialog" aria-expanded={picker === "model"}
+            <div className="new-host-chat-pills" role="group" aria-labelledby={`${id}-pills`}>
+              <button type="button" className="composer-pill host-chat-pill host-chat-model" disabled={!pickable} aria-haspopup="dialog" aria-expanded={picker === "model"}
                 aria-label={t("Model: {model}", { model: model?.effort ? `${modelLabel} · ${model.effort}` : modelLabel })} onClick={() => setPicker("model")}>
                 <span className={`composer-model${model === null ? " is-none" : entry ? "" : " is-id"}`}>{modelLabel}</span>
                 {model?.effort && <span className="composer-reasoning"><span className="composer-reasoning-dot" aria-hidden="true">·</span><span className="composer-reasoning-short">{model.effort}</span></span>}
-                <ChevronDown className="vscode-chat-pill-caret" aria-hidden="true" />
+                <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
               </button>
-              <button type="button" className="composer-pill vscode-chat-pill vscode-chat-agent" disabled={!pickable} aria-haspopup="dialog" aria-expanded={picker === "agent"}
+              <button type="button" className="composer-pill host-chat-pill host-chat-agent" disabled={!pickable} aria-haspopup="dialog" aria-expanded={picker === "agent"}
                 aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => setPicker("agent")}>
                 <span className="composer-model">{agentLabel}</span>
-                <ChevronDown className="vscode-chat-pill-caret" aria-hidden="true" />
+                <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
               </button>
             </div>
           </div>
           <label className="field">
             <span className="field-label">{t("First message")}</span>
-            <textarea className="input new-vscode-chat-text" rows={4} value={text} disabled={pending} placeholder={t("Message VS Code")} spellCheck autoCapitalize="sentences" autoCorrect="on"
+            <textarea className="input new-host-chat-text" rows={4} value={text} disabled={pending} placeholder={t("Message Copilot")} spellCheck autoCapitalize="sentences" autoCorrect="on"
               onChange={(event) => setText(event.target.value)} />
           </label>
           {pending && <p className="new-session-note" role="status">{t("Starting…")}</p>}

@@ -91,6 +91,7 @@ describe("browser lane", () => {
     expect(rows(text).map((row) => row.script)).toContain("scripts/application-paging-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/palette-machines-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/restored-draft-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/host-chats-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/render-crash-demo-regression.ts");
     expect(rows(text).every((row) => row.code === 0 && row.seconds >= 0)).toBe(true);
     expect(rows(text).at(-1)?.script).toBe("scripts/herdr-profiles-browser-qa.ts");

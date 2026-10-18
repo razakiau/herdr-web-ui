@@ -7,7 +7,7 @@ import type { HostEntry } from "./registry.ts";
 
 const dirs: string[] = [];
 const tempHome = (): string => {
-  const dir = mkdtempSync(join(tmpdir(), "herdr-vscode-home-"));
+  const dir = mkdtempSync(join(tmpdir(), "herdr-agent-host-home-"));
   dirs.push(dir);
   return dir;
 };

@@ -6,20 +6,20 @@ import { chromium } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// One fictional VS Code chat on a remote demo PC, at 390 px: the sidebar group, the chat's rows,
+// One fictional host chat on a remote demo PC, at 390 px: the sidebar group, the chat's rows,
 // the question card, the model · effort and agent pills with their sheet, a send that queues, and
-// "+ New VS Code chat" (made and sent, and made with its first message not sent).
+// "+ New Copilot chat" (made and sent, and made with its first message not sent).
 // The roster's `remote` is the fixture's `local` cloned; this patched fetch answers that PC's
-// /api/vscode routes itself and records what the app posts. No live session or VS Code is read.
-// VSCODE_SHOTS=<dir> also saves the chat, the open sheet and the new-chat sheet as screenshots.
+// /api/host-chats routes itself and records what the app posts. No live session or agent host is read.
+// HOST_CHATS_SHOTS=<dir> also saves the chat, the open sheet and the new-chat sheet as screenshots.
 const SESSION = "fictional-session-1";
 const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
-const app = mkdtempSync(join(tmpdir(), "herdr-vscode-chats-"));
+const app = mkdtempSync(join(tmpdir(), "herdr-agent-host-chats-"));
 const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
   const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)};
-  const calls = window.vscodeCalls = { posts: [], models: [] };
-  const state = window.vscodeState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false };
+  const calls = window.hostCalls = { posts: [], models: [] };
+  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const roster = (original) => ["local", "remote"].map((id) => {
@@ -47,10 +47,10 @@ const patch = `(() => {
     ];
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
     const prompt = state.answered ? null : {
-      id: "req-1:q-1", agent: "vscode", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick a direction",
+      id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick a direction",
       body: null, options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: null }],
       multi_select: false, custom_option_index: null,
-      vscode: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east"] },
+      host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east"] },
     };
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: null, prompt,
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent]) };
@@ -58,7 +58,7 @@ const patch = `(() => {
   const push = (message) => {
     for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "remote", message }) }));
   };
-  window.setVscodeBusy = (busy) => { state.busy = busy; push({ type: "vscode-chat-changed", session: SESSION }); };
+  window.setHostBusy = (busy) => { state.busy = busy; push({ type: "host-chat-changed", session: SESSION }); };
   window.EventSource = class extends EventTarget {
     constructor(url, options) {
       super(); this.inner = new EventSourceDemo(url, options); this.readyState = 1; sources.add(this);
@@ -78,33 +78,33 @@ const patch = `(() => {
     const match = url.pathname.match(/^\\/api\\/machines\\/([^/]+)(\\/.*)$/);
     const machine = match ? decodeURIComponent(match[1]) : "local";
     const path = match ? "/api" + match[2] : url.pathname;
-    if (machine === "remote" && path.startsWith("/api/vscode/")) {
+    if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
-      if (path === "/api/vscode/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
-      if (path === "/api/vscode/chats") return json({ chats: [
+      if (path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
+      if (path === "/api/host-chats/chats") return json({ chats: [
         { session: SESSION, title: "FICTIONAL build chat", status: state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo" },
         { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs" },
         ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd })),
       ] });
-      if (path === "/api/vscode/chat") return json(read(url.searchParams.get("session")));
-      if (path === "/api/vscode/chat/new") {
+      if (path === "/api/host-chats/chat") return json(read(url.searchParams.get("session")));
+      if (path === "/api/host-chats/chat/new") {
         const session = "fictional-new-" + (state.created.length + 1);
         state.created.push({ session, cwd: body.cwd, text: body.text, sent: state.newSent });
         return json(state.newSent ? { session } : { session, sent: false });
       }
-      if (path === "/api/vscode/models") calls.models.push(url.searchParams.get("session"));
-      if (path === "/api/vscode/models") return json({
+      if (path === "/api/host-chats/models") calls.models.push(url.searchParams.get("session"));
+      if (path === "/api/host-chats/models") return json({
         models: [
-          { id: "fictional-own", name: "FICTIONAL Own", efforts: null },
-          { id: "fictional/model-a", name: "FICTIONAL Model A", efforts: null },
-          { id: "fictional/model-b", name: "FICTIONAL Model B", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] } },
+          { id: "fictional-own", name: "FICTIONAL Own", provider: "copilotcli", efforts: null, context: null },
+          { id: "fictional/model-a", name: "FICTIONAL Model A", provider: "copilotcli", efforts: null, context: null },
+          { id: "fictional/model-b", name: "FICTIONAL Model B", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null },
         ],
         agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
       });
-      if (path === "/api/vscode/chat/watch" || path === "/api/vscode/chat/draft" || path === "/api/vscode/chat/confirm") return json({ ok: true });
-      if (path === "/api/vscode/chat/answer") { state.answered = true; return json({ ok: true }); }
-      if (path === "/api/vscode/chat/send") {
+      if (path === "/api/host-chats/chat/watch" || path === "/api/host-chats/chat/draft" || path === "/api/host-chats/chat/confirm") return json({ ok: true });
+      if (path === "/api/host-chats/chat/answer") { state.answered = true; return json({ ok: true }); }
+      if (path === "/api/host-chats/chat/send") {
         // the proxy's 502 after the bridge got it: the message went, the answer did not
         const lost = state.failNextSend;
         state.failNextSend = false;
@@ -126,12 +126,12 @@ const patch = `(() => {
   };
 })();`;
 
-const shots = process.env["VSCODE_SHOTS"];
+const shots = process.env["HOST_CHATS_SHOTS"];
 try {
   await buildDemoApp(app);
-  writeFileSync(join(app, "vscode-chats.js"), patch);
+  writeFileSync(join(app, "host-chats.js"), patch);
   const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script><script src="./vscode-chats.js"></script><script type="module"'));
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script><script src="./host-chats.js"></script><script type="module"'));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     let file: string;
@@ -160,7 +160,7 @@ try {
           assert.match(String(id), UUID, `${post.path} carries a UUID id`);
           return rest;
         };
-        const posts = async (path: string): Promise<Post[]> => (await page.evaluate(() => (window as unknown as { vscodeCalls: { posts: Post[] } }).vscodeCalls.posts)).filter((post) => post.path === path);
+        const posts = async (path: string): Promise<Post[]> => (await page.evaluate(() => (window as unknown as { hostCalls: { posts: Post[] } }).hostCalls.posts)).filter((post) => post.path === path);
         const fits = async (what: string) => {
           const width = await page.evaluate(() => document.documentElement.scrollWidth);
           assert.ok(width <= 390, `${what}: no horizontal overflow at 390 px (scrollWidth ${width})`);
@@ -168,19 +168,19 @@ try {
         await page.goto(`http://127.0.0.1:${server.port}/`);
         await page.locator(".conn-live").waitFor({ state: "attached" });
 
-        // 1. the sidebar's group under the PC, with VS Code's mark
+        // 1. the sidebar's group under the PC, still with the vscode mark (Task 6 drops it)
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-        await page.getByRole("heading", { name: "VS Code chats", exact: true }).first().waitFor();
-        assert.equal(await page.getByRole("region", { name: "VS Code chats on Build PC", exact: true }).count(), 1, "the group's landmark names its PC");
-        const row = page.locator(`.vscode-chat-item[data-machine="remote"][data-vscode-session="${SESSION}"]`).first();
+        await page.getByRole("heading", { name: "Copilot", exact: true }).first().waitFor();
+        assert.equal(await page.getByRole("region", { name: "Copilot on Build PC", exact: true }).count(), 1, "the group's landmark names its PC");
+        const row = page.locator(`.host-chat-item[data-machine="remote"][data-host-session="${SESSION}"]`).first();
         await row.waitFor();
-        assert.equal(await row.locator('svg[aria-label="vscode"]').count(), 1, "the chat's row wears VS Code's mark");
-        assert.equal(await page.locator('.vscode-chat-item[data-machine="local"]').count(), 0, "a PC whose bridge has the feature off has no chats");
-        console.log("PASS the sidebar shows VS Code chats under the remote PC, with the VS Code mark");
+        assert.equal(await row.locator('svg[aria-label="vscode"]').count(), 1, "the chat's row wears the vscode mark until the sidebar redraw (Task 6)");
+        assert.equal(await page.locator('.host-chat-item[data-machine="local"]').count(), 0, "a PC whose bridge has the feature off has no chats");
+        console.log("PASS the sidebar shows the remote PC's host chats under it, headed Copilot");
 
         // 2. the chat: a user turn, an assistant's text and a folded tool row
         await row.locator(".agent-select").click();
-        const view = page.locator(`.vscode-chat[data-vscode-session="${SESSION}"]`);
+        const view = page.locator(`.host-chat[data-host-session="${SESSION}"]`);
         await view.waitFor();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" }).waitFor();
         await view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).waitFor();
@@ -190,7 +190,7 @@ try {
         assert.equal(await block.locator(".work-row").count(), 0, "a folded block draws no tool rows");
         await block.locator(".work-block-head").click();
         await block.locator(".work-row", { hasText: "FICTIONAL make test" }).waitFor();
-        await page.waitForFunction(() => (window as unknown as { vscodeCalls: { posts: { path: string }[] } }).vscodeCalls.posts.some((post) => post.path.endsWith("/vscode/chat/watch")));
+        await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/host-chats/chat/watch")));
         await fits("the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-5-chat-390.png") });
         console.log("PASS the chat shows a user turn, an assistant text and a folded tool row, and is watched");
@@ -199,94 +199,94 @@ try {
         const card = page.locator(".prompt-card");
         await card.getByRole("button", { name: /FICTIONAL south/ }).click();
         await card.waitFor({ state: "detached" });
-        const answers = await posts("/api/machines/remote/vscode/chat/answer");
+        const answers = await posts("/api/machines/remote/host-chats/chat/answer");
         assert.deepEqual(answers.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
         console.log("PASS the question card answers option 2 with its option id and goes away");
 
         // 4. model · effort and agent picks, then Send
-        const modelPill = view.locator(".vscode-chat-model");
+        const modelPill = view.locator(".host-chat-model");
         await modelPill.waitFor();
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model A/);
         await modelPill.click();
         const sheet = page.getByRole("dialog", { name: "Model and agent" });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        assert.deepEqual(await sheet.locator(".vscode-picker-group .vscode-picker-provider").allTextContents(), ["Copilot", "fictional"], "the host's own models (no provider in the id) stand first, as Copilot");
+        assert.deepEqual(await sheet.locator(".host-picker-group .host-picker-provider").allTextContents(), ["Copilot", "fictional"], "the host's own models (no provider in the id) stand first, as Copilot");
         await sheet.locator('[data-model="fictional/model-b"]').click();
         await sheet.locator('[data-effort="high"]').click();
         await sheet.waitFor({ state: "detached" });
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pill says the model and its effort");
-        await view.locator(".vscode-chat-agent").click();
+        await view.locator(".host-chat-agent").click();
         await sheet.waitFor();
-        assert.equal(await sheet.locator(".vscode-picker-option[data-agent]").first().textContent(), "Agent", '"Agent" comes first');
-        await sheet.getByText("VS Code's agent picker does not follow this choice; a message typed in VS Code uses VS Code's agent.", { exact: true }).waitFor();
+        assert.equal(await sheet.locator(".host-picker-option[data-agent]").first().textContent(), "Agent", '"Agent" comes first');
+        await sheet.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
         // the sheet slides up from the bottom edge: measured and drawn once it has settled
         await page.waitForFunction(() => {
-          const surface = document.querySelector(".vscode-picker");
+          const surface = document.querySelector(".host-picker");
           return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
         });
         await fits("the open sheet");
         if (shots) await page.screenshot({ path: join(shots, "task-5-sheet-390.png") });
         await sheet.locator(`[data-agent="${REPORT}"]`).click();
         await sheet.waitFor({ state: "detached" });
-        assert.match(await view.locator(".vscode-chat-agent").textContent() ?? "", /Report/);
-        const drafts = await posts("/api/machines/remote/vscode/chat/draft");
+        assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/);
+        const drafts = await posts("/api/machines/remote/host-chats/chat/draft");
         assert.deepEqual(drafts.at(-1)?.body, { session: SESSION, model: { id: "fictional/model-b", effort: "high" } }, "the model pick is written to the chat's draft");
         const box = view.getByRole("textbox", { name: "Message" });
         await box.fill("FICTIONAL next");
         await view.getByRole("button", { name: "Send message" }).click();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL next" }).waitFor();
-        const sends = await posts("/api/machines/remote/vscode/chat/send");
+        const sends = await posts("/api/machines/remote/host-chats/chat/send");
         assert.deepEqual(sends.map(bare), [{ session: SESSION, text: "FICTIONAL next", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }], "the send carries the model, its effort and the agent, once");
         assert.equal(await box.inputValue(), "", "a sent message leaves the box");
         console.log("PASS the pills pick model-b · high and Report; the send carries both and the draft the model");
 
         // 5. a busy chat: the composer says it works, and Send queues
-        await page.evaluate(() => (window as unknown as { setVscodeBusy(busy: boolean): void }).setVscodeBusy(true));
-        await view.locator(".vscode-chat-status", { hasText: "VS Code is working on this chat" }).waitFor();
+        await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
+        await view.locator(".host-chat-status", { hasText: "Copilot is working on this chat" }).waitFor();
         await box.fill("FICTIONAL later");
         await view.getByRole("button", { name: "Queue message" }).click();
-        await view.locator(".vscode-chat-status", { hasText: "Queued" }).waitFor();
-        const queued = await posts("/api/machines/remote/vscode/chat/send");
+        await view.locator(".host-chat-status", { hasText: "Queued" }).waitFor();
+        const queued = await posts("/api/machines/remote/host-chats/chat/send");
         assert.equal(queued.length, 2);
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pills still show model-b · high after the send");
-        assert.match(await view.locator(".vscode-chat-agent").textContent() ?? "", /Report/, "and Report");
+        assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/, "and Report");
         assert.deepEqual(bare(queued[1]), { session: SESSION, text: "FICTIONAL later", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "the next send carries the model and agent the pills show");
         console.log("PASS a busy chat says it is working, and Send queues the message with the model and agent the pills show");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
-        await page.evaluate(() => { (window as unknown as { vscodeState: { failNextSend: boolean } }).vscodeState.failNextSend = true; });
+        await page.evaluate(() => { (window as unknown as { hostState: { failNextSend: boolean } }).hostState.failNextSend = true; });
         await box.fill("FICTIONAL maybe");
         await view.getByRole("button", { name: "Queue message" }).click();
         await view.getByRole("alert").filter({ hasText: "Couldn't confirm it was sent. Send again: it won't go twice." }).waitFor();
         assert.equal(await box.inputValue(), "FICTIONAL maybe", "the words stay in the box");
         await view.getByRole("button", { name: "Queue message" }).click();
-        await view.locator(".vscode-chat-status", { hasText: "Queued" }).waitFor();
-        const retried = (await posts("/api/machines/remote/vscode/chat/send")).slice(2);
+        await view.locator(".host-chat-status", { hasText: "Queued" }).waitFor();
+        const retried = (await posts("/api/machines/remote/host-chats/chat/send")).slice(2);
         assert.equal(retried.length, 2);
         assert.match(String(retried[0]!.body["id"]), UUID);
         assert.equal(retried[1]!.body["id"], retried[0]!.body["id"], "the retry of the same words reuses the id");
-        assert.notEqual(retried[0]!.body["id"], (await posts("/api/machines/remote/vscode/chat/send"))[1]!.body["id"], "a new message has a new id");
+        assert.notEqual(retried[0]!.body["id"], (await posts("/api/machines/remote/host-chats/chat/send"))[1]!.body["id"], "a new message has a new id");
         console.log("PASS a send whose answer was lost says to send again, and the retry reuses its id");
 
         // 6. nothing wider than the phone
         await fits("the busy chat");
         console.log("PASS no horizontal overflow at 390 px");
 
-        // 7. "+ New VS Code chat" on the remote PC: a folder chip, a model, the first message, Start chat
-        const newChats = () => posts("/api/machines/remote/vscode/chat/new");
+        // 7. "+ New Copilot chat" on the remote PC: a folder chip, a model, the first message, Start chat
+        const newChats = () => posts("/api/machines/remote/host-chats/chat/new");
         const openNewSheet = async () => {
           await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-          await page.getByRole("button", { name: "New VS Code chat on Build PC", exact: true }).click();
-          const form = page.getByRole("dialog", { name: "New VS Code chat · Build PC" });
+          await page.getByRole("button", { name: "New Copilot chat on Build PC", exact: true }).click();
+          const form = page.getByRole("dialog", { name: "New Copilot chat · Build PC" });
           await form.waitFor();
           return form;
         };
-        assert.equal(await page.getByRole("button", { name: "New VS Code chat on Laptop" }).count(), 0, "a PC without the feature has no new-chat button");
+        assert.equal(await page.getByRole("button", { name: "New Copilot chat on Laptop" }).count(), 0, "a PC without the feature has no new-chat button");
         // the models and agents are a session's: the newest chat in the folder picked, else the PC's newest
-        const modelReads = async (): Promise<string[]> => page.evaluate(() => [...(window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models]);
+        const modelReads = async (): Promise<string[]> => page.evaluate(() => [...(window as unknown as { hostCalls: { models: string[] } }).hostCalls.models]);
         const nextModelRead = async (after: number, what: string): Promise<string | undefined> => {
-          await page.waitForFunction((count) => (window as unknown as { vscodeCalls: { models: string[] } }).vscodeCalls.models.length > count, after, { timeout: 10_000 })
+          await page.waitForFunction((count) => (window as unknown as { hostCalls: { models: string[] } }).hostCalls.models.length > count, after, { timeout: 10_000 })
             .catch(() => assert.fail(`${what}: the sheet read no models after the folder changed`));
           return (await modelReads())[after];
         };
@@ -302,37 +302,37 @@ try {
         await form.getByRole("button", { name: "Use folder /tmp/fictional-repo", exact: true }).click();
         assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the chip fills the folder");
         assert.equal(await nextModelRead(readsBefore + 2, "/tmp/fictional-repo"), SESSION, "back in /tmp/fictional-repo, its newest chat's models");
-        await form.locator(".vscode-chat-model").click();
+        await form.locator(".host-chat-model").click();
         const picker = page.getByRole("dialog", { name: "Model and agent" });
         await picker.locator('[data-model="fictional/model-a"]').click();
         await picker.waitFor({ state: "detached" });
-        assert.match(await form.locator(".vscode-chat-model").textContent() ?? "", /FICTIONAL Model A/);
+        assert.match(await form.locator(".host-chat-model").textContent() ?? "", /FICTIONAL Model A/);
         await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL first");
         await page.waitForFunction(() => {
-          const surface = document.querySelector(".new-vscode-chat");
+          const surface = document.querySelector(".new-host-chat");
           return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
         });
         await fits("the new-chat sheet");
         if (shots) await page.screenshot({ path: join(shots, "task-6-new-chat-sheet-390.png") });
         await form.getByRole("button", { name: "Start chat", exact: true }).click();
-        const made = page.locator('.vscode-chat[data-vscode-session="fictional-new-1"]');
+        const made = page.locator('.host-chat[data-host-session="fictional-new-1"]');
         await made.waitFor();
         await made.locator(".chat-turn-user", { hasText: "FICTIONAL first" }).waitFor();
         assert.equal(await form.count(), 0, "the sheet closes on the chat made");
         assert.deepEqual((await newChats()).map(bare), [{ cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-a" } }], "one chat/new with the folder, the text and the model");
-        console.log("PASS + New VS Code chat posts the folder chip's path and the first message once, and opens the chat made");
+        console.log("PASS + New Copilot chat posts the folder chip's path and the first message once, and opens the chat made");
 
         // 7b. made, but its first message did not go: the chat opens with the words in its box, nothing re-sent
-        await page.evaluate(() => { (window as unknown as { vscodeState: { newSent: boolean } }).vscodeState.newSent = false; });
-        const sendsBefore = (await posts("/api/machines/remote/vscode/chat/send")).length;
+        await page.evaluate(() => { (window as unknown as { hostState: { newSent: boolean } }).hostState.newSent = false; });
+        const sendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
         form = await openNewSheet();
         await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL kept");
         await form.getByRole("button", { name: "Start chat", exact: true }).click();
-        const kept = page.locator('.vscode-chat[data-vscode-session="fictional-new-2"]');
+        const kept = page.locator('.host-chat[data-host-session="fictional-new-2"]');
         await kept.waitFor();
         assert.equal(await kept.getByRole("textbox", { name: "Message" }).inputValue(), "FICTIONAL kept", "the unsent first message waits in the composer");
         assert.equal((await newChats()).length, 2, "exactly one chat/new for this tap: no second chat");
-        assert.equal((await posts("/api/machines/remote/vscode/chat/send")).length, sendsBefore, "nothing is sent on the user's behalf");
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).length, sendsBefore, "nothing is sent on the user's behalf");
         await fits("the chat made unsent");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a chat made with its first message unsent opens with the words in its composer, once");

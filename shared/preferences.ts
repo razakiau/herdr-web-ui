@@ -18,7 +18,7 @@ export interface SharedPreferences {
   revision: number;
   /** only the settings some browser has shared: one nobody changed is absent, and stays each device's own */
   settings: Partial<Record<SharedSettingKey, unknown>>;
-  /** sidebar pin keys (`machine:pane` for an agent, `machine:workspace:id` for a workspace, `machine:vscode:session` for a VS Code chat), in their order; absent until a browser first shares its pins */
+  /** sidebar pin keys (`machine:pane` for an agent, `machine:workspace:id` for a workspace, `machine:vscode:session` for a host chat), in their order; absent until a browser first shares its pins */
   pins?: string[];
 }
 

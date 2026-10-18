@@ -1,6 +1,6 @@
 /**
- * `/api/vscode/*`: this PC's VS Code chats, read from its agent host (server/vscode/connection.ts).
- * Off unless HERDR_WEB_AGENT_HOST=on: with no host every path answers 404 `vscode_off`. A
+ * `/api/host-chats/*`: this PC's host chats, read from its agent host (server/agent-host/connection.ts).
+ * Off unless HERDR_WEB_AGENT_HOST=on: with no host every path answers 404 `host_chats_off`. A
  * connection server reaches a PC's routes through its bridge (MACHINE_PROXY_PATH).
  *
  * Invariants:
@@ -8,7 +8,7 @@
  *   names each message (`id`, a UUID it reuses when the user sends the same words again after a
  *   failure): a send whose id the chat already has, as a turn or a pending message, dispatches
  *   nothing and answers as the first did, and so does a new chat whose session already exists.
- * - No response carries the host's token: errors are built from codes (VscodeError), never from a
+ * - No response carries the host's token: errors are built from codes (AgentHostError), never from a
  *   transport's message.
  * - A chat stays subscribed while a phone holds its lease (a read or POST /chat/watch, renewed
  *   within LEASE_MS); the lease's expiry releases the watch.
@@ -38,14 +38,14 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { VscodeHostState } from "../../shared/vscode.ts";
+import type { AgentHostState } from "../../shared/host-chats.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { agentsFrom, currentQuestion, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom } from "./chats.ts";
-import { VscodeError } from "./connection.ts";
+import { AgentHostError } from "./connection.ts";
 
-/** What the routes use of a VscodeConnection, so they can be tested against a stub. */
-export interface VscodeHost {
-  state(): VscodeHostState;
+/** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
+export interface AgentHost {
+  state(): AgentHostState;
   mirror(): { readonly root: RootState; getSession(uri: string): SessionState | undefined };
   summaries(): SessionSummary[];
   chat(session: string): ChatState | undefined;
@@ -65,7 +65,7 @@ export interface LeaseClock {
 export const LEASE_MS = 90_000;
 /** How long a read with `before` waits for the host's older turns to arrive after fetchTurns answers. */
 const OLDER_TURNS_WAIT_MS = 5_000;
-const PREFIX = "/api/vscode/";
+const PREFIX = "/api/host-chats/";
 
 const realClock: LeaseClock = {
   setTimeout: (run, ms) => { const timer = setTimeout(run, ms); timer.unref?.(); return timer; },
@@ -77,7 +77,7 @@ interface Lease { taking: Promise<() => void>; timer: unknown }
 /** Per session: one watch, held while a phone keeps renewing it. */
 class Leases {
   private readonly held = new Map<string, Lease>();
-  constructor(private readonly host: VscodeHost, private readonly clock: LeaseClock) {}
+  constructor(private readonly host: AgentHost, private readonly clock: LeaseClock) {}
 
   async take(session: string): Promise<void> {
     let lease = this.held.get(session);
@@ -123,15 +123,15 @@ class Sent {
     if (this.answered.size > SENT_MAX) this.answered.delete(this.answered.keys().next().value!);
   }
 }
-const sentSets = new WeakMap<VscodeHost, Sent>();
-function sentOf(host: VscodeHost): Sent {
+const sentSets = new WeakMap<AgentHost, Sent>();
+function sentOf(host: AgentHost): Sent {
   let sent = sentSets.get(host);
   if (!sent) { sent = new Sent(); sentSets.set(host, sent); }
   return sent;
 }
 
-const leaseSets = new WeakMap<VscodeHost, Leases>();
-function leasesOf(host: VscodeHost, clock: LeaseClock | undefined): Leases {
+const leaseSets = new WeakMap<AgentHost, Leases>();
+function leasesOf(host: AgentHost, clock: LeaseClock | undefined): Leases {
   let leases = leaseSets.get(host);
   if (!leases) { leases = new Leases(host, clock ?? realClock); leaseSets.set(host, leases); }
   return leases;
@@ -144,16 +144,16 @@ class Refusal extends Error {
 const refuse = (response: Response): never => { throw new Refusal(response); };
 
 /**
- * The answer for a `/api/vscode/` path; null for any other path. `clock` is the lease timers' (tests);
+ * The answer for a `/api/host-chats/` path; null for any other path. `clock` is the lease timers' (tests);
  * it is read when a host's first route is answered.
  */
-export function vscodeRoute(request: Request, pathname: string, host: VscodeHost | null, clock?: LeaseClock): Promise<Response> | null {
+export function hostChatsRoute(request: Request, pathname: string, host: AgentHost | null, clock?: LeaseClock): Promise<Response> | null {
   if (!pathname.startsWith(PREFIX)) return null;
   return answer(request, pathname.slice(PREFIX.length), host, clock);
 }
 
 type Handler = (call: Call) => Promise<Response>;
-interface Call { host: VscodeHost; leases: Leases; url: URL; body: Record<string, unknown> }
+interface Call { host: AgentHost; leases: Leases; url: URL; body: Record<string, unknown> }
 
 const GETS: Record<string, Handler> = {
   // the connection keeps its last list after a disconnect: a down host says so instead of a stale list
@@ -170,15 +170,15 @@ const POSTS: Record<string, Handler> = {
   "chat/new": newChat,
 };
 
-async function answer(request: Request, route: string, host: VscodeHost | null, clock: LeaseClock | undefined): Promise<Response> {
-  if (!host) return jsonResponse({ error: { code: "vscode_off", message: "VS Code chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
+async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined): Promise<Response> {
+  if (!host) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
   if (route === "state") {
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     return jsonResponse({ host: host.state() });
   }
   const get = GETS[route];
   const post = POSTS[route];
-  if (!get && !post) return jsonResponse({ error: { code: "not_found", message: `unknown endpoint /api/vscode/${route}` } }, 404);
+  if (!get && !post) return jsonResponse({ error: { code: "not_found", message: `unknown endpoint /api/host-chats/${route}` } }, 404);
   if (get && request.method !== "GET") return badRequest("method_not_allowed", "use GET");
   if (post && request.method !== "POST") return badRequest("method_not_allowed", "use POST");
   let body: Record<string, unknown> = {};
@@ -196,14 +196,14 @@ async function answer(request: Request, route: string, host: VscodeHost | null, 
   }
 }
 
-function hostDown(host: VscodeHost): Response {
-  return jsonResponse({ error: { code: "vscode_host", message: "VS Code's agent host is not connected" }, host: host.state() }, 503);
+function hostDown(host: AgentHost): Response {
+  return jsonResponse({ error: { code: "agent_host_down", message: "the agent host is not connected" }, host: host.state() }, 503);
 }
 
-function failure(error: unknown, host: VscodeHost): Response {
-  if (error instanceof VscodeError) {
+function failure(error: unknown, host: AgentHost): Response {
+  if (error instanceof AgentHostError) {
     if (error.code === "not_connected") return hostDown(host);
-    return jsonResponse({ error: { code: "vscode_failed", message: `VS Code's agent host failed the request (${error.code})` } }, 502);
+    return jsonResponse({ error: { code: "agent_host_failed", message: `the agent host failed the request (${error.code})` } }, 502);
   }
   return errorResponse(error);
 }
@@ -248,14 +248,14 @@ function messageText(value: unknown): string {
 
 // ─── Sessions and chats ──────────────────────────────────────────────────────
 
-function connected(host: VscodeHost): void {
+function connected(host: AgentHost): void {
   if (host.state().state !== "connected") refuse(hostDown(host));
 }
 
-const missing = (): never => refuse(jsonResponse({ error: { code: "vscode_chat_missing", message: "no such VS Code chat on this PC" } }, 404));
+const missing = (): never => refuse(jsonResponse({ error: { code: "host_chat_missing", message: "no such host chat on this PC" } }, 404));
 
 /** A Copilot CLI session the host knows; another provider's session is not one of these chats, whatever its id. */
-function known(host: VscodeHost, session: string): boolean {
+function known(host: AgentHost, session: string): boolean {
   const provider = host.summaries().find((summary) => summary.resource === session)?.provider ?? host.mirror().getSession(session)?.provider;
   return provider === PROVIDER;
 }
@@ -267,7 +267,7 @@ async function watched({ host, leases }: Call, session: string): Promise<{ chann
   try {
     await leases.take(session);
   } catch (error) {
-    if (error instanceof VscodeError && error.code === "rpc_error") missing();
+    if (error instanceof AgentHostError && error.code === "rpc_error") missing();
     throw error;
   }
   const channel = host.mirror().getSession(session)?.defaultChat;
@@ -275,7 +275,7 @@ async function watched({ host, leases }: Call, session: string): Promise<{ chann
   return channel && chat ? { channel, chat } : missing();
 }
 
-const titleOf = (host: VscodeHost, session: string): string =>
+const titleOf = (host: AgentHost, session: string): string =>
   host.summaries().find((summary) => summary.resource === session)?.title ?? host.mirror().getSession(session)?.title ?? "";
 
 /** Polls the mirror (the host's turnsLoaded follows its fetchTurns answer) until `ready`, or the deadline. */
@@ -334,7 +334,7 @@ function alreadyHas(chat: ChatState, id: string): { queued: boolean } | null {
  * a queued message (its id). An id this host already sent, or the chat already has, dispatches
  * nothing: the answer is the first one's (queued while still pending).
  */
-function send(host: VscodeHost, session: string, channel: string, chat: ChatState, message: Message, id: string): { queued: boolean } {
+function send(host: AgentHost, session: string, channel: string, chat: ChatState, message: Message, id: string): { queued: boolean } {
   const had = alreadyHas(chat, id);
   if (had) return had;
   // sent by this bridge, and no longer in the chat under its id: a queued message that has since
@@ -393,7 +393,7 @@ async function newChat(call: Call): Promise<Response> {
     if (!channel || !chat) return jsonResponse({ session, sent: false });
     send(call.host, session, channel, chat, messageFrom(call.host.mirror().root, words, model, agent), id);
   } catch (error) {
-    console.warn(`vscode: chat/new made ${session} but its first message did not go (${errorName(error)})`);
+    console.warn(`agent-host: chat/new made ${session} but its first message did not go (${errorName(error)})`);
     return jsonResponse({ session, sent: false });
   }
   return jsonResponse({ session });

@@ -25,7 +25,7 @@ import { AhpStateMirror } from "@microsoft/agent-host-protocol/client";
 const ROOT = "ahp-root://";
 const quiet = (): void => {};
 
-export class VscodeMirror extends AhpStateMirror {
+export class AgentHostMirror extends AhpStateMirror {
   private ownRoot: RootState = { agents: [] };
   private readonly ownSessions = new Map<string, SessionState>();
   private readonly ownChats = new Map<string, ChatState>();

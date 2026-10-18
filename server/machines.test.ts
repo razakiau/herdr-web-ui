@@ -78,9 +78,9 @@ describe("machine boundaries", () => {
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/split", "pane/zoom", "pane/swap", "pane/resize", "pane/clear", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
   });
-  it("MACHINE_PROXY_PATH proxies vscode routes and nothing past them", () => {
-    for (const path of ["vscode/state", "vscode/chats", "vscode/chat", "vscode/chat/watch", "vscode/chat/send", "vscode/chat/answer", "vscode/chat/confirm", "vscode/chat/draft", "vscode/chat/new", "vscode/models"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
-    for (const path of ["vscode/chat/send/extra", "vscode/../auth", "vscode/token", "vscode", "vscode/", "vscode/state/extra", "vscode/chat/../../auth"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+  it("MACHINE_PROXY_PATH proxies host-chats routes and nothing past them", () => {
+    for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
   });
 });
 
@@ -658,14 +658,14 @@ describe("bridge verification failures", () => {
   });
 });
 
-describe("VS Code chats through a bridge", () => {
+describe("host chats through a bridge", () => {
   const dirs: string[] = [];
   const stops: Array<() => void> = [];
   afterEach(() => {
     for (const stop of stops.splice(0).reverse()) stop();
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
-  const temp = () => { const dir = mkdtempSync(join(tmpdir(), "herdr-bridge-vscode-")); dirs.push(dir); return dir; };
+  const temp = () => { const dir = mkdtempSync(join(tmpdir(), "herdr-bridge-agent-host-")); dirs.push(dir); return dir; };
   const offline = async (): Promise<never> => { throw new Error("local offline"); };
 
   /** The start script a manager built with `agentHost` sends to a POSIX PC that runs no bridge yet. */
@@ -717,7 +717,7 @@ describe("VS Code chats through a bridge", () => {
     for (const script of [...posix, ...windows]) expect(script).not.toContain("HERDR_WEB_AGENT_HOST_START");
   });
 
-  it("a bridge's vscode-chat-changed reaches the phone as a machine-message", async () => {
+  it("a bridge's host-chat-changed reaches the phone as a machine-message", async () => {
     const push = { seed() {}, onStatus: async () => {}, onEnded: async () => {} } as unknown as PushService;
     const manager = new MachineManager(temp(), push, {} as CompletionTracker, offline, true);
     stops.push(() => manager.stop());
@@ -755,14 +755,14 @@ describe("VS Code chats through a bridge", () => {
     stops.push(unsubscribe);
     if (!observer) throw new Error("remote observer missing");
     const frames: ServerMessage[] = [
-      { type: "vscode-chat-changed", session: "copilotcli:/00000000-0000-4000-8000-000000000001" },
-      { type: "vscode-chat-changed", session: null },
-      { type: "vscode-host", host: { state: "connected", signed_in: true, protocol: "1.0.0" } },
+      { type: "host-chat-changed", session: "copilotcli:/00000000-0000-4000-8000-000000000001" },
+      { type: "host-chat-changed", session: null },
+      { type: "host-chat-state", host: { state: "connected", signed_in: true, protocol: "1.0.0" } },
     ];
     for (const frame of frames) observer.send(JSON.stringify(frame));
     await heard.promise;
     expect(relayed).toEqual(frames);
-    // a VS Code frame is relayed as it is and leaves the PC's herdr snapshot alone
+    // a host chat frame is relayed as it is and leaves the PC's herdr snapshot alone
     expect(runtime.machine.snapshot).toBe(before);
   });
 });

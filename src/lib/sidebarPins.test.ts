@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isVscodePinKey, isWorkspacePinKey, loadSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, vscodePinKey, workspacePinKey } from "./sidebarPins.ts";
+import { isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, workspacePinKey } from "./sidebarPins.ts";
 
 describe("sidebar agent pins", () => {
   it("keys a pin by PC and pane", () => {
@@ -29,15 +29,15 @@ describe("sidebar agent pins", () => {
     expect(pruneSidebarPins(["pc:p1", "pc-extra:p2"], new Set(), [{ id: "pc", snapshot: null }])).toEqual(["pc:p1"]);
   });
 
-  it("keys a VS Code chat by PC and session, apart from every pane and workspace", () => {
-    expect(vscodePinKey("m", "copilotcli:/x")).toBe("m:vscode:copilotcli:/x");
-    expect(isVscodePinKey(vscodePinKey("m", "copilotcli:/x"))).toBe(true);
-    expect(isVscodePinKey(sidebarPinKey("m", "w1:p1"))).toBe(false);
-    expect(isVscodePinKey(workspacePinKey("m", "w1"))).toBe(false);
-    expect(isWorkspacePinKey(vscodePinKey("m", "s"))).toBe(false);
+  it("keys a host chat by PC and session, apart from every pane and workspace", () => {
+    expect(hostChatPinKey("m", "copilotcli:/x")).toBe("m:vscode:copilotcli:/x");
+    expect(isHostChatPinKey(hostChatPinKey("m", "copilotcli:/x"))).toBe(true);
+    expect(isHostChatPinKey(sidebarPinKey("m", "w1:p1"))).toBe(false);
+    expect(isHostChatPinKey(workspacePinKey("m", "w1"))).toBe(false);
+    expect(isWorkspacePinKey(hostChatPinKey("m", "s"))).toBe(false);
   });
 
-  it("pruning agent pins keeps VS Code pins", () => {
+  it("pruning agent pins keeps host chat pins", () => {
     expect(pruneSidebarPins(["m:vscode:copilotcli:/x", "m:gone-pane"], new Set(), [{ id: "m", snapshot: {} }])).toEqual(["m:vscode:copilotcli:/x"]);
   });
 

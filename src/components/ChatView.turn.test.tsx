@@ -19,7 +19,7 @@ const render = (paneId: string, turn: ConversationTurn): string => {
 };
 
 describe("a user turn's images", () => {
-  it("a VS Code chat's turn (no pane) reads no file for an @image mention", () => {
+  it("a host chat's turn (no pane) reads no file for an @image mention", () => {
     const html = render("", user("FICTIONAL look at @shots/x.png please"));
     expect(html).toContain("FICTIONAL look at");
     expect(html).not.toContain("fs/file");

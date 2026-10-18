@@ -165,7 +165,7 @@ export class MachineManager {
   private autoQueued = new Set<string>();
   private emitTimer?: ReturnType<typeof setTimeout>;
 
-  /** `agentHost`: the bridges this manager starts show their PC's VS Code chats (HERDR_WEB_AGENT_HOST=on) */
+  /** `agentHost`: the bridges this manager starts show their PC's host chats (HERDR_WEB_AGENT_HOST=on) */
   constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes), private readonly agentHost = false) {
     this.profileState = new HerdrProfileState(stateDir);
     this.statePath = join(stateDir, "machines.json");

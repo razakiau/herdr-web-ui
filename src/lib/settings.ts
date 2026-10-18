@@ -23,8 +23,8 @@ export type Density = "compact" | "comfortable";
 export type SidebarRows = "one" | "two";
 /** the Agents list's order: herdr's workspace order, or a waiting agent first and then the latest change */
 export type AgentOrder = "workspace" | "activity";
-/** Which VS Code chats the Agents list shows: the live ones (working, asking, or pinned), or the recent ones too. */
-export type VscodeChatsInAgents = "live" | "recent";
+/** Which host chats the Agents list shows: the live ones (working, asking, or pinned), or the recent ones too. */
+export type HostChatsInAgents = "live" | "recent";
 /** how agent logos are drawn: in their brand colors, or without color: Claude's in the text color, the others in grey (data-marks on <html>) */
 export type AgentMarks = "color" | "mono";
 /** what the plan meters count: the share of a limit used, or what is left of it */
@@ -72,8 +72,8 @@ export interface Settings {
   sidebarRows: SidebarRows;
   /** The Agents list's order. Activity is display-only: herdr's own order never changes. */
   agentOrder: AgentOrder;
-  /** VS Code chats in the Agents list: live only, or every chat of the last days too (each PC's group lists them all) */
-  vscodeChatsInAgents: VscodeChatsInAgents;
+  /** host chats in the Agents list: live only, or every chat of the last days too (each PC's group lists them all) */
+  vscodeChatsInAgents: HostChatsInAgents;
   /** Agent logos: brand colors, or without color, so a list of one agent is not a stripe of tiles */
   agentMarks: AgentMarks;
   /** the sidebar's state marks: this app's own, or herdr's dots or symbols, as its `[ui] status_indicators` (lib/status.ts) */

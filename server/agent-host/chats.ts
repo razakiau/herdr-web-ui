@@ -31,10 +31,10 @@ import {
   type Turn,
 } from "@microsoft/agent-host-protocol";
 import type { ConversationPart, ConversationTurn, InteractivePromptOption } from "../../shared/protocol.ts";
-import type { VscodeAgent, VscodeChatRead, VscodeChatRow, VscodeModel } from "../../shared/vscode.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostModel } from "../../shared/host-chats.ts";
 
 export const PROVIDER = "copilotcli";
-/** InteractivePrompt.agent for every VS Code card. */
+/** InteractivePrompt.agent for every host chat card. */
 const PROMPT_AGENT = "copilot";
 /** The typed-answer slot's label, after a question's own options. */
 export const OTHER_LABEL = "Other";
@@ -43,7 +43,7 @@ const ANSWER_LABEL = "Answer";
 /** In `option_ids`: the slot that has no host id (the typed answer, or a default Approve/Deny). */
 const NO_ID = "";
 
-type Status = VscodeChatRow["status"];
+type Status = HostChatRow["status"];
 
 /** Bit flags: InputNeeded (24) includes InProgress (8), so it is tested first. */
 export function statusOf(status: number): Status {
@@ -59,7 +59,7 @@ function pathOf(uri: string | undefined): string | null {
 }
 
 /** The chat list: Copilot CLI sessions only, newest first. */
-export function rowsFrom(summaries: SessionSummary[]): VscodeChatRow[] {
+export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
   return summaries
     .filter((summary) => summary.provider === PROVIDER)
     .map((summary) => ({
@@ -190,7 +190,7 @@ function questionOptions(question: ChatInputQuestion): { options: InteractivePro
   }
 }
 
-function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion): NonNullable<VscodeChatRead["prompt"]> {
+function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion): NonNullable<HostChatRead["prompt"]> {
   const questions = request.questions ?? [];
   const { options, ids, custom } = questionOptions(question);
   return {
@@ -210,11 +210,11 @@ function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion):
         current: each.id === question.id,
       })),
     } : {}),
-    vscode: { request_id: request.id, question_id: question.id, option_ids: ids },
+    host: { request_id: request.id, question_id: question.id, option_ids: ids },
   };
 }
 
-function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<VscodeChatRead["prompt"]> {
+function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<HostChatRead["prompt"]> {
   const own = tool.status === ToolCallStatus.PendingConfirmation ? tool.options ?? [] : [];
   const choices = own.length > 0
     ? own.map((option) => ({ label: option.label, id: option.id, approves: option.kind === ConfirmationOptionKind.Approve }))
@@ -231,12 +231,12 @@ function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<Vscode
     options: choices.map((choice) => ({ label: choice.label, description: null })),
     multi_select: false,
     custom_option_index: null,
-    vscode: { tool_call_id: tool.toolCallId, turn_id: turnId, option_ids: choices.map((c) => c.id), approves: choices.map((c) => c.approves) },
+    host: { tool_call_id: tool.toolCallId, turn_id: turnId, option_ids: choices.map((c) => c.id), approves: choices.map((c) => c.approves) },
   };
 }
 
 /** What the running turn waits on: its first open question, else its first tool call to confirm. */
-export function promptFrom(chat: ChatState): VscodeChatRead["prompt"] {
+export function promptFrom(chat: ChatState): HostChatRead["prompt"] {
   const active = chat.activeTurn;
   if (!active) return null;
   for (const request of openRequests(chat)) {
@@ -250,7 +250,7 @@ export function promptFrom(chat: ChatState): VscodeChatRead["prompt"] {
 // ─── Models and agents ───────────────────────────────────────────────────────
 
 /** The reasoning-effort property of a model's configSchema: `thinkingLevel`, else its first enum. */
-function effortsOf(schema: VscodeModelSchema | undefined): VscodeModel["efforts"] {
+function effortsOf(schema: HostModelSchema | undefined): HostModel["efforts"] {
   const properties = schema?.properties ?? {};
   const named = properties["thinkingLevel"];
   const entry: [string, { enum?: unknown[] }] | undefined = Array.isArray(named?.enum)
@@ -259,11 +259,13 @@ function effortsOf(schema: VscodeModelSchema | undefined): VscodeModel["efforts"
   if (!entry) return null;
   return { key: entry[0], values: (entry[1].enum ?? []).map(String) };
 }
-type VscodeModelSchema = { properties?: Record<string, { enum?: unknown[] }> };
+type HostModelSchema = { properties?: Record<string, { enum?: unknown[] }> };
 
-export function modelsFrom(root: RootState): VscodeModel[] {
+export function modelsFrom(root: RootState): HostModel[] {
   const agent = root.agents.find((each) => each.provider === PROVIDER);
-  return (agent?.models ?? []).map((model) => ({ id: model.id, name: model.name, efforts: effortsOf(model.configSchema) }));
+  return (agent?.models ?? []).map((model) => ({
+    id: model.id, name: model.name, provider: model.provider, efforts: effortsOf(model.configSchema), context: model.maxContextWindow ?? null,
+  }));
 }
 
 /** A model choice on the wire: the effort goes under the model's own effort key. */
@@ -273,8 +275,8 @@ export function modelSelection(root: RootState, model: { id: string; effort?: st
 }
 
 /** Enabled custom agents, top-level or inside an enabled container, once each. */
-export function agentsFrom(session: SessionState | undefined): VscodeAgent[] {
-  const found = new Map<string, VscodeAgent>();
+export function agentsFrom(session: SessionState | undefined): HostAgent[] {
+  const found = new Map<string, HostAgent>();
   const visit = (entries: readonly unknown[]): void => {
     for (const raw of entries) {
       const entry = raw as Customization & { enabled?: boolean; description?: string; children?: unknown[] };
@@ -293,7 +295,7 @@ export function agentsFrom(session: SessionState | undefined): VscodeAgent[] {
 // ─── A chat, read ────────────────────────────────────────────────────────────
 
 /** The newest turn's model (its effort read from the config's one value), else the draft's. */
-function modelOf(chat: ChatState): VscodeChatRead["model"] {
+function modelOf(chat: ChatState): HostChatRead["model"] {
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const selection = newest?.message.model ?? chat.draft?.model;
   if (!selection) return null;
@@ -302,11 +304,11 @@ function modelOf(chat: ChatState): VscodeChatRead["model"] {
   return { id: selection.id, effort: typeof effort === "string" ? effort : null };
 }
 
-export function readFrom(session: string, title: string, chat: ChatState): VscodeChatRead {
+export function readFrom(session: string, title: string, chat: ChatState): HostChatRead {
   const prompt = promptFrom(chat);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const status = statusOf(chat.status);
-  const read: Omit<VscodeChatRead, "signature"> = {
+  const read: Omit<HostChatRead, "signature"> = {
     session,
     title: chat.title || title,
     status,

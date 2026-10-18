@@ -6,7 +6,7 @@ import { liveStandalone, registryDirs } from "./registry.ts";
 
 const dirs: string[] = [];
 const tempDir = (): string => {
-  const dir = mkdtempSync(join(tmpdir(), "herdr-vscode-registry-"));
+  const dir = mkdtempSync(join(tmpdir(), "herdr-agent-host-registry-"));
   dirs.push(dir);
   return dir;
 };

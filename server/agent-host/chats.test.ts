@@ -19,7 +19,7 @@ const asking = (request: Record<string, unknown>) => chat({
   activeTurn: { id: "turn-2", startedAt: AT, message: user("FICTIONAL ask me"), usage: undefined, responseParts: [{ kind: "inputRequest", request }] },
 });
 
-describe("VS Code chat mappers", () => {
+describe("host chat mappers", () => {
   it("a turn maps to a user turn and an assistant turn with folded tools", () => {
     const state = chat({
       turns: [{
@@ -84,11 +84,11 @@ describe("VS Code chat mappers", () => {
       body: "rm /tmp/fictional-repo/x",
       options: [{ label: "Allow once", description: null }, { label: "Always allow", description: null }, { label: "Skip", description: null }],
       multi_select: false, custom_option_index: null,
-      vscode: { tool_call_id: "call-9", turn_id: "turn-2", option_ids: ["allow-once", "allow-always", "no"], approves: [true, true, false] },
+      host: { tool_call_id: "call-9", turn_id: "turn-2", option_ids: ["allow-once", "allow-always", "no"], approves: [true, true, false] },
     });
     const plain = promptFrom(pending())!;
     expect(plain.options.map((option) => option.label)).toEqual(["Approve", "Deny"]);
-    expect(plain.vscode).toEqual({ tool_call_id: "call-9", turn_id: "turn-2", option_ids: ["", ""], approves: [true, false] });
+    expect(plain.host).toEqual({ tool_call_id: "call-9", turn_id: "turn-2", option_ids: ["", ""], approves: [true, false] });
     expect(promptFrom(chat({}))).toBeNull();
   });
 
@@ -98,12 +98,12 @@ describe("VS Code chat mappers", () => {
       id: "req-1:q-color", agent: "copilot", kind: "question", title: "Color", question: "FICTIONAL which color?", body: null,
       options: [{ label: "Red", description: null }, { label: "Blue", description: "the calm one" }],
       multi_select: false, custom_option_index: null,
-      vscode: { request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue"] },
+      host: { request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue"] },
     });
     const free = promptFrom(asking({ id: "req-1", questions: [{ ...QUESTION, allowFreeformInput: true }] }))!;
     expect(free.options.map((option) => option.label)).toEqual(["Red", "Blue", "Other"]);
     expect(free.custom_option_index).toBe(2);
-    expect(free.vscode).toEqual({ request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue", ""] });
+    expect(free.host).toEqual({ request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue", ""] });
     expect(free.steps).toBeUndefined();
     // an answered request asks nothing
     expect(promptFrom(chat({ status: 8, activeTurn: { id: "t", startedAt: AT, message: user("x"), usage: undefined, responseParts: [
@@ -120,7 +120,7 @@ describe("VS Code chat mappers", () => {
       answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "red" } } },
     }))!;
     expect(second.id).toBe("req-2:q-size");
-    expect(second.vscode).toEqual({ request_id: "req-2", question_id: "q-size", option_ids: [""] });
+    expect(second.host).toEqual({ request_id: "req-2", question_id: "q-size", option_ids: [""] });
     expect(second.custom_option_index).toBe(0);
     expect(second.steps).toEqual([{ label: "Color", answered: true, current: false }, { label: "Size", answered: false, current: true }]);
     // the redraw is in the signature
@@ -143,10 +143,23 @@ describe("VS Code chat mappers", () => {
       ],
     } as unknown as RootState;
     expect(modelsFrom(root)).toEqual([
-      { id: "fictional/model-a", name: "Fictional Model A", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] } },
-      { id: "fictional/model-b", name: "Fictional Model B", efforts: { key: "budget", values: ["small", "large"] } },
-      { id: "fictional/model-c", name: "Fictional Model C", efforts: null },
+      { id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null },
+      { id: "fictional/model-b", name: "Fictional Model B", provider: "copilotcli", efforts: { key: "budget", values: ["small", "large"] }, context: null },
+      { id: "fictional/model-c", name: "Fictional Model C", provider: "copilotcli", efforts: null, context: null },
     ]);
+  });
+
+  it("models_carry_provider_and_context", () => {
+    const root = {
+      agents: [{ provider: "copilotcli", displayName: "Fictional Agent", description: "", models: [
+        { id: "fictional/a", provider: "FICTIONAL Provider", name: "FICTIONAL A", maxContextWindow: 1000000 },
+        { id: "fictional/b", provider: "FICTIONAL Provider", name: "FICTIONAL B" },
+      ] }],
+    } as unknown as RootState;
+    const models = modelsFrom(root);
+    expect(models).toContainEqual(expect.objectContaining({ id: "fictional/a", provider: "FICTIONAL Provider", context: 1000000 }));
+    // a model without a context window says so: null, never 0 or undefined
+    expect(models).toContainEqual({ id: "fictional/b", name: "FICTIONAL B", provider: "FICTIONAL Provider", efforts: null, context: null });
   });
 
   it("agents come from enabled agent customizations, nested in containers", () => {

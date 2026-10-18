@@ -670,17 +670,17 @@ describe("Portal API", () => {
 
 describe("mutation body validation", () => {
   it("rejects non-object JSON without touching herdr or losing the error envelope", async () => {
-    // the VS Code routes answer only with the switch on: their own server, whose agent host never comes
-    const home = mkdtempSync(join(tmpdir(), "herdr-web-ui-contract-vscode-"));
-    const vscode = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(home, "state"), registerBridge: false, agentHost: { enabled: true, startHost: false, home, env: { XDG_CONFIG_HOME: join(home, "cfg") } } });
+    // the host chat routes answer only with the switch on: their own server, whose agent host never comes
+    const home = mkdtempSync(join(tmpdir(), "herdr-web-ui-contract-agent-host-"));
+    const hostServer = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(home, "state"), registerBridge: false, agentHost: { enabled: true, startHost: false, home, env: { XDG_CONFIG_HOME: join(home, "cfg") } } });
     try {
       for (const path of [
         "/api/workspace/create", "/api/tab/create", "/api/tab/rename", "/api/tab/close", "/api/tab/move", "/api/workspace/rename", "/api/workspace/move", "/api/workspace/close",
         "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/image",
         "/api/pane/scroll", "/api/agent/rename",
-        "/api/vscode/chat/watch", "/api/vscode/chat/send", "/api/vscode/chat/answer", "/api/vscode/chat/confirm", "/api/vscode/chat/draft", "/api/vscode/chat/new",
+        "/api/host-chats/chat/watch", "/api/host-chats/chat/send", "/api/host-chats/chat/answer", "/api/host-chats/chat/confirm", "/api/host-chats/chat/draft", "/api/host-chats/chat/new",
       ]) {
-        const origin = path.startsWith("/api/vscode/") ? `http://127.0.0.1:${vscode.port}` : base();
+        const origin = path.startsWith("/api/host-chats/") ? `http://127.0.0.1:${hostServer.port}` : base();
         for (const body of [null, [], "text", 42, true]) {
           const response = await fetch(`${origin}${path}`, {
             method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -689,7 +689,7 @@ describe("mutation body validation", () => {
           expect(((await response.json()) as ApiError).error.code).toBe("invalid_body");
         }
       }
-    } finally { vscode.stop(); rmSync(home, { recursive: true, force: true }); }
+    } finally { hostServer.stop(); rmSync(home, { recursive: true, force: true }); }
   });
 
   it("rejects invalid pane identifiers and key/image fields before RPCs", async () => {

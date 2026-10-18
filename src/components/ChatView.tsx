@@ -491,7 +491,7 @@ const IMAGE_MENTION = /(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi;
 function UserImages({ paneId, parts, text }: { paneId: string; parts: ConversationPart[]; text: string }) {
   const t = useT();
   const machineId = useMachineId();
-  // no pane (a VS Code chat's turn): nothing is read through one, not even a mentioned file
+  // no pane (a host chat's turn): nothing is read through one, not even a mentioned file
   if (paneId === "") return null;
   const pasted = parts.filter((part): part is Extract<ConversationPart, { kind: "image" }> => part.kind === "image");
   const mentioned = [...new Set([...text.matchAll(IMAGE_MENTION)].map((match) => match[1]!))];

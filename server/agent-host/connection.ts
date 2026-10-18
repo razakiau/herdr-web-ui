@@ -26,15 +26,15 @@ import type {
 } from "@microsoft/agent-host-protocol";
 import { AhpClient, RpcError, type AhpStateMirror, type ClientEvent } from "@microsoft/agent-host-protocol/client";
 import { WebSocketTransport } from "@microsoft/agent-host-protocol/ws";
-import type { VscodeHostState } from "../../shared/vscode.ts";
+import type { AgentHostState } from "../../shared/host-chats.ts";
 import { findServerCli, startHost as startAgentHost, START_DEADLINE_MS } from "./host-start.ts";
-import { VscodeMirror } from "./mirror.ts";
+import { AgentHostMirror } from "./mirror.ts";
 import { liveStandalone, registryDirs, type HostEntry } from "./registry.ts";
 
-export interface VscodeConnectionOptions {
+export interface AgentHostConnectionOptions {
   home: string; platform: NodeJS.Platform; env: Record<string, string | undefined>;
   startHost: boolean;                          // false: HERDR_WEB_AGENT_HOST_START=off
-  onChange: (event: VscodeEvent) => void;      // state, chat list, or one chat changed
+  onChange: (event: AgentHostEvent) => void;      // state, chat list, or one chat changed
   clientId?: string;                           // default `herdr-web-<8 hex>`, stable for the process
   deps?: {                                     // tests only; defaults are the real ones
     spawn?: (argv: string[]) => void;          // default: Bun.spawn(argv, {stdin/stdout/stderr: "ignore", detached: true}).unref()
@@ -42,14 +42,14 @@ export interface VscodeConnectionOptions {
     now?: () => number; sleep?: (ms: number) => Promise<void>;
   };
 }
-export type VscodeEvent = { kind: "host" } | { kind: "chats" } | { kind: "chat"; session: string };
+export type AgentHostEvent = { kind: "host" } | { kind: "chats" } | { kind: "chat"; session: string };
 
 /** Why a call to the host failed, by code only: `message` never carries the host's URL or token. */
-export type VscodeErrorCode = "not_connected" | "connect_failed" | "refused" | "rpc_error" | "timeout";
-export class VscodeError extends Error {
-  constructor(readonly code: VscodeErrorCode, readonly rpcCode?: number) {
+export type AgentHostErrorCode = "not_connected" | "connect_failed" | "refused" | "rpc_error" | "timeout";
+export class AgentHostError extends Error {
+  constructor(readonly code: AgentHostErrorCode, readonly rpcCode?: number) {
     super(rpcCode === undefined ? code : `${code} ${rpcCode}`);
-    this.name = "VscodeError";
+    this.name = "AgentHostError";
   }
 }
 
@@ -79,11 +79,11 @@ const defaultAlive = (pid: number): boolean => {
 const errorName = (error: unknown): string => error instanceof Error ? error.name : typeof error;
 
 /** A rebuilt error: the package's errors keep the transport's text, which can carry the URL. */
-function coded(error: unknown): VscodeError {
-  if (error instanceof VscodeError) return error;
-  if (error instanceof RpcError) return new VscodeError("rpc_error", error.code);
-  if (error instanceof Error && error.name === "RpcTimeoutError") return new VscodeError("timeout");
-  return new VscodeError("connect_failed");
+function coded(error: unknown): AgentHostError {
+  if (error instanceof AgentHostError) return error;
+  if (error instanceof RpcError) return new AgentHostError("rpc_error", error.code);
+  if (error instanceof Error && error.name === "RpcTimeoutError") return new AgentHostError("timeout");
+  return new AgentHostError("connect_failed");
 }
 
 /**
@@ -91,10 +91,10 @@ function coded(error: unknown): VscodeError {
  * changes inside it are held and the latest goes out when it closes, opening the next one.
  */
 class Coalescer {
-  private readonly windows = new Map<string, { timer: ReturnType<typeof setTimeout>; held: VscodeEvent | null }>();
-  constructor(private readonly emit: (event: VscodeEvent) => void, private readonly ms: number) {}
+  private readonly windows = new Map<string, { timer: ReturnType<typeof setTimeout>; held: AgentHostEvent | null }>();
+  constructor(private readonly emit: (event: AgentHostEvent) => void, private readonly ms: number) {}
 
-  push(key: string, event: VscodeEvent): void {
+  push(key: string, event: AgentHostEvent): void {
     const open = this.windows.get(key);
     if (open) { open.held = event; return; }
     this.emit(event);
@@ -105,7 +105,7 @@ class Coalescer {
     const window = { timer: setTimeout(() => {
       this.windows.delete(key);
       if (window.held) { this.emit(window.held); this.open(key); }
-    }, this.ms), held: null as VscodeEvent | null };
+    }, this.ms), held: null as AgentHostEvent | null };
     window.timer.unref?.();
     this.windows.set(key, window);
   }
@@ -119,15 +119,15 @@ class Coalescer {
 interface Watch { count: number; chat: string | null; ready: Promise<void> }
 interface Live { client: AhpClient; closed: Promise<void> }
 
-export class VscodeConnection {
+export class AgentHostConnection {
   readonly clientId: string;
-  private readonly options: VscodeConnectionOptions;
+  private readonly options: AgentHostConnectionOptions;
   private readonly spawn: (argv: string[]) => void;
   private readonly alive: (pid: number) => boolean;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
-  private readonly store = new VscodeMirror();
-  private current: VscodeHostState;
+  private readonly store = new AgentHostMirror();
+  private current: AgentHostState;
   private sessionList: SessionSummary[] = [];
   private readonly watches = new Map<string, Watch>();
   /** Per channel: the snapshot's `fromSeq`; an action at or below it is already in the snapshot. */
@@ -141,7 +141,7 @@ export class VscodeConnection {
   private readonly stopping: Promise<void>;
   private readonly pushes: Coalescer;
 
-  constructor(options: VscodeConnectionOptions) {
+  constructor(options: AgentHostConnectionOptions) {
     this.options = options;
     this.clientId = options.clientId ?? PROCESS_CLIENT_ID;
     this.spawn = options.deps?.spawn ?? defaultSpawn;
@@ -153,12 +153,12 @@ export class VscodeConnection {
     this.pushes = new Coalescer((event) => {
       if (this.stopped) return;
       // a push can run from the window's timer: a consumer that throws is logged, never thrown there
-      try { this.options.onChange(event); } catch (error) { console.warn(`vscode: a ${event.kind} push failed (${errorName(error)})`); }
+      try { this.options.onChange(event); } catch (error) { console.warn(`agent-host: a ${event.kind} push failed (${errorName(error)})`); }
     }, PUSH_WINDOW_MS);
   }
 
   /** A change of one chat, or of the list: at most one push per PUSH_WINDOW_MS each, the last one always. */
-  private changed(event: VscodeEvent): void {
+  private changed(event: AgentHostEvent): void {
     this.pushes.push(event.kind === "chat" ? `chat\n${event.session}` : event.kind, event);
   }
 
@@ -175,7 +175,7 @@ export class VscodeConnection {
     await this.running;
   }
 
-  state(): VscodeHostState { return this.current; }
+  state(): AgentHostState { return this.current; }
   mirror(): AhpStateMirror { return this.store; }
   summaries(): SessionSummary[] { return this.sessionList; }
 
@@ -186,7 +186,7 @@ export class VscodeConnection {
 
   /** Subscribes `session` and its default chat, shared and reference-counted; the returned function releases this hold. */
   async watch(session: string): Promise<() => void> {
-    if (!this.live) throw new VscodeError("not_connected");
+    if (!this.live) throw new AgentHostError("not_connected");
     let watch = this.watches.get(session);
     if (watch) {
       watch.count += 1;
@@ -211,26 +211,26 @@ export class VscodeConnection {
 
   async request<M extends keyof CommandMap>(method: M, params: CommandMap[M]["params"]): Promise<CommandMap[M]["result"]> {
     const live = this.live;
-    if (!live) throw new VscodeError("not_connected");
+    if (!live) throw new AgentHostError("not_connected");
     try { return await live.client.request(method, params); } catch (error) { throw coded(error); }
   }
 
   /** Sends `action` once, now. Never queued and never replayed: without a connection it throws. */
   dispatch(channel: string, action: StateAction): void {
     const live = this.live;
-    if (!live) throw new VscodeError("not_connected");
+    if (!live) throw new AgentHostError("not_connected");
     try { live.client.dispatch(channel, action); } catch (error) { throw coded(error); }
   }
 
   // ─── Connection loop ───────────────────────────────────────────────────────
 
-  private setState(next: VscodeHostState): void {
+  private setState(next: AgentHostState): void {
     if (JSON.stringify(next) === JSON.stringify(this.current)) return;
     this.current = next;
     this.options.onChange({ kind: "host" });
   }
 
-  private connectedState(protocol: string): VscodeHostState {
+  private connectedState(protocol: string): AgentHostState {
     return { state: "connected", signed_in: this.store.root.agents.some((agent) => agent.models.length > 0), protocol };
   }
 
@@ -286,7 +286,7 @@ export class VscodeConnection {
       const init = await client.initialize({ clientId: this.clientId, protocolVersions: PROTOCOL_VERSIONS, initialSubscriptions: [ROOT] });
       if (!(PROTOCOL_VERSIONS as readonly string[]).includes(init.protocolVersion)) {
         this.setState({ state: "refused", server_version: init.protocolVersion || null });
-        throw new VscodeError("refused");
+        throw new AgentHostError("refused");
       }
       this.store.reset();
       this.fromSeq.clear();
@@ -349,7 +349,7 @@ export class VscodeConnection {
 
   private async subscribeWatch(session: string, watch: Watch): Promise<void> {
     const live = this.live;
-    if (!live) throw new VscodeError("not_connected");
+    if (!live) throw new AgentHostError("not_connected");
     const state = (await this.subscribe(live.client, session, "session")).state as SessionState;
     live.client.dispatch(session, { type: "session/activeClientSet", activeClient: { clientId: this.clientId, displayName: "herdr-web", tools: [] } } as StateAction);
     watch.chat = state.defaultChat ?? null;
@@ -369,7 +369,7 @@ export class VscodeConnection {
     const snapshot = result.snapshot;
     const held = this.early.get(channel) ?? [];
     this.early.delete(channel);
-    if (!snapshot) throw new VscodeError("rpc_error");
+    if (!snapshot) throw new AgentHostError("rpc_error");
     if (kind === "session") this.store.applySessionSnapshot(snapshot);
     else this.store.applyChatSnapshot(snapshot);
     this.fromSeq.set(channel, snapshot.fromSeq);
@@ -435,7 +435,7 @@ export class VscodeConnection {
       } catch (error) {
         // a reducer threw: one event, not the connection. Its name only: a message can carry the
         // host's URL
-        console.warn(`vscode: an agent host ${event.type} event on a ${channel === ROOT ? "root" : this.watcherOf(channel) ? "watched" : "other"} channel failed (${errorName(error)})`);
+        console.warn(`agent-host: an agent host ${event.type} event on a ${channel === ROOT ? "root" : this.watcherOf(channel) ? "watched" : "other"} channel failed (${errorName(error)})`);
       }
     }
   }

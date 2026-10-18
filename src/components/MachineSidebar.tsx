@@ -8,9 +8,9 @@ import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismisse
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
-import { AgentSidebar, VscodeChatItem, type VscodeChatTarget } from "./AgentSidebar.tsx";
-import { currentSidebarPins, setSidebarPins, subscribeSidebarPins, toggleSidebarPin, vscodePinKey } from "../lib/sidebarPins.ts";
-import { hostLine, useMinuteClock, useVscodeChats, type VscodePc } from "../lib/vscodeChats.ts";
+import { AgentSidebar, VscodeChatItem, type HostChatTarget } from "./AgentSidebar.tsx";
+import { currentSidebarPins, setSidebarPins, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
+import { hostLine, useMinuteClock, useHostChats, type HostPc } from "../lib/hostChats.ts";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageMeters } from "./UsageMeters.tsx";
 import { NewVscodeChatSheet } from "./NewVscodeChatSheet.tsx";
@@ -29,9 +29,9 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 interface Props {
   machines: Machine[]; selectedMachineId: string; selectedPaneId: string | null; actions: AppActions;
   onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void;
-  /** the VS Code chat the app shows instead of a pane, and the pick of one (App.tsx) */
-  selectedVscodeChat?: VscodeChatTarget | null;
-  onSelectVscodeChat?(target: VscodeChatTarget): void;
+  /** the host chat the app shows instead of a pane, and the pick of one (App.tsx) */
+  selectedHostChat?: HostChatTarget | null;
+  onSelectHostChat?(target: HostChatTarget): void;
 }
 export function MachineSidebar(props: Props) {
   const t = useT();
@@ -39,18 +39,18 @@ export function MachineSidebar(props: Props) {
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   // both lists draw from it: live counters per PC (lib/sidebarActivity.tsx)
   const activity = useSidebarActivityState(props.machines);
-  // each PC's VS Code chats, for the PCs whose bridge has them (lib/vscodeChats.ts)
-  const vscode = useVscodeChats(props.machines);
-  // the PC whose "+ New VS Code chat" is open (NewVscodeChatSheet), over the drawer until the chat is made
+  // each PC's host chats, for the PCs whose bridge has them (lib/hostChats.ts)
+  const hostChats = useHostChats(props.machines);
+  // the PC whose "+ New Copilot chat" is open (NewVscodeChatSheet), over the drawer until the chat is made
   const [newChatOn, setNewChatOn] = useState<string | null>(null);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
   return <SidebarActivityProvider value={activity}><div className="sidebar-shell">
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} vscode={vscode.get(machine.id)} onNewVscodeChat={setNewChatOn} />)}
+      {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={setNewChatOn} />)}
       {!props.machines.length && <p className="tree-state" role="status">{t("Loading PCs…")}</p>}
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect}
-      vscode={vscode} selectedVscodeChat={props.selectedVscodeChat} onSelectVscodeChat={props.onSelectVscodeChat} />
+      hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat} />
     <footer className="sidebar-footer">
       {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
       {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />{t("Install app")}</button>}
@@ -60,13 +60,13 @@ export function MachineSidebar(props: Props) {
         <UsageMeters />
       </div>
     </footer>
-    {newChatOn !== null && vscode.has(newChatOn) && <NewVscodeChatSheet machines={props.machines} pcs={vscode} machineId={newChatOn} onClose={() => setNewChatOn(null)}
+    {newChatOn !== null && hostChats.has(newChatOn) && <NewVscodeChatSheet machines={props.machines} pcs={hostChats} machineId={newChatOn} onClose={() => setNewChatOn(null)}
       // the app opens the chat made, and on a phone puts the drawer away as a pick does
-      onCreated={(target) => { setNewChatOn(null); props.onSelectVscodeChat?.(target); }} />}
+      onCreated={(target) => { setNewChatOn(null); props.onSelectHostChat?.(target); }} />}
   </div></SidebarActivityProvider>;
 }
 
-function MachineGroup({ machine, vscode, onNewVscodeChat, ...props }: Props & { machine: Machine; vscode: VscodePc | undefined; onNewVscodeChat(machineId: string): void }) {
+function MachineGroup({ machine, hostChats, onNewHostChat, ...props }: Props & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(machineId: string): void }) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`herdr-web-ui:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [editing, setEditing] = useState(false);
@@ -132,35 +132,35 @@ function MachineGroup({ machine, vscode, onNewVscodeChat, ...props }: Props & { 
     {!collapsed && <div className={online ? "" : "machine-offline"} inert={!online}>
       {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions} /></MachineContext.Provider>}
     </div>}
-    {!collapsed && online && vscode && <VscodeChatsGroup machine={machine} pc={vscode} selected={props.selectedVscodeChat ?? null} onSelect={(target) => props.onSelectVscodeChat?.(target)} onNew={() => onNewVscodeChat(machine.id)} />}
+    {!collapsed && online && hostChats && <VscodeChatsGroup machine={machine} pc={hostChats} selected={props.selectedHostChat ?? null} onSelect={(target) => props.onSelectHostChat?.(target)} onNew={() => onNewHostChat(machine.id)} />}
   </section>;
 }
 
 /**
- * A PC's "VS Code chats": what its host needs while it is not ready, every chat of the host (newest
- * first), and "+ New VS Code chat". Only a PC whose bridge has the feature on has the group.
+ * A PC's "Copilot": what its host needs while it is not ready, every chat of the host (newest
+ * first), and "+ New Copilot chat". Only a PC whose bridge has the feature on has the group.
  */
-function VscodeChatsGroup({ machine, pc, selected, onSelect, onNew }: { machine: Machine; pc: VscodePc; selected: VscodeChatTarget | null; onSelect(target: VscodeChatTarget): void; onNew(): void }) {
+function VscodeChatsGroup({ machine, pc, selected, onSelect, onNew }: { machine: Machine; pc: HostPc; selected: HostChatTarget | null; onSelect(target: HostChatTarget): void; onNew(): void }) {
   const t = useT();
   const now = useMinuteClock();
   // the same pins as the Agents list's, shared with the other browsers (lib/preferencesSync.ts)
   const pinned = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const line = pc.host ? hostLine(pc.host, t) : null;
   // one landmark per PC: its name tells them apart
-  return <section className="vscode-chats" aria-label={t("VS Code chats on {name}", { name: machine.name })}>
-    <h3 className="sidebar-section-label vscode-chats-label">{t("VS Code chats")}</h3>
-    {line && <p className="tree-state vscode-chats-state" role="status">{line}</p>}
-    {pc.chats.length > 0 && <ul className="agent-list vscode-chats-list">
+  return <section className="host-chats" aria-label={t("Copilot on {name}", { name: machine.name })}>
+    <h3 className="sidebar-section-label host-chats-label">{t("Copilot")}</h3>
+    {line && <p className="tree-state host-chats-state" role="status">{line}</p>}
+    {pc.chats.length > 0 && <ul className="agent-list host-chats-list">
       {pc.chats.map((chat) => <VscodeChatItem key={chat.session} machine={machine} chat={chat} now={now}
         // the group sits under its PC: the PC's name would say it twice
         machineName={null}
         selected={selected?.machineId === machine.id && selected.session === chat.session}
-        pinned={pinned.includes(vscodePinKey(machine.id, chat.session))}
+        pinned={pinned.includes(hostChatPinKey(machine.id, chat.session))}
         onSelect={onSelect} onTogglePin={(key) => setSidebarPins(toggleSidebarPin(currentSidebarPins(), key))} />)}
     </ul>}
     {/* a host that is not up cannot make one: the line above says what it needs */}
-    <button type="button" className="btn btn-ghost vscode-chats-new" disabled={pc.host?.state !== "connected"} aria-haspopup="dialog"
-      aria-label={t("New VS Code chat on {name}", { name: machine.name })} onClick={onNew}>{t("+ New VS Code chat")}</button>
+    <button type="button" className="btn btn-ghost host-chats-new" disabled={pc.host?.state !== "connected"} aria-haspopup="dialog"
+      aria-label={t("New Copilot chat on {name}", { name: machine.name })} onClick={onNew}>{t("+ New Copilot chat")}</button>
   </section>;
 }
 

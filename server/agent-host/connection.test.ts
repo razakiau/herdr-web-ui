@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction } from "@microsoft/agent-host-protocol";
-import { PUSH_WINDOW_MS, VscodeConnection, type VscodeConnectionOptions, type VscodeEvent } from "./connection.ts";
+import { PUSH_WINDOW_MS, AgentHostConnection, type AgentHostConnectionOptions, type AgentHostEvent } from "./connection.ts";
 import { fakeAgentHost, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
 
 // Stands in for the reconnect backoff (1 s, 2 s, 4 s …) so a restart is seen within a test.
@@ -14,7 +14,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 /** A temp home whose Linux registry dir (under XDG_CONFIG_HOME) exists and is empty. */
 function tempHome(): { home: string; env: Record<string, string>; entries: string } {
-  const home = mkdtempSync(join(tmpdir(), "herdr-vscode-conn-"));
+  const home = mkdtempSync(join(tmpdir(), "herdr-agent-host-conn-"));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const config = join(home, "cfg");
   const entries = join(config, "Code", "agent-host", "local-endpoint", "entries");
@@ -70,10 +70,10 @@ async function host(entries: string, overrides: Partial<FakeAgentHostSeed> = {})
   return fake;
 }
 
-function connection(options: Partial<VscodeConnectionOptions> & { home: string; env: Record<string, string> }) {
-  const events: VscodeEvent[] = [];
+function connection(options: Partial<AgentHostConnectionOptions> & { home: string; env: Record<string, string> }) {
+  const events: AgentHostEvent[] = [];
   const spawned: string[][] = [];
-  const conn = new VscodeConnection({
+  const conn = new AgentHostConnection({
     platform: "linux",
     startHost: true,
     onChange: (event) => { events.push(event); },
@@ -89,7 +89,7 @@ const turnStarted = (text: string): StateAction => ({
   type: "chat/turnStarted", turnId: crypto.randomUUID(), startedAt: AT, message: { text, origin: { kind: "user" } },
 } as unknown as StateAction);
 
-describe("VS Code connection", () => {
+describe("agent host connection", () => {
   it("connects with protocolVersions 1.0.0 then 0.10.0 and reports connected", async () => {
     const { home, env, entries } = tempHome();
     const fake = await host(entries);
@@ -108,8 +108,8 @@ describe("VS Code connection", () => {
 
   it("a default clientId is herdr-web-<8 hex> and stable for the process", () => {
     const { home, env } = tempHome();
-    const a = new VscodeConnection({ home, env, platform: "linux", startHost: false, onChange: () => {} });
-    const b = new VscodeConnection({ home, env, platform: "linux", startHost: false, onChange: () => {} });
+    const a = new AgentHostConnection({ home, env, platform: "linux", startHost: false, onChange: () => {} });
+    const b = new AgentHostConnection({ home, env, platform: "linux", startHost: false, onChange: () => {} });
     expect(a.clientId).toMatch(/^herdr-web-[0-9a-f]{8}$/);
     expect(b.clientId).toBe(a.clientId);
   });
@@ -317,12 +317,12 @@ describe("VS Code connection", () => {
       // the reducer cannot end a turn without its duration: pump() logs it
       fake.push(chatUri(1), { type: "chat/turnComplete", turnId: "turn-live" } as unknown as StateAction);
       await until("the event's log line", () => warned.length > 0);
-      expect(warned).toEqual(["vscode: an agent host action event on a watched channel failed (RangeError)"]);
+      expect(warned).toEqual(["agent-host: an agent host action event on a watched channel failed (RangeError)"]);
       // a consumer that throws on a push, sent now or when its window ends
       throwing = true;
       fake.push(chatUri(1), { type: "chat/activityChanged", activity: "FICTIONAL_one" } as unknown as StateAction);
       await until("the push's log line", () => warned.length > 1, PUSH_WINDOW_MS * 4);
-      expect(warned[1]).toBe("vscode: a chat push failed (RangeError)");
+      expect(warned[1]).toBe("agent-host: a chat push failed (RangeError)");
     } finally { console.warn = warn; }
     expect(warned.join()).not.toContain("FICTIONAL secret");
     expect(warned.join()).not.toContain(fake.token);

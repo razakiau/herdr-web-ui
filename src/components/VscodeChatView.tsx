@@ -1,10 +1,10 @@
 /**
- * One VS Code chat, read from its PC's agent host through the bridge (lib/vscodeChats.ts): its
+ * One host chat, read from its PC's agent host through the bridge (lib/hostChats.ts): its
  * turns in the chat's own rows (ChatView's Turn inside ChatTimeline), the question or approval it
  * waits on in the prompt card's look, and a composer whose two pills pick the next message's model
  * and effort, and its agent (VscodePickerSheet).
  *
- * The screen reads the chat when it opens and on each `vscode-chat-changed` push for it, and keeps
+ * The screen reads the chat when it opens and on each `host-chat-changed` push for it, and keeps
  * the bridge watching it (a 90 s lease, renewed every 30 s while the page is shown). A message goes
  * out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
@@ -18,15 +18,15 @@ import "./Composer.css";
 import "./VscodeChatView.css";
 
 import type { ConversationTurn } from "../../shared/protocol.ts";
-import type { VscodeAgent, VscodeChatRead, VscodeModel } from "../../shared/vscode.ts";
+import type { HostAgent, HostChatRead, HostModel } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import type { ChatRowMemory } from "../lib/chatRowState.tsx";
 import {
-  agentName, answerVscode, choose, chosenFor, coalesced, confirmVscode, errorText, fetchVscodeChat, fetchVscodeModels, keepVscodeDraft, onVscodeMessage, onVscodeResume, readVscodeDraft,
-  sendErrorText, sendVscode, setVscodeDraftModel, settleChoice, watchVscodeChat, type VscodeChoice,
-} from "../lib/vscodeChats.ts";
+  agentName, answerHost, choose, chosenFor, coalesced, confirmHost, errorText, fetchHostChat, fetchHostModels, keepHostDraft, onHostChatMessage, onHostChatResume, readHostDraft,
+  sendErrorText, sendHost, setHostDraftModel, settleChoice, watchHostChat, type HostChoice,
+} from "../lib/hostChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { Turn } from "./ChatView.tsx";
 import { loadChatTimeline, useChatTimeline } from "./chatTimelineLoader.ts";
@@ -43,7 +43,7 @@ export interface VscodeChatViewProps { machineId: string; session: string }
 
 interface Row { key: string; beforeUser: boolean; turn: ConversationTurn }
 
-type VscodePrompt = NonNullable<VscodeChatRead["prompt"]>;
+type HostPrompt = NonNullable<HostChatRead["prompt"]>;
 
 /**
  * The chat's question or tool approval, in the pane prompt card's markup and CSS (PromptCardView),
@@ -51,14 +51,14 @@ type VscodePrompt = NonNullable<VscodeChatRead["prompt"]>;
  * by whether the picked option approves, with the host's own option id when it offered one.
  */
 export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, onAnswered }: {
-  machineId: string; session: string; prompt: VscodePrompt; onPromptChanged(): void; onAnswered(): void;
+  machineId: string; session: string; prompt: HostPrompt; onPromptChanged(): void; onAnswered(): void;
 }) {
   const submit = async (choice: PromptChoice): Promise<void> => {
-    const ref = prompt.vscode;
+    const ref = prompt.host;
     if ("request_id" in ref) {
       const picked = choice.option_indices ?? (choice.option_index !== undefined ? [choice.option_index] : []);
       const optionIds = picked.map((index) => ref.option_ids[index] ?? "").filter((id) => id !== "");
-      await answerVscode(machineId, {
+      await answerHost(machineId, {
         session, request_id: ref.request_id, question_id: ref.question_id,
         ...(optionIds.length > 0 ? { option_ids: optionIds } : {}),
         ...(choice.custom_text !== undefined ? { text: choice.custom_text } : {}),
@@ -67,7 +67,7 @@ export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, 
     }
     const index = choice.option_index ?? 0;
     const optionId = ref.option_ids[index] ?? "";
-    await confirmVscode(machineId, {
+    await confirmHost(machineId, {
       session, turn_id: ref.turn_id, tool_call_id: ref.tool_call_id, approved: ref.approves[index] === true,
       ...(optionId !== "" ? { option_id: optionId } : {}),
     });
@@ -80,16 +80,16 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const { settings } = useSettings();
   const visible = usePageVisible();
   const ChatTimeline = useChatTimeline();
-  const [chat, setChat] = useState<VscodeChatRead | null>(null);
+  const [chat, setChat] = useState<HostChatRead | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
-  const [choice, setChoice] = useState<VscodeChoice>(() => chosenFor(machineId, session));
-  const [text, setText] = useState(() => readVscodeDraft(machineId, session));
+  const [choice, setChoice] = useState<HostChoice>(() => chosenFor(machineId, session));
+  const [text, setText] = useState(() => readHostDraft(machineId, session));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
   const [sheet, setSheet] = useState<"model" | "agent" | null>(null);
-  const [catalog, setCatalog] = useState<{ models: VscodeModel[]; agents: VscodeAgent[] } | null>(null);
+  const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -103,7 +103,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  const apply = useCallback((next: VscodeChatRead, older: boolean): void => {
+  const apply = useCallback((next: HostChatRead, older: boolean): void => {
     if (older) base.current -= Math.max(0, next.turns.length - count.current);
     count.current = next.turns.length;
     setChat((current) => current !== null && current.signature === next.signature ? current : next);
@@ -113,7 +113,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const read = useCallback(async (): Promise<void> => {
     const turn = ++generation.current;
     try {
-      const next = await fetchVscodeChat(machineId, session);
+      const next = await fetchHostChat(machineId, session);
       if (mounted.current && turn === generation.current) apply(next, false);
     } catch (cause) {
       if (mounted.current && turn === generation.current) setError(errorText(cause));
@@ -125,18 +125,18 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   useEffect(() => {
     void loadChatTimeline().catch(() => undefined);
     void reread();
-    return onVscodeMessage((from, pushed) => {
+    return onHostChatMessage((from, pushed) => {
       if (from !== machineId) return;
-      if (pushed.type === "vscode-chat-changed" ? pushed.session === session : pushed.host.state === "connected") void reread();
+      if (pushed.type === "host-chat-changed" ? pushed.session === session : pushed.host.state === "connected") void reread();
     });
   }, [machineId, session, reread]);
   // back on screen, or the event stream reopened: a push may have been missed meanwhile
-  useEffect(() => onVscodeResume(() => { void reread(); }), [reread]);
+  useEffect(() => onHostChatResume(() => { void reread(); }), [reread]);
 
   // the bridge watches the chat while it is on screen; a closed tab lets the lease run out
   useEffect(() => {
     if (!visible) return;
-    const renew = (): void => { void watchVscodeChat(machineId, session).catch(() => undefined); };
+    const renew = (): void => { void watchHostChat(machineId, session).catch(() => undefined); };
     renew();
     const timer = window.setInterval(renew, WATCH_MS);
     return () => window.clearInterval(timer);
@@ -148,7 +148,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setOlderState("loading");
     const turn = ++generation.current;
     try {
-      const next = await fetchVscodeChat(machineId, session, cursor);
+      const next = await fetchHostChat(machineId, session, cursor);
       if (!mounted.current) return;
       if (turn === generation.current) apply(next, true);
       setOlderState("idle");
@@ -190,7 +190,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setSheet(part);
     setSheetError(null);
     if (catalog === null) {
-      void fetchVscodeModels(machineId, session).then((value) => { if (mounted.current) setCatalog(value); }, (cause: unknown) => {
+      void fetchHostModels(machineId, session).then((value) => { if (mounted.current) setCatalog(value); }, (cause: unknown) => {
         if (mounted.current) { setSheetError(errorText(cause)); setCatalog({ models: [], agents: [] }); }
       });
     }
@@ -198,7 +198,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   // the models' names are the pills' too: read once the chat is
   useEffect(() => {
     if (chat === null || catalog !== null) return;
-    void fetchVscodeModels(machineId, session).then((value) => { if (mounted.current) setCatalog((current) => current ?? value); }, () => undefined);
+    void fetchHostModels(machineId, session).then((value) => { if (mounted.current) setCatalog((current) => current ?? value); }, () => undefined);
   }, [chat === null, catalog, machineId, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a pick the chat now uses is the chat's own from here on
@@ -210,7 +210,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     choose(machineId, session, { model: next });
     setChoice(chosenFor(machineId, session));
     setSheetError(null);
-    void setVscodeDraftModel(machineId, session, next).catch((cause: unknown) => { if (mounted.current) setSheetError(errorText(cause)); });
+    void setHostDraftModel(machineId, session, next).catch((cause: unknown) => { if (mounted.current) setSheetError(errorText(cause)); });
     // a model with an effort to pick keeps the sheet open for it
     const entry = catalog?.models.find((each) => each.id === next.id);
     if (!entry?.efforts || next.effort !== undefined) setSheet(null);
@@ -227,8 +227,8 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setSending(true);
     setSendError(null);
     try {
-      // sent: sendVscode lets the stored draft go even if this screen is gone by now
-      const result = await sendVscode(machineId, { session, text: words }, { model: chat?.model ?? null, agent: chat?.agent ?? null });
+      // sent: sendHost lets the stored draft go even if this screen is gone by now
+      const result = await sendHost(machineId, { session, text: words }, { model: chat?.model ?? null, agent: chat?.agent ?? null });
       if (!mounted.current) return;
       // words typed while it was on its way stay in the box
       setText((current) => current.trim() === words ? "" : current);
@@ -246,7 +246,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
 
 
   const header = <>
-    <p className="vscode-chat-title"><AgentMark agent="vscode" size={16} /><span>{chat?.title.trim() || t("VS Code chat")}</span></p>
+    <p className="host-chat-title"><AgentMark agent="vscode" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
     {chat?.cursor && (
       <button type="button" className="btn btn-ghost chat-older" disabled={olderState === "loading"} onClick={() => void loadOlder()}>
         {t(olderState === "loading" ? "Loading earlier messages…" : olderState === "failed" ? "Couldn't load earlier messages — retry" : "Earlier messages")}
@@ -259,10 +259,10 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     {chat === null && error === null && <p className="chat-inline-state" role="status">{t("Loading conversation…")}</p>}
     {chat !== null && turns.length === 0 && chat.prompt === null && <div className="chat-empty"><AgentMark agent="vscode" size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
   </>;
-  const label = t("VS Code chat {title}", { title: chat?.title ?? "" });
-  const statusLine = sendError !== null ? null : queued ? t("Queued: it goes out when this turn ends") : busy ? t("VS Code is working on this chat; Send queues the message") : null;
+  const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
+  const statusLine = sendError !== null ? null : queued ? t("Queued: it goes out when this turn ends") : busy ? t("Copilot is working on this chat; Send queues the message") : null;
 
-  return <div className="terminal-stack is-chat vscode-chat" data-vscode-session={session}>
+  return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
     <div className="terminal-surface">
       <div className="chat-frame"><div className="chat-frame-body">
         {ChatTimeline === null
@@ -282,27 +282,27 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
         void reread();
       }} />}
     </div>
-    <div className="composer vscode-composer" role="group" aria-label={t("Message composer")}>
-      {statusLine !== null && <p className="vscode-chat-status" role="status" data-status={queued ? "queued" : "working"}>{statusLine}</p>}
-      {sendError !== null && <p className="composer-note vscode-chat-error" role="alert"><span className="composer-note-text">{sendError}</span></p>}
+    <div className="composer host-composer" role="group" aria-label={t("Message composer")}>
+      {statusLine !== null && <p className="host-chat-status" role="status" data-status={queued ? "queued" : "working"}>{statusLine}</p>}
+      {sendError !== null && <p className="composer-note host-chat-error" role="alert"><span className="composer-note-text">{sendError}</span></p>}
       <div className="composer-surface">
-        <textarea className="composer-text" rows={1} value={text} placeholder={t("Message VS Code")} aria-label={t("Message")} spellCheck autoCapitalize="sentences" autoCorrect="on"
-          onChange={(event) => { setText(event.target.value); keepVscodeDraft(machineId, session, event.target.value); }}
+        <textarea className="composer-text" rows={1} value={text} placeholder={t("Message Copilot")} aria-label={t("Message")} spellCheck autoCapitalize="sentences" autoCorrect="on"
+          onChange={(event) => { setText(event.target.value); keepHostDraft(machineId, session, event.target.value); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && !window.matchMedia?.("(pointer: coarse)").matches) {
               event.preventDefault();
               void send();
             }
           }} />
-        <div className="composer-controls composer-controls-left vscode-chat-pills">
-          <button type="button" className="composer-pill vscode-chat-pill vscode-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: model?.effort ? `${modelLabel} · ${model.effort}` : modelLabel })} onClick={() => openSheet("model")}>
+        <div className="composer-controls composer-controls-left host-chat-pills">
+          <button type="button" className="composer-pill host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: model?.effort ? `${modelLabel} · ${model.effort}` : modelLabel })} onClick={() => openSheet("model")}>
             <span className={`composer-model${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelLabel}</span>
             {model?.effort && <span className="composer-reasoning"><span className="composer-reasoning-dot" aria-hidden="true">·</span><span className="composer-reasoning-short">{model.effort}</span></span>}
-            <ChevronDown className="vscode-chat-pill-caret" aria-hidden="true" />
+            <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
           </button>
-          <button type="button" className="composer-pill vscode-chat-pill vscode-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
+          <button type="button" className="composer-pill host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
             <span className="composer-model">{agentLabel}</span>
-            <ChevronDown className="vscode-chat-pill-caret" aria-hidden="true" />
+            <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
           </button>
         </div>
         <div className="composer-controls composer-controls-right">

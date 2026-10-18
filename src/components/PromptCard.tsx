@@ -41,7 +41,7 @@ export type PromptChoice = Omit<PromptAnswer, "pane_id" | "prompt_id">;
 
 /**
  * The card itself, with whatever sends its answer: a pane's answers go to its prompt route
- * (PromptCard), a VS Code chat's to its host (VscodeChatView). `submit` rejects with the route's
+ * (PromptCard), a host chat's to its host (VscodeChatView). `submit` rejects with the route's
  * ApiError; a 409 `prompt_changed` (or 400 `invalid_answer`) says the card was stale.
  */
 export interface PromptCardViewProps extends Omit<PromptCardProps, "paneId"> {

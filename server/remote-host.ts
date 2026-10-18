@@ -63,7 +63,7 @@ export interface HostInspection {
 }
 export interface StartOptions {
   session?: string; herdrPath: string; inspection: HostInspection;
-  /** the bridge shows its PC's VS Code chats (HERDR_WEB_AGENT_HOST=on). HERDR_WEB_AGENT_HOST_START is the PC's own to set. */
+  /** the bridge shows its PC's host chats (HERDR_WEB_AGENT_HOST=on). HERDR_WEB_AGENT_HOST_START is the PC's own to set. */
   agentHost?: boolean;
 }
 export interface InstallOptions { cacheDir?: string; onProgress?(stage: InstallStage, done: number, total: number | null): void }

@@ -24,9 +24,9 @@ import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
-import type { VscodeChatTarget } from "./components/AgentSidebar.tsx";
+import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { VscodeChatView } from "./components/VscodeChatView.tsx";
-import { noteVscodeStreamOpen, takeVscodeEvent } from "./lib/vscodeChats.ts";
+import { noteHostChatStreamOpen, takeHostChatEvent } from "./lib/hostChats.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -248,10 +248,10 @@ export function App() {
     if (initialLink && (initialLink.workspace || fileFromLink(initialLink))) return null;
     return storedSelection()?.pane_id ?? null;
   });
-  // a VS Code chat shown in the pane's place (lib/vscodeChats.ts): picking one clears the pane, and a pane picked clears it
-  const [selectedVscodeChat, setSelectedVscodeChat] = useState<VscodeChatTarget | null>(null);
+  // a host chat shown in the pane's place (lib/hostChats.ts): picking one clears the pane, and a pane picked clears it
+  const [selectedHostChat, setSelectedHostChat] = useState<HostChatTarget | null>(null);
   useEffect(() => {
-    if (selectedPaneId !== null) setSelectedVscodeChat(null);
+    if (selectedPaneId !== null) setSelectedHostChat(null);
   }, [selectedPaneId]);
   const [notificationViewTarget, setNotificationViewTarget] = useState<NotificationTarget | null>(
     () => notificationTargetFromSearch(window.location.search),
@@ -567,15 +567,15 @@ export function App() {
       snapshot: machine.snapshot && { panes: machine.snapshot.panes.map((pane) => ({ pane_id: pane.pane_id, agent_status: alertStatus(pane.agent_status, (pane as HerdrPane).background_wait) })) },
     }));
     const events = new EventSource("/api/machines/events");
-    // opened, or reopened after a drop: a VS Code push may have been missed while it was down
-    events.onopen = () => noteVscodeStreamOpen();
+    // opened, or reopened after a drop: a host chat push may have been missed while it was down
+    events.onopen = () => noteHostChatStreamOpen();
     events.onmessage = (event) => {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
-      // a PC's VS Code host or chats changed: its sidebar group and an open chat read them again;
+      // a PC's agent host or host chats changed: its sidebar group and an open chat read them again;
       // no pane snapshot is touched, so a streaming chat never voids the roster's polls
-      if (takeVscodeEvent(payload, (id) => machinesRef.current.some((m) => m.id === id))) return;
+      if (takeHostChatEvent(payload, (id) => machinesRef.current.some((m) => m.id === id))) return;
       // A poll started before this event can carry an older roster or pane status.
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
@@ -726,7 +726,7 @@ export function App() {
     if (machineId !== selectedMachineRef.current) setConnected(false);
     // the active half alone takes the pick, whatever the other half shows (lib/split.ts)
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
-    setSelectedVscodeChat(null);
+    setSelectedHostChat(null);
     setOutputStopped(false);
     setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
     // this browser's choice only: herdr's focus, its TUI and every other device stay where they are
@@ -738,10 +738,10 @@ export function App() {
     selectionSince.current = rosterSeq.current;
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
-  // a VS Code chat takes the pane's place on its PC; the chat screen draws it (Task 5)
-  const selectVscodeChat = useCallback((target: VscodeChatTarget) => {
+  // a host chat takes the pane's place on its PC; the chat screen draws it (Task 5)
+  const selectHostChat = useCallback((target: HostChatTarget) => {
     selectTarget(target.machineId, null);
-    setSelectedVscodeChat(target);
+    setSelectedHostChat(target);
   }, [selectTarget]);
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
@@ -790,8 +790,8 @@ export function App() {
       }
     }
     if (snapshot.panes.some((pane) => pane.pane_id === selectedPaneId)) return;
-    // a VS Code chat in the pane's place is a choice, not an empty selection to fill
-    if (selectedPaneId === null && selectedVscodeChat !== null) return;
+    // a host chat in the pane's place is a choice, not an empty selection to fill
+    if (selectedPaneId === null && selectedHostChat !== null) return;
     if (selectedPaneId === null) { setSelectedPaneId(fallback(snapshot)); return; }
     // The combined roster is cached: a newly created pane can be selected before it
     // appears there. Confirm absence against this PC before discarding the selection.
@@ -813,7 +813,7 @@ export function App() {
       setAutoSelected(true);
     }).catch(() => { /* a failed read is not evidence that the pane disappeared */ });
     return () => { cancelled = true; };
-  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick, selectedVscodeChat]);
+  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick, selectedHostChat]);
   useEffect(() => {
     storeSelection(selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);
@@ -1502,7 +1502,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedVscodeChat={selectedVscodeChat} onSelectVscodeChat={selectVscodeChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1598,9 +1598,9 @@ export function App() {
                 {/* the tab strip's panel: its id is what each tab's aria-controls points at, one per half.
                     No tabIndex - the terminal (PaneTerminal) and the composer are the focusable things inside it. */}
                 <main className="terminal-host">
-                  {/* a VS Code chat picked in the sidebar takes the pane's place in the active half */}
-                  {active && selectedVscodeChat !== null && selectedVscodeChat.machineId === machineId ? (
-                    <VscodeChatView key={`${selectedVscodeChat.machineId}\n${selectedVscodeChat.session}`} machineId={selectedVscodeChat.machineId} session={selectedVscodeChat.session} />
+                  {/* a host chat picked in the sidebar takes the pane's place in the active half */}
+                  {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
+                    <VscodeChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
