@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
-import { HOST_ATTEMPT_TTL_MS, openHostChatClosed } from "./hostChats.ts";
+import { HOST_ATTEMPT_TTL_MS, hostChatLive, openHostChatClosed, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
@@ -625,5 +625,19 @@ describe("HostPcs: a pushed host state is not a list", () => {
     pcs.refresh("desk", { state: "connected", signed_in: true, protocol: "1.0.0" });
     expect(pcs.get().get("desk")).toMatchObject({ host: { state: "connected" }, stale: true });
     expect(openHostChatClosed(pcs.get().get("desk"), "fictional-open")).toBe(false);
+  });
+});
+
+describe("the header's connection chip on a host chat", () => {
+  const pc = (host: HostPc["host"], stale = false): HostPc => ({ host, chats: [], ...(stale ? { stale: true as const } : {}) });
+  const up = { state: "connected", signed_in: true, protocol: "1.0.0" } as const;
+  it("host_chat_header_dot_tracks_its_reads: live after a good read on a connected host, else reconnecting", () => {
+    expect(hostChatLive(pc(up), true)).toBe(true);
+    expect(hostChatLive(pc(up), false)).toBe(false);
+    // not read yet
+    expect(hostChatLive(pc(up), null)).toBe(false);
+    expect(hostChatLive(pc({ state: "no_server" }), true)).toBe(false);
+    expect(hostChatLive(pc(up, true), true)).toBe(false);
+    expect(hostChatLive(undefined, true)).toBe(false);
   });
 });

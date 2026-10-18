@@ -459,6 +459,15 @@ export function onHostChatMessage(listener: (machineId: string, message: HostCha
 export interface HostPc { host: AgentHostState | null; chats: HostChatRow[]; stale?: true }
 
 /**
+ * The header's connection chip for an open host chat (it has no pane, whose stream sets it): live
+ * once its last read went through on a connected host whose list is current; `read` null is not
+ * read yet. A failed read, a host down or a PC dropped says reconnecting.
+ */
+export function hostChatLive(pc: HostPc | undefined, read: boolean | null): boolean {
+  return read === true && pc !== undefined && !pc.stale && pc.host?.state === "connected";
+}
+
+/**
  * Whether the open chat `session` was closed on its PC: marked done, or gone from a list its
  * connected host just gave. A PC not listed, a host not connected or a list that failed to read
  * say nothing: the chat stays open through a host restart or a dropped PC.

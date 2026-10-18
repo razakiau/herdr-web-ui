@@ -117,6 +117,7 @@ import { bridgeAgentNews, MachineManager } from "./machines.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { hostChatsRoute } from "./agent-host/routes.ts";
+import { withHostAgent } from "./agent-host/agents.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
@@ -2058,7 +2059,7 @@ export function createServer(
             // an agent's command is its kind; the pane's shell may carry another PATH, as for omo and gjc above
             .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
             .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
-          return jsonResponse({ agents });
+          return jsonResponse({ agents: withHostAgent(agents, agentHostConnection?.state() ?? null) });
         } catch (error) {
           return errorResponse(error);
         }

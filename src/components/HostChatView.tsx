@@ -34,7 +34,13 @@ import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./Model
 import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
 import { hostSlashItems, resolveHostSlash } from "../lib/hostSlash.ts";
 
-export interface HostChatViewProps { machineId: string; session: string }
+export interface HostChatViewProps {
+  machineId: string; session: string;
+  /** each read of the chat went through (true) or failed (false): the header's connection chip */
+  onReadHealth?(ok: boolean): void;
+  /** the chat's title as its reads give it: the header's, before the PC's list has the chat */
+  onTitle?(title: string): void;
+}
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
 
@@ -71,7 +77,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
-export function HostChatView({ machineId, session }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onReadHealth, onTitle }: HostChatViewProps) {
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
@@ -88,6 +94,13 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
   const [sheetError, setSheetError] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const healthRef = useRef(onReadHealth);
+  healthRef.current = onReadHealth;
+  useEffect(() => source.onHealth((ok) => { if (mounted.current) healthRef.current?.(ok); }), [source]);
+  const titleRef = useRef(onTitle);
+  titleRef.current = onTitle;
+  const readTitle = chat?.title ?? null;
+  useEffect(() => { if (readTitle !== null) titleRef.current?.(readTitle); }, [readTitle]);
   // what each read says beside the turns; an unchanged one keeps the object shown
   useEffect(() => source.onRead((next) => {
     if (mounted.current) setChat((current) => current !== null && current.signature === next.signature ? current : next);

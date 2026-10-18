@@ -692,6 +692,18 @@ describe("mutation body validation", () => {
     } finally { hostServer.stop(); rmSync(home, { recursive: true, force: true }); }
   });
 
+  it("agents_lists_copilot_host_when_signed_in: a PC whose agent host is not connected offers no copilot-host", async () => {
+    const home = mkdtempSync(join(tmpdir(), "herdr-web-ui-contract-agents-"));
+    const hostServer = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(home, "state"), registerBridge: false, agentHost: { enabled: true, startHost: false, home, env: { XDG_CONFIG_HOME: join(home, "cfg") } } });
+    try {
+      const response = await fetch(`http://127.0.0.1:${hostServer.port}/api/agents`);
+      expect(response.status).toBe(200);
+      const { agents } = (await response.json()) as { agents: { kind: string }[] };
+      expect(agents.some((agent) => agent.kind === "claude")).toBe(true);
+      expect(agents.some((agent) => agent.kind === "copilot-host")).toBe(false);
+    } finally { hostServer.stop(); rmSync(home, { recursive: true, force: true }); }
+  });
+
   it("rejects invalid pane identifiers and key/image fields before RPCs", async () => {
     for (const [path, body, code] of [
       ["/api/pane/input", { pane_id: true, text: "echo bad" }, "missing_pane_id"],

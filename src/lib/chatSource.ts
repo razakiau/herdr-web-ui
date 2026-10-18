@@ -54,6 +54,8 @@ export interface HostChatSource extends ChatSource {
   /** each read of the chat, as the host said it (its title, prompt, model, agent, busy) */
   onRead(listener: (read: HostChatRead) => void): () => void;
   last(): HostChatRead | null;
+  /** whether each read went through (true) or failed (false): the header's connection chip */
+  onHealth(listener: (ok: boolean) => void): () => void;
 }
 
 const changed = (detail: string): ApiError => new ApiError("host-chats/chat", 409, detail, "history_changed");
@@ -88,6 +90,19 @@ export function hostSource(machineId: string, session: string): HostChatSource {
   /** the last newest page answered: an unchanged read hands back this very object (ChatView skips it) */
   let lastPage: { from: string | undefined; signature: string; answer: ConversationResponse } | null = null;
   const readListeners = new Set<(read: HostChatRead) => void>();
+  const healthListeners = new Set<(ok: boolean) => void>();
+  const health = (ok: boolean): void => { for (const listener of [...healthListeners]) listener(ok); };
+  /** a read of the chat through the bridge, its outcome told to the header */
+  const fetchRead = async (before?: string): Promise<HostChatRead> => {
+    try {
+      const read = await fetchHostChat(machineId, session, before);
+      health(true);
+      return read;
+    } catch (cause) {
+      health(false);
+      throw cause;
+    }
+  };
   let holders = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -117,14 +132,14 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       if (page.before !== undefined) {
         const start = starts.get(page.before);
         if (start === undefined) throw changed(`no such cursor: ${page.before}`);
-        const read = await fetchHostChat(machineId, session, page.before);
+        const read = await fetchRead(page.before);
         heard(read);
         const end = at(read, start);
         if (end < 0) throw changed("the chat no longer holds the turn its page started at");
         remember(read);
         return answer(read, 0, end, read.cursor);
       }
-      const read = await fetchHostChat(machineId, session);
+      const read = await fetchRead();
       heard(read);
       let from: { cursor: string | null; id: string | null };
       if (page.from !== undefined) {
@@ -180,5 +195,9 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       return () => { readListeners.delete(listener); };
     },
     last: () => lastRead,
+    onHealth(listener) {
+      healthListeners.add(listener);
+      return () => { healthListeners.delete(listener); };
+    },
   };
 }

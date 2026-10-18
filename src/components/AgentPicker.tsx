@@ -3,6 +3,7 @@ import { ChevronDown, Terminal } from "lucide-react";
 
 import type { AgentKind } from "../../shared/protocol.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 
 /** The shell entry is a program name like the agents beside it, so it stays in English. */
 const SHELL_LABEL = "Shell";
@@ -36,7 +37,8 @@ export interface AgentPickerProps {
 }
 
 function OptionMark({ kind }: { kind: string }) {
-  return kind ? <AgentMark agent={kind} size={16} /> : <span className="agent-picker-shell"><Terminal aria-hidden="true" /></span>;
+  // a Copilot chat on the PC's agent host wears Copilot's own mark
+  return kind ? <AgentMark agent={kind === HOST_AGENT_KIND ? "copilot" : kind} size={16} /> : <span className="agent-picker-shell"><Terminal aria-hidden="true" /></span>;
 }
 
 /**

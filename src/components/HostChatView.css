@@ -211,16 +211,17 @@
   font-size: var(--fs-xs);
 }
 
-/* "+ New host chat" (NewVscodeChatSheet.tsx): New workspace's fields, the chat's two pills, and
-   a first message a few lines tall */
+/* the "+" dialog's Copilot (host) choice (NewHostChatFields.tsx): a first message a few lines
+   tall, then the chat's model, agent and mode triggers */
 .new-host-chat-pills {
   display: flex;
   gap: var(--space-2);
   min-width: 0;
 }
 
-.new-host-chat-pills .host-chat-pill {
-  border-color: var(--border);
+.new-host-chat-pills {
+  flex-wrap: wrap;
+  margin-top: calc(-1 * var(--space-2));
 }
 
 .new-host-chat-pills .host-chat-pill:disabled {

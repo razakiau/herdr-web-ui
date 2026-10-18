@@ -18,7 +18,6 @@ import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
 import type { SidebarActivity } from "../lib/sidebarActivity.tsx";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageMeters } from "./UsageMeters.tsx";
-import { NewVscodeChatSheet } from "./NewVscodeChatSheet.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
 
@@ -33,7 +32,9 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 
 interface Props {
   machines: Machine[]; selectedMachineId: string; selectedPaneId: string | null; actions: AppActions;
-  onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void;
+  onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void;
+  /** "New Copilot chat…": the "+" dialog with Copilot (host) picked, in the folder given */
+  onNewHostChat?(machineId: string, cwd: string | null): void; onSetup(machine: Machine, update?: boolean): void;
   /** the host chat the app shows instead of a pane, and the pick of one (App.tsx) */
   selectedHostChat?: HostChatTarget | null;
   onSelectHostChat?(target: HostChatTarget): void;
@@ -59,8 +60,6 @@ export function MachineSidebar(props: Props) {
   // both lists draw from it: live counters per PC (lib/sidebarActivity.tsx)
   const activity = useSidebarActivityState(props.machines);
   const hostChats = props.hostChats ?? NO_HOST_CHATS;
-  // the PC whose "New Copilot chat…" is open (NewVscodeChatSheet, until the "+" dialog offers Copilot), over the drawer until the chat is made
-  const [newChatOn, setNewChatOn] = useState<{ machineId: string; cwd: string | null } | null>(null);
   // the PC whose "All agents on <PC>…" is open
   const [allOn, setAllOn] = useState<string | null>(null);
   // a PC picked from "Other PCs": a full group until another one is picked
@@ -75,7 +74,7 @@ export function MachineSidebar(props: Props) {
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
   return <SidebarActivityProvider value={activity}><div className="sidebar-shell">
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => setNewChatOn({ machineId: machine.id, cwd })} onAllAgents={() => setAllOn(machine.id)} />)}
+      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onAllAgents={() => setAllOn(machine.id)} />)}
       {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={setPicked} />}
       {!props.machines.length && <p className="tree-state" role="status">{t("Loading PCs…")}</p>}
     </div>
@@ -94,9 +93,6 @@ export function MachineSidebar(props: Props) {
       selected={props.selectedHostChat?.machineId === allOn ? props.selectedHostChat.session : null} onClose={() => setAllOn(null)}
       // the chat opens as a tab of its workspace or its folder row; on a phone the drawer goes as a pick's does
       onOpen={(session) => { setAllOn(null); props.onSelectHostChat?.({ machineId: allOn, session }); }} />}
-    {newChatOn !== null && hostChats.has(newChatOn.machineId) && <NewVscodeChatSheet machines={props.machines} pcs={hostChats} machineId={newChatOn.machineId} cwd={newChatOn.cwd} onClose={() => setNewChatOn(null)}
-      // the app opens the chat made, and on a phone puts the drawer away as a pick does
-      onCreated={(target) => { setNewChatOn(null); props.onSelectHostChat?.(target); }} />}
   </div></SidebarActivityProvider>;
 }
 

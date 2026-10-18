@@ -26,7 +26,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
-import { basename, errorText, noteHostChatStreamOpen, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
+import { basename, errorText, hostChatLive, noteHostChatStreamOpen, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
@@ -37,7 +37,8 @@ import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
-import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
+import { headerCrumb, hostHeaderCrumb, showsChat } from "./lib/headerCrumb.ts";
+import { HOST_AGENT_KIND } from "../shared/supported-agents.ts";
 import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
@@ -255,6 +256,12 @@ export function App() {
   });
   // a host chat shown in the pane's place (lib/hostChats.ts): picking one clears the pane, and a pane picked clears it
   const [selectedHostChat, setSelectedHostChat] = useState<HostChatTarget | null>(null);
+  // the open host chat's last read: went through (true), failed (false), not read yet (null)
+  const [hostReadOk, setHostReadOk] = useState<boolean | null>(null);
+  // and its title as its reads give it (a chat just made is not on its PC's list yet)
+  const [hostReadTitle, setHostReadTitle] = useState<string | null>(null);
+  // the folder a chat just made from "+" was started in, until its PC's list has the chat
+  const [hostMadeIn, setHostMadeIn] = useState<string | null>(null);
   useEffect(() => {
     if (selectedPaneId !== null) setSelectedHostChat(null);
   }, [selectedPaneId]);
@@ -747,6 +754,9 @@ export function App() {
   const selectHostChat = useCallback((target: HostChatTarget) => {
     selectTarget(target.machineId, null);
     setSelectedHostChat(target);
+    setHostReadOk(null);
+    setHostReadTitle(null);
+    setHostMadeIn(null);
   }, [selectTarget]);
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
@@ -1255,14 +1265,21 @@ export function App() {
   const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
   // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
   const alertsOffDot = bellVisible && !bell.on;
-  const connWord = t(connected ? "live" : outputStopped ? "disconnected" : "reconnecting");
+  // a host chat has no pane, whose terminal stream says live: its chip follows its own reads
+  const hostShown = selectedHostChat !== null && selectedPane === null;
+  const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId), hostReadOk) : connected;
+  const connWord = t(live ? "live" : !hostShown && outputStopped ? "disconnected" : "reconnecting");
+  const hostTitle = hostShown ? (openHostRow?.title ?? hostReadTitle)?.trim() || t("Copilot chat") : null;
   const crumb = selectedPane && selectedTitle !== null
     ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
-    : null;
+    : hostShown && hostTitle !== null
+      ? hostHeaderCrumb({ machine: selectedMachine?.name ?? selectedMachineId, title: hostTitle, cwd: openHostRow?.cwd ?? hostMadeIn })
+      : null;
 
   useEffect(() => {
-    document.title = selectedTitle ? `${selectedTitle} · herdr` : APP_TITLE;
-  }, [selectedTitle]);
+    const title = selectedTitle ?? hostTitle;
+    document.title = title ? `${title} · herdr` : APP_TITLE;
+  }, [selectedTitle, hostTitle]);
 
   const actions = useMemo<AppActions>(
     () => ({
@@ -1479,15 +1496,16 @@ export function App() {
               <span className="context-title-text">{t(headerNote === "copied" ? "Link copied" : headerNote === "pane-closed" ? "That agent has closed: its workspace is open" : headerNote === "machine-missing" ? "That link's PC is not set up here" : "That link's workspace is closed")}</span>
             </span>
           </div>
-        ) : selectedPane && crumb ? (
+        ) : (selectedPane || hostShown) && crumb ? (
           <div className="context" title={crumb.tooltip}>
             <div className="context-title">
-              {selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
-              <span className="context-title-text">{selectedTitle}</span>
+              {hostShown ? <AgentMark agent="copilot" size={18} /> : selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
+              <span className="context-title-text">{hostShown ? hostTitle : selectedTitle}</span>
             </div>
             <div className="context-sub">
-              <span className="machine-context-name">{crumb.machine}</span><span className="context-sep" aria-hidden="true">›</span>
-              <span>{crumb.workspace}</span>
+              <span className="machine-context-name">{crumb.machine}</span>
+              {!hostShown && <><span className="context-sep" aria-hidden="true">›</span>
+              <span>{crumb.workspace}</span></>}
               {crumb.folder !== null && (
                 <>
                   <span className="context-sep" aria-hidden="true">›</span>
@@ -1498,6 +1516,20 @@ export function App() {
           </div>
         ) : (
           <><Brand /><span className="machine-context-name">{selectedMachine?.name ?? selectedMachineId}</span></>
+        )}
+        {hostShown && (
+          // a host chat is a chat only: Chat stays pressed, and there is no terminal to switch to
+          <div className="segmented view-switch" role="group" aria-label="Pane view">
+            <button type="button" aria-pressed="true" title={t("Chat transcript (⌘⇧J)")}>
+              <MessageSquare />
+              <span className="header-desktop-only">{t("Chat")}</span>
+            </button>
+            {/* aria-disabled, not disabled: a disabled button takes no hover, so its tooltip would never show */}
+            <button type="button" aria-pressed="false" aria-disabled="true" aria-label={t("Terminal")} title={t("This chat has no terminal")} onClick={(event) => event.preventDefault()}>
+              <SquareTerminal />
+              <span className="header-desktop-only">{t("Terminal")}</span>
+            </button>
+          </div>
         )}
         {selectedPane && (
           <div className="segmented view-switch" role="group" aria-label="Pane view">
@@ -1516,9 +1548,9 @@ export function App() {
           {/* speaks only while the bridge is not live; live, it stays in the document for a screen
               reader (and the browser scripts that wait on it), drawn by nothing (styles.css) */}
           <span
-            className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`}
+            className={`conn ${live ? "conn-live" : "conn-reconnecting"}`}
             role="status"
-            title={[connected ? null : connWord, targetHerdr ? t("herdr {version} · protocol {protocol}", { version: targetHerdr.version, protocol: targetHerdr.protocol }) : null].filter((part) => part !== null).join(" · ") || undefined}
+            title={[live ? null : connWord, targetHerdr ? t("herdr {version} · protocol {protocol}", { version: targetHerdr.version, protocol: targetHerdr.protocol }) : null].filter((part) => part !== null).join(" · ") || undefined}
           >
             <span className="conn-dot" aria-hidden="true" />
             <span className="conn-text">{connWord}</span>
@@ -1564,7 +1596,8 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
+              onNewHostChat={(id, cwd) => { setNewPrefill({ cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1651,7 +1684,7 @@ export function App() {
                 {active && hostFolder && selectedHostChat && <HostChatTabStrip folder={basename(hostFolder.cwd)} chats={hostFolder.chats} selectedSession={selectedHostChat.session} onSelect={(session) => selectHostChat({ machineId, session })} />}
                 {active && !pane && hostWorkspace && hostWorkspacePane && slotSnapshot && selectedHostChat && (
                   <TabStrip snapshot={slotSnapshot} workspace={hostWorkspace} selectedPane={hostWorkspacePane} panelId={slotPanelId} onSelectPane={onSelect}
-                    onNewTab={() => actions.openNewTab()} hostTabs={hostPlacement.tabs.get(hostWorkspace.workspace_id)} selectedHostSession={selectedHostChat.session}
+                    onNewTab={() => actions.openNewTab({ machineId, workspaceId: hostWorkspace.workspace_id })} hostTabs={hostPlacement.tabs.get(hostWorkspace.workspace_id)} selectedHostSession={selectedHostChat.session}
                     onSelectHostChat={(session) => selectHostChat({ machineId, session })} />
                 )}
                 {slotSnapshot && pane && workspace && (
@@ -1672,7 +1705,7 @@ export function App() {
                 <main className="terminal-host">
                   {/* a host chat picked in the sidebar takes the pane's place in the active half */}
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
-                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} />
+                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onReadHealth={setHostReadOk} onTitle={setHostReadTitle} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
@@ -1735,6 +1768,8 @@ export function App() {
         tab={newTab}
         defaultCwd={newSessionMachineId === selectedMachineId ? selectedPane?.cwd ?? null : null}
         prefill={newPrefill}
+        hostChats={hostChats.get(newSessionMachineId)?.chats}
+        onHostChat={(session, cwd) => { closeNewSession(); selectHostChat({ machineId: newSessionMachineId, session }); setHostMadeIn(cwd); }}
         onDraft={setNewFields}
         onClose={closeNewSession}
         onCreated={(paneId, agentStarted) => {
