@@ -23,10 +23,10 @@ import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
   agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
-  sendErrorText, sendHost, setHostConfig, setHostDraftModel, settleChoice, stopHost, type HostChoice,
+  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
-import { Composer } from "./Composer.tsx";
+import { Composer, type SentAttachment } from "./Composer.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
@@ -67,7 +67,8 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
       ...(optionId !== "" ? { option_id: optionId } : {}),
     });
   };
-  return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown />;
+  return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown expandable
+    onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
 export function HostChatView({ machineId, session }: HostChatViewProps) {
@@ -155,7 +156,7 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
 
   // One message, once, on the user's tap, as `mode`. True: it went (the composer clears what it
   // carried); a string: it did not, and says why (the words stay in the box).
-  const sendAs = useCallback(async (mode: HostSendPick | "send", text: string): Promise<boolean | string> => {
+  const sendAs = useCallback(async (mode: HostSendPick | "send", text: string, attached: SentAttachment[] = []): Promise<boolean | string> => {
     // a leading config command (/plan, /autopilot on…) sets the chat's mode or approvals first, as
     // VS Code does on send; what is left goes as the message, and nothing goes when nothing is left
     const slash = resolveHostSlash(text.trim());
@@ -164,10 +165,10 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
       if (slash) {
         await setHostConfig(machineId, session, { ...(slash.config["mode"] ? { mode: slash.config["mode"] } : {}), ...(slash.config["autoApprove"] ? { approvals: slash.config["autoApprove"] } : {}) });
         if (mounted.current) void fetchHostConfig(machineId, session).then((value) => { if (mounted.current) setConfig(value); }, () => undefined);
-        if (words === "") return true;
+        if (words === "" && attached.length === 0) return true;
       }
       // sent: sendHost lets the stored draft go even if this screen is gone by now
-      const result = await sendHost(machineId, { session, text: words, ...(mode === "send" ? {} : { mode }) }, { model: chat?.model ?? null, agent: chat?.agent ?? null }, true);
+      const result = await sendHost(machineId, { session, text: words, ...(mode === "send" ? {} : { mode }), ...(attached.length > 0 ? { attachments: attached } : {}) }, { model: chat?.model ?? null, agent: chat?.agent ?? null }, true);
       if (mounted.current) {
         setJoined(result.joined === true);
         // the chat reads it now (and follows it to the end); the pills let a pick go only once the
@@ -185,7 +186,7 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
     files: (query: string) => fetchHostFiles(machineId, session, query),
   }), [chat?.commands, config, machineId, session]);
   useEffect(() => { if (!busy) setJoined(false); }, [busy]);
-  const sendMenu = useMemo(() => ({ default: "steer" as const, onPick: (mode: HostSendPick, text: string) => sendAs(mode, text) }), [sendAs]);
+  const sendMenu = useMemo(() => ({ default: "steer" as const, onPick: (mode: HostSendPick, text: string, attached?: SentAttachment[]) => sendAs(mode, text, attached) }), [sendAs]);
 
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
   const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
@@ -236,7 +237,8 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
       pills={pills} sendMenu={sendMenu}
       pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}
       pendingNote={joined ? t("Added to your steer") : null}
-      onSend={(text) => sendAs("send", text)}
+      onSend={(text, _clear, _anyway, attached) => sendAs("send", text, attached)}
+      attachAsChips onUploadImage={(file) => uploadHostFile(machineId, session, file)}
       onAbort={() => { void stopHost(machineId, session).finally(reread); }} />
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
       onModel={pickModel} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}

@@ -374,3 +374,11 @@ button.host-model-detail {
     margin-inline: calc(var(--space-1) * -1) var(--space-1);
   }
 }
+
+/* narrower still (a 390 px phone once attach and the mic stand before them): the model's dim effort
+   word goes too; the trigger's title and label still say it, and its picker shows it */
+@container pickers (max-width: 240px) {
+  .host-chat-model .host-chat-pill-aside {
+    display: none;
+  }
+}

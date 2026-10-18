@@ -373,7 +373,7 @@ export async function signOut(): Promise<void> {
 }
 
 /** Chunked btoa: the naive one-liner blows the stack on multi-MB screenshots. */
-function base64FromBytes(bytes: Uint8Array): string {
+export function base64FromBytes(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));

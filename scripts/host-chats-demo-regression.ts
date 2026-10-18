@@ -87,7 +87,7 @@ const patch = `(() => {
     const ids = [...(state.older ? ["h0"] : []), "h1", "h1b", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
-      body: "FICTIONAL see the \`map\` first", options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
+      body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
       multi_select: false, custom_option_index: 3,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
@@ -154,6 +154,11 @@ const patch = `(() => {
         { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
         ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
       ]) });
+      // an attached file, stored in the chat's folder on its PC (a failure on request)
+      if (path === "/api/host-chats/chat/upload") {
+        if (state.failUpload) return json({ error: { code: "image_too_large", message: "FICTIONAL no room on the PC" } }, 413);
+        return json({ path: "/tmp/fictional-repo/.herdr-web-ui/" + body.name });
+      }
       if (path === "/api/host-chats/chat/stop") { state.stopped += 1; state.busy = false; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/pending/remove") { state.pending = state.pending.filter((each) => each.id !== body.id); return json({ ok: true }); }
       // the row and tab menus' actions: the host has them, and says so on its next list
@@ -430,13 +435,55 @@ try {
         assert.match(await card.locator(".prompt-card-option-description").innerText(), /\*\*plain\*\*/, "an option's description stays plain");
         assert.equal(await card.getByRole("textbox").getAttribute("placeholder"), "Other…", "the typed-answer field is the Other… slot");
         await fits("the card");
+        // the card opens to a full-height sheet: the question scrolls, the answer field stays in view,
+        // and collapsing keeps the typed text
+        await card.getByRole("textbox").fill("FICTIONAL kept");
+        await card.getByRole("button", { name: "Expand" }).click();
+        const expanded = page.getByRole("dialog", { name: "Agent is asking" });
+        await expanded.waitFor();
+        const opened = expanded.locator(".prompt-card");
+        assert.equal(await opened.getByRole("textbox").inputValue(), "FICTIONAL kept", "the typed text goes with the card");
+        // the sheet rises: measure it once it has stopped moving
+        await expanded.evaluate((node) => Promise.all(node.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+        const sized = await expanded.evaluate((node) => {
+          const field = node.querySelector(".prompt-card-custom .input")!.getBoundingClientRect();
+          const body = node.querySelector(".prompt-card-body")!;
+          return { height: node.getBoundingClientRect().height, viewport: window.innerHeight, fieldBottom: field.bottom, bodyScrolls: body.scrollHeight > body.clientHeight + 1 };
+        });
+        assert.ok(sized.height > sized.viewport * 0.85, `the sheet fills the screen (${sized.height} of ${sized.viewport})`);
+        assert.ok(sized.bodyScrolls, "the long message scrolls on its own inside the sheet");
+        assert.ok(sized.fieldBottom <= sized.viewport, `the answer field is on screen without scrolling (bottom ${sized.fieldBottom} of ${sized.viewport})`);
+        await fits("the expanded card");
+        if (shots) await page.screenshot({ path: join(shots, "task-10-card-expanded-390.png") });
+        await opened.getByRole("button", { name: "Collapse" }).click();
+        await expanded.waitFor({ state: "detached" });
+        assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL kept", "collapsing returns the card inline with its text");
+        assert.equal(await page.locator(".modal-scrim .prompt-card").count(), 0, "no card left in a sheet");
+        // a typed answer with an image: the upload fails first (nothing posted, text and chip kept),
+        // then the answer goes as "@<path> " + the text
+        await card.getByRole("textbox").fill("FICTIONAL west");
+        await page.evaluate(() => { (window as unknown as { hostState: { failUpload: boolean } }).hostState.failUpload = true; });
+        await card.locator('input[type="file"]').setInputFiles({ name: "fictional-west.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") });
+        await card.locator(".prompt-card-files img").waitFor();
+        await card.getByRole("button", { name: "Send" }).click();
+        await card.locator(".prompt-card-error", { hasText: /^FICTIONAL no room on the PC$/ }).waitFor();
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/answer")).length, 0, "a failed upload posts no answer");
+        assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL west", "and keeps the typed text");
+        assert.equal(await card.locator(".prompt-card-files .composer-attachment").count(), 1, "and the chip");
+        if (shots) {
+          // the collapsed sheet's leaving copy (lib/sheets.ts) is gone before the picture
+          await page.waitForFunction(() => ![...document.body.children].some((node) => node instanceof HTMLElement && node.inert && node.shadowRoot === null && node.getAttribute("aria-hidden") === "true" && node.childElementCount === 0));
+          await page.screenshot({ path: join(shots, "task-10-card-attach-390.png") });
+        }
+        await page.evaluate(() => { (window as unknown as { hostState: { failUpload: boolean } }).hostState.failUpload = false; });
         // a typed answer goes as its text and the slot's empty id (refused here, so the card stays for option 2)
         await page.evaluate(() => { (window as unknown as { hostState: { holdAnswer: boolean } }).hostState.holdAnswer = true; });
-        await card.getByRole("textbox").fill("FICTIONAL west");
         await card.getByRole("button", { name: "Send" }).click();
-        await card.locator(".prompt-card-error").waitFor();
+        await card.locator(".prompt-card-error", { hasText: "changed" }).waitFor();
         const typed = await posts("/api/machines/remote/host-chats/chat/answer");
-        assert.deepEqual(typed.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", text: "FICTIONAL west", option_ids: [""] }], "a typed answer posts { text, option_ids: [\"\"] }");
+        const uploaded = await posts("/api/machines/remote/host-chats/chat/upload");
+        assert.deepEqual(uploaded.map((post) => [post.body["name"], post.body["media_type"]]), [["fictional-west.png", "image/png"], ["fictional-west.png", "image/png"]], "the card's file is uploaded on each try");
+        assert.deepEqual(typed.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", text: "@/tmp/fictional-repo/.herdr-web-ui/fictional-west.png FICTIONAL west", option_ids: [""] }], "a typed answer with a file posts \"@<path> <text>\" and the slot's id");
         await page.evaluate(() => { (window as unknown as { hostState: { holdAnswer: boolean } }).hostState.holdAnswer = false; });
         await card.getByRole("button", { name: /FICTIONAL south/ }).click();
         await card.waitFor({ state: "detached" });
@@ -516,6 +563,27 @@ try {
         assert.equal(await box.inputValue(), "", "a sent message leaves the box");
         console.log("PASS the pills pick model-b · high and Report; the send carries both and the draft the model");
 
+        // 4b. attachments are chips, VS Code's way: a PNG picked and a file taken with "@" go with the
+        // message as attachments, and the text carries no @path
+        await view.locator('.composer input[type="file"]').setInputFiles({ name: "fictional-shot.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") });
+        const chips = view.locator(".composer-attachments .composer-attachment");
+        await view.locator(".composer-attachment.is-ready img").waitFor();
+        assert.equal(await box.inputValue(), "", "an uploaded file puts no @path in the box");
+        await box.fill("FICTIONAL look @READ");
+        await view.locator(".composer-menu").getByText("README.md").click();
+        await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 2);
+        assert.equal(await box.inputValue(), "FICTIONAL look ", "an @ pick leaves the box and becomes a chip");
+        assert.deepEqual(await chips.evaluateAll((nodes) => nodes.map((node) => node.querySelector("img") ? "image" : node.querySelector(".composer-attachment-file")?.textContent?.trim())), ["image", "README.md"], "a thumbnail chip, then the file's chip");
+        await fits("the composer with chips");
+        if (shots) await page.screenshot({ path: join(shots, "task-10-composer-chips-390.png") });
+        await box.fill("FICTIONAL look");
+        await view.getByRole("button", { name: "Send message" }).click();
+        await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 0);
+        const withFiles = bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1));
+        assert.deepEqual(withFiles, { session: SESSION, text: "FICTIONAL look", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT,
+          attachments: [{ path: "/tmp/fictional-repo/.herdr-web-ui/fictional-shot.png", media_type: "image/png", name: "fictional-shot.png" }, { path: "README.md" }] }, "the send carries both chips as attachments");
+        console.log("PASS a picked PNG and an @ file are chips and go as the message's attachments");
+
         // 5. a busy chat: VS Code's send menu. Send steers by default, a second steer joins the first,
         // Add to Queue waits for the turn, and Stop and Send ends the turn and sends
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
@@ -582,6 +650,9 @@ try {
         await page.getByRole("dialog", { name: "Send", exact: true }).getByRole("button", { name: "Stop and Send" }).click();
         await page.getByRole("dialog", { name: "Send", exact: true }).waitFor({ state: "detached", timeout: 5000 });
         // the new turn is in the transcript; it may sit under the New messages jump
+        // (the chat does not follow here yet: a ledgered minor) so the jump is pressed, as a user would
+        const jump = view.locator(".chat-new-messages");
+        if (await jump.count() > 0) await jump.click();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" }).waitFor({ state: "attached" });
         assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)?.body["mode"], "stop_and_send", "Stop and Send posts its mode");
         console.log("PASS Stop and Send cancels, then sends");

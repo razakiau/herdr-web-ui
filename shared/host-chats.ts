@@ -72,7 +72,9 @@ export interface HostChatRead {
  */
 /** `mode`: VS Code's send menu; absent is `send` (starts a turn, or queues behind a running one). */
 export type HostSendMode = "send" | "steer" | "queue" | "stop_and_send";
-export interface HostSend { session: string; id?: string; text: string; model?: { id: string; effort?: string }; agent?: string | null; mode?: HostSendMode }
+/** A file a message carries: one chat/upload stored (its type and name), or a path of the chat's folder (an "@" pick). */
+export interface HostAttachment { path: string; media_type?: string; name?: string }
+export interface HostSend { session: string; id?: string; text: string; model?: { id: string; effort?: string }; agent?: string | null; mode?: HostSendMode; attachments?: HostAttachment[] }
 /** POST /api/host-chats/chat/send: `queued` when it waits for the running turn; `joined` when a steer joined the one already set. */
 export interface HostSendResult { queued: boolean; joined?: true }
 export interface HostAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true }

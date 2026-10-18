@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, ToolCallResult, Turn } from "@microsoft/agent-host-protocol";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import type { HostChatRead, AgentHostState } from "../../shared/host-chats.ts";
@@ -1193,6 +1193,90 @@ describe("host chat session config: mode and permissions", () => {
       expect({ code, status: refused.status, got: refused.json.error.code }).toEqual({ code, status: 400, got: code });
     }
     expect(actions(r.fake, "session/configChanged")).toEqual([]);
+  });
+});
+
+describe("host chat attachments", () => {
+  const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex").toString("base64");
+  const inFolder = async () => {
+    const folder = temp();
+    const where = (n: number) => ({ ...summary(n), workingDirectories: [`file://${folder}`] });
+    const noFolder = { ...summary(2), workingDirectories: [] };
+    return { folder, r: await rig({ sessions: [where(1), noFolder] }) };
+  };
+
+  it("upload_writes_into_chat_folder: under <cwd>/.herdr-web-ui/, and the answer gives its path", async () => {
+    const { folder, r } = await inFolder();
+    const up = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "shot.png", media_type: "image/png", data: PNG });
+    expect(up.status).toBe(200);
+    expect(up.json.path.startsWith(join(folder, ".herdr-web-ui") + "/")).toBe(true);
+    expect(readFileSync(up.json.path).toString("base64")).toBe(PNG);
+    const text = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "notes.txt", media_type: "text/plain", data: Buffer.from("FICTIONAL").toString("base64") });
+    expect(text.json.path).toMatch(/\/notes-[^/]+\.txt$/);
+  });
+
+  it("upload_without_folder_409, an unknown session 404, a bad body 400", async () => {
+    const { r } = await inFolder();
+    const none = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(2), name: "shot.png", media_type: "image/png", data: PNG });
+    expect({ status: none.status, code: none.json.error.code }).toEqual({ status: 409, code: "no_folder" });
+    const unknown = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(9), name: "shot.png", media_type: "image/png", data: PNG });
+    expect(unknown.status).toBe(404);
+    const bad = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "shot.png", media_type: "image/png" });
+    expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_upload" });
+  });
+
+  it("upload_limit_is_the_panes: a file over it is 413 image_too_large with its reason, a 20 MiB one is stored whole", async () => {
+    const { r } = await inFolder();
+    const over = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "big.zip", media_type: "application/zip", data: Buffer.alloc(40 * 1024 * 1024, 1).toString("base64") });
+    expect({ status: over.status, code: over.json.error.code }).toEqual({ status: 413, code: "image_too_large" });
+    const whole = Buffer.alloc(20 * 1024 * 1024, 7);
+    const kept = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "big.zip", media_type: "application/zip", data: whole.toString("base64") });
+    expect(kept.status).toBe(200);
+    expect(readFileSync(kept.json.path).byteLength).toBe(whole.byteLength);
+  });
+
+  it("send_image_attachment_is_embedded and send_file_attachment_is_resource", async () => {
+    const { r } = await inFolder();
+    const image = (await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "shot.png", media_type: "image/png", data: PNG })).json.path as string;
+    const file = (await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "notes.txt", media_type: "text/plain", data: Buffer.from("FICTIONAL").toString("base64") })).json.path as string;
+    const sent = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL look",
+      attachments: [{ path: image, media_type: "image/png", name: "shot.png" }, { path: file, media_type: "text/plain", name: "notes.txt" }] });
+    expect(sent.status).toBe(200);
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    expect(only(r.fake, "chat/turnStarted")["message"]["attachments"]).toEqual([
+      { type: "embeddedResource", label: "shot.png", displayKind: "image", data: PNG, contentType: "image/png" },
+      { type: "resource", label: "notes.txt", displayKind: "document", uri: `file://${file}`, contentType: "text/plain" },
+    ]);
+  });
+
+  it("a file of the chat's folder (an @ pick) goes by its path, relative or not; an image there is embedded", async () => {
+    const { folder, r } = await inFolder();
+    mkdirSync(join(folder, "src"));
+    writeFileSync(join(folder, "src", "main.ts"), "FICTIONAL");
+    writeFileSync(join(folder, "logo.png"), Buffer.from(PNG, "base64"));
+    const sent = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL read",
+      attachments: [{ path: "src/main.ts" }, { path: join(folder, "logo.png") }] });
+    expect(sent.status).toBe(200);
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    expect(only(r.fake, "chat/turnStarted")["message"]["attachments"]).toEqual([
+      { type: "resource", label: "main.ts", displayKind: "document", uri: `file://${realpathSync(join(folder, "src", "main.ts"))}` },
+      { type: "embeddedResource", label: "logo.png", displayKind: "image", data: PNG, contentType: "image/png" },
+    ]);
+  });
+
+  it("an attachment outside the chat's folder, or one that is gone, is refused and nothing is sent", async () => {
+    const { folder, r } = await inFolder();
+    const elsewhere = temp();
+    writeFileSync(join(elsewhere, "secret.png"), Buffer.from(PNG, "base64"));
+    symlinkSync(join(elsewhere, "secret.png"), join(folder, "link.png"));
+    for (const path of ["/etc/hosts", join(folder, "link.png"), "link.png", `../${basename(elsewhere)}/secret.png`, join(folder, "..", basename(elsewhere), "secret.png"), "gone.png", 7]) {
+      const refused = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL x", attachments: [{ path, media_type: "image/png" }] });
+      expect({ path, status: refused.status, code: refused.json.error.code }).toEqual({ path, status: 400, code: "invalid_attachment" });
+    }
+    // a chat with no folder takes no attachment at all
+    const none = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(2), text: "FICTIONAL x", attachments: [{ path: "/etc/hosts" }] });
+    expect({ status: none.status, code: none.json.error.code }).toEqual({ status: 400, code: "invalid_attachment" });
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
   });
 });
 

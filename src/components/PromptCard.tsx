@@ -1,12 +1,19 @@
-import { useContext, useEffect, useId, useRef, useState } from "react";
-import { Check, FileText, Send } from "lucide-react";
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Check, FileText, Maximize2, Minimize2, Plus, Send, X } from "lucide-react";
 
 import "./PromptCard.css";
 
-import { ApiError } from "../lib/api.ts";
+import { ApiError, assertAttachable } from "../lib/api.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
-import { focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { customAnswerWithFiles, focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { useSettings } from "../lib/settings.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
+import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { useSheetSwipe } from "../lib/sheets.ts";
+import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
+import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
@@ -32,6 +39,14 @@ export interface PromptCardProps {
    * Markdown, as VS Code draws them. Off for every other agent: their cards read as plain text.
    */
   markdown?: boolean;
+  /**
+   * A Copilot card's typed answer takes files (VS Code's answer field has the composer's attach
+   * and mic): each is stored with this, and its path leads the answer as `@path`. Absent: no
+   * attach button, as every other agent's card.
+   */
+  onUploadFile?: (file: File) => Promise<string>;
+  /** a Copilot card opens to a full-height sheet and back, keeping its step, picks and text */
+  expandable?: boolean;
 }
 
 export function PromptCard({ paneId, ...props }: PromptCardProps) {
@@ -64,10 +79,13 @@ export interface PromptCardViewProps extends Omit<PromptCardProps, "paneId"> {
   submit(choice: PromptChoice): Promise<void>;
 }
 
-export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false }: PromptCardViewProps) {
+export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false, onUploadFile, expandable = false }: PromptCardViewProps) {
   const t = useT();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
+  // a Copilot answer's files, as thumbnails in the field until it is sent
+  const [files, setFiles] = useState<{ id: number; file: File; preview: string }[]>([]);
+  const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
@@ -95,13 +113,15 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
   useEffect(() => {
     const node = cardRef.current;
     return node === null ? undefined : dismissKeyboardOn(node, { atTopOnly: true });
-  }, []);
+  }, [expanded]);
 
   /**
    * Sends one answer. `press` is the click that asked for it (none for a key in the card's field).
    * Resolves to whether this card is still the one shown: an answer that comes back after another
    * prompt took its place, or after its pane was left, changes nothing there.
    */
+  // whether the last answer went: `answer` itself says only whether the card is still the one shown
+  const answeredOk = useRef(false);
   const answer = async (choice: PromptChoice, press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<boolean> => {
     // read now: the pressed button is disabled while the answer is on its way, and loses the focus
     const fromCard = cardRef.current?.contains(document.activeElement) === true;
@@ -113,9 +133,13 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     const coarse = window.matchMedia?.("(pointer: coarse)").matches === true;
     setPending(true);
     setError(null);
+    answeredOk.current = false;
     try {
       await submit(choice);
+      answeredOk.current = true;
       if (!shown.current) return false;
+      // answered from the full-height sheet: back to the chat, as the inline card would be
+      setExpanded(false);
       // and read again: the answer took a moment, and the user may have gone on to something else
       const card = cardRef.current;
       const active = document.activeElement;
@@ -135,6 +159,62 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     return true;
   };
 
+  // the typed answer: with files, each goes up first and leads the text as `@path`; a failed
+  // upload says why and posts nothing, and the card keeps its text and files
+  const answerCustom = async (press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<void> => {
+    const text = custom.trim();
+    if (files.length === 0 || !onUploadFile) {
+      await answer({ custom_text: text }, press);
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const result = await customAnswerWithFiles(text, files.map((each) => each.file), onUploadFile, async (withPaths) => { await answer({ custom_text: withPaths }, press); });
+    if (!shown.current) return;
+    if (!result.ok) { setError(result.error); setPending(false); }
+  };
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  useEffect(() => () => { for (const each of filesRef.current) URL.revokeObjectURL(each.preview); }, []);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const addFiles = (picked: readonly File[]): void => {
+    const kept: { id: number; file: File; preview: string }[] = [];
+    for (const file of picked) {
+      try { assertAttachable(file); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); continue; }
+      kept.push({ id: ++answerFileSequence, file, preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : "" });
+    }
+    if (kept.length > 0) setFiles((current) => [...current, ...kept]);
+  };
+  const removeFile = (id: number): void => {
+    setFiles((current) => current.filter((each) => {
+      if (each.id === id) URL.revokeObjectURL(each.preview);
+      return each.id !== id;
+    }));
+  };
+  const customRef = useRef<HTMLInputElement | null>(null);
+  const customValue = useRef(custom);
+  customValue.current = custom;
+  const { settings } = useSettings();
+  const phone = useMediaQuery("(max-width: 640px), (pointer: coarse)");
+  const dictation = useDictation({
+    mode: "chat",
+    // the card's own field: only a Copilot card's has a mic
+    active: onUploadFile !== undefined,
+    connected: true,
+    phone,
+    polish: settings.voicePolishChat,
+    box: customRef,
+    read: () => customValue.current,
+    write: (value, caret) => {
+      customValue.current = value;
+      setCustom(value);
+      requestAnimationFrame(() => customRef.current?.setSelectionRange(caret, caret));
+    },
+    onNote: setError,
+  });
+  const attaching = onUploadFile !== undefined;
+  const canSend = custom.trim().length > 0 || (attaching && files.length > 0);
+
   const toggle = (index: number): void => {
     setSelected((current) => {
       const next = new Set(current);
@@ -153,8 +233,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
   const openFile = useContext(OpenFileContext);
   const planFile = prompt.plan_file;
 
-  return (
-    <section className="prompt-card" ref={cardRef} role="region" aria-label={t("Agent is asking")} aria-busy={pending}
+  const collapse = (): void => setExpanded(false);
+  const card = (
+    <section className={`prompt-card${expanded ? " is-expanded" : ""}`} ref={cardRef} role="region" aria-label={t("Agent is asking")} aria-busy={pending}
       onKeyDown={(event) => { down.current = null; keyed.current = event.key === "Enter" || event.key === " " ? event.target : null; }}
       onPointerDown={(event) => {
         keyed.current = null;
@@ -169,6 +250,12 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         {planFile && openFile && (
           <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
             <FileText aria-hidden="true" />{t("View plan")}
+          </button>
+        )}
+        {expandable && (
+          <button type="button" className="icon-button prompt-card-expand" aria-label={expanded ? t("Collapse") : t("Expand")} title={expanded ? t("Collapse") : t("Expand")}
+            aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>
+            {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
           </button>
         )}
       </header>
@@ -241,12 +328,42 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
           <div className="prompt-card-custom-row">
             <input className="input" value={custom} disabled={pending} placeholder={markdown ? copilotSlot(prompt.options[prompt.custom_option_index]?.label, t) : prompt.options[prompt.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
               // an IME's Enter commits the candidate; WebKit can send it after compositionend, as key code 229
-              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && custom.trim().length > 0) void answer({ custom_text: custom.trim() });
-            }} />
-            <button type="button" className={`btn${custom.trim().length > 0 ? " btn-primary" : ""}`} disabled={pending || custom.trim().length === 0} onClick={(event) => void answer({ custom_text: custom.trim() }, event)}>
+              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && canSend) void answerCustom();
+            }} {...(attaching ? { ref: customRef, onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => {
+              const pasted = Array.from(event.clipboardData.files);
+              if (pasted.length === 0) return;
+              event.preventDefault();
+              addFiles(pasted);
+            } } : {})} />
+            {attaching && <>
+              <input ref={fileInput} type="file" multiple hidden onChange={(event) => {
+                const picked = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                addFiles(picked);
+              }} />
+              <button type="button" className="icon-button prompt-card-attach" aria-label={t("Attach files")} title={t("Attach files")} disabled={pending} onClick={() => fileInput.current?.click()}>
+                <Plus aria-hidden="true" />
+              </button>
+              {dictation.shown && <MicButton dictation={dictation} className="prompt-card-mic" />}
+            </>}
+            <button type="button" className={`btn${canSend ? " btn-primary" : ""}`} disabled={pending || !canSend} onClick={(event) => void answerCustom(event)}>
               <Send aria-hidden="true" /> {t("Send")}
             </button>
           </div>
+          {attaching && dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
+          {files.length > 0 && (
+            <div className="composer-attachments prompt-card-files" aria-label={t("Attached files")}>
+              {files.map((each) => (
+                <div className="composer-attachment is-ready" key={each.id}>
+                  {each.preview ? <img src={each.preview} alt={each.file.name} />
+                    : <span className="composer-attachment-file" title={each.file.name}><FileText aria-hidden="true" /><span>{each.file.name}</span></span>}
+                  <button type="button" aria-label={t("Remove {file}", { file: each.file.name })} disabled={pending} onClick={() => removeFile(each.id)}>
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {typedAnswer?.option_index !== undefined && (
@@ -262,5 +379,36 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       )}
       {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}
     </section>
+  );
+  return expanded ? <PromptCardSheet label={t("Agent is asking")} onClose={collapse}>{card}</PromptCardSheet> : card;
+}
+
+let answerFileSequence = 0;
+
+/**
+ * A Copilot card opened to the full height (the app's sheet: focus trap, swipe down, Back and
+ * Escape close it). The card inside is the same one: its owner keeps its step, picks and text.
+ */
+function PromptCardSheet({ label, onClose, children }: { label: string; onClose(): void; children: ReactNode }) {
+  const surface = useFocusTrap<HTMLDivElement>(true);
+  useSheetSwipe(surface, onClose);
+  usePhoneSheetBack(() => { onClose(); });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || nativeModalOver(surface.current)) return;
+      event.stopPropagation();
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  return createPortal(
+    <div className="modal-scrim prompt-card-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div ref={surface} className="modal prompt-card-sheet" role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
+        {children}
+      </div>
+    </div>,
+    document.body,
   );
 }

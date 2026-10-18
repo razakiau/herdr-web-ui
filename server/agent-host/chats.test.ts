@@ -316,6 +316,19 @@ describe("host chat turns, whole", () => {
     expect(imageOf(state, "nope:0")).toBeNull();
   });
 
+  it("user_attachment_images_show_in_the_user_turn: by ref, never their bytes; a file shows nothing", () => {
+    const message = { ...user("FICTIONAL look"), attachments: [
+      { type: "embeddedResource", label: "shot.png", displayKind: "image", data: PNG, contentType: "image/png" },
+      { type: "resource", label: "notes.txt", displayKind: "document", uri: "file:///fictional/notes.txt" },
+      { type: "embeddedResource", label: "doc.pdf", data: "AAAA", contentType: "application/pdf" },
+    ] };
+    const state = reducedChat([{ type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message } as StateAction, finished()]);
+    expect(turnsFrom(state)[0]!.parts).toEqual([{ kind: "text", text: "FICTIONAL look" }, { kind: "image", media_type: "image/png", ref: "turn:turn-1:0" }]);
+    expect(JSON.stringify(turnsFrom(state))).not.toContain(PNG);
+    expect(imageOf(state, "turn:turn-1:0")).toEqual({ media_type: "image/png", bytes: Buffer.from(PNG, "base64") });
+    for (const ref of ["turn:turn-1:1", "turn:turn-9:0", "turn:turn-1:00", "turn:turn-1"]) expect({ ref, image: imageOf(state, ref) }).toEqual({ ref, image: null });
+  });
+
   it("file_edit_gives_edit_counts", () => {
     const side = (path: string) => ({ uri: `file://${path}`, content: { uri: `ahp-content://fictional${path}` } });
     const edits = [

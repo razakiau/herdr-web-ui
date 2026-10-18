@@ -33,7 +33,7 @@ function errorNote(t: Translate, error: VoiceError | VoiceUnavailable): string |
 const BAR_COUNT = 7;
 
 // Mod+Shift+Space dictates into one mounted field: the focused one, else the composer, else any visible one
-interface VoiceTarget { mode: VoiceMode; box: RefObject<HTMLTextAreaElement | null>; voice: () => VoiceInput; press: () => void }
+interface VoiceTarget { mode: VoiceMode; box: RefObject<HTMLTextAreaElement | HTMLInputElement | null>; voice: () => VoiceInput; press: () => void }
 const targets = new Set<VoiceTarget>();
 let held: VoiceTarget | null = null;
 
@@ -92,7 +92,7 @@ export interface DictationOptions {
   /** a phone's input, short of room: the mic is there only when Settings asks for it */
   phone?: boolean;
   keywords?: () => string[];
-  box: RefObject<HTMLTextAreaElement | null>;
+  box: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   /** the input's current text */
   read: () => string;
   /** sets the text and puts the caret at `caret`, without taking focus */
@@ -136,7 +136,7 @@ export function useDictation(options: DictationOptions): Dictation {
     const value = read();
     const element = box.current;
     const live = element !== null && element.value === value;
-    const selection = live ? { start: element.selectionStart, end: element.selectionEnd } : { start: value.length, end: value.length };
+    const selection = live ? { start: element.selectionStart ?? value.length, end: element.selectionEnd ?? value.length } : { start: value.length, end: value.length };
     const next = applyDictation(value, selection, spans.current, result, maxLength);
     if (next === "too_long") onNote(t("The dictation does not fit in the box"));
     else if (next) write(next.value, next.caret);

@@ -12,7 +12,7 @@ import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
 import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
-import { ApiError, getJson } from "./api.ts";
+import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
 export async function fetchHostChats(machineId: string): Promise<HostChatRow[]> {
@@ -98,6 +98,17 @@ export function fetchHostConfig(machineId: string, session: string): Promise<Hos
 /** The chat's folder's files matching `query`, for "@" (as a pane chat lists its own). */
 export async function fetchHostFiles(machineId: string, session: string, query: string, limit = 20): Promise<string[]> {
   return (await getJson<{ files: string[] }>(machinePath(machineId, `host-chats/files?${new URLSearchParams({ session, q: query, limit: String(limit) }).toString()}`))).files;
+}
+
+/**
+ * Stores an attached file in the chat's folder on its PC (`.herdr-web-ui/`, where a pane's go): its
+ * path, which the message then carries as an attachment. Refused before reading for a file over
+ * the limit (AttachmentTooLargeError), as a pane's upload is.
+ */
+export async function uploadHostFile(machineId: string, session: string, file: File): Promise<string> {
+  assertAttachable(file);
+  const data = base64FromBytes(new Uint8Array(await file.arrayBuffer()));
+  return (await post<{ path: string }>(machineId, "host-chats/chat/upload", { session, media_type: file.type || "application/octet-stream", data, ...(file.name ? { name: file.name } : {}) })).path;
 }
 
 /** Sets the chat's mode or approvals on its host (only what is given): it stays the chat's, as in VS Code. */

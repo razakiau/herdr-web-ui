@@ -12,6 +12,7 @@ import {
   ChatInputResponseKind,
   ConfirmationOptionKind,
   CustomizationType,
+  MessageAttachmentKind,
   ResponsePartKind,
   SessionStatus,
   ToolCallCancellationReason,
@@ -24,6 +25,8 @@ import {
   type ChatState,
   type Customization,
   type InputRequestResponsePart,
+  type Message,
+  type MessageEmbeddedResourceAttachment,
   type ModelSelection,
   type ResponsePart,
   type RootState,
@@ -337,10 +340,18 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
     const read: TurnRead = { times: { started: ts, ended: end ?? null }, running, model: turn.message.model?.id ?? null, context };
     const parts = turn.responseParts.flatMap((part) => partsOf(part, read));
     return [
-      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }] },
+      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.contentType, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts },
     ];
   });
+}
+
+/** A user image's ref is `turn:<turnId>:<index>`; a tool's is `<toolCallId>:<index>`. */
+const USER_REF = "turn:";
+
+/** The images a user message carried (pasted or attached), in order: the index in its ref counts these alone. */
+function userImagesOf(message: Message): MessageEmbeddedResourceAttachment[] {
+  return (message.attachments ?? []).flatMap((each) => (each.type === MessageAttachmentKind.EmbeddedResource && IMAGE_TYPES.has(each.contentType) ? [each] : []));
 }
 
 /** A tool call of the chat by its id, in any turn it holds. */
@@ -364,6 +375,12 @@ export function imageOf(chat: ChatState, ref: string): { media_type: string; byt
   // one spelling per image: `c1:0`, never `c1:`, `c1:00` or `c1:0x0`
   if (!/^(?:0|[1-9]\d*)$/.test(digits)) return null;
   const index = Number(digits);
+  if (ref.startsWith(USER_REF)) {
+    const id = ref.slice(USER_REF.length, at);
+    const turn = (chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns).find((each) => each.id === id);
+    const attached = turn ? userImagesOf(turn.message)[index] : undefined;
+    return attached ? { media_type: attached.contentType, bytes: Buffer.from(attached.data, "base64") } : null;
+  }
   const tool = toolCallOf(chat, ref.slice(0, at));
   const image = tool ? imagesOf(tool)[index] : undefined;
   if (!tool || !image) return null;

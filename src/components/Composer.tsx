@@ -97,7 +97,7 @@ export interface ComposerProps {
   /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
    * note offers to send again with `clearDraft`, which clears that draft from the terminal first, or,
    * where it named none, with `sendAnyway`; a promise settles to any of them */
-  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean, attached?: SentAttachment[]) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
   /** absent: no attaching (the button, a paste or a drop of files does nothing) */
   onUploadImage?: (file: File) => Promise<string>;
@@ -107,7 +107,12 @@ export interface ComposerProps {
    * on a phone) offers Stop and Send, Add to Queue and Steer with Message. `onPick` sends the box's
    * text that way and settles like `onSend`. Absent: Send is the pane's.
    */
-  sendMenu?: { default: "steer" | "queue"; onPick(mode: HostSendPick, text: string): Promise<boolean | string> };
+  sendMenu?: { default: "steer" | "queue"; onPick(mode: HostSendPick, text: string, attached?: SentAttachment[]): Promise<boolean | string> };
+  /**
+   * A host chat's attachments, VS Code's way: a file stays a chip above the box (no `@path` in the
+   * text), an "@" pick becomes one too, and Send hands the chips to `onSend`/`onPick` with the text.
+   */
+  attachAsChips?: boolean;
   /** A host chat's messages waiting for the running turn: rows above the box under "Steering" and "Queued". */
   pending?: { id: string; kind: "steering" | "queued"; text: string }[];
   onRemovePending?: (id: string) => void;
@@ -125,6 +130,9 @@ export interface ComposerProps {
   /** drawn in the status pill's place: a host chat's model and agent pills, which press */
   pills?: ReactNode;
 }
+
+/** A chip sent with a host chat's message: an uploaded file (its type and name), or an "@" pick (a path of the chat's folder). */
+export interface SentAttachment { path: string; media_type?: string; name?: string }
 
 const UPLOADS_AT_ONCE = 3;
 /** How long a press on Send opens a host chat's send menu instead of sending. */
@@ -169,6 +177,8 @@ type Attachment = {
   missing?: number;
   /** what the pick this file came in with left out, repeated beside an upload error of the batch */
   leftOut: string | null;
+  /** an "@" pick of the chat's folder (attachAsChips): never uploaded, `path` is the folder's */
+  picked?: true;
 };
 
 function readSlashUsage(): Record<string, number> {
@@ -298,6 +308,7 @@ export function Composer({
   keywords,
   hostMenus,
   pills,
+  attachAsChips = false,
 }: ComposerProps) {
   const t = useT();
   const activeRef = useRef(active);
@@ -814,6 +825,17 @@ export function Composer({
         setMenuDismissed(true);
         return;
       }
+      if (attachAsChips && currentTrigger.kind === "file") {
+        // VS Code's "@" in an agent-host chat: the pick attaches the file; the "@query" typed goes
+        const path = choice as string;
+        const completed = applyCompletion(text, currentTrigger, "");
+        setTextAndCaret(completed.text, completed.caret);
+        setMenuDismissed(true);
+        setAttachments((current) => current.some((item) => item.picked && item.path === path) ? current : [...current, {
+          id: ++attachmentSequence, file: new File([], path.split("/").pop() ?? path), previewUrl: "", path, state: "ready", leftOut: null, picked: true,
+        }]);
+        return;
+      }
       const replacement = currentTrigger.kind === "slash" ? `${(choice as SlashCommand).trigger ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
       const completed = applyCompletion(text, currentTrigger, replacement);
       setTextAndCaret(completed.text, completed.caret);
@@ -831,7 +853,7 @@ export function Composer({
         });
       }
     },
-    [setTextAndCaret, text],
+    [attachAsChips, setTextAndCaret, text],
   );
 
   const pumpUploads = useCallback(() => {
@@ -845,6 +867,11 @@ export function Composer({
         .then(
           (path) => {
             if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
+            // a host chat's file stays a chip and goes with the message, never as text
+            if (attachAsChips) {
+              setAttachments((current) => current.map((item) => (item.id === attachment.id ? { ...item, path, state: "ready" } : item)));
+              return;
+            }
             waitingMentions.current.push({ id: attachment.id, path });
             placeWaitingMentions();
           },
@@ -862,7 +889,7 @@ export function Composer({
           pumpUploads();
         });
     }
-  }, [onUploadImage, placeWaitingMentions]);
+  }, [attachAsChips, onUploadImage, placeWaitingMentions]);
 
   const uploadImages = useCallback(
     (incoming: readonly File[]) => {
@@ -899,6 +926,7 @@ export function Composer({
     placedMentions.current.delete(attachment.id);
     URL.revokeObjectURL(attachment.previewUrl);
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+    if (attachAsChips) return;
     if (attachment.path) {
       const mention = imageMention(attachment.path);
       setText((current) => {
@@ -912,7 +940,7 @@ export function Composer({
       // would wait for the next edit: try them now
       placeWaitingMentions();
     }
-  }, [placeWaitingMentions]);
+  }, [attachAsChips, placeWaitingMentions]);
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. False: nothing went out */
@@ -942,7 +970,9 @@ export function Composer({
     try {
       // a host chat at work: a plain Send goes as its menu's default
       const how = sendMenu && (pick ?? (agentStatus === "working" ? sendMenu.default : undefined));
-      const result = how ? sendMenu.onPick(how, text) : onSend(text, clearDraft, sendAnyway);
+      const attached = attachAsChips ? sentAttachments.flatMap((each): SentAttachment[] => each.path === null || each.state !== "ready" ? []
+        : [each.picked ? { path: each.path } : { path: each.path, media_type: each.file.type || "application/octet-stream", name: each.file.name }]) : undefined;
+      const result = how ? sendMenu.onPick(how, text, attached) : onSend(text, clearDraft, sendAnyway, attached);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return true; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
@@ -950,7 +980,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [agentStatus, attachments, connected, dictation.forget, draftKey, onSend, roomless, sendMenu, sending, text, uploading]);
+  }, [agentStatus, attachAsChips, attachments, connected, dictation.forget, draftKey, onSend, roomless, sendMenu, sending, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);

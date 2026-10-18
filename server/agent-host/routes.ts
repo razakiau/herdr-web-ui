@@ -14,7 +14,7 @@
  *   within LEASE_MS); the lease's expiry releases the watch.
  */
 import { randomUUID } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { basename, extname, isAbsolute, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   ActionType,
@@ -22,6 +22,7 @@ import {
   ChatInputAnswerValueKind,
   ChatInputQuestionKind,
   ChatInputResponseKind,
+  MessageAttachmentKind,
   MessageKind,
   PendingMessageKind,
   ToolCallCancellationReason,
@@ -32,6 +33,7 @@ import {
   type ChatState,
   type CommandMap,
   type Message,
+  type MessageAttachment,
   type ModelSelection,
   type RootState,
   type SessionState,
@@ -40,6 +42,8 @@ import {
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState } from "../../shared/host-chats.ts";
 import { paneFiles } from "../files.ts";
+import { PasteImageError, saveAttachment } from "../paste.ts";
+import { readFileSync, realpathSync } from "node:fs";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
@@ -199,6 +203,7 @@ const GETS: Record<string, Handler> = {
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
   "chat/send": sendMessage,
+  "chat/upload": uploadFile,
   "chat/stop": stopTurn,
   "chat/pending/remove": removePending,
   "chat/answer": answerQuestion,
@@ -439,13 +444,70 @@ async function listModels(call: Call): Promise<Response> {
 
 // ─── Sends ───────────────────────────────────────────────────────────────────
 
-function messageFrom(root: RootState, words: string, model: { id: string; effort?: string } | undefined, agent: string | null): Message {
+function messageFrom(root: RootState, words: string, model: { id: string; effort?: string } | undefined, agent: string | null, attachments: MessageAttachment[] = []): Message {
   return {
     text: words,
     origin: { kind: MessageKind.User },
     ...(model ? { model: modelSelection(root, model) } : {}),
     ...(agent ? { agent: { uri: agent } } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
   };
+}
+
+/** The chat's working folder on this PC, or null. */
+const folderOf = (host: AgentHost, session: string): string | null => rowsFrom(host.summaries()).find((row) => row.session === session)?.cwd ?? null;
+
+/** The image types an attachment is embedded as, by extension, when the phone names none (an "@" pick). */
+const IMAGE_BY_EXTENSION: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
+
+/**
+ * The message's attachments, as VS Code sends them: an image embedded (base64, read back from the
+ * file), any other file a resource the host reads by its file:// URI. Only files inside the chat's
+ * own folder are taken: one chat/upload wrote (under `.herdr-web-ui/`), or one picked with "@"
+ * (a path relative to the folder, as the file source gives it). Symlinks are followed before the
+ * check, so a link inside cannot hand out a file outside.
+ */
+function attachmentsOf(value: unknown, host: AgentHost, session: string): MessageAttachment[] {
+  if (value === undefined) return [];
+  const bad = (): never => refuse(badRequest("invalid_attachment", "attachments must be files of this chat's folder: [{ path, media_type?, name? }]"));
+  if (!Array.isArray(value)) return bad();
+  const folder = folderOf(host, session);
+  if (folder === null) return bad();
+  let root: string;
+  try { root = realpathSync(folder); } catch { return bad(); }
+  return value.map((each): MessageAttachment => {
+    if (!isJsonObject(each) || !text(each["path"]) || each["path"] === "") return bad();
+    const mediaType = each["media_type"];
+    const name = each["name"];
+    if ((mediaType !== undefined && !text(mediaType)) || (name !== undefined && !text(name))) return bad();
+    let path: string;
+    try { path = realpathSync(resolve(root, each["path"])); } catch { return bad(); }
+    if (!path.startsWith(root + sep)) return bad();
+    // the file's own name, as the user picked it; an uploaded one is stored under a stamped name
+    const label = name && name.trim() !== "" ? name : basename(path);
+    const contentType = mediaType && mediaType !== "" ? mediaType : IMAGE_BY_EXTENSION[extname(path).toLowerCase()];
+    if (contentType?.startsWith("image/")) {
+      return { type: MessageAttachmentKind.EmbeddedResource, label, displayKind: "image", data: readFileSync(path).toString("base64"), contentType } as MessageAttachment;
+    }
+    return { type: MessageAttachmentKind.Resource, label, displayKind: "document", uri: pathToFileURL(path).href, ...(contentType ? { contentType } : {}) } as MessageAttachment;
+  });
+}
+
+/** Writes an attached file into the chat's folder (`<cwd>/.herdr-web-ui/`, as a pane's): its path. */
+async function uploadFile(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const { name, media_type: mediaType, data } = call.body;
+  if (!text(mediaType) || mediaType === "" || !text(data) || (name !== undefined && !text(name))) return badRequest("invalid_upload", "give media_type and data (base64), and name");
+  connected(call.host);
+  if (!known(call.host, session)) missing();
+  const folder = folderOf(call.host, session);
+  if (folder === null) return conflictResponse("no_folder", "this chat has no folder on its PC to put a file in");
+  try {
+    return jsonResponse({ path: await saveAttachment({ cwd: async () => folder, contentType: mediaType, dataBase64: data, ...(name ? { name } : {}) }) });
+  } catch (error) {
+    if (error instanceof PasteImageError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
+    throw error;
+  }
 }
 
 /** The chat's shared draft with this model: its text and attachments kept. */
@@ -495,7 +557,7 @@ async function sendMessage(call: Call): Promise<Response> {
   const agent = agentOf(call.body["agent"]);
   const mode = modeOf(call.body["mode"]);
   const { channel, chat } = await watched(call, session);
-  const message = messageFrom(call.host.mirror().root, words, model, agent);
+  const message = messageFrom(call.host.mirror().root, words, model, agent, attachmentsOf(call.body["attachments"], call.host, session));
   if (mode !== "stop_and_send" || chat.activeTurn === undefined || alreadyHas(chat, id) || sentOf(call.host).get(id)) {
     return jsonResponse(send(call.host, session, channel, chat, message, id, mode === "stop_and_send" ? "send" : mode));
   }

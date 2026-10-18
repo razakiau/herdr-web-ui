@@ -47,6 +47,37 @@ describe("PromptCardView", () => {
   });
 });
 
+describe("a Copilot card's extras", () => {
+  const renderWith = (extra: Record<string, unknown>, value = prompt()): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      const props = { prompt: value, submit: async () => {}, onPromptChanged: () => {}, onAnswered: () => {}, ...extra };
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(PromptCardView, props) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+
+  it("non_copilot_card_has_no_expand, and no attach: every other agent's card is byte for byte as before", () => {
+    const other = prompt({ agent: "claude" });
+    const plain = renderWith({}, other);
+    expect(plain).not.toContain("prompt-card-expand");
+    expect(plain).not.toContain("prompt-card-attach");
+    expect(plain).not.toContain('type="file"');
+  });
+
+  it("a Copilot card has Expand in its header, and attach beside its typed answer", () => {
+    const html = renderWith({ markdown: true, expandable: true, onUploadFile: async () => "/w/a.png" });
+    expect(html).toMatch(/<button[^>]*class="icon-button prompt-card-expand"[^>]*aria-label="Expand"/);
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toMatch(/<button[^>]*class="icon-button prompt-card-attach"[^>]*aria-label="Attach files"/);
+    // a question with no typed answer has nothing to attach to
+    expect(renderWith({ markdown: true, onUploadFile: async () => "" }, prompt({ options: [{ label: "Red", description: null }], custom_option_index: null }))).not.toContain("prompt-card-attach");
+  });
+});
+
 describe("the typed-answer slot", () => {
   const renderIn = (language: "en" | "ko" | "ja" | "zh", markdown: boolean | undefined, value: InteractivePrompt): string => {
     const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
