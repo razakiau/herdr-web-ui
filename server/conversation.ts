@@ -241,7 +241,7 @@ function claudeResultText(output: unknown): string {
 }
 
 /** The image types a chat shows; anything else stays out of the page. */
-const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+export const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 /**
  * Splits one transcript file's contents into turns. Adjacent assistant entries

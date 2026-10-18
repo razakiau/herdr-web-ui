@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, Turn } from "@microsoft/agent-host-protocol";
+import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, ToolCallResult, Turn } from "@microsoft/agent-host-protocol";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import type { HostChatRead, AgentHostState } from "../../shared/host-chats.ts";
 import { descriptorPath, type BridgeDescriptor } from "../bridge.ts";
@@ -10,7 +10,7 @@ import { createServer } from "../index.ts";
 import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
-import { fakeAgentHost, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
+import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
 import { LEASE_MS, hostChatsRoute, type LeaseClock, type AgentHost } from "./routes.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -631,6 +631,7 @@ describe("host chat read and write routes", () => {
       ["/api/host-chats/chat/answer", { session: other, request_id: "req-1", question_id: "q-color", option_ids: ["red"] }],
       ["/api/host-chats/chat/confirm", { session: other, turn_id: "t", tool_call_id: "c", approved: true }],
       ["/api/host-chats/chat/draft", { session: other, model: { id: "fictional/model-a" } }],
+      [`/api/host-chats/image?${q}&ref=c1:0`, undefined], [`/api/host-chats/tool-output?${q}&ref=c1`, undefined],
     ] as const) {
       const answer = await call(r, path, body);
       expect({ path, status: answer.status, code: answer.json.error?.code }).toEqual({ path, status: 404, code: "host_chat_missing" });
@@ -730,5 +731,65 @@ describe("host chat read and write routes", () => {
     ] as const) seen.push((await call(r, path, body)).status);
     expect(tokens).toContain(r.fake.token);
     expect(seen.length).toBe(13);
+  });
+});
+
+// ─── Images and tool output ──────────────────────────────────────────────────
+
+/** A route call whose answer may be bytes: the raw response, still never carrying the host's token. */
+async function fetchRaw(rig: { conn: AgentHost; clock: LeaseClock }, path: string): Promise<{ status: number; type: string | null; bytes: Buffer }> {
+  const response = await hostChatsRoute(get(path), new URL(`http://127.0.0.1${path}`).pathname, rig.conn, rig.clock)!;
+  const bytes = Buffer.from(await response.arrayBuffer());
+  for (const token of tokens) expect(bytes.toString("latin1")).not.toContain(token);
+  return { status: response.status, type: response.headers.get("content-type"), bytes };
+}
+
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0xfe, 0xff]);
+const LONG_OUTPUT = `FICTIONAL ${"line of output\n".repeat(600)}`;
+const withResults = (): ChatState => {
+  const result = (content: unknown[]) => ({ success: true, pastTenseMessage: "FICTIONAL done", content }) as ToolCallResult;
+  const call = (toolCallId: string) => ({ toolCallId, toolName: "screenshot", displayName: "Screenshot", invocationMessage: "FICTIONAL shooting" });
+  return reducedChat([
+    { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: user("FICTIONAL look") } as StateAction,
+    ...toolCallActions("turn-1", call("c1"), result([{ type: "embeddedResource", data: PNG_BYTES.toString("base64"), contentType: "image/png" }])),
+    ...toolCallActions("turn-1", call("c2"), result([{ type: "text", text: LONG_OUTPUT }])),
+    { type: "chat/turnComplete", turnId: "turn-1", duration: 1000 } as StateAction,
+  ], chatState(1));
+};
+const imagePath = (ref: string, n = 1) => `/api/host-chats/image?session=${encodeURIComponent(sessionUri(n))}&ref=${encodeURIComponent(ref)}`;
+
+describe("host chat image and tool-output routes", () => {
+  it("image_route_serves_png_bytes", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
+    const read = (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+    const image = read.turns[1]!.parts.flatMap((part) => (part.kind === "tool" ? part.images ?? [] : []))[0]!;
+    expect(image).toEqual({ media_type: "image/png", ref: "c1:0" });
+    const served = await fetchRaw(r, imagePath(image.ref));
+    expect(served.status).toBe(200);
+    expect(served.type).toBe("image/png");
+    expect(served.bytes.equals(PNG_BYTES)).toBe(true);
+  });
+
+  it("image_route_unknown_ref_404", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
+    for (const ref of ["c1:1", "c9:0", "c1", "c2:0", "c1:-1"]) {
+      const answer = await call(r, imagePath(ref));
+      expect({ ref, status: answer.status, code: answer.json.error.code }).toEqual({ ref, status: 404, code: "not_found" });
+    }
+    const missing = await call(r, imagePath("c1:0", 9));
+    expect({ status: missing.status, code: missing.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
+    const bare = await call(r, `/api/host-chats/image?session=${encodeURIComponent(sessionUri(1))}`);
+    expect({ status: bare.status, code: bare.json.error.code }).toEqual({ status: 400, code: "missing_ref" });
+  });
+
+  it("a cut tool output is served whole by its output_ref", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
+    const read = (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+    const cut = read.turns[1]!.parts.find((part) => part.kind === "tool" && part.output_ref !== undefined);
+    expect(cut).toMatchObject({ output_ref: "c2", output_size: LONG_OUTPUT.length });
+    const path = (ref: string) => `/api/host-chats/tool-output?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(ref)}`;
+    expect(await call(r, path("c2"))).toEqual({ status: 200, json: { output: LONG_OUTPUT } });
+    const unknown = await call(r, path("c9"));
+    expect({ status: unknown.status, code: unknown.json.error.code }).toEqual({ status: 404, code: "not_found" });
   });
 });

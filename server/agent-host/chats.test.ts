@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import type { ChatState, RootState, SessionState, SessionSummary } from "@microsoft/agent-host-protocol";
-import { agentsFrom, modelsFrom, promptFrom, readFrom, rowsFrom, turnsFrom } from "./chats.ts";
+import type { ChatState, RootState, SessionState, SessionSummary, StateAction, ToolCallResult } from "@microsoft/agent-host-protocol";
+import type { ConversationPart } from "../../shared/protocol.ts";
+import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
+import { agentsFrom, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
+import { reducedChat, toolCallActions } from "./fake-host.ts";
 
 const AT = "2026-01-01T00:00:00.000Z";
 const CHAT = "ahp-chat://default/fictional";
@@ -46,17 +49,17 @@ describe("host chat mappers", () => {
       { role: "user", ts: AT, parts: [{ kind: "text", text: "FICTIONAL list the files" }] },
       { role: "assistant", ts: AT, end_ts: "2026-01-01T00:00:01.500Z", parts: [
         { kind: "thinking", text: "FICTIONAL thinking" },
-        { kind: "tool", name: "Run in terminal", summary: "Running `ls`", input: "ls /tmp/fictional-repo", output: "a.txt\nb.txt", error: false },
-        { kind: "tool", name: "Read file", summary: "Reading", input: "", output: "", error: true },
+        { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running `ls`", past: "Ran `ls`", input: "ls /tmp/fictional-repo", output: "a.txt\nb.txt", error: false },
+        { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: "", output: "", error: true },
         { kind: "text", text: "FICTIONAL two files" },
-        { kind: "text", text: "FICTIONAL failure", phase: "final_answer" },
+        { kind: "notice", text: "FICTIONAL failure", source: "error" },
       ] },
       { role: "user", ts: AT, parts: [{ kind: "text", text: "FICTIONAL again" }] },
       { role: "assistant", ts: AT, parts: [] },
     ]);
   });
 
-  it("an answered input request reads back as its question and answer", () => {
+  it("an answered input request reads back as a question part, not as text", () => {
     const state = chat({ turns: [{
       id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL ask"),
       responseParts: [{ kind: "inputRequest", response: "accept", request: {
@@ -64,7 +67,7 @@ describe("host chat mappers", () => {
         answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "blue", freeformValues: ["navy"] } } },
       } }],
     }] });
-    expect(turnsFrom(state)[1]!.parts).toEqual([{ kind: "text", text: "FICTIONAL which color?\n→ Blue, navy" }]);
+    expect(turnsFrom(state)[1]!.parts).toEqual([{ kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: ["Blue"], custom: "navy", skipped: false }]);
   });
 
   it("a pending confirmation is an approval prompt with the host's options", () => {
@@ -210,5 +213,179 @@ describe("host chat mappers", () => {
       model: { id: "fictional/model-a", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md", busy: false });
     expect(read.signature).toMatch(/^[0-9a-f]{16}$/);
     expect(readFrom("s", "t", chat({ draft: { ...user(""), model: { id: "fictional/model-a" } } })).model).toEqual({ id: "fictional/model-a", effort: null });
+  });
+});
+
+// ─── The whole turn, built through the package's reducers ────────────────────
+
+const LATER = "2026-01-01T00:00:05.000Z";
+const started = (turnId = "turn-1", startedAt = AT) => ({ type: "chat/turnStarted", turnId, startedAt, message: user("FICTIONAL do it") }) as StateAction;
+const finished = (turnId = "turn-1", duration = 5000) => ({ type: "chat/turnComplete", turnId, duration }) as StateAction;
+const assistant = (state: ChatState) => turnsFrom(state)[1]!.parts;
+const call = (toolCallId: string, toolName = "bash", displayName = "Run in terminal") => ({ toolCallId, toolName, displayName, invocationMessage: `FICTIONAL running ${toolCallId}`, toolInput: "FICTIONAL input" });
+const done = (content: unknown[], success = true, past = "FICTIONAL ran it") => ({ success, pastTenseMessage: past, content }) as ToolCallResult;
+const tool = (parts: ConversationPart[]) => parts.find((part): part is Extract<ConversationPart, { kind: "tool" }> => part.kind === "tool")!;
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x46, 0x49, 0x43, 0x54]).toString("base64");
+
+describe("host chat turns, whole", () => {
+  it("tool_uses_past_tense_when_done", () => {
+    const state = reducedChat([started(), ...toolCallActions("turn-1", call("c1"), done([{ type: "text", text: "a.txt" }])), finished()]);
+    const part = tool(assistant(state));
+    expect(part.past).toBe("FICTIONAL ran it");
+    expect(part.summary).toBe("FICTIONAL running c1");
+    expect(part.tool_id).toBe("bash");
+    // a running call has no past yet
+    const running = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c1"))])));
+    expect(running.past).toBeUndefined();
+  });
+
+  it("terminal_result_gives_command_and_exit_code", () => {
+    const terminal = { type: "terminal", resource: "ahp-terminal://fictional/1", title: "npm test", result: { exitCode: 1, preview: "FICTIONAL 1 failed" } };
+    const part = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c1"), done([terminal])), finished()])));
+    expect(part.command).toBe("npm test");
+    expect(part.exit_code).toBe(1);
+    expect(part.error).toBe(true);
+    // a terminal call with no text block reads its terminal's output preview
+    expect(part.output).toBe("FICTIONAL 1 failed");
+    // exit 0 is no error
+    const ok = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c1"), done([{ ...terminal, result: { exitCode: 0 } }])), finished()])));
+    expect({ exit_code: ok.exit_code, error: ok.error }).toEqual({ exit_code: 0, error: false });
+  });
+
+  it("embedded_image_becomes_image_ref", () => {
+    const content = [{ type: "text", text: "FICTIONAL shot" }, { type: "embeddedResource", data: "AAAA", contentType: "application/pdf" }, { type: "embeddedResource", data: PNG, contentType: "image/png" }];
+    const state = reducedChat([started(), ...toolCallActions("turn-1", call("c7", "screenshot", "Screenshot"), done(content)), finished()]);
+    const part = tool(assistant(state));
+    expect(part.images).toEqual([{ media_type: "image/png", ref: "c7:0" }]);
+    expect(part.output).toBe("FICTIONAL shot");
+    expect(JSON.stringify(turnsFrom(state))).not.toContain(PNG);
+    expect(JSON.stringify(turnsFrom(state))).not.toContain("AAAA");
+    expect(imageOf(state, "c7:0")).toEqual({ media_type: "image/png", bytes: Buffer.from(PNG, "base64") });
+    expect(imageOf(state, "c7:1")).toBeNull();
+    expect(imageOf(state, "nope:0")).toBeNull();
+  });
+
+  it("file_edit_gives_edit_counts", () => {
+    const side = (path: string) => ({ uri: `file://${path}`, content: { uri: `ahp-content://fictional${path}` } });
+    const edits = [
+      { type: "fileEdit", before: side("/tmp/fictional-repo/a.ts"), after: side("/tmp/fictional-repo/a.ts"), diff: { added: 3, removed: 1 } },
+      { type: "fileEdit", after: side("/tmp/fictional-repo/new.ts"), diff: { added: 9 } },
+      { type: "fileEdit", before: side("/tmp/fictional-repo/gone.ts") },
+    ];
+    const part = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c1", "edit", "Edit file"), done(edits)), finished()])));
+    expect(part.edits).toEqual([
+      { path: "/tmp/fictional-repo/a.ts", added: 3, removed: 1 },
+      { path: "/tmp/fictional-repo/new.ts", added: 9, removed: 0 },
+      { path: "/tmp/fictional-repo/gone.ts", added: 0, removed: 0 },
+    ]);
+  });
+
+  it("subagent_result_becomes_subagent_part", () => {
+    const subagent = { type: "subagent", resource: "ahp-chat://default/fictional-sub", title: "Explore", agentName: "explore", description: "FICTIONAL find the config" };
+    const running = reducedChat([started(), ...toolCallActions("turn-1", call("c3", "task", "Task")),
+      { type: "chat/toolCallContentChanged", turnId: "turn-1", toolCallId: "c3", content: [subagent] } as StateAction]);
+    expect(assistant(running)).toEqual([{
+      kind: "subagent", id: "c3", agent: "explore", description: "FICTIONAL find the config", model: null,
+      started: AT, ended: null, status: "running", chat: "ahp-chat://default/fictional-sub",
+    }]);
+    const ended = reducedChat([...toolCallActions("turn-1", call("c3", "task", "Task"), done([subagent])).slice(2), finished()], running);
+    expect(assistant(ended)).toEqual([{
+      kind: "subagent", id: "c3", agent: "explore", description: "FICTIONAL find the config", model: null,
+      started: AT, ended: LATER, status: "done", chat: "ahp-chat://default/fictional-sub",
+    }]);
+    const failed = reducedChat([...toolCallActions("turn-1", call("c3", "task", "Task"), done([subagent], false)).slice(2), finished()], running);
+    expect((assistant(failed)[0] as { status: string }).status).toBe("failed");
+  });
+
+  const QUESTIONS = [
+    { ...QUESTION, allowFreeformInput: true },
+    { id: "q-tags", kind: "multi-select", title: "Tags", message: "FICTIONAL which tags?", required: true, options: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }] },
+    { id: "q-ok", kind: "boolean", title: "Ok", message: "FICTIONAL go on?", required: true },
+    SECOND,
+  ];
+  const answered = (answers: Record<string, unknown>) => reducedChat([
+    started(),
+    { type: "chat/inputRequested", request: { id: "req-1", questions: QUESTIONS } } as StateAction,
+    { type: "chat/inputCompleted", requestId: "req-1", response: "accept", answers } as StateAction,
+    finished(),
+  ]);
+
+  it("answered_question_becomes_question_part", () => {
+    const parts = assistant(answered({
+      "q-color": { state: "submitted", value: { kind: "selected", value: "blue", freeformValues: ["navy"] } },
+      "q-tags": { state: "submitted", value: { kind: "selected-many", value: ["a", "b"] } },
+      "q-ok": { state: "submitted", value: { kind: "boolean", value: false } },
+      "q-size": { state: "submitted", value: { kind: "text", value: "FICTIONAL large" } },
+    }));
+    expect(parts).toEqual([
+      { kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: ["Blue"], custom: "navy", skipped: false },
+      { kind: "question", text: "FICTIONAL which tags?", options: ["Alpha", "Beta"], chosen: ["Alpha", "Beta"], custom: null, skipped: false },
+      { kind: "question", text: "FICTIONAL go on?", options: ["Yes", "No"], chosen: ["No"], custom: null, skipped: false },
+      { kind: "question", text: "FICTIONAL what size?", options: [], chosen: [], custom: "FICTIONAL large", skipped: false },
+    ]);
+    // the old "question → answer" text is gone
+    expect(JSON.stringify(parts)).not.toContain("→");
+    // a freeform answer with no option picked
+    const free = assistant(answered({ "q-color": { state: "submitted", value: { kind: "selected", value: "", freeformValues: ["FICTIONAL teal"] } } }))[0];
+    expect(free).toEqual({ kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: [], custom: "FICTIONAL teal", skipped: false });
+  });
+
+  it("skipped_question_is_marked", () => {
+    const parts = assistant(answered({ "q-color": { state: "skipped" } }));
+    expect(parts[0]).toEqual({ kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: [], custom: null, skipped: true });
+    // a declined request answered nothing: every question reads skipped
+    const declined = assistant(reducedChat([started(),
+      { type: "chat/inputRequested", request: { id: "req-1", questions: [QUESTION] } } as StateAction,
+      { type: "chat/inputCompleted", requestId: "req-1", response: "decline" } as StateAction, finished()]));
+    expect(declined).toEqual([{ kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: [], custom: null, skipped: true }]);
+    // an open request is no history part: the prompt card asks it
+    const open = reducedChat([started(), { type: "chat/inputRequested", request: { id: "req-1", questions: [QUESTION] } } as StateAction]);
+    expect(assistant(open)).toEqual([]);
+    expect(promptFrom(open)?.id).toBe("req-1:q-color");
+  });
+
+  it("system_notification_becomes_notice", () => {
+    const parts = assistant(reducedChat([started(),
+      { type: "chat/responsePart", turnId: "turn-1", part: { kind: "systemNotification", content: { markdown: "FICTIONAL subagent **explore** completed" } } } as StateAction,
+      { type: "chat/responsePart", turnId: "turn-1", part: { kind: "systemNotification", content: "FICTIONAL task cancelled" } } as StateAction,
+      finished()]));
+    expect(parts).toEqual([
+      { kind: "notice", text: "FICTIONAL subagent **explore** completed", source: "system" },
+      { kind: "notice", text: "FICTIONAL task cancelled", source: "system" },
+    ]);
+  });
+
+  it("error_becomes_error_notice_not_answer", () => {
+    const state = reducedChat([started(),
+      { type: "chat/responsePart", turnId: "turn-1", part: { kind: "markdown", id: "m1", content: "FICTIONAL working on it" } } as StateAction,
+      { type: "chat/error", turnId: "turn-1", duration: 5000, part: { kind: "error", error: { errorType: "x", message: "FICTIONAL rate limited" } } } as StateAction]);
+    const parts = assistant(state);
+    expect(parts).toEqual([{ kind: "text", text: "FICTIONAL working on it" }, { kind: "notice", text: "FICTIONAL rate limited", source: "error" }]);
+    expect(parts.some((part) => part.kind === "text" && part.phase === "final_answer")).toBe(false);
+  });
+
+  it("content_ref_becomes_link_text", () => {
+    const parts = assistant(reducedChat([started(),
+      { type: "chat/responsePart", turnId: "turn-1", part: { kind: "contentRef", uri: "file:///tmp/fictional-repo/plan.md", contentType: "text/markdown" } } as StateAction,
+      { type: "chat/responsePart", turnId: "turn-1", part: { kind: "contentRef", uri: "https://example.com/fictional/doc" } } as StateAction,
+      finished()]));
+    expect(parts).toEqual([
+      { kind: "text", text: "[plan.md](file:///tmp/fictional-repo/plan.md)" },
+      { kind: "text", text: "[doc](https://example.com/fictional/doc)" },
+    ]);
+  });
+
+  it("a long tool output is cut at the pane readers' length, with its call's id as output_ref", () => {
+    const long = "x".repeat(TOOL_OUTPUT_CHARS * 2);
+    const state = reducedChat([started(), ...toolCallActions("turn-1", call("c9"), done([{ type: "text", text: long }])), finished()]);
+    const part = tool(assistant(state));
+    expect(part.output_ref).toBe("c9");
+    expect(part.output_size).toBe(long.length);
+    expect(part.output.startsWith("x".repeat(TOOL_OUTPUT_CHARS))).toBe(true);
+    expect(part.output.length).toBeLessThan(long.length);
+    expect(toolOutputOf(state, "c9")).toBe(long);
+    expect(toolOutputOf(state, "nope")).toBeNull();
+    const short = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c9"), done([{ type: "text", text: "short" }])), finished()])));
+    expect(short.output_ref).toBeUndefined();
   });
 });

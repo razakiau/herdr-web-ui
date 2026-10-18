@@ -40,7 +40,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState } from "../../shared/host-chats.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, currentQuestion, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom } from "./chats.ts";
+import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, toolOutputOf } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -160,6 +160,8 @@ const GETS: Record<string, Handler> = {
   "chats": async ({ host }) => { connected(host); return jsonResponse({ chats: rowsFrom(host.summaries()) }); },
   "chat": readChat,
   "models": listModels,
+  "image": readImage,
+  "tool-output": readToolOutput,
 };
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
@@ -294,6 +296,34 @@ async function readChat(call: Call): Promise<Response> {
     chat = call.host.chat(session) ?? chat;
   }
   return jsonResponse(readFrom(session, titleOf(call.host, session), chat));
+}
+
+/** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
+async function refRead(call: Call): Promise<{ chat: ChatState; ref: string }> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") refuse(badRequest("missing_session", "session is required"));
+  const ref = call.url.searchParams.get("ref") ?? "";
+  if (ref === "") refuse(badRequest("missing_ref", "ref is required"));
+  const { chat } = await watched(call, session);
+  return { chat, ref };
+}
+
+const noRef = (what: string): Response => jsonResponse({ error: { code: "not_found", message: `no such ${what} in this host chat` } }, 404);
+
+/** An image a tool call returned, by the ref its part names (`<toolCallId>:<index>`), from the chat in the mirror. */
+async function readImage(call: Call): Promise<Response> {
+  const { chat, ref } = await refRead(call);
+  const image = imageOf(chat, ref);
+  if (!image) return noRef("image");
+  // a running call's content can still change under the same ref
+  return new Response(new Uint8Array(image.bytes), { headers: { "content-type": image.media_type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+}
+
+/** A tool call's whole output, by its `output_ref` (the call's id). */
+async function readToolOutput(call: Call): Promise<Response> {
+  const { chat, ref } = await refRead(call);
+  const output = toolOutputOf(chat, ref);
+  return output === null ? noRef("tool call") : jsonResponse({ output });
 }
 
 async function listModels(call: Call): Promise<Response> {

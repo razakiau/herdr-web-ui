@@ -18,8 +18,34 @@ import {
   type SessionState,
   type SessionSummary,
   type StateAction,
+  type StringOrMarkdown,
+  type ToolCallResult,
+  type ToolInput,
   type Turn,
 } from "@microsoft/agent-host-protocol";
+
+/** A chat after these actions, through the package's own reducer, as a host would hold it. */
+export function reducedChat(actions: StateAction[], start?: ChatState): ChatState {
+  const empty = { resource: "ahp-chat://default/fictional", title: "FICTIONAL_chat", status: 1, modifiedAt: new Date(0).toISOString(), turns: [] } as unknown as ChatState;
+  return actions.reduce((chat, action) => chatReducer(chat, action as ChatAction, () => {}), start ?? empty);
+}
+
+/**
+ * The actions a host sends for one tool call of turn `turnId`: started, ready (no confirmation
+ * needed) and, given a result, completed with it. Without one the call is left running.
+ */
+export function toolCallActions(
+  turnId: string,
+  call: { toolCallId: string; toolName: string; displayName: string; invocationMessage: StringOrMarkdown; toolInput?: ToolInput },
+  result?: ToolCallResult,
+): StateAction[] {
+  const base = { turnId, toolCallId: call.toolCallId };
+  return [
+    { type: "chat/toolCallStart", ...base, toolName: call.toolName, displayName: call.displayName },
+    { type: "chat/toolCallReady", ...base, invocationMessage: call.invocationMessage, ...(call.toolInput === undefined ? {} : { toolInput: call.toolInput }), confirmed: "not-needed" },
+    ...(result ? [{ type: "chat/toolCallComplete", ...base, result }] : []),
+  ] as StateAction[];
+}
 
 /** A root notification the fake can push besides state actions. */
 export type FakeRootNotice =
