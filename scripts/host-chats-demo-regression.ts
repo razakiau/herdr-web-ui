@@ -109,6 +109,8 @@ const patch = `(() => {
   };
   // the list's push, as the bridge sends one when the host adds a chat
   window.pushHostList = () => push({ type: "host-chat-changed", session: null });
+  // the PC's agent host stops (VS Code closed) and comes back: its state and list say so
+  window.setHostDown = (down) => { state.hostDown = down; push({ type: "host-chat-state", host: down ? { state: "no_server" } : { state: "connected", signed_in: true, protocol: "1.0.0" } }); };
   window.setHostBusy = (busy) => { state.busy = busy; push({ type: "host-chat-changed", session: SESSION }); };
   // a turn made on the PC: only its push tells the phone
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
@@ -140,6 +142,7 @@ const patch = `(() => {
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
+      if (state.hostDown && (path === "/api/host-chats/state" || path === "/api/host-chats/chats")) return path.endsWith("/state") ? json({ host: { state: "no_server" } }) : json({ error: { code: "agent_host_down", message: "FICTIONAL the agent host is down" }, host: { state: "no_server" } }, 503);
       if (path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
       if (path === "/api/host-chats/chats") return json({ chats: edited([
         { session: SESSION, title: "FICTIONAL build chat", status: SIX || state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo", unread: false, archived: false },
@@ -288,6 +291,13 @@ try {
         assert.equal(await page.locator('.tab-strip-item:not(.host-chat-tab) [role="tab"][aria-selected="true"]').count(), 0, "no pane's tab is open beside it");
         assert.ok(await page.locator(".tab-strip-item:not(.host-chat-tab)").count() > 0, "the workspace's pane tabs stand before it");
         await noVsCode("the open chat");
+        // the PC's agent host stops and comes back (VS Code closed, then opened): the chat stays open
+        await page.evaluate(() => (window as unknown as { setHostDown(down: boolean): void }).setHostDown(true));
+        await page.waitForTimeout(300);
+        assert.equal(await page.locator(`.host-chat[data-host-session="${SESSION}"]`).count(), 1, "a host going down leaves the open chat open");
+        await page.evaluate(() => (window as unknown as { setHostDown(down: boolean): void }).setHostDown(false));
+        await hostTab.waitFor();
+        assert.equal(await hostTab.locator('[role="tab"]').getAttribute("aria-selected"), "true", "and it is still the open tab once the host is back");
         await fits("the workspace with its Copilot tab");
         // the pick puts the drawer away: the shot waits for it to have gone
         await page.waitForFunction(() => { const drawer = document.querySelector("#workspace-drawer"); return drawer !== null && !drawer.classList.contains("is-open") && drawer.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running"); });

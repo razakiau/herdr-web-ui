@@ -26,7 +26,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { VscodeChatView } from "./components/VscodeChatView.tsx";
-import { basename, errorText, noteHostChatStreamOpen, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
+import { basename, errorText, noteHostChatStreamOpen, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
@@ -900,7 +900,8 @@ export function App() {
   // does it: a chat just made (not listed yet) or opened from Archived stays open
   const openHostRow = selectedHostChat ? hostChats.get(selectedHostChat.machineId)?.chats.find((chat) => chat.session === selectedHostChat.session) : undefined;
   const openHostKey = selectedHostChat ? `${selectedHostChat.machineId}\n${selectedHostChat.session}` : null;
-  const openHostLive = openHostRow !== undefined && !openHostRow.archived;
+  // a host restarting, a PC dropping or a failed read is not a close (openHostChatClosed)
+  const openHostLive = selectedHostChat ? !openHostChatClosed(hostChats.get(selectedHostChat.machineId), selectedHostChat.session) : false;
   const openHostWas = useRef<{ key: string | null; live: boolean }>({ key: null, live: false });
   useEffect(() => {
     const was = openHostWas.current;

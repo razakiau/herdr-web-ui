@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
-import { HOST_ATTEMPT_TTL_MS } from "./hostChats.ts";
+import { HOST_ATTEMPT_TTL_MS, openHostChatClosed } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
@@ -438,7 +438,7 @@ describe("each PC's group (HostPcs)", () => {
     const pcs = new HostPcs();
     pcs.setRoster(["desk", "laptop"]);
     await until(() => pcs.get().has("desk"));
-    expect(pcs.get().get("desk")).toEqual({ host: { state: "no_server" }, chats: [] });
+    expect(pcs.get().get("desk")).toEqual({ host: { state: "no_server" }, chats: [], stale: true });
     // the state read failing with the host down still makes the group
     const urls = serve((machine) => machine === "desk" ? { status: 503, body: { error: { code: "agent_host_down", message: "down" }, host: { state: "starting" } } } : { status: 404, body: { error: { code: "host_chats_off", message: "off" } } });
     pcs.setRoster(["desk", "laptop"]);
@@ -574,5 +574,43 @@ describe("a chat's actions (rename, read, done, delete)", () => {
     await pcs.idle();
     expect(chats().map((r) => r.session)).toEqual(["c1"]);
     expect(chats().find((r) => r.session === "c1")?.title).toBe("FICTIONAL renamed");
+  });
+});
+
+describe("openHostChatClosed: the open chat is let go only on a positive signal", () => {
+  const row = (over: Partial<HostChatRow> = {}): HostChatRow => ({ session: "s", title: "FICTIONAL", status: "idle", modified_at: "2026-01-01T00:00:00.000Z", cwd: "/tmp/fictional-repo", unread: false, archived: false, ...over });
+  const up = { state: "connected", signed_in: true, protocol: "1.0.0" } as const;
+  it("archived in a listed row closes it", () => {
+    expect(openHostChatClosed({ host: up, chats: [row({ archived: true })] }, "s")).toBe(true);
+  });
+  it("gone from a list read while the host is connected closes it", () => {
+    expect(openHostChatClosed({ host: up, chats: [row({ session: "other" })] }, "s")).toBe(true);
+  });
+  it("host_goes_503_keeps_open_chat: a down host's empty list says nothing", () => {
+    expect(openHostChatClosed({ host: { state: "no_server" }, chats: [] }, "s")).toBe(false);
+    expect(openHostChatClosed({ host: { state: "waiting" }, chats: [] }, "s")).toBe(false);
+  });
+  it("a PC no longer listed (left the roster, or host_chats_off) says nothing", () => {
+    expect(openHostChatClosed(undefined, "s")).toBe(false);
+  });
+  it("a connected host whose list read failed (stale) says nothing", () => {
+    expect(openHostChatClosed({ host: up, chats: [], stale: true }, "s")).toBe(false);
+  });
+  it("a PC whose state is not read yet says nothing", () => {
+    expect(openHostChatClosed({ host: null, chats: [] }, "s")).toBe(false);
+  });
+  it("a live listed row stays open", () => {
+    expect(openHostChatClosed({ host: up, chats: [row()] }, "s")).toBe(false);
+  });
+});
+
+describe("HostPcs: a pushed host state is not a list", () => {
+  it("state_push_before_list_is_stale: the group shows the pushed state with stale set until its list reads", () => {
+    const pcs = new HostPcs();
+    pcs.setRoster([]);
+    pcs.setRoster(["desk"]);
+    pcs.refresh("desk", { state: "connected", signed_in: true, protocol: "1.0.0" });
+    expect(pcs.get().get("desk")).toMatchObject({ host: { state: "connected" }, stale: true });
+    expect(openHostChatClosed(pcs.get().get("desk"), "fictional-open")).toBe(false);
   });
 });

@@ -413,8 +413,24 @@ export function onHostChatMessage(listener: (machineId: string, message: HostCha
 
 // ─── Each PC's list ──────────────────────────────────────────────────────────
 
-/** A PC's group: its host's state (null until read) and its chats, newest first. */
-export interface HostPc { host: AgentHostState | null; chats: HostChatRow[] }
+/**
+ * A PC's group: its host's state (null until read) and its chats, newest first. `stale`: the last
+ * list read failed (a down host has none), so `chats` is not the PC's word on which chats exist.
+ */
+export interface HostPc { host: AgentHostState | null; chats: HostChatRow[]; stale?: true }
+
+/**
+ * Whether the open chat `session` was closed on its PC: marked done, or gone from a list its
+ * connected host just gave. A PC not listed, a host not connected or a list that failed to read
+ * say nothing: the chat stays open through a host restart or a dropped PC.
+ */
+export function openHostChatClosed(pc: HostPc | undefined, session: string): boolean {
+  if (!pc || pc.stale || pc.host?.state !== "connected") {
+    return pc?.chats.find((chat) => chat.session === session)?.archived === true;
+  }
+  const row = pc.chats.find((chat) => chat.session === session);
+  return row === undefined || row.archived;
+}
 
 /** The clock the chats' ages and the recent window read: once a minute is enough for both. */
 export function useMinuteClock(): number {
@@ -513,8 +529,9 @@ export class HostPcs {
     this.generation.set(machineId, turn);
     if (host) {
       const read = this.read.get(machineId);
-      if (read) this.read.set(machineId, { ...read, host });
-      this.set(withPc(this.pcs, machineId, { host, chats: this.pcs.get(machineId)?.chats ?? [] }));
+      // the pushed state comes before its list: until that is read, the chats shown are not its word
+      if (read) this.read.set(machineId, { ...read, host, stale: true });
+      this.set(withPc(this.pcs, machineId, { host, chats: this.pcs.get(machineId)?.chats ?? [], stale: true }));
     }
     const read = Promise.allSettled([host ? Promise.resolve(host) : fetchHostState(machineId), fetchHostChats(machineId)]).then(([state, chats]) => {
       if (this.generation.get(machineId) !== turn || !this.online.includes(machineId)) return;
@@ -532,7 +549,7 @@ export class HostPcs {
       // a host that is down (503) has no list; any other failure keeps what was shown
       const down = chats.status === "rejected" && chats.reason instanceof ApiError && chats.reason.status === 503;
       const nextChats = chats.status === "fulfilled" ? newestFirst(chats.value) : down ? [] : this.read.get(machineId)?.chats ?? previous?.chats ?? [];
-      this.read.set(machineId, { host: nextHost, chats: nextChats });
+      this.read.set(machineId, { host: nextHost, chats: nextChats, ...(chats.status === "fulfilled" ? {} : { stale: true as const }) });
       this.show(machineId);
     });
     this.reads.add(read);
@@ -600,7 +617,7 @@ export class HostPcs {
       if (!row) continue;
       chats = edit.change === "gone" ? chats.filter((each) => each !== row) : chats.map((each) => each === row ? { ...each, ...edit.change as Partial<HostChatRow> } : each);
     }
-    this.set(withPc(this.pcs, machineId, { host: read.host, chats }));
+    this.set(withPc(this.pcs, machineId, { host: read.host, chats, ...(read.stale ? { stale: true as const } : {}) }));
   }
 
   private set(next: ReadonlyMap<string, HostPc>): void {
