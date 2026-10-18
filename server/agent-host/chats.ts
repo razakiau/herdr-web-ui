@@ -42,7 +42,7 @@ import {
   type Turn,
 } from "@microsoft/agent-host-protocol";
 import type { ConversationPart, ConversationTurn, InteractivePromptOption } from "../../shared/protocol.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostCommand, HostModel } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostCommand, HostContextUsage, HostModel } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
 
@@ -582,6 +582,34 @@ function modelOf(chat: ChatState): HostChatRead["model"] {
   return { id: selection.id, effort: typeof effort === "string" ? effort : null };
 }
 
+/** The chat's background work by kind (AHP lists only work still running). */
+function backgroundOf(chat: ChatState): HostChatRead["background"] {
+  const work = (chat as { backgroundWork?: { kind: string }[] }).backgroundWork ?? [];
+  return { subagents: work.filter((each) => each.kind === "subagent").length, commands: work.filter((each) => each.kind === "shell").length };
+}
+
+const count = (value: unknown): number | undefined => typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+
+/**
+ * The context window Copilot reports on the session (`_meta["copilot.usageInfo"]`), by VS Code's
+ * rules (copilotdMetadataReader readCopilotContextUsage): whole token counts, a limit above 0 and a
+ * message count, else nothing; an optional count that is not a whole number is left out.
+ */
+export function contextUsageOf(session: SessionState | undefined): HostContextUsage | null {
+  const info = (session as { _meta?: Record<string, unknown> } | undefined)?._meta?.["copilot.usageInfo"];
+  if (typeof info !== "object" || info === null) return null;
+  const value = info as Record<string, unknown>;
+  const currentTokens = count(value["currentTokens"]);
+  const tokenLimit = count(value["tokenLimit"]);
+  if (currentTokens === undefined || tokenLimit === undefined || tokenLimit === 0 || count(value["messagesLength"]) === undefined) return null;
+  const usage: HostContextUsage = { currentTokens, tokenLimit };
+  for (const key of ["conversationTokens", "systemTokens", "toolDefinitionsTokens"] as const) {
+    const each = count(value[key]);
+    if (each !== undefined) usage[key] = each;
+  }
+  return usage;
+}
+
 export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext): HostChatRead {
   const prompt = promptFrom(chat);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
@@ -598,6 +626,9 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     agent: newest?.message.agent?.uri ?? null,
     busy: chat.activeTurn !== undefined,
     commands: commandsFrom(context?.session?.()),
+    background: backgroundOf(chat),
+    confirmations: pendingToolCalls(chat).length,
+    context: contextUsageOf(context?.session?.()),
     pending: [
       ...(chat.steeringMessage ? [{ id: chat.steeringMessage.id, kind: "steering" as const, text: chat.steeringMessage.message.text }] : []),
       ...(chat.queuedMessages ?? []).map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),
@@ -612,6 +643,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
+    read.background, read.confirmations, read.context,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];

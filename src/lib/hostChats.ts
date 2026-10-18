@@ -11,7 +11,7 @@ import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
-import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
@@ -457,6 +457,42 @@ export function onHostChatMessage(listener: (machineId: string, message: HostCha
  * list read failed (a down host has none), so `chats` is not the PC's word on which chats exist.
  */
 export interface HostPc { host: AgentHostState | null; chats: HostChatRow[]; stale?: true }
+
+/**
+ * What a working host chat waits on, in VS Code's order (chatListRenderer's persistent progress):
+ * an open question, then tool calls waiting for a yes or no, then background work (subagents and
+ * commands); null when none, and the app's own working word stands. A bridge from before these
+ * fields sends none of them: nothing to say.
+ */
+export function hostStatusLine(read: HostChatRead, t: Translate): string | null {
+  if (read.prompt?.kind === "question") return t("Waiting for your response");
+  const confirmations = read.confirmations ?? 0;
+  if (confirmations > 0) return confirmations === 1 ? t("1 confirmation pending") : t("{0} confirmations pending", { 0: confirmations });
+  const { subagents, commands } = read.background ?? { subagents: 0, commands: 0 };
+  const agents = subagents === 1 ? t("1 subagent") : subagents > 1 ? t("{0} subagents", { 0: subagents }) : null;
+  const shells = commands === 1 ? t("1 background command") : commands > 1 ? t("{0} background commands", { 0: commands }) : null;
+  if (agents && shells) return t("{0} and {1} running", { 0: agents, 1: shells });
+  if (agents) return subagents === 1 ? t("1 subagent running") : t("{0} subagents running", { 0: subagents });
+  if (shells) return commands === 1 ? t("1 background command running") : t("{0} background commands running", { 0: commands });
+  return null;
+}
+
+/** Tokens as VS Code's meter writes them: 850, 1.5K, 84K, 1M. */
+function tokens(value: number): string {
+  if (value < 1000) return String(value);
+  const [scaled, unit] = value >= 1_000_000 ? [value / 1_000_000, "M"] : [value / 1000, "K"];
+  return `${scaled >= 10 ? Math.round(scaled) : Math.round(scaled * 10) / 10}${unit}`;
+}
+
+/**
+ * The chat's context window as a meter: "42% · 84K / 200K" and the bar's share (at most 100).
+ * Null when Copilot reported nothing usable.
+ */
+export function contextMeter(usage: HostContextUsage | null): { percent: number; label: string } | null {
+  if (usage === null || !Number.isFinite(usage.currentTokens) || !Number.isFinite(usage.tokenLimit) || usage.tokenLimit <= 0) return null;
+  const share = Math.round((usage.currentTokens / usage.tokenLimit) * 100);
+  return { percent: Math.min(100, share), label: `${share}% · ${tokens(usage.currentTokens)} / ${tokens(usage.tokenLimit)}` };
+}
 
 /**
  * The header's connection chip for an open host chat (it has no pane, whose stream sets it): live

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { HostChatRow } from "../../shared/host-chats.ts";
+import type { HostChatRead, HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
-import { HOST_ATTEMPT_TTL_MS, hostChatLive, openHostChatClosed, type HostPc } from "./hostChats.ts";
+import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
@@ -639,5 +639,49 @@ describe("the header's connection chip on a host chat", () => {
     expect(hostChatLive(pc({ state: "no_server" }), true)).toBe(false);
     expect(hostChatLive(pc(up, true), true)).toBe(false);
     expect(hostChatLive(undefined, true)).toBe(false);
+  });
+});
+
+describe("what a host chat waits on (VS Code's persistent progress)", () => {
+  const words = (key: string, values?: Record<string, string | number>) => Object.entries(values ?? {}).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), key);
+  const read = (extra: Partial<HostChatRead>): HostChatRead => ({
+    session: "s", title: "t", status: "working", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: true, pending: [], commands: [],
+    background: { subagents: 0, commands: 0 }, confirmations: 0, context: null, message_ids: [], signature: "x", ...extra,
+  });
+  const question = { kind: "question" } as unknown as HostChatRead["prompt"];
+  it("an open question comes first", () => {
+    expect(hostStatusLine(read({ prompt: question, confirmations: 2, background: { subagents: 1, commands: 1 } }), words)).toBe("Waiting for your response");
+  });
+  it("then pending confirmations, one or more", () => {
+    expect(hostStatusLine(read({ confirmations: 1, background: { subagents: 1, commands: 0 } }), words)).toBe("1 confirmation pending");
+    expect(hostStatusLine(read({ confirmations: 3 }), words)).toBe("3 confirmations pending");
+  });
+  it("then background work, as VS Code words it", () => {
+    expect(hostStatusLine(read({ background: { subagents: 1, commands: 0 } }), words)).toBe("1 subagent running");
+    expect(hostStatusLine(read({ background: { subagents: 2, commands: 0 } }), words)).toBe("2 subagents running");
+    expect(hostStatusLine(read({ background: { subagents: 0, commands: 1 } }), words)).toBe("1 background command running");
+    expect(hostStatusLine(read({ background: { subagents: 0, commands: 4 } }), words)).toBe("4 background commands running");
+    expect(hostStatusLine(read({ background: { subagents: 2, commands: 1 } }), words)).toBe("2 subagents and 1 background command running");
+  });
+  it("else nothing: the app's working word stands", () => {
+    expect(hostStatusLine(read({}), words)).toBeNull();
+    // a bridge from before these fields
+    const { background: _b, confirmations: _c, context: _x, ...older } = read({});
+    expect(hostStatusLine(older as HostChatRead, words)).toBeNull();
+  });
+});
+
+describe("the context meter", () => {
+  it("context_meter_formats: percent · used / limit, in K and M", () => {
+    expect(contextMeter({ currentTokens: 84000, tokenLimit: 200000 })).toEqual({ percent: 42, label: "42% · 84K / 200K" });
+    expect(contextMeter({ currentTokens: 1500, tokenLimit: 1000000 })).toEqual({ percent: 0, label: "0% · 1.5K / 1M" });
+    expect(contextMeter({ currentTokens: 850, tokenLimit: 128000 })).toEqual({ percent: 1, label: "1% · 850 / 128K" });
+    // over the window (a long tool output before compaction): said as it is, the bar full
+    expect(contextMeter({ currentTokens: 210000, tokenLimit: 200000 })).toEqual({ percent: 100, label: "105% · 210K / 200K" });
+  });
+  it("context_meter_null_on_bad_usage", () => {
+    expect(contextMeter(null)).toBeNull();
+    expect(contextMeter({ currentTokens: 5, tokenLimit: 0 })).toBeNull();
+    expect(contextMeter({ currentTokens: Number.NaN, tokenLimit: 10 })).toBeNull();
   });
 });

@@ -27,6 +27,7 @@ import {
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
 import { Composer, type SentAttachment } from "./Composer.tsx";
+import { HostChatStatus } from "./HostChatStatus.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
@@ -92,6 +93,7 @@ export function HostChatView({ machineId, session, onReadHealth, onTitle }: Host
   const [config, setConfig] = useState<HostSessionConfig | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const healthRef = useRef(onReadHealth);
@@ -245,6 +247,7 @@ export function HostChatView({ machineId, session, onReadHealth, onTitle }: Host
         reread();
       }} />}
     </div>
+    <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} sendMenu={sendMenu}

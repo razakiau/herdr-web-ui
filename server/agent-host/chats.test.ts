@@ -265,6 +265,41 @@ describe("host chat mappers", () => {
   });
 });
 
+describe("what a host chat waits on, and its context", () => {
+  const sessionWith = (meta: Record<string, unknown> | undefined) => ({ _meta: meta }) as unknown as SessionState;
+  const ctx = (session: SessionState | undefined) => ({ chat: () => undefined, modelName: (id: string) => id, session: () => session });
+
+  it("background work counts subagents and commands; a read with none says zeros", () => {
+    const work = [
+      { kind: "subagent", id: "w1", label: "explore", startedAt: AT, chat: "copilotcli:/sub" },
+      { kind: "shell", id: "w2", label: "FICTIONAL dev server", startedAt: AT, command: "npm run dev" },
+      { kind: "shell", id: "w3", label: "FICTIONAL watch", startedAt: AT, command: "tsc -w" },
+    ];
+    expect(readFrom("s", "t", chat({ backgroundWork: work })).background).toEqual({ subagents: 1, commands: 2 });
+    expect(readFrom("s", "t", chat({})).background).toEqual({ subagents: 0, commands: 0 });
+    expect(readFrom("s", "t", chat({ backgroundWork: work })).signature).not.toBe(readFrom("s", "t", chat({})).signature);
+  });
+
+  it("confirmations count the running turn's calls waiting for a yes or no", () => {
+    const waiting = (id: string) => ({ kind: "toolCall", toolCall: { toolCallId: id, toolName: "bash", displayName: "Run", status: "pending-confirmation", invocationMessage: "FICTIONAL" } });
+    const active = { id: "turn-1", startedAt: AT, message: user("FICTIONAL go"), responseParts: [waiting("c1"), waiting("c2")] };
+    expect(readFrom("s", "t", chat({ activeTurn: active })).confirmations).toBe(2);
+    expect(readFrom("s", "t", chat({})).confirmations).toBe(0);
+  });
+
+  it("read_maps_copilot_usage_info as VS Code reads it: integers, a limit above 0, else none", () => {
+    const usage = { currentTokens: 84000, tokenLimit: 200000, messagesLength: 12, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 };
+    expect(readFrom("s", "t", chat({}), ctx(sessionWith({ "copilot.usageInfo": usage }))).context)
+      .toEqual({ currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 });
+    for (const bad of [{ ...usage, tokenLimit: 0 }, { ...usage, currentTokens: 1.5 }, { ...usage, currentTokens: -1 }, { ...usage, messagesLength: undefined }, {}, "x"]) {
+      expect({ bad, context: readFrom("s", "t", chat({}), ctx(sessionWith({ "copilot.usageInfo": bad }))).context }).toEqual({ bad, context: null });
+    }
+    expect(readFrom("s", "t", chat({})).context).toBeNull();
+    // a bad optional count is left out, the rest stays
+    expect(readFrom("s", "t", chat({}), ctx(sessionWith({ "copilot.usageInfo": { ...usage, systemTokens: -3 } }))).context).toEqual({ currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, toolDefinitionsTokens: 15000 });
+  });
+});
+
 // ─── The whole turn, built through the package's reducers ────────────────────
 
 const LATER = "2026-01-01T00:00:05.000Z";

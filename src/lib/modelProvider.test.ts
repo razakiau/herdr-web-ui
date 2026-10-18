@@ -37,12 +37,12 @@ describe("the model picker's rows", () => {
     expect(contextLabel(1_048_576)).toBe("1M");
   });
   it("search_filters_335_models: typing glm shows only GLM rows; tabs group by provider, none with one provider", () => {
-    const models = Array.from({ length: 335 }, (_, index) => index % 67 === 0 ? model(`fictional/glm-${index}`, `GLM-${index} (FICTIONAL)`, "omniroute") : model(`fictional/m-${index}`, `FICTIONAL M${index}`, index % 2 ? "copilotcli" : "omniroute"));
+    const models = Array.from({ length: 335 }, (_, index) => index % 67 === 0 ? model(`fictional/glm-${index}`, `GLM-${index} (FICTIONAL)`, "fictional-router") : model(`fictional/m-${index}`, `FICTIONAL M${index}`, index % 2 ? "copilotcli" : "fictional-router"));
     const shown = filterModels(models, "glm");
     expect(shown.length).toBe(5);
     expect(shown.every((each) => /GLM/.test(each.name))).toBe(true);
-    expect(modelTabs(models)).toEqual(["omniroute", "copilotcli"]);
-    expect(modelTabs(models.filter((each) => each.provider === "omniroute"))).toEqual([]);
+    expect(modelTabs(models)).toEqual(["fictional-router", "copilotcli"]);
+    expect(modelTabs(models.filter((each) => each.provider === "fictional-router"))).toEqual([]);
     expect(filterModels(models, "", "copilotcli").every((each) => each.provider === "copilotcli")).toBe(true);
   });
   it("pinned_and_recent_sections: Pinned, then the last 5 picked on this PC, then All models", () => {

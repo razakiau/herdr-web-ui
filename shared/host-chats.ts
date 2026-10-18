@@ -40,6 +40,12 @@ export type HostPromptRef =
   | { tool_call_id: string; turn_id: string; option_ids: string[]; approves: boolean[] };
 
 /** GET /api/host-chats/chat: one chat, read. */
+/** The chat's context window, as VS Code reads `copilot.usageInfo` (readCopilotContextUsage). */
+export interface HostContextUsage {
+  currentTokens: number; tokenLimit: number;
+  conversationTokens?: number; systemTokens?: number; toolDefinitionsTokens?: number;
+}
+
 export interface HostChatRead {
   session: string; title: string; status: HostChatRow["status"];
   turns: ConversationTurn[];
@@ -56,6 +62,12 @@ export interface HostChatRead {
   pending: { id: string; kind: "steering" | "queued"; text: string }[];
   /** the session's skills, prompts and agents, offered after "/" (VS Code's customizations) */
   commands: HostCommand[];
+  /** work still running for the chat (AHP backgroundWork): subagents and shell commands */
+  background: { subagents: number; commands: number };
+  /** the running turn's tool calls waiting for a yes or no */
+  confirmations: number;
+  /** the context window as Copilot reports it (copilot.usageInfo); null when it says nothing usable */
+  context: HostContextUsage | null;
   /**
    * The ids the chat holds its messages under: its turns' (past, the loaded page, and the running
    * one) and its pending messages'. A phone whose send lost its answer sees here that it went.

@@ -94,7 +94,9 @@ const patch = `(() => {
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending,
       commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }], message_ids: ids,
-      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending]) };
+      background: state.background ?? { subagents: 0, commands: 0 }, confirmations: 0,
+      context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 },
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
     ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
@@ -440,6 +442,11 @@ try {
         await card.locator(".prompt-card-body code", { hasText: "map" }).waitFor();
         assert.match(await card.locator(".prompt-card-option-description").innerText(), /\*\*plain\*\*/, "an option's description stays plain");
         assert.equal(await card.getByRole("textbox").getAttribute("placeholder"), "Other…", "the typed-answer field is the Other… slot");
+        // the status row says what the chat waits on, VS Code's words, and ends with its context meter
+        assert.equal((await view.locator(".host-chat-status-line").textContent())?.trim(), "Waiting for your response", "an open question: Waiting for your response");
+        assert.equal((await view.locator(".host-chat-meter-label").textContent())?.trim(), "42% · 84K / 200K", "the meter reads copilot.usageInfo");
+        assert.equal(await view.locator(".host-chat-meter").getAttribute("title"), "Context window: 42% · 84K / 200K");
+        assert.equal((await view.locator(".host-chat-meter-short").innerText()).trim(), "42%", "a phone shows the percent, the counts in its title and sheet");
         await fits("the card");
         // the card opens to a full-height sheet: the question scrolls, the answer field stays in view,
         // and collapsing keeps the typed text
@@ -633,6 +640,31 @@ try {
         await queuedRows.waitFor({ state: "detached" });
         assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/pending/remove")).map((post) => post.body["session"]), [SESSION], "the row's remove posts once");
         console.log("PASS a pending row's remove takes it off");
+
+        // 5a. background work while busy: VS Code's words, then the meter's breakdown
+        await page.evaluate(() => {
+          const host = window as unknown as { hostState: { background: { subagents: number; commands: number } }; setHostBusy(busy: boolean): void };
+          host.hostState.background = { subagents: 2, commands: 1 };
+          host.setHostBusy(true);
+        });
+        const line = view.locator(".host-chat-status-line", { hasText: "2 subagents and 1 background command running" });
+        await line.waitFor();
+        assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");
+        await view.locator(".host-chat-meter").click();
+        const contextSheet = page.getByRole("dialog", { name: "Context window" });
+        await contextSheet.waitFor();
+        assert.deepEqual((await contextSheet.locator("dt").allInnerTexts()).map((text) => text.trim()), ["Conversation", "System", "Tool definitions", "Used"], "the breakdown the host sent");
+        assert.match(await contextSheet.locator(".is-total dd").innerText(), /84,000 of 200,000/);
+        await fits("the context sheet");
+        if (shots) await page.screenshot({ path: join(shots, "task-12-context-390.png") });
+        await contextSheet.getByRole("button", { name: "Close" }).click();
+        await contextSheet.waitFor({ state: "detached" });
+        await page.evaluate(() => { (window as unknown as { hostState: { background: unknown } }).hostState.background = { subagents: 0, commands: 0 }; });
+        if (shots) {
+          await page.waitForFunction(() => ![...document.body.children].some((node) => node instanceof HTMLElement && node.inert && node.shadowRoot === null && node.getAttribute("aria-hidden") === "true" && node.childElementCount === 0));
+          await page.screenshot({ path: join(shots, "task-12-status-390.png") });
+        }
+        console.log("PASS background work reads as VS Code says it, and the meter opens the context breakdown");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
         const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;

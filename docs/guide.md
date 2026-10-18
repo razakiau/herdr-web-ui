@@ -199,6 +199,46 @@ Background tasks have a button by the message box, with a count while some run: 
 
 A pane's plan is the task list a Claude Code agent keeps (`TaskCreate` / `TaskUpdate`) or the checklist Codex keeps (`update_plan`), read back from the session's transcript. While there is one, the background-task button by the message box starts with **Plan** and how many of its steps are done (`2/5`); the same button opens one list with the plan's steps first and the background tasks below. Steps are listed so a step comes after the steps it waits on (Claude Code's `blockedBy`; a Codex step waits on the one before it). The running step says what it does now, and each step shows how long it took. The sidebar row carries the same count. Claude Code empties its task list once every task is done, and so does this: the first task after that starts a new plan. A teammate of an agent team that changes a task writes that in its own transcript, which is not read.
 
+## Copilot host chats
+
+VS Code runs Copilot chats in an agent host on the PC, which the app can read and drive too.
+Turn it on with `HERDR_WEB_AGENT_HOST=on` (see [Configuration](#configuration)); the bridges this
+server starts on other PCs get the same switch. A host chat is a Copilot agent like any other:
+
+- **Where it shows.** A tab of the workspace that works in its folder, else a row for its folder
+  under the PC, and in Agents while it works or asks. Two or three PCs show in full; from three,
+  the ones not in use fold under "Other PCs", and a PC with a chat that needs you stays open.
+  "All agents on <PC>…" in the PC's menu lists every chat, done ones under Archived.
+- **Starting one.** "+" offers **Copilot (host)** where the PC's agent host is up and signed in
+  ("Copilot (terminal)" is the `copilot` command in a pane). Pick a folder (the PC's chats' folders
+  are offered), write the first message, and pick the model, the agent and the mode. "New Copilot
+  chat…" in the PC's menu opens the same dialog. A chat whose first message did not go out opens
+  with the message waiting in its box: nothing is sent twice.
+- **Reading.** The app's chat view, read from the host: tool calls fold into groups as VS Code
+  folds them, subagents open to their own chats, a tool's images open full size, answered
+  questions read "Question / Answered". The header shows Copilot's mark, the title and
+  `PC › folder`; a host chat has no terminal.
+- **Sending.** While the agent works, Send steers it (VS Code's default); Alt+Enter queues, and
+  the caret beside Send (a long press on a phone) offers Stop and Send, Add to Queue and Steer with
+  Message. What waits shows above the box under Steering and Queued, each removable.
+- **Model, agent and mode.** The controls under the box set the model and its effort, the custom
+  agent, and the mode with its permissions, for this chat from the next message on, as VS Code
+  does. `/plan`, `/autopilot`, `/yolo`, `/allow-all` and `/goal` work as in VS Code, and the host's
+  skills, prompts and agents are listed after `/`.
+- **Files.** Attach (pick, paste, drop) or type `@` to pick a file of the chat's folder: each is a
+  chip above the box and goes with the message, an image embedded. Uploads are stored in the
+  chat's folder on its PC, under `.herdr-web-ui/`, as a pane's are; a file outside the chat's
+  folder is refused.
+- **Questions and approvals.** The card renders the question as Markdown, always offers "Other…"
+  for a typed answer (unless the question forbids it), and takes files and dictation there: an
+  answer carries text only, so each file is uploaded and its path leads the answer. A long card
+  opens to the full screen and back.
+- **What it waits on.** The row over the box says it in VS Code's words: "Waiting for your
+  response", "1 confirmation pending", "2 subagents running", and ends with the context window
+  ("42% · 84K / 200K"), which opens its breakdown.
+
+Copilot's own pane chats and every other agent are unchanged.
+
 ## Features
 
 | | |
@@ -618,6 +658,14 @@ A React client talks to a Bun HTTP/WebSocket server.
 - **Chat:** it reads the agents' own session files, and sending types into the same live pane.
 
 herdr owns the processes and the scrollback.
+
+**Diagrams.** A `mermaid` block in a chat is drawn with Mermaid 12.1.0, loaded on first use, in
+strict mode, with a lightbox. [Pele](https://github.com/obsidianmd/pele) 1.6.0 (MIT, Mermaid
+12.1.0 syntax, synchronous, no runtime dependencies) was measured as a replacement on 2026-10-19:
+one bundle of 661 KiB minified, 245 KiB gzip, against Mermaid's 5.0 MiB / 1.4 MiB when bundled
+whole; and a median first render over 10 runs at 390 px of 11–14 ms for the six types seen in
+chats (flowchart, sequence, class, state, ER, Gantt), against Mermaid's 25–192 ms. Mermaid is
+every agent's diagram renderer, so a switch is left for a separate decision.
 
 ## FAQ
 
