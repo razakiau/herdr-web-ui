@@ -54,6 +54,18 @@ it("drops the old host-chats-in-Agents setting, and its stored key on load", () 
   }
 });
 
+it("a full storage that refuses the clean-up keeps the user's settings (only the old key stays)", () => {
+  const stored = new Map([["herdr-web-ui:settings", JSON.stringify({ density: "compact", vscodeChatsInAgents: "recent" })]]);
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: () => { throw new Error("QuotaExceededError"); } } } });
+  try {
+    expect(loadSettings().density).toBe("compact");
+  } finally {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
 it("draws agent logos in their brand colors unless Mono was chosen", () => {
   expect(DEFAULT_SETTINGS.agentMarks).toBe("color");
   expect(sanitizeSettings({}).agentMarks).toBe("color");

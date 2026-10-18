@@ -745,13 +745,19 @@ try {
         console.log("PASS no horizontal overflow at 390 px");
 
         // 6b. the folder row opens its chat, whose tab is the folder's; a read that fails says the bridge's words, not the request's URL
+        // it finished while nobody looked: unread, and opening it reads it (as VS Code does)
+        await page.evaluate(() => { (window as unknown as { hostEdits: { unread: Record<string, boolean> } }).hostEdits.unread["fictional-session-0"] = true; (window as unknown as { pushHostList(): void }).pushHostList(); });
+        await page.locator('.agents-sidebar [data-host-session="fictional-session-0"]').waitFor({ state: "attached" });
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
         await folderRow.locator(".workspace-select").click();
+        await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string; body: { session?: string; read?: boolean } }[] } }).hostCalls.posts
+          .some((post) => post.path.endsWith("/chat/read") && post.body.session === "fictional-session-0" && post.body.read === true));
         const down = page.locator('.host-chat[data-host-session="fictional-session-0"]');
         await down.locator(".chat-inline-error").waitFor();
         assert.equal(await down.locator(".chat-inline-error").textContent(), "FICTIONAL the agent host is down", "the bridge's detail, without the URL and status");
         assert.equal(await page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-0"] [role="tab"]').getAttribute("aria-selected"), "true", "the folder row's chat is its tab");
-        console.log("PASS a folder row opens its chat as its tab; a read that fails says the bridge's own words");
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/read")).filter((post) => post.body["session"] === "fictional-session-0").length, 1, "read once on opening");
+        console.log("PASS a folder row opens its unread chat as its tab and marks it read; a read that fails says the bridge's own words");
 
         // 6c. "All agents on Build PC…": search finds the month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
         const pcMenu = async () => {
@@ -853,6 +859,7 @@ try {
         assert.equal(await terminalButton.getAttribute("title"), "This chat has no terminal");
         assert.equal(await header.getByRole("button", { name: "Chat" }).getAttribute("aria-pressed"), "true", "Chat is pressed");
         await header.locator(".conn.conn-live").waitFor({ state: "attached" });
+        assert.equal(await page.locator(".host-chat-title").count(), 0, "the title is the header's alone: no second title bar over the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-11-header-390.png") });
         console.log("PASS New Copilot chat… is the + dialog on Copilot (host): one chat/new, the mode set, and the header names the chat");
 
@@ -866,6 +873,10 @@ try {
         const kept = page.locator('.host-chat[data-host-session="fictional-new-2"]');
         await kept.waitFor();
         assert.equal(await kept.getByRole("textbox", { name: "Message" }).inputValue(), "FICTIONAL kept", "the unsent first message waits in the composer");
+        // an empty chat greets with Copilot's mark, never VS Code's
+        await kept.locator(".chat-empty").waitFor();
+        assert.equal(await kept.locator('.chat-empty svg[aria-label="copilot"]').count(), 1, "the empty chat wears Copilot's mark");
+        assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no VS Code mark anywhere");
         assert.equal((await newChats()).length, 2, "exactly one chat/new for this tap: no second chat");
         assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).length, sendsBefore, "nothing is sent on the user's behalf");
         await fits("the chat made unsent");
@@ -906,7 +917,7 @@ try {
         await nameField.fill("FICTIONAL renamed chat");
         await nameField.press("Enter");
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL renamed chat" }).waitFor();
-        await kept.locator(".host-chat-title", { hasText: "FICTIONAL renamed chat" }).waitFor();
+        await page.locator(".app-header .context-title-text", { hasText: "FICTIONAL renamed chat" }).waitFor();
         assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-2", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
         // the header's ⋯: Rename chat… in the sheet, the same route
         await page.getByRole("button", { name: "More", exact: true }).click();
@@ -916,7 +927,7 @@ try {
         await renameSheet.getByRole("button", { name: "Save", exact: true }).click();
         await renameSheet.waitFor({ state: "detached" });
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL named in the header" }).waitFor();
-        await kept.locator(".host-chat-title", { hasText: "FICTIONAL named in the header" }).waitFor();
+        await page.locator(".app-header .context-title-text", { hasText: "FICTIONAL named in the header" }).waitFor();
         assert.equal((await actionPosts("rename")).length, 2, "the header's rename went too");
         console.log("PASS rename from the tab's menu and the header's ⋯: the new title on the tab and over the chat");
 
@@ -924,7 +935,7 @@ try {
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as unread" }).click();
         await keptTab.locator('.tab-strip-dot[data-status="done"]').waitFor();
-        assert.deepEqual(await actionPosts("read"), [{ session: "fictional-new-2", read: false }]);
+        assert.deepEqual((await actionPosts("read")).filter((body) => body["session"] === "fictional-new-2"), [{ session: "fictional-new-2", read: false }], "marked unread, and kept so while open");
         await page.evaluate(() => { (window as unknown as { hostEdits: { failRead: boolean } }).hostEdits.failRead = true; });
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as read" }).click();

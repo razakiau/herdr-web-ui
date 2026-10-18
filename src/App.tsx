@@ -26,7 +26,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
-import { basename, errorText, hostChatLive, noteHostChatStreamOpen, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
+import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
@@ -39,6 +39,7 @@ import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
 import { headerCrumb, hostHeaderCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { HOST_AGENT_KIND } from "../shared/supported-agents.ts";
+import type { HostChatRow } from "../shared/host-chats.ts";
 import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
@@ -912,6 +913,17 @@ export function App() {
   const openHostKey = selectedHostChat ? `${selectedHostChat.machineId}\n${selectedHostChat.session}` : null;
   // a host restarting, a PC dropping or a failed read is not a close (openHostChatClosed)
   const openHostLive = selectedHostChat ? !openHostChatClosed(hostChats.get(selectedHostChat.machineId), selectedHostChat.session) : false;
+  // the chat on screen is read, as in VS Code: on opening it, and when its turn ends while shown
+  // (readsOnView); a chat marked unread while open stays so
+  const openHostSeen = useRef<{ key: string | null; row: HostChatRow | undefined }>({ key: null, row: undefined });
+  useEffect(() => {
+    const key = selectedHostChat && selectedPane === null ? `${selectedHostChat.machineId}\n${selectedHostChat.session}` : null;
+    const was = openHostSeen.current.key === key ? openHostSeen.current.row : undefined;
+    // a chat not listed yet has not been seen: its first row is its opening
+    openHostSeen.current = { key, row: openHostRow ?? (openHostSeen.current.key === key ? openHostSeen.current.row : undefined) };
+    if (key === null || openHostRow === undefined || !readsOnView(was, openHostRow)) return;
+    void hostTracker.setRead(selectedHostChat!.machineId, selectedHostChat!.session, true).catch(() => undefined);
+  }, [openHostRow, selectedHostChat, selectedPane, hostTracker]);
   const openHostWas = useRef<{ key: string | null; live: boolean }>({ key: null, live: false });
   useEffect(() => {
     const was = openHostWas.current;

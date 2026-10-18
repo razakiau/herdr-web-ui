@@ -28,7 +28,6 @@ import {
 import type { HostSendPick } from "../lib/compose.ts";
 import { Composer, type SentAttachment } from "./Composer.tsx";
 import { HostChatStatus } from "./HostChatStatus.tsx";
-import { AgentMark } from "./AgentMark.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
@@ -235,11 +234,10 @@ export function HostChatView({ machineId, session, onReadHealth, onTitle }: Host
   </span>;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
-    <p className="host-chat-title"><AgentMark agent="copilot" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
     <div className="terminal-surface">
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
       <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}
-        connected ended={false} agent="vscode" agentStatus={status} />
+        connected ended={false} agent="copilot" agentStatus={status} />
     </div>
     <div className="prompt-dock" aria-live="polite">
       {chat?.prompt && <HostPromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={reread} onAnswered={() => {

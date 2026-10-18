@@ -4,23 +4,6 @@
   height: 100%;
 }
 
-.host-chat-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  margin: var(--space-3) 0 0;
-  color: var(--text-dim);
-  font-size: var(--fs-sm);
-}
-
-.host-chat-title > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* the pickers, in the composer's row after the mic (Composer's `pills`): VS Code's input toolbar,
    quiet triggers with no fill at rest, each a mark or glyph, its words, a dim aside and a caret */
 .host-chat-pills {

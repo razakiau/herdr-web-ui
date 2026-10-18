@@ -482,7 +482,8 @@ export function loadSettings(): Settings {
     // a setting this version removed leaves the stored record too
     if (typeof parsed === "object" && parsed !== null && REMOVED_KEYS.some((key) => key in parsed)) {
       const kept = Object.fromEntries(Object.entries(parsed).filter(([key]) => !REMOVED_KEYS.includes(key)));
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+      // a storage that refuses the write (full) keeps the record as it was: the settings still load
+      try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(kept)); } catch { /* left for the next load */ }
     }
     return sanitizeSettings(parsed);
   } catch {

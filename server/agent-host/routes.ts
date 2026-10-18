@@ -43,7 +43,8 @@ import {
 import type { AgentHostState } from "../../shared/host-chats.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, saveAttachment } from "../paste.ts";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
@@ -487,6 +488,8 @@ function attachmentsOf(value: unknown, host: AgentHost, session: string): Messag
     const label = name && name.trim() !== "" ? name : basename(path);
     const contentType = mediaType && mediaType !== "" ? mediaType : IMAGE_BY_EXTENSION[extname(path).toLowerCase()];
     if (contentType?.startsWith("image/")) {
+      // embedded whole in the message: refused past the attachment limit before it is read
+      if (statSync(path).size > MAX_ATTACHMENT_BYTES) refuse(jsonResponse({ error: { code: "image_too_large", message: `file exceeds ${MAX_ATTACHMENT_BYTES} bytes` } }, 413));
       return { type: MessageAttachmentKind.EmbeddedResource, label, displayKind: "image", data: readFileSync(path).toString("base64"), contentType } as MessageAttachment;
     }
     return { type: MessageAttachmentKind.Resource, label, displayKind: "document", uri: pathToFileURL(path).href, ...(contentType ? { contentType } : {}) } as MessageAttachment;
@@ -501,11 +504,16 @@ async function uploadFile(call: Call): Promise<Response> {
   connected(call.host);
   if (!known(call.host, session)) missing();
   const folder = folderOf(call.host, session);
-  if (folder === null) return conflictResponse("no_folder", "this chat has no folder on its PC to put a file in");
+  // a folder that is gone is not made again: the chat's own folder is the PC's to have
+  let isFolder = false;
+  try { isFolder = folder !== null && statSync(folder).isDirectory(); } catch { /* gone */ }
+  if (!isFolder) return conflictResponse("no_folder", "this chat has no folder on its PC to put a file in");
   try {
     return jsonResponse({ path: await saveAttachment({ cwd: async () => folder, contentType: mediaType, dataBase64: data, ...(name ? { name } : {}) }) });
   } catch (error) {
     if (error instanceof PasteImageError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
+    const code = (error as { code?: unknown }).code;
+    if (code === "EACCES" || code === "EPERM" || code === "EROFS") return conflictResponse("folder_not_writable", "this chat's folder on its PC cannot be written to");
     throw error;
   }
 }
@@ -537,7 +545,9 @@ function send(host: AgentHost, session: string, channel: string, chat: ChatState
   const queued = chat.activeTurn !== undefined;
   // a chat holds one steering message: a second steer joins it, under its id (VS Code's rule)
   const steering = queued && mode === "steer" ? chat.steeringMessage : undefined;
-  const pending = steering ? { ...message, text: `${steering.message.text}\n\n${message.text}` } : message;
+  // the joined steer keeps both messages' attachments, the first's first: nothing given is dropped
+  const joinedAttachments = [...(steering?.message.attachments ?? []), ...(message.attachments ?? [])];
+  const pending = steering ? { ...message, text: `${steering.message.text}\n\n${message.text}`, ...(joinedAttachments.length > 0 ? { attachments: joinedAttachments } : {}) } : message;
   host.dispatch(channel, (queued
     ? { type: ActionType.ChatPendingMessageSet, kind: mode === "steer" ? PendingMessageKind.Steering : PendingMessageKind.Queued, id: steering?.id ?? id, message: pending }
     : { type: ActionType.ChatTurnStarted, turnId: id, startedAt: new Date().toISOString(), message }) as StateAction);

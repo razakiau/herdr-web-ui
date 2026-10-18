@@ -459,6 +459,16 @@ export function onHostChatMessage(listener: (machineId: string, message: HostCha
 export interface HostPc { host: AgentHostState | null; chats: HostChatRow[]; stale?: true }
 
 /**
+ * Whether the chat on screen is to be marked read, as VS Code does: when it is opened unread, and
+ * when its turn ends while it is shown (`was` is its row before, undefined on opening). A chat the
+ * user marks unread while it is open stays unread: only a change of what is seen reads it.
+ */
+export function readsOnView(was: HostChatRow | undefined, now: HostChatRow | undefined): boolean {
+  if (now === undefined || !now.unread || now.status === "working") return false;
+  return was === undefined || was.status === "working";
+}
+
+/**
  * What a working host chat waits on, in VS Code's order (chatListRenderer's persistent progress):
  * an open question, then tool calls waiting for a yes or no, then background work (subagents and
  * commands); null when none, and the app's own working word stands. A bridge from before these

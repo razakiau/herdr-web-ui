@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { HostChatRead, HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
-import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, type HostPc } from "./hostChats.ts";
+import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
@@ -683,5 +683,24 @@ describe("the context meter", () => {
     expect(contextMeter(null)).toBeNull();
     expect(contextMeter({ currentTokens: 5, tokenLimit: 0 })).toBeNull();
     expect(contextMeter({ currentTokens: Number.NaN, tokenLimit: 10 })).toBeNull();
+  });
+});
+
+describe("an open chat is read", () => {
+  const row = (extra: Partial<HostChatRow>): HostChatRow => ({ session: "s", title: "t", status: "idle", modified_at: "2026-01-01T00:00:00.000Z", cwd: "/w", unread: true, archived: false, ...extra } as HostChatRow);
+  it("opening_unread_chat_marks_read: opened (nothing seen before) unread and not working", () => {
+    expect(readsOnView(undefined, row({}))).toBe(true);
+    expect(readsOnView(undefined, row({ status: "asks" }))).toBe(true);
+  });
+  it("its turn ends while it is on screen: read", () => {
+    expect(readsOnView(row({ status: "working", unread: false }), row({ status: "idle" }))).toBe(true);
+    expect(readsOnView(row({ status: "working", unread: false }), row({ status: "asks" }))).toBe(true);
+  });
+  it("marked unread by the user while open: it stays unread; nothing else reads it", () => {
+    expect(readsOnView(row({ unread: false }), row({}))).toBe(false);
+    expect(readsOnView(row({}), row({}))).toBe(false);
+    expect(readsOnView(undefined, row({ status: "working" }))).toBe(false);
+    expect(readsOnView(undefined, row({ unread: false }))).toBe(false);
+    expect(readsOnView(undefined, undefined)).toBe(false);
   });
 });

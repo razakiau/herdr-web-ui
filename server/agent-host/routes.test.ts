@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, ToolCallResult, Turn } from "@microsoft/agent-host-protocol";
@@ -1041,6 +1042,14 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", id: first, message: { text: "FICTIONAL first\n\nFICTIONAL second" } });
   });
 
+  it("second_steer_keeps_the_first_steers_attachments, then its own", async () => {
+    const shot = { type: "embeddedResource", label: "shot.png", displayKind: "image", data: "AAAA", contentType: "image/png" };
+    const r = await busy({ steeringMessage: { id: uuid(43), message: { ...user("FICTIONAL look"), attachments: [shot] } } });
+    expect((await sendAs(r, "steer", "FICTIONAL and this")).json).toEqual({ queued: true, joined: true });
+    await until("the joined steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")["message"]["attachments"]).toEqual([shot]);
+  });
+
   it("stop_and_send_waits_for_turn_end: cancels, then starts a turn with the text; queued messages stay queued", async () => {
     const queued = { id: uuid(42), message: user("FICTIONAL waiting") };
     const r = await busy({ queuedMessages: [queued] });
@@ -1233,6 +1242,29 @@ describe("host chat attachments", () => {
     const kept = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "big.zip", media_type: "application/zip", data: whole.toString("base64") });
     expect(kept.status).toBe(200);
     expect(readFileSync(kept.json.path).byteLength).toBe(whole.byteLength);
+  });
+
+  it("a chat whose folder is gone or cannot be written takes no file, and says which: nothing is made", async () => {
+    const { folder, r } = await inFolder();
+    rmSync(folder, { recursive: true, force: true });
+    const gone = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "shot.png", media_type: "image/png", data: PNG });
+    expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "no_folder" });
+    expect(existsSync(folder)).toBe(false);
+    mkdirSync(folder);
+    chmodSync(folder, 0o500);
+    try {
+      const locked = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "shot.png", media_type: "image/png", data: PNG });
+      expect({ status: locked.status, code: locked.json.error.code }).toEqual({ status: 409, code: "folder_not_writable" });
+    } finally { chmodSync(folder, 0o700); }
+  });
+
+  it("an image picked with @ over the attachment limit is refused before it is read", async () => {
+    const { folder, r } = await inFolder();
+    writeFileSync(join(folder, "huge.png"), "");
+    truncateSync(join(folder, "huge.png"), MAX_ATTACHMENT_BYTES + 1);
+    const refused = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL x", attachments: [{ path: "huge.png" }] });
+    expect({ status: refused.status, code: refused.json.error.code }).toEqual({ status: 413, code: "image_too_large" });
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
   });
 
   it("send_image_attachment_is_embedded and send_file_attachment_is_resource", async () => {
