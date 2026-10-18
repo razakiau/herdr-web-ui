@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target,
+  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target, Wrench,
   type LucideProps,
 } from "lucide-react";
 
@@ -43,7 +43,8 @@ import { ConversationRefresh } from "../lib/conversationRefresh.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
-import { OpenFileContext } from "../lib/filePaths.ts";
+import { fileLineTarget, OpenFileContext } from "../lib/filePaths.ts";
+import { parseInline, type InlineNode } from "../lib/markdown.ts";
 import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
@@ -60,6 +61,9 @@ import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { shouldFoldUserMessage } from "../lib/userMessageFold.ts";
 import { paneSource, type ChatSource } from "../lib/chatSource.ts";
 import { errorText } from "../lib/hostChats.ts";
+import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
+import { toolIcon } from "../lib/toolIcons.ts";
+import { FileGlyph } from "./FileGlyph.tsx";
 
 /** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
 const ChatSourceContext = createContext<ChatSource | null>(null);
@@ -465,6 +469,159 @@ function WorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, sh
   </section>;
 }
 
+/** The pictures a turn's tools returned, as one gallery: a press opens ChatView's viewer on them. */
+function WorkImages({ paneId, parts }: { paneId: string; parts: ConversationPart[] }) {
+  const t = useT();
+  const imageUrl = useImageUrl(paneId);
+  const images = parts.flatMap((part) => part.kind === "tool" ? (part.images ?? []) : []).map((image, index): GalleryImage => ({
+    src: imageUrl(image.ref),
+    name: t("Attached image"),
+    file: attachmentFileName(image.media_type, index),
+  }));
+  if (images.length === 0) return null;
+  return <ImageGallery images={images} className="chat-tool-images work-images" />;
+}
+
+/** A file a row names, as VS Code's pill: its icon and its name, opening the viewer where one can. */
+function FilePill({ path }: { path: string }) {
+  const t = useT();
+  const open = useContext(OpenFileContext);
+  const name = baseName(path);
+  if (open === null) return <span className="work-file-pill" title={path}><FileGlyph name={name} /><span>{name}</span></span>;
+  return <button type="button" className="work-file-pill" title={t("Open {path}", { path })} onClick={() => open(path)}><FileGlyph name={name} /><span>{name}</span></button>;
+}
+
+/** A row's text from the host (`Ran \`ls\``): its code spans as code, a file it links as its name. */
+function RowText({ text }: { text: string }) {
+  return <>{parseInline(text, false).map((node, index) => <RowNode key={index} node={node} />)}</>;
+}
+
+function RowNode({ node }: { node: InlineNode }): ReactNode {
+  switch (node.type) {
+    case "text": return node.value;
+    case "code": return <code>{node.value}</code>;
+    case "math": return node.value;
+    case "image": return node.alt;
+    case "file": return node.children.length > 0 ? <RowText text={inlineText(node.children)} /> : baseName(fileLineTarget(node.path).path);
+    default: return <>{node.children.map((child, index) => <RowNode key={index} node={child} />)}</>;
+  }
+}
+
+function inlineText(nodes: InlineNode[]): string {
+  return nodes.map((node) => node.type === "text" || node.type === "code" || node.type === "math" ? node.value : node.type === "image" ? node.alt : inlineText(node.children)).join("");
+}
+
+/** The command a terminal call ran: the host's, else its input's. */
+function rowCommand(part: ToolPartType): string | null {
+  if (part.command !== undefined && part.command.trim().length > 0) return part.command;
+  if (toolKind(part) !== "command") return null;
+  try {
+    const args = JSON.parse(part.input) as Record<string, unknown>;
+    const command = args?.command ?? args?.cmd;
+    return typeof command === "string" && command.trim().length > 0 ? command : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A call's output in its opened row, and the button for the rest of a cut one; the classic row's markup. */
+function ToolOutput({ part, output, whole }: { part: ToolPartType; output: string; whole: ReturnType<typeof useWholeOutput> }) {
+  const t = useT();
+  const openFile = useContext(OpenFileContext);
+  return <section className="chat-tool-output"><h4>{t(part.error ? "Error" : "Output")}</h4><pre className={`chat-tool-io${whole.text !== null ? " is-whole" : ""}`}>{linkFilePaths(output, openFile)}</pre>
+    {part.output_ref !== undefined && whole.text === null && <button type="button" className="btn btn-ghost chat-tool-more" disabled={whole.state === "loading"} onClick={whole.load}>
+      {t(whole.state === "loading" ? "Loading the whole output…" : whole.state === "failed" ? "Couldn't load the whole output — retry" : "Show the whole output ({size} characters)", { size: formatTokens(part.output_size ?? 0) })}
+    </button>}</section>;
+}
+
+/**
+ * A call the way VS Code lists it in a tool group: its kind's icon (the error's when it failed),
+ * then what it did (`past`, else what it set out to do). A terminal call reads "Ran `cmd`" and opens
+ * to its output; a file it read or changed is a pill that opens the viewer.
+ */
+function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  const whole = useWholeOutput(part.output_ref);
+  const kind = toolKind(part);
+  const Icon = toolIcon(kind, part.error ? "failed" : "done");
+  const command = rowCommand(part);
+  const summary = part.arguments_omitted ? t("Arguments omitted (too large)") : todoCallSummary(part) ?? part.summary;
+  const { verb } = useMemo(() => workRowLabel({ name: part.name, input: part.input }, summary), [part.name, part.input, summary]);
+  // a file the call read, listed or changed, unless the host's own words name it already
+  const file = (kind === "read" || kind === "edit" || kind === "list") ? toolFile(part) : null;
+  const named = part.past !== undefined && parseInline(part.past, false).some(function names(node: InlineNode): boolean {
+    return node.type === "file" || ("children" in node && node.children.some(names));
+  });
+  const pill = file !== null && !named ? file : null;
+  const output = isTodoTool(part.name) && parseTodoAnswer(part.output) !== null ? "" : whole.text ?? part.output;
+  // without the host's words (a Copilot pane), the row keeps what the classic row says
+  const label = command !== null ? <>{t("Ran")} <code>{command}</code></>
+    : part.past !== undefined && part.past.trim().length > 0 ? <RowText text={part.past} />
+      : pill !== null && verb !== null ? <>{t(verb)}</>
+        : verb !== null ? <>{t(verb)} {summary}</>
+          : <>{part.name}{summary.length > 0 && summary !== part.name && <> {summary}</>}</>;
+  return <div className={`work-row is-vscode${part.error ? " is-error" : ""}`}>
+    <div className="work-row-line">
+      <button type="button" className="work-row-head" aria-expanded={open} title={`${part.name} · ${summary}`} onClick={() => setOpen(!open)}>
+        <Icon className="work-row-icon" aria-hidden="true" />
+        <span className="work-row-text">{label}</span>
+      </button>
+      {pill !== null && <FilePill path={pill} />}
+    </div>
+    {open && <div className="work-row-detail">
+      {command !== null
+        ? output.length > 0 ? <ToolOutput part={part} output={output} whole={whole} /> : <p className="work-row-empty">{t("No output was produced by the command.")}</p>
+        : <><p className="work-row-tool">{part.name}</p><ToolInputView part={part} />{output.length > 0 && <ToolOutput part={part} output={output} whole={whole} />}</>}
+    </div>}
+  </div>;
+}
+
+/**
+ * The work block in VS Code's words: one per turn, open and folded as the classic one, its head the
+ * tool group's sentence ("Edited x.ts, ran 2 commands") with a wrench, a check once done or the error
+ * icon when a call failed, and on its quiet right the edits' lines and how long it worked. The
+ * pictures the tools returned and the calls VS Code never folds (MCP, mermaid) sit after it.
+ */
+function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, showThinking }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean }) {
+  const t = useT();
+  const [chosenOpen, setOpen] = useChatRowToggle("work", null);
+  const open = chosenOpen ?? defaultOpen;
+  const keepOpen = () => { if (chosenOpen === null) setOpen(true); };
+  const apart = (part: ConversationPart): boolean => part.kind === "tool" && neverFolded(part);
+  const folded: ConversationPart[] = parts.filter((part) => !apart(part));
+  const visible = folded.filter((part) => part.kind !== "skill" && (showThinking || part.kind !== "thinking"));
+  const standalone = parts.filter((part): part is ToolPartType => part.kind === "tool" && apart(part));
+  const { title, added, removed } = toolGroupSummary(folded, t);
+  const failed = folded.some((part) => part.kind === "tool" && part.error === true);
+  const Icon = failed ? CircleX : live ? Wrench : Check;
+  const heading = waiting ? t("Needs you") : live ? t("Working…") : title;
+  const space = heading.indexOf(" ");
+  return <>
+    {visible.length > 0 && <section className={`work-block is-vscode${live ? " is-live" : ""}${waiting ? " is-waiting" : ""}${open ? "" : " is-folded"}${failed ? " is-failed" : ""}`}>
+      <button type="button" className="work-block-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon className="work-block-icon" aria-hidden="true" />
+        <span className="work-block-title">{space < 0 || live ? heading : <>{heading.slice(0, space)}<span className="work-title-detail">{heading.slice(space)}</span></>}</span>
+        <span className="work-block-meta">
+          {(added > 0 || removed > 0) && <span className="work-block-lines"><span className="chat-diff-add">+{added}</span> <span className="chat-diff-del">−{removed}</span></span>}
+          {!live && duration !== null && <span className="work-block-time">{t("Worked for {duration}", { duration })}</span>}
+        </span>
+        <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
+      </button>
+      <AnimatedHeight open={open} animateContent={false}>
+        <div className="work-block-rows" onFocus={keepOpen} onClick={keepOpen}>{visible.map((part, index) =>
+          part.kind === "thinking" ? <ThinkingRow key={index} stateKey={`thinking:${parts.indexOf(part)}`} text={part.text} />
+            : part.kind === "text" ? <div key={index} className="work-narration"><Markdown style="vscode">{part.text}</Markdown></div>
+              : part.kind === "tool" ? <VscodeWorkRow key={index} stateKey={`tool:${parts.indexOf(part)}`} part={part} /> : null)}
+        </div>
+      </AnimatedHeight>
+    </section>}
+    <WorkImages paneId={paneId} parts={parts} />
+    {standalone.length > 0 && <div className="work-standalone">{standalone.map((part) => <VscodeWorkRow key={parts.indexOf(part)} stateKey={`tool:${parts.indexOf(part)}`} part={part} />)}</div>}
+  </>;
+}
+
 /** Skill evidence stays visible even when the surrounding work block is folded. */
 function SkillActivityList({ parts }: { parts: ConversationPart[] }) {
   const t = useT();
@@ -584,6 +741,8 @@ interface TurnProps {
   showThinking: boolean;
   /** the pane's skill names: an answer's text chips them */
   skills?: SkillMatcher | null;
+  /** how the turn reads (lib/toolGroupSummary.ts `turnStyle`): "vscode" for Copilot, else today's "classic" */
+  style?: TurnStyle;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -644,7 +803,7 @@ function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey:
 // a turn that did not change keeps its object across polls: skip re-rendering it. A host chat's
 // row has paneId "": its pictures and outputs come through the chat's source, and UserImages shows
 // no `@image` mention without a pane, so such a row reads no file
-export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, style = "classic" }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -697,9 +856,11 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   return <article className="chat-turn chat-turn-agent">
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
-    {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />}
+    {work.length > 0 && (style === "vscode"
+      ? <VscodeWorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />
+      : <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />)}
     {noticeRows(true)}
-    {answer.map((part, index) => <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
+    {answer.map((part, index) => style === "vscode" ? <Markdown key={index} skills={skills} style="vscode">{part.text}</Markdown> : <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
     {noticeRows(false)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
@@ -764,6 +925,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   // were, a host chat's its source's key, never a pane's
   const scopeId = hosted ? chat.key : paneId;
   const skillMatcher = useSkillMatcher(hosted ? null : paneId);
+  /** how its turns read: Copilot's like VS Code, every other agent's as before */
+  const style = turnStyle(agent, hosted);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
   const visible = paneVisible && pageVisible;
@@ -1398,9 +1561,9 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t(hosted ? "This message can't be shown here." : "This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} />
+      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} style={style} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style]);
   const header = <>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First

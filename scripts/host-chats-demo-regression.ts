@@ -46,7 +46,11 @@ const patch = `(() => {
       ...older,
       { role: "user", ts: at(9), parts: [{ kind: "text", text: "FICTIONAL look at the build" }] },
       { role: "assistant", ts: at(9), end_ts: at(8), parts: [
-        { kind: "tool", name: "runInTerminal", summary: "FICTIONAL make test", input: "{}", output: "FICTIONAL ok" },
+        { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL make test", input: "make test", output: "FICTIONAL ok", error: false, command: "make test", exit_code: 0 },
+        { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
+        { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
+        { kind: "tool", name: "Edit file", tool_id: "edit", summary: "Editing", past: "Edited", input: JSON.stringify({ path: "/tmp/fictional-repo/src/build.ts" }), output: "", error: false, edits: [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3 }] },
+        { kind: "tool", name: "View image", tool_id: "view", summary: "Viewing", past: "Viewed the screenshot", input: "{}", output: "", error: false, images: [{ media_type: "image/png", ref: "c-shot:0" }] },
         { kind: "text", text: "FICTIONAL the build passes." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
@@ -151,6 +155,8 @@ try {
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script><script src="./host-chats.js"></script><script type="module"'));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
+    // a tool's picture (an <img>, so not through the page's fetch): a fictional 1×1 PNG
+    if (path.endsWith("/host-chats/image")) return new Response(Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0)), { headers: { "content-type": "image/png" } });
     let file: string;
     try { file = decodeURIComponent(path.slice(1)); } catch { return new Response("bad path", { status: 400 }); }
     if (!file || file.endsWith("/")) file += "index.html";
@@ -212,11 +218,35 @@ try {
         await block.waitFor();
         assert.match(await block.getAttribute("class") ?? "", /is-folded/, "the finished turn's tool work is folded");
         assert.equal(await block.locator(".work-row").count(), 0, "a folded block draws no tool rows");
-        await block.locator(".work-block-head").click();
-        await block.locator(".work-row", { hasText: "FICTIONAL make test" }).waitFor();
+        // the vscode style: VS Code's sentence for the group, the edits' lines and the time on the right
+        const head = block.locator(".work-block-head");
+        assert.match(await block.getAttribute("class") ?? "", /is-vscode/, "a host chat reads in the vscode style");
+        assert.equal((await head.locator(".work-block-title").innerText()).trim(), "Edited build.ts, ran 1 command, read README.md, 1 other step", "the head sums the group up as VS Code does, a file read twice once");
+        assert.equal((await head.locator(".work-title-detail").innerText()).trim(), "build.ts, ran 1 command, read README.md, 1 other step", "the first word is plain, the rest quieter");
+        assert.equal(await head.locator(".work-block-lines").innerText(), "+28 −3", "the edits' lines on the right");
+        assert.match(await head.locator(".work-block-time").innerText(), /^Worked for \d+m$/, "the time stays on the head's quiet right");
+        assert.equal(await head.locator("svg.lucide-check.work-block-icon").count(), 1, "a finished group wears the check");
+        assert.equal(await head.locator(".work-block-summary").count(), 0, "no classic counts");
+        // the tool's picture: under the block, outside the fold, through the host source
+        const thumb = view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).locator(":scope > .work-images .chat-user-image img");
+        await thumb.waitFor();
+        assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
+        assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
+        await head.click();
+        const command = block.locator(".work-row", { hasText: "make test" });
+        await command.waitFor();
+        assert.equal((await command.locator(".work-row-text").innerText()).trim(), "Ran make test", "a terminal row reads Ran and its command");
+        assert.equal(await command.locator(".work-row-text code").innerText(), "make test", "the command in a code chip");
+        assert.equal(await command.locator("svg.lucide-square-terminal").count(), 1, "the terminal icon");
+        await command.locator(".work-row-head").click();
+        await command.locator(".chat-tool-output", { hasText: "FICTIONAL ok" }).waitFor();
+        const pill = block.locator(".work-row", { hasText: "Edited" }).locator(".work-file-pill");
+        assert.equal(await pill.innerText(), "build.ts", "a file the row names is a pill with its name");
+        assert.equal(await pill.locator("svg").count(), 1, "and its icon");
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/host-chats/chat/watch")));
         await fits("the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-5-chat-390.png") });
+        if (shots) await page.screenshot({ path: join(shots, "task-4-host-390.png") });
         console.log("PASS the chat renders through ChatView: a user turn, an assistant text and a folded tool row, and is watched");
 
         // 2b. earlier messages: the host's cursor loads the turn before, above the ones shown, once

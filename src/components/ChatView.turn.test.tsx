@@ -65,3 +65,104 @@ describe("a notice in a turn", () => {
     expect(html).not.toContain("chat-turn-agent");
   });
 });
+
+describe("a turn's style", () => {
+  const settled = (parts: ConversationTurn["parts"]): ConversationTurn => ({ role: "assistant", ts: "2026-01-01T00:00:00.000Z", end_ts: "2026-01-01T00:00:07.000Z", parts } as ConversationTurn);
+  const styled = (turn: ConversationTurn, style?: "vscode" | "classic"): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "p-1", turn, live: false, waiting: false, showThinking: false, ...(style ? { style } : {}) }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const work = settled([
+    { kind: "tool", name: "Edit", summary: "src/x.ts", input: JSON.stringify({ file_path: "src/x.ts", old_string: "a", new_string: "b" }), output: "", edits: [{ path: "src/x.ts", added: 28, removed: 3 }] },
+    { kind: "tool", name: "Read", summary: "docs/y.md", input: JSON.stringify({ file_path: "docs/y.md" }), output: "" },
+    { kind: "tool", name: "Read", summary: "docs/z.md", input: JSON.stringify({ file_path: "docs/z.md" }), output: "" },
+    { kind: "text", text: "FICTIONAL done" },
+  ]);
+
+  it("classic is today's header, with or without the prop", () => {
+    const html = styled(work, "classic");
+    expect(html).toContain('<span class="work-block-title">Worked for 7s</span><span class="work-block-summary">· 1 edit · 2 file reads</span>');
+    expect(styled(work)).toBe(html);
+    expect(html).not.toContain("Edited x.ts");
+  });
+
+  it("vscode sums the work up in VS Code's sentence, its edits and time on the right", () => {
+    const html = styled(work, "vscode");
+    expect(html).toContain("Edited");
+    expect(html).toContain("x.ts, read 2 files");
+    expect(html).toContain("work-title-detail");
+    expect(html).toContain("+28");
+    expect(html).toContain("−3");
+    expect(html).toContain("Worked for 7s");
+    expect(html).not.toContain("1 edit · 2 file reads");
+  });
+
+  it("vscode shows a tool's pictures under the block, outside the fold", () => {
+    const html = styled(settled([
+      { kind: "tool", name: "view", tool_id: "view", summary: "shot.png", input: JSON.stringify({ path: "/r/shot.png" }), output: "", images: [{ media_type: "image/png", ref: "c1:0" }] },
+      { kind: "text", text: "FICTIONAL seen" },
+    ]), "vscode");
+    expect(html).toContain("is-folded");
+    expect(html).toContain("work-images");
+    expect(html).toContain("c1%3A0");
+    // classic keeps them in the opened row: folded, none drawn
+    expect(styled(settled([
+      { kind: "tool", name: "view", summary: "shot.png", input: "{}", output: "", images: [{ media_type: "image/png", ref: "c1:0" }] },
+      { kind: "text", text: "FICTIONAL seen" },
+    ]), "classic")).not.toContain("c1%3A0");
+  });
+
+  it("vscode keeps an MCP call out of the fold, its own row after the block", () => {
+    const html = styled(settled([
+      { kind: "tool", name: "bash", tool_id: "bash", summary: "ls", input: "ls", output: "", command: "ls" },
+      { kind: "tool", name: "FICTIONAL issue", tool_id: "mcp_github_issue", summary: "FICTIONAL opened #1", input: "{}", output: "" },
+      { kind: "text", text: "FICTIONAL done" },
+    ]), "vscode");
+    expect(html).toContain("is-folded");
+    expect(html).toContain("FICTIONAL opened #1");
+    expect(html).not.toContain(">ls<");
+  });
+});
+
+describe("a Copilot pane's turn (no fixture for one: rendered here)", () => {
+  const turn = { role: "assistant", ts: "2026-01-01T00:00:00.000Z", end_ts: "2026-01-01T00:00:07.000Z", parts: [
+    { kind: "tool", name: "view", summary: "/r/src/a.ts", input: JSON.stringify({ path: "/r/src/a.ts" }), output: "" },
+    { kind: "tool", name: "run_in_terminal", summary: "bun test", input: JSON.stringify({ command: "bun test" }), output: "" },
+    { kind: "text", text: "FICTIONAL green" },
+  ] } as ConversationTurn;
+  // live, the block is open and its rows are drawn
+  const html = (style: "vscode" | "classic", live = false) => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "p-1", turn, live, waiting: false, showThinking: false, style }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+
+  it("sums its work up by the app's tool names", () => {
+    expect(html("vscode")).toContain('<span class="work-block-title">Ran<span class="work-title-detail"> 1 command, read a.ts</span></span>');
+    expect(html("classic")).toContain('<span class="work-block-title">Worked for 7s</span><span class="work-block-summary">· 1 file read · 1 command</span>');
+  });
+
+  it("reads its rows with the command as a chip and the file as a pill", () => {
+    const out = html("vscode", true);
+    expect(out).toContain("Ran <code>bun test</code>");
+    expect(out).toContain("work-file-pill");
+    expect(out).toContain("<span>a.ts</span>");
+  });
+
+  it("classic keeps the verb rows of today", () => {
+    const out = html("classic", true);
+    expect(out).toContain('<span class="work-row-name is-verb">Ran</span> <span class="work-row-summary">bun test</span>');
+    expect(out).not.toContain("work-file-pill");
+  });
+});

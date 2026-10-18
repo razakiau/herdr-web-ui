@@ -1530,3 +1530,114 @@
 .chat-abandoned { margin: var(--space-2) 0; }
 .chat-abandoned > summary { font-style: italic; }
 .chat-abandoned-note { margin: var(--space-2) 0 0; color: var(--text-dim); }
+
+/* ---------- the vscode style (Copilot: host chats and copilot panes; lib/toolGroupSummary.ts turnStyle) ---------- */
+
+/* the head: the group's icon, its sentence (the first word plain, the rest quieter), then on the
+   quiet right the edits' lines and the time, the caret last */
+.work-block.is-vscode .work-block-head { gap: var(--space-1); }
+.work-block-icon {
+  flex: none;
+  width: var(--fs-md);
+  height: var(--fs-md);
+  color: var(--text-dim);
+}
+.work-block.is-vscode.is-failed .work-block-icon { color: var(--status-blocked); }
+.work-block.is-vscode:not(.is-live) .work-block-title {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.work-title-detail { color: var(--text-dim); }
+.work-block-meta {
+  flex: none;
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.work-block-lines { font-family: var(--font-mono); }
+
+/* a row: its kind's icon, then what it did, in the interface face; a file it names a pill */
+.work-row-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.work-row.is-vscode .work-row-line .work-row-head {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  margin-inline: calc(-1 * var(--space-1)) 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+}
+.work-row-icon {
+  flex: none;
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+.work-row.is-vscode.is-error .work-row-icon { color: var(--status-blocked); }
+.work-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-row-head[aria-expanded="true"] .work-row-text { white-space: normal; overflow-wrap: anywhere; }
+.work-row-text code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.work-row-empty { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); }
+
+.work-file-pill,
+.markdown-file.is-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-decoration: none;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.work-file-pill { flex: 0 1 auto; min-width: 0; }
+.work-file-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-file-pill svg,
+.markdown-file.is-pill svg { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.markdown-file.is-pill code { text-decoration: none; }
+.markdown-file-line { color: var(--text-dim); }
+.work-file-pill:hover,
+.markdown-file.is-pill:hover { color: var(--accent); border-color: currentColor; }
+
+/* the pictures the tools returned, under the block and outside its fold */
+.work-images { margin-top: var(--space-1); }
+/* a call VS Code never folds: its own row after the block */
+.work-standalone { display: flex; flex-direction: column; }
+
+.markdown-host-link {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 0.2em;
+}
+/* running, the wrench says it works: the classic pulsing dot is not drawn twice (a blocked turn keeps its red dot) */
+.work-block.is-vscode.is-live:not(.is-waiting) .work-block-title::before { display: none; }
+.work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon { color: var(--status-working); }
