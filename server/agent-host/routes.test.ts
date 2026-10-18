@@ -189,7 +189,7 @@ describe("host chat routes", () => {
     cleanups.push(() => server.stop());
     const response = await fetch(`http://127.0.0.1:${server.port}/api/vscode/state`);
     expect(response.status).toBe(404);
-    expect(((await response.json()) as { error: { code: string } }).error.code).not.toBe("host_chats_off");
+    expect(await response.json()).toEqual({ error: { code: "not_found", message: "unknown endpoint /api/vscode/state" } });
   });
 
   it("with agentHost enabled /api/host-chats/state answers the connection's state", async () => {

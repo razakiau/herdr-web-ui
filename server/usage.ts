@@ -525,7 +525,7 @@ const copilot: UsageProvider = {
         body = await requestJson(ctx, "https://api.github.com/copilot_internal/user", {
           headers: {
             authorization: `token ${token}`, accept: "application/json", "user-agent": "GitHubCopilotChat/0.26.7",
-            "editor-version": "host-chats/1.96.2", "editor-plugin-version": "copilot-chat/0.26.7", "x-github-api-version": "2025-04-01",
+            "editor-version": "vscode/1.96.2", "editor-plugin-version": "copilot-chat/0.26.7", "x-github-api-version": "2025-04-01",
           },
         });
         break;

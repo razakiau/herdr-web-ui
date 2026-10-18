@@ -80,7 +80,7 @@ describe("machine boundaries", () => {
   });
   it("MACHINE_PROXY_PATH proxies host-chats routes and nothing past them", () => {
     for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
-    for (const path of ["host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+    for (const path of ["vscode/state", "vscode/chat/send", "host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
   });
 });
 
