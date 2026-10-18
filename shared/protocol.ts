@@ -464,6 +464,13 @@ export type ConversationPart =
     command?: string; exit_code?: number;
     /** the files the call changed, with the lines it added and removed in each */
     edits?: { path: string; added: number; removed: number }[];
+    /** a host chat's: why the agent makes the call (AHP `intention`), shown before a command */
+    intention?: string;
+    /**
+     * a host chat's call that is not completed: still `running` (or streaming), `awaiting` a yes or
+     * no, or cancelled as `skipped` or `denied` (AHP `ToolCallCancellationReason`). Absent once done.
+     */
+    state?: "running" | "awaiting" | "skipped" | "denied";
   }
   /**
    * A subagent a tool call started (a host chat's subagent result), its own row. `id`: the call's id;
@@ -473,13 +480,15 @@ export type ConversationPart =
   | {
     kind: "subagent"; id: string; agent: string; description: string; model: string | null;
     started: string | null; ended: string | null; status: "running" | "done" | "failed"; chat: string | null;
+    /** while it runs: what its own chat is doing now (its newest tool call's words), when the bridge reads it */
+    activity?: string;
   }
   /**
    * A question the agent asked and the user answered (or skipped), as the history reads it back.
    * `options`: the choices it offered, by label; `chosen`: the labels picked; `custom`: the text the
    * user typed instead, null when none.
    */
-  | { kind: "question"; text: string; options: string[]; chosen: string[]; custom: string | null; skipped: boolean }
+  | { kind: "question"; text: string; options: string[]; chosen: string[]; custom: string | null; skipped: boolean; /** several could be picked */ multi?: true }
   /** A native Claude/Codex user image, addressed by an opaque ref and fetched on demand: GET /api/pane/conversation/image?pane_id=…&ref=… */
   | { kind: "image"; media_type: string; ref: string }
   /** the summary a compaction left; the conversation before it is what it sums up */

@@ -40,7 +40,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState } from "../../shared/host-chats.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, toolOutputOf } from "./chats.ts";
+import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -54,6 +54,10 @@ export interface AgentHost {
   watching(session: string): boolean;
   request<M extends keyof CommandMap>(method: M, params: CommandMap[M]["params"]): Promise<CommandMap[M]["result"]>;
   dispatch(channel: string, action: StateAction): void;
+  /** A subagent's worker chat, watched on its own for the session that started it (read only); a host without them reads no worker chat. */
+  watchChat?(uri: string, session: string): Promise<() => void>;
+  watchingChat?(uri: string): boolean;
+  chatAt?(uri: string): ChatState | undefined;
 }
 
 /** The timers a lease runs on; tests pass a clock they advance by hand. */
@@ -74,10 +78,13 @@ const realClock: LeaseClock = {
 
 interface Lease { taking: Promise<() => void>; timer: unknown }
 
-/** Per session: one watch, held while a phone keeps renewing it. */
+/** What a lease holds: a session's watch, or a worker chat's. */
+interface Watcher { watch(key: string): Promise<() => void>; watching(key: string): boolean }
+
+/** Per session (or worker chat): one watch, held while a phone keeps renewing it. */
 class Leases {
   private readonly held = new Map<string, Lease>();
-  constructor(private readonly host: AgentHost, private readonly clock: LeaseClock) {}
+  constructor(private readonly host: Watcher, private readonly clock: LeaseClock) {}
 
   async take(session: string): Promise<void> {
     let lease = this.held.get(session);
@@ -130,10 +137,20 @@ function sentOf(host: AgentHost): Sent {
   return sent;
 }
 
-const leaseSets = new WeakMap<AgentHost, Leases>();
-function leasesOf(host: AgentHost, clock: LeaseClock | undefined): Leases {
+/** A host's leases: its sessions', its worker chats', and which session each worker chat was found in. */
+interface HostLeases { sessions: Leases; chats: Leases; workers: Map<string, string> }
+const leaseSets = new WeakMap<AgentHost, HostLeases>();
+function leasesOf(host: AgentHost, clock: LeaseClock | undefined): HostLeases {
   let leases = leaseSets.get(host);
-  if (!leases) { leases = new Leases(host, clock ?? realClock); leaseSets.set(host, leases); }
+  if (!leases) {
+    const workers = new Map<string, string>();
+    const chats: Watcher = {
+      watch: (uri) => host.watchChat ? host.watchChat(uri, workers.get(uri) ?? "") : Promise.reject(new AgentHostError("rpc_error")),
+      watching: (uri) => host.watchingChat?.(uri) ?? false,
+    };
+    leases = { sessions: new Leases(host, clock ?? realClock), chats: new Leases(chats, clock ?? realClock), workers };
+    leaseSets.set(host, leases);
+  }
   return leases;
 }
 
@@ -153,7 +170,7 @@ export function hostChatsRoute(request: Request, pathname: string, host: AgentHo
 }
 
 type Handler = (call: Call) => Promise<Response>;
-interface Call { host: AgentHost; leases: Leases; url: URL; body: Record<string, unknown> }
+interface Call { host: AgentHost; leases: HostLeases; url: URL; body: Record<string, unknown> }
 
 const GETS: Record<string, Handler> = {
   // the connection keeps its last list after a disconnect: a down host says so instead of a stale list
@@ -267,7 +284,7 @@ async function watched({ host, leases }: Call, session: string): Promise<{ chann
   connected(host);
   if (!known(host, session)) missing();
   try {
-    await leases.take(session);
+    await leases.sessions.take(session);
   } catch (error) {
     if (error instanceof AgentHostError && error.code === "rpc_error") missing();
     throw error;
@@ -285,9 +302,55 @@ async function settle(ready: () => boolean, ms: number): Promise<void> {
   for (const deadline = Date.now() + ms; !ready() && Date.now() < deadline;) await Bun.sleep(10);
 }
 
+/** How many of a chat's subagents a read follows: their own chats give their rows a model and times. */
+const SUBAGENTS_FOLLOWED = 20;
+
+/**
+ * Leases the worker chats `chat`'s subagent calls started (the newest SUBAGENTS_FOLLOWED), and
+ * remembers them as `session`'s: from then on each reads through the chat route too. One the host
+ * will not give is left out; its row keeps its turn's times.
+ */
+async function followSubagents(call: Call, session: string, chat: ChatState): Promise<void> {
+  if (!call.host.watchChat) return;
+  const uris = subagentChats(chat).slice(-SUBAGENTS_FOLLOWED);
+  for (const uri of uris) call.leases.workers.set(uri, session);
+  await Promise.all(uris.map((uri) => call.leases.chats.take(uri).catch(() => undefined)));
+}
+
+/** What a read of `session`'s chat knows beside it: its subagents' own chats, and the models' names. */
+function contextOf(host: AgentHost): ReadContext {
+  const names = new Map(modelsFrom(host.mirror().root).map((model) => [model.id, model.name]));
+  return { chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id };
+}
+
+/**
+ * A subagent's worker chat, by its URI, once a read of its session found it: the session's lease
+ * and its own are taken, the session still a Copilot one. Read only: no write route takes it.
+ */
+async function workerChat(call: Call, uri: string): Promise<ChatState> {
+  const session = call.leases.workers.get(uri) ?? missing();
+  await watched(call, session);
+  try {
+    await call.leases.chats.take(uri);
+  } catch (error) {
+    if (error instanceof AgentHostError && error.code !== "rpc_error") throw error;
+    missing();
+  }
+  return call.host.chatAt?.(uri) ?? missing();
+}
+
+/** A session's chat, else a worker chat one of them started. */
+const isWorker = (call: Call, session: string): boolean => !known(call.host, session) && call.leases.workers.has(session);
+
 async function readChat(call: Call): Promise<Response> {
   const session = call.url.searchParams.get("session") ?? "";
   if (session === "") return badRequest("missing_session", "session is required");
+  connected(call.host);
+  if (isWorker(call, session)) {
+    const chat = await workerChat(call, session);
+    // its questions and approvals are its parent's to show: a worker chat's read asks nothing
+    return jsonResponse({ ...readFrom(session, chat.title, chat, contextOf(call.host)), prompt: null });
+  }
   const before = call.url.searchParams.get("before");
   let { channel, chat } = await watched(call, session);
   if (before) {
@@ -295,7 +358,8 @@ async function readChat(call: Call): Promise<Response> {
     await settle(() => (call.host.chat(session)?.turnsNextCursor ?? null) !== before, OLDER_TURNS_WAIT_MS);
     chat = call.host.chat(session) ?? chat;
   }
-  return jsonResponse(readFrom(session, titleOf(call.host, session), chat));
+  await followSubagents(call, session, chat);
+  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host)));
 }
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
@@ -304,6 +368,8 @@ async function refRead(call: Call): Promise<{ chat: ChatState; ref: string }> {
   if (session === "") refuse(badRequest("missing_session", "session is required"));
   const ref = call.url.searchParams.get("ref") ?? "";
   if (ref === "") refuse(badRequest("missing_ref", "ref is required"));
+  connected(call.host);
+  if (isWorker(call, session)) return { chat: await workerChat(call, session), ref };
   const { chat } = await watched(call, session);
   return { chat, ref };
 }
@@ -417,7 +483,7 @@ async function newChat(call: Call): Promise<Response> {
   // the session exists from here on: whatever fails next, the phone is told which one, so it opens
   // that chat (the message still in its composer) instead of retrying into a second, empty one
   try {
-    await call.leases.take(session);
+    await call.leases.sessions.take(session);
     const channel = call.host.mirror().getSession(session)?.defaultChat;
     const chat = call.host.chat(session);
     if (!channel || !chat) return jsonResponse({ session, sent: false });
@@ -436,7 +502,7 @@ async function newChat(call: Call): Promise<Response> {
 async function madeBefore(call: Call, session: string): Promise<{ session: string; sent?: false }> {
   if (sentOf(call.host).has(session)) return { session };
   try {
-    await call.leases.take(session);
+    await call.leases.sessions.take(session);
     const chat = call.host.chat(session);
     if (chat && (chat.activeTurn !== undefined || chat.turns.length > 0 || chat.steeringMessage !== undefined || (chat.queuedMessages ?? []).length > 0)) return { session };
   } catch { /* it cannot be read now: the words stay with the phone */ }
@@ -456,16 +522,18 @@ const submittedAs = (value: ChatInputAnswerValue): ChatInputAnswer => ({ state: 
 function valueFor(question: ChatInputQuestion, optionIds: string[], typed: string | undefined): ChatInputAnswerValue {
   const free = typed !== undefined && typed.trim() !== "" ? [typed] : [];
   const noAnswer = (): never => refuse(badRequest("missing_answer", "pick an option or type an answer"));
+  // VS Code's rule, as the card offers it (chats.ts questionOptions): typed text unless the question says no
+  const freeform = (question as { allowFreeformInput?: boolean }).allowFreeformInput !== false;
   switch (question.kind) {
     case ChatInputQuestionKind.SingleSelect: {
       const known = optionIds.find((id) => question.options.some((option) => option.id === id));
-      if (!known && (free.length === 0 || !question.allowFreeformInput)) return noAnswer();
-      return { kind: ChatInputAnswerValueKind.Selected, value: known ?? "", ...(free.length && question.allowFreeformInput ? { freeformValues: free } : {}) };
+      if (!known && (free.length === 0 || !freeform)) return noAnswer();
+      return { kind: ChatInputAnswerValueKind.Selected, value: known ?? "", ...(free.length && freeform ? { freeformValues: free } : {}) };
     }
     case ChatInputQuestionKind.MultiSelect: {
       const picked = optionIds.filter((id) => question.options.some((option) => option.id === id));
-      if (picked.length === 0 && (free.length === 0 || !question.allowFreeformInput)) return noAnswer();
-      return { kind: ChatInputAnswerValueKind.SelectedMany, value: picked, ...(free.length && question.allowFreeformInput ? { freeformValues: free } : {}) };
+      if (picked.length === 0 && (free.length === 0 || !freeform)) return noAnswer();
+      return { kind: ChatInputAnswerValueKind.SelectedMany, value: picked, ...(free.length && freeform ? { freeformValues: free } : {}) };
     }
     case ChatInputQuestionKind.Boolean: {
       const picked = optionIds.find((id) => id === "true" || id === "false");

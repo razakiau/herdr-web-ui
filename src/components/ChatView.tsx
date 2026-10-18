@@ -59,14 +59,21 @@ import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { shouldFoldUserMessage } from "../lib/userMessageFold.ts";
-import { paneSource, type ChatSource } from "../lib/chatSource.ts";
+import { hostSource, paneSource, type ChatSource } from "../lib/chatSource.ts";
 import { errorText } from "../lib/hostChats.ts";
 import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
 import { toolIcon } from "../lib/toolIcons.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
+import { SubagentRow } from "./SubagentRow.tsx";
+import { QuestionSummary } from "./QuestionSummary.tsx";
 
 /** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
 const ChatSourceContext = createContext<ChatSource | null>(null);
+/**
+ * A host chat's subagent row reads the subagent's own chat through this: its turns, by its chat URI.
+ * Null for a pane, whose agents make no subagent parts.
+ */
+export const SubagentChatContext = createContext<((chat: string) => Promise<ConversationTurn[]>) | null>(null);
 const ChatHistoryContext = createContext("");
 /**
  * Opens the image viewer for a message's pictures. The viewer is held by ChatView, not by the row:
@@ -545,7 +552,7 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   const open = chosen === true;
   const whole = useWholeOutput(part.output_ref);
   const kind = toolKind(part);
-  const Icon = toolIcon(kind, part.error ? "failed" : "done");
+  const Icon = toolIcon(kind, part.state === "skipped" || part.state === "denied" ? "skipped" : part.error ? "failed" : "done");
   const command = rowCommand(part);
   const summary = part.arguments_omitted ? t("Arguments omitted (too large)") : todoCallSummary(part) ?? part.summary;
   const { verb } = useMemo(() => workRowLabel({ name: part.name, input: part.input }, summary), [part.name, part.input, summary]);
@@ -557,7 +564,11 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   const pill = file !== null && !named ? file : null;
   const output = isTodoTool(part.name) && parseTodoAnswer(part.output) !== null ? "" : whole.text ?? part.output;
   // without the host's words (a Copilot pane), the row keeps what the classic row says
-  const label = command !== null ? <>{t("Ran")} <code>{command}</code></>
+  // VS Code's terminal title (chatTerminalToolProgressPart.ts): the intention first when there is
+  // one, else what happened to the command; skipped keeps its word, as it never ran
+  const label = command !== null
+    ? part.intention !== undefined && part.state !== "skipped" ? <>{part.intention} <code>{command}</code></>
+      : <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : "Ran")} <code>{command}</code></>
     : part.past !== undefined && part.past.trim().length > 0 ? <RowText text={part.past} />
       : pill !== null && verb !== null ? <>{t(verb)}</>
         : verb !== null ? <>{t(verb)} {summary}</>
@@ -848,6 +859,11 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   // sits after the work when it came before the answer, else after the answer
   const said = turn.parts.filter((part) => !isNotice(part));
   const { work, answer } = splitTurn(said);
+  // a Copilot turn's subagents and answered questions: rows of their own after the work, in order
+  const ownRows = style === "vscode" ? turn.parts.flatMap((part, index) =>
+    part.kind === "subagent" ? [<TurnSubagent key={`subagent:${index}`} part={part} live={live} />]
+      : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} />]
+        : []) : [];
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   const firstAnswer = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
@@ -859,6 +875,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {work.length > 0 && (style === "vscode"
       ? <VscodeWorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />
       : <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />)}
+    {ownRows}
     {noticeRows(true)}
     {answer.map((part, index) => style === "vscode" ? <Markdown key={index} skills={skills} style="vscode">{part.text}</Markdown> : <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
     {noticeRows(false)}
@@ -871,6 +888,17 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {copyError}
   </article>;
 });
+
+/** A subagent's row, its opened chat read through the host chat's source and drawn with the same Turn. */
+function TurnSubagent({ part, live }: { part: Extract<ConversationPart, { kind: "subagent" }>; live: boolean }) {
+  const readChat = useContext(SubagentChatContext);
+  const machineId = useMachineId();
+  // its turns' pictures and whole outputs are its own chat's: refs are read there, not in the parent
+  const own = useMemo(() => part.chat === null ? null : hostSource(machineId, part.chat), [machineId, part.chat]);
+  const renderTurn = useCallback((turn: ConversationTurn, index: number) =>
+    <ChatSourceContext.Provider value={own}><ChatRowMemoryContext.Provider value={null}><Turn key={index} paneId="" turn={turn} live={false} waiting={false} showThinking={false} style="vscode" /></ChatRowMemoryContext.Provider></ChatSourceContext.Provider>, [own]);
+  return <SubagentRow part={part} live={live} {...(readChat !== null ? { readChat, renderTurn } : {})} />;
+}
 
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
@@ -927,6 +955,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   const skillMatcher = useSkillMatcher(hosted ? null : paneId);
   /** how its turns read: Copilot's like VS Code, every other agent's as before */
   const style = turnStyle(agent, hosted);
+  /** a host chat's subagent rows read their own chats through its source */
+  const subagentTurns = useMemo(() => chat.subagentTurns === undefined ? null : (uri: string) => chat.subagentTurns!(uri), [chat]);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
   const visible = paneVisible && pageVisible;
@@ -1602,7 +1632,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   const transcriptLabel = label ?? t("conversation of {pane}", { pane: paneId });
-  return <ChatSourceContext.Provider value={chat}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
+  return <ChatSourceContext.Provider value={chat}><SubagentChatContext.Provider value={subagentTurns}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
     <div className="chat-frame">
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
@@ -1642,7 +1672,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
       re-read) stays here. */}
   {prompt !== null && promptDock !== null && createPortal(
-    <PromptCard key={promptOccurrence.current.count} paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={() => onPendingAnswerDone?.(paneId, prompt.id)} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={(toMessageBox) => {
+    <PromptCard key={promptOccurrence.current.count} paneId={paneId} prompt={prompt} {...(style === "vscode" ? { markdown: true } : {})} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={() => onPendingAnswerDone?.(paneId, prompt.id)} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={(toMessageBox) => {
       // the card reports only while it is the one shown; still, only its own prompt is cleared
       onPromptAnswered?.(toMessageBox);
       setPrompt((current) => current === prompt ? null : current);
@@ -1651,5 +1681,5 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatSourceContext.Provider>;
+  </ImageViewerContext.Provider></ChatHistoryContext.Provider></SubagentChatContext.Provider></ChatSourceContext.Provider>;
 });

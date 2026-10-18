@@ -10,6 +10,7 @@ import { focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/prompt
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useT } from "../lib/i18n.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
+import { Markdown } from "./Markdown.tsx";
 
 /**
  * One card is one occurrence of a prompt on one pane: its owner mounts a new card (a `key`) for
@@ -26,6 +27,11 @@ export interface PromptCardProps {
   /** an option picked by a typed message, sent only on Confirm */
   typedAnswer?: TypedAnswer | null;
   onTypedAnswerDone?(): void;
+  /**
+   * A Copilot prompt (a host chat's, or a `copilot` pane's): its title, question and message are
+   * Markdown, as VS Code draws them. Off for every other agent: their cards read as plain text.
+   */
+  markdown?: boolean;
 }
 
 export function PromptCard({ paneId, ...props }: PromptCardProps) {
@@ -48,7 +54,7 @@ export interface PromptCardViewProps extends Omit<PromptCardProps, "paneId"> {
   submit(choice: PromptChoice): Promise<void>;
 }
 
-export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone }: PromptCardViewProps) {
+export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false }: PromptCardViewProps) {
   const t = useT();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
@@ -148,7 +154,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       <header className="prompt-card-header">
         {/* read, not drawn: the title is the card's one red */}
         <span className="visually-hidden">{t("input needed")}</span>
-        <h2>{prompt.title}</h2>
+        {markdown ? <h2 className="prompt-card-markdown"><Markdown style="vscode">{prompt.title}</Markdown></h2> : <h2>{prompt.title}</h2>}
         {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
         {planFile && openFile && (
           <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
@@ -169,7 +175,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         </ol>
       )}
       {/* a Claude approval's heading is its question too: said once */}
-      {prompt.question !== prompt.title && <p className="prompt-card-question">{prompt.question}</p>}
+      {prompt.question !== prompt.title && (markdown
+        ? <div className="prompt-card-question prompt-card-markdown"><Markdown style="vscode">{prompt.question}</Markdown></div>
+        : <p className="prompt-card-question">{prompt.question}</p>)}
       {prompt.queued && (
         <p className="prompt-card-hint">
           {prompt.queued === "open"
@@ -178,7 +186,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         </p>
       )}
       {/* the reference text (a command, a plan, a diff) is the one part that gives way when the card is short */}
-      {prompt.body !== null && prompt.body.length > 0 && <pre className={`prompt-card-body${prompt.body.includes("\n") ? "" : " is-line"}`}>{prompt.body}</pre>}
+      {prompt.body !== null && prompt.body.length > 0 && (markdown
+        ? <div className="prompt-card-body prompt-card-markdown"><Markdown style="vscode">{prompt.body}</Markdown></div>
+        : <pre className={`prompt-card-body${prompt.body.includes("\n") ? "" : " is-line"}`}>{prompt.body}</pre>)}
       {hasChoices && (
         <div className="prompt-card-options" role={prompt.multi_select ? "group" : undefined} aria-label={prompt.multi_select ? prompt.question : undefined}>
           {prompt.options.map((option, index) => {

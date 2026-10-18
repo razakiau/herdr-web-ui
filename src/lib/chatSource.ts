@@ -9,7 +9,7 @@
  */
 import type { HostChatRead } from "../../shared/host-chats.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
-import type { ConversationResponse } from "../../shared/protocol.ts";
+import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError, getJson, type ConversationPageQuery } from "./api.ts";
 import { fetchHostChat, onHostChatMessage, onHostChatResume, watchHostChat } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
@@ -25,6 +25,8 @@ export interface ChatSource {
   watch?(enabled: boolean): void;
   /** host: this chat changed (a push), its host came up, or a push may have been missed (resume) */
   onChange?(listener: () => void): () => void;
+  /** host: the turns of a subagent's own chat (by its chat URI), for its row opened */
+  subagentTurns?(chat: string): Promise<ConversationTurn[]>;
 }
 
 /** A herdr pane's chat: the reads ChatView made before there were two sources. */
@@ -146,6 +148,8 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       return shown;
     },
     image: (ref) => machinePath(machineId, `host-chats/image?${query(ref)}`),
+    // the read route takes a subagent's chat URI as its `session` once this chat's read found it
+    subagentTurns: async (chat) => (await fetchHostChat(machineId, chat)).turns,
     toolOutput: async (ref, signal) => (await getJson<{ output: string }>(machinePath(machineId, `host-chats/tool-output?${query(ref)}`), { signal })).output,
     // one lease however many hold it (StrictMode mounts an effect twice): asked at once, renewed
     // every 30 s; a chat no longer shown lets it run out

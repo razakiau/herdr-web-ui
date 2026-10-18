@@ -438,6 +438,51 @@ describe("host chat read and write routes", () => {
     });
   });
 
+  it("a question that leaves allowFreeformInput unset takes a typed answer, as VS Code's does; false refuses it", async () => {
+    const { allowFreeformInput: _, ...unset } = COLOR;
+    const r = await rig({ chats: { [chatUri(1)]: asking([unset]), [chatUri(2)]: chatState(2) } });
+    const read = (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+    expect(read.prompt).toMatchObject({ custom_option_index: 2, host: { option_ids: ["red", "blue", ""] } });
+    const posted = await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", option_ids: [""], text: "FICTIONAL teal" });
+    expect(posted.json).toEqual({ ok: true });
+    await until("the answer", () => actions(r.fake, "chat/inputCompleted").length > 0);
+    expect(only(r.fake, "chat/inputCompleted").answers).toEqual({ "q-color": { state: "submitted", value: { kind: "selected", value: "", freeformValues: ["FICTIONAL teal"] } } });
+    const closed = await rig({ chats: { [chatUri(1)]: asking([{ ...COLOR, allowFreeformInput: false }]), [chatUri(2)]: chatState(2) } });
+    await call(closed, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    const refused = await call(closed, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", option_ids: [""], text: "FICTIONAL teal" });
+    expect({ status: refused.status, code: refused.json.error.code }).toEqual({ status: 400, code: "missing_answer" });
+  });
+
+  it("a subagent's own chat reads through the chat route once its parent is read, and gives the parent's row its model and times", async () => {
+    const worker = "ahp-chat://default/fictional-worker";
+    const subagent = { type: "subagent", resource: worker, title: "Explore", agentName: "explore", description: "FICTIONAL find the config" };
+    const parent = reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: { ...user("FICTIONAL do it"), model: { id: "fictional/model-a" } } } as StateAction,
+      ...toolCallActions("turn-1", { toolCallId: "c3", toolName: "task", displayName: "Task", invocationMessage: "FICTIONAL delegating" }, { success: true, pastTenseMessage: "FICTIONAL delegated", content: [subagent] } as ToolCallResult),
+      { type: "chat/turnComplete", turnId: "turn-1", duration: 400_000 } as StateAction,
+    ], chatState(1));
+    const workerChat = reducedChat([
+      { type: "chat/turnStarted", turnId: "w-1", startedAt: "2026-01-01T00:00:01.000Z", message: { ...user("FICTIONAL find the config"), model: { id: "fictional/model-b" } } } as StateAction,
+      { type: "chat/responsePart", turnId: "w-1", part: { kind: "markdown", id: "m", content: "FICTIONAL found it" } } as StateAction,
+      { type: "chat/turnComplete", turnId: "w-1", duration: 343_000 } as StateAction,
+    ], chatState(3, { resource: worker }));
+    const r = await rig({ chats: { [chatUri(1)]: parent, [chatUri(2)]: chatState(2), [worker]: workerChat } });
+    const path = (session: string) => `/api/host-chats/chat?session=${encodeURIComponent(session)}`;
+    // not a chat of any session read so far: missing, as any unknown chat
+    expect((await call(r, path(worker))).json.error.code).toBe("host_chat_missing");
+    const read = (await call(r, path(sessionUri(1)))).json as HostChatRead;
+    expect(read.turns[1]!.parts[0]).toEqual({
+      kind: "subagent", id: "c3", agent: "explore", description: "FICTIONAL find the config", model: "fictional/model-b",
+      started: "2026-01-01T00:00:01.000Z", ended: "2026-01-01T00:05:44.000Z", status: "done", chat: worker,
+    });
+    const own = await call(r, path(worker));
+    expect(own.status).toBe(200);
+    expect((own.json as HostChatRead).turns.map((each) => each.parts)).toEqual([[{ kind: "text", text: "FICTIONAL find the config" }], [{ kind: "text", text: "FICTIONAL found it" }]]);
+    // read only: nothing is sent into a subagent's chat
+    const sent = await call(r, "/api/host-chats/chat/send", { session: worker, text: "FICTIONAL hi", id: uuid(77) });
+    expect({ status: sent.status, code: sent.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
+  });
+
   it("a two-question form answers step one with inputAnswerChanged and completes on step two with both answers", async () => {
     const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
     const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;

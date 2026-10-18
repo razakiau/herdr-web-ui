@@ -48,8 +48,9 @@ export function toolKind(part: ToolPart): ToolKind {
   return verb === null ? "other" : VERB_KIND[verb];
 }
 
-/** A call VS Code never folds into a tool group: an MCP tool's, a mermaid diagram's. */
+/** A call VS Code never folds into a tool group: an MCP tool's, a mermaid diagram's, one waiting for a confirmation. */
 export function neverFolded(part: ToolPart): boolean {
+  if (part.state === "awaiting") return true;
   if (isTodoTool(part.name)) return false;
   return toolKind(part) === "mcp" || (part.tool_id ?? part.name).toLowerCase().includes("mermaid");
 }
@@ -105,13 +106,17 @@ export function toolGroupSummary(parts: readonly ConversationPart[], t: Translat
   const phrases = new Set<string>();
   const patterns = new Set<string>();
   let commands = 0, readSteps = 0, editSteps = 0, textSteps = 0, fileSteps = 0, directorySteps = 0, diagnosticSteps = 0;
-  let failed = 0, other = 0, steps = 0, added = 0, removed = 0;
+  let failed = 0, skipped = 0, denied = 0, unfinished = 0, other = 0, steps = 0, added = 0, removed = 0;
   for (const part of parts) {
     // the plan and a skill are not steps of the work: the classic header leaves them out too
     if (part.kind !== "tool" || part.skill || isTodoTool(part.name)) continue;
     steps += 1;
     for (const edit of part.edits ?? []) { added += edit.added; removed += edit.removed; }
+    // VS Code's order: denied and skipped before a failure, a failure before an unfinished call
+    if (part.state === "denied") { denied += 1; continue; }
+    if (part.state === "skipped") { skipped += 1; continue; }
     if (part.error === true) { failed += 1; continue; }
+    if (part.state === "running" || part.state === "awaiting") { unfinished += 1; continue; }
     const args = fields(part.input);
     switch (toolKind(part)) {
       case "command": commands += 1; break;
@@ -182,6 +187,9 @@ export function toolGroupSummary(parts: readonly ConversationPart[], t: Translat
       diagnostics.size === 1 ? t("checked {file} for problems", { file }) : t("checked {n} paths for problems", { n: diagnostics.size }), diagnosticSteps);
   }
   if (failed > 0) labels.push({ text: failed === 1 ? t("1 tool call failed") : t("{n} tool calls failed", { n: failed }), steps: failed, overflow: t("{n} failed", { n: failed }) });
+  if (skipped > 0) labels.push({ text: skipped === 1 ? t("1 tool call skipped") : t("{n} tool calls skipped", { n: skipped }), steps: skipped, overflow: t("{n} skipped", { n: skipped }) });
+  if (denied > 0) labels.push({ text: denied === 1 ? t("1 tool call denied") : t("{n} tool calls denied", { n: denied }), steps: denied, overflow: t("{n} denied", { n: denied }) });
+  if (unfinished > 0) labels.push({ text: unfinished === 1 ? t("1 unfinished tool call") : t("{n} unfinished tool calls", { n: unfinished }), steps: unfinished, overflow: t("{n} unfinished", { n: unfinished }) });
   const shown = labels.slice(0, 3).map((label) => label.text);
   const overflow = labels.slice(3);
   other += overflow.reduce((total, label) => total + label.steps, 0);

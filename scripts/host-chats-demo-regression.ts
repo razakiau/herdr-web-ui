@@ -14,10 +14,11 @@ import { chromePath } from "./chrome-path.ts";
 // HOST_CHATS_SHOTS=<dir> also saves the chat, the open sheet and the new-chat sheet as screenshots.
 const SESSION = "fictional-session-1";
 const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
+const SUB = "ahp-chat://default/fictional-sub";
 const app = mkdtempSync(join(tmpdir(), "herdr-agent-host-chats-"));
 const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
-  const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)};
+  const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)}, SUB = ${JSON.stringify(SUB)};
   const calls = window.hostCalls = { posts: [], models: [] };
   const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [] };
   const sources = new Set();
@@ -31,6 +32,14 @@ const patch = `(() => {
   });
   const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
   const read = (session, before) => {
+    // a subagent's own chat, read by its chat URI as the session
+    if (session === SUB) {
+      calls.subagent = (calls.subagent ?? 0) + 1;
+      return { session: SUB, title: "explore", status: "idle", turns: [
+        { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the build config" }] },
+        { role: "assistant", ts: at(6), end_ts: at(5), parts: [{ kind: "text", text: "FICTIONAL the config is release.toml" }] },
+      ], cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: ["sub-1"], signature: "sub" };
+    }
     const made = state.created.find((chat) => chat.session === session);
     if (made) {
       const turns = made.sent ? [{ role: "user", ts: at(0), parts: [{ kind: "text", text: made.text }] }, { role: "assistant", ts: at(0), parts: [] }] : [];
@@ -53,17 +62,23 @@ const patch = `(() => {
         { kind: "tool", name: "View image", tool_id: "view", summary: "Viewing", past: "Viewed the screenshot", input: "{}", output: "", error: false, images: [{ media_type: "image/png", ref: "c-shot:0" }] },
         { kind: "text", text: "FICTIONAL the build passes." },
       ] },
+      { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
+      { role: "assistant", ts: at(6), end_ts: at(5), parts: [
+        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
+        { kind: "question", text: "FICTIONAL which config?", options: ["FICTIONAL debug", "FICTIONAL release"], chosen: ["FICTIONAL release"], custom: null, skipped: false },
+        { kind: "text", text: "FICTIONAL release it is." },
+      ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
       { role: "assistant", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL which way should I go?" }] },
     ];
     for (const text of state.pushed) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: "FICTIONAL from the PC" }] }, { role: "assistant", ts: at(1), parts: [{ kind: "text", text }] });
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
-    const ids = [...(state.older ? ["h0"] : []), "h1", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
+    const ids = [...(state.older ? ["h0"] : []), "h1", "h1b", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
-      id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick a direction",
-      body: null, options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: null }],
-      multi_select: false, custom_option_index: null,
-      host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east"] },
+      id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
+      body: "FICTIONAL see the \`map\` first", options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
+      multi_select: false, custom_option_index: 3,
+      host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, message_ids: ids,
@@ -124,7 +139,7 @@ const patch = `(() => {
         agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
       });
       if (path === "/api/host-chats/chat/watch" || path === "/api/host-chats/chat/draft" || path === "/api/host-chats/chat/confirm") return json({ ok: true });
-      if (path === "/api/host-chats/chat/answer") { state.answered = true; return json({ ok: true }); }
+      if (path === "/api/host-chats/chat/answer") { if (state.holdAnswer) return json({ error: { code: "prompt_changed", message: "FICTIONAL changed" } }, 409); state.answered = true; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/send") {
         // the proxy's 502 after the bridge got it: the message went, the answer did not
         const lost = state.failNextSend;
@@ -261,18 +276,64 @@ try {
 
         // 2c. a turn made on the PC: its push alone brings it, under the turns already shown
         await page.evaluate(() => (window as unknown as { pushHostTurn(text: string): void }).pushHostTurn("FICTIONAL pushed answer"));
+        // the reader opened a row above, so the list is not following: the new turn is drawn at the end
+        await transcript.evaluate((el) => { el.scrollTop = el.scrollHeight; });
         await view.locator(".chat-turn-agent", { hasText: "FICTIONAL pushed answer" }).waitFor({ timeout: 5_000 });
         assert.equal(await view.locator(".chat-turn-agent", { hasText: "FICTIONAL an earlier answer" }).count(), 1, "the earlier page stays");
         // no scrollback, terminal output, prompt state or skill list is read for it: it has no pane
         assert.deepEqual(await page.evaluate(() => (window as unknown as { hostCalls: { paneless?: string[] } }).hostCalls.paneless ?? []), [], "no pane request for a host chat");
         console.log("PASS a pushed change appears in the chat");
 
-        // 3. the question card answers with option 2, and goes on the next read
+        // 2d. a subagent row (its own row, outside the work block) that opens to its own chat, and an
+        // answered question as VS Code's summary
+        const subTurn = view.locator(".chat-turn-agent", { hasText: "FICTIONAL release it is." });
+        const sub = subTurn.locator(":scope > .subagent-row");
+        await sub.waitFor();
+        assert.equal(await subTurn.locator(".work-block .subagent-row").count(), 0, "a subagent is never inside a work block");
+        assert.equal((await sub.locator(".subagent-row-name").innerText()).trim(), "explore", "the agent's name");
+        assert.equal((await sub.locator(".subagent-row-description").innerText()).trim(), "FICTIONAL find the build config", "its task");
+        assert.equal((await sub.locator(".subagent-row-model").innerText()).trim(), "FICTIONAL Model B", "a model not the chat's");
+        assert.equal((await sub.locator(".subagent-row-time").innerText()).trim(), "Worked for 5m 43s", "VS Code's elapsed time");
+        assert.equal(await sub.locator("svg.lucide-messages-square").count(), 1, "the comment-discussion icon");
+        await sub.scrollIntoViewIfNeeded();
+        await fits("the subagent row");
+        if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-collapsed-390.png") });
+        await sub.locator(".subagent-row-head").click();
+        await sub.locator(".subagent-row-body .chat-turn-agent", { hasText: "FICTIONAL the config is release.toml" }).waitFor();
+        assert.ok((await page.evaluate(() => (window as unknown as { hostCalls: { subagent?: number } }).hostCalls.subagent ?? 0)) >= 1, "its chat is read by its URI");
+        await fits("the opened subagent row");
+        if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-expanded-390.png") });
+        const summary = subTurn.locator(".question-summary");
+        assert.equal((await summary.locator(".question-summary-question").innerText()).replace(/\s+/g, " ").trim(), "Question: FICTIONAL which config?", "Question: and the text");
+        assert.equal((await summary.locator(".question-summary-answer").innerText()).replace(/\s+/g, " ").trim(), "Answered: FICTIONAL release", "Answered: and the answer");
+        await summary.locator(".question-summary-answer").click();
+        const chosen = summary.locator(".question-summary-option.is-selected");
+        assert.equal((await chosen.innerText()).trim(), "FICTIONAL release", "the chosen option is checked");
+        assert.equal(await chosen.locator("svg.lucide-check").count(), 1);
+        await summary.scrollIntoViewIfNeeded();
+        await fits("the answered question");
+        if (shots) await page.screenshot({ path: join(shots, "task-5-question-390.png") });
+        console.log("PASS a subagent row shows its name, task, model and time and opens to its own chat; an answered question reads Question / Answered");
+
+        // 3. the question card: its markdown rendered, a typed answer through "Other…", then option 2
         const card = page.locator(".prompt-card");
+        await card.locator(".prompt-card-question strong", { hasText: "one" }).waitFor();
+        await card.locator(".prompt-card-body code", { hasText: "map" }).waitFor();
+        assert.match(await card.locator(".prompt-card-option-description").innerText(), /\*\*plain\*\*/, "an option's description stays plain");
+        assert.equal(await card.getByRole("textbox").getAttribute("placeholder"), "Other…", "the typed-answer field is the Other… slot");
+        await fits("the card");
+        // a typed answer goes as its text and the slot's empty id (refused here, so the card stays for option 2)
+        await page.evaluate(() => { (window as unknown as { hostState: { holdAnswer: boolean } }).hostState.holdAnswer = true; });
+        await card.getByRole("textbox").fill("FICTIONAL west");
+        await card.getByRole("button", { name: "Send" }).click();
+        await card.locator(".prompt-card-error").waitFor();
+        const typed = await posts("/api/machines/remote/host-chats/chat/answer");
+        assert.deepEqual(typed.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", text: "FICTIONAL west", option_ids: [""] }], "a typed answer posts { text, option_ids: [\"\"] }");
+        await page.evaluate(() => { (window as unknown as { hostState: { holdAnswer: boolean } }).hostState.holdAnswer = false; });
         await card.getByRole("button", { name: /FICTIONAL south/ }).click();
         await card.waitFor({ state: "detached" });
         const answers = await posts("/api/machines/remote/host-chats/chat/answer");
-        assert.deepEqual(answers.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
+        assert.deepEqual(answers.slice(1).map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
         console.log("PASS the question card answers option 2 with its option id and goes away");
 
         // 4. model · effort and agent picks, then Send

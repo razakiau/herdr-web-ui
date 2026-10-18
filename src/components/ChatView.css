@@ -1641,3 +1641,174 @@
 /* running, the wrench says it works: the classic pulsing dot is not drawn twice (a blocked turn keeps its red dot) */
 .work-block.is-vscode.is-live:not(.is-waiting) .work-block-title::before { display: none; }
 .work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon { color: var(--status-working); }
+
+/* ---------- a subagent's row (vscode style only; SubagentRow.tsx) ---------- */
+/* the turn's column lays its rows out at their own width: these take the column's, so a long
+   task ellipsises before the time instead of pushing it out */
+.subagent-row,
+.question-summary {
+  align-self: stretch;
+  max-width: 100%;
+}
+.subagent-row {
+  margin: var(--space-2) 0;
+  min-width: 0;
+}
+.subagent-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+button.subagent-row-head { cursor: pointer; }
+.subagent-row-icon {
+  flex: none;
+  width: var(--fs-md);
+  height: var(--fs-md);
+  color: var(--text-dim);
+}
+.subagent-row.is-failed .subagent-row-icon { color: var(--status-blocked); }
+.subagent-row-icon.is-spinning { animation: subagent-spin var(--dur-spin) steps(8) infinite; }
+@keyframes subagent-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .subagent-row-icon.is-spinning { animation: none; } }
+.subagent-row-main {
+  flex: 1 1 0;
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.subagent-row-name { flex: none; font-weight: 600; }
+.subagent-row-description,
+.subagent-row-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.subagent-row-model { flex: none; max-width: 40%; font-size: var(--fs-xs); align-self: center; }
+.subagent-row-time {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+/* while it runs: a connector line down to what it does now */
+.subagent-row-activity,
+.subagent-row-body {
+  margin: 0 0 0 calc(var(--fs-md) / 2);
+  padding-left: calc(var(--fs-md) / 2 + var(--space-1));
+  border-left: var(--hairline) solid var(--border-strong);
+}
+.subagent-row-activity {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subagent-row-note { margin: var(--space-1) 0; color: var(--text-dim); font-size: var(--fs-sm); }
+.subagent-row-body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.subagent-row-turn { min-width: 0; max-width: 100%; }
+.subagent-row-turn .chat-turn { width: 100%; }
+
+/* ---------- an answered question (vscode style only; QuestionSummary.tsx), VS Code's conversation summary ---------- */
+.question-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+.question-summary-question {
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  color: var(--text-dim);
+}
+.question-summary-prefix { flex: none; font-weight: 600; }
+.question-summary-question-value,
+.question-summary-answer-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* the L connector: a left and bottom border, rounded at the corner */
+.question-summary-decision {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: calc(4 * var(--space-1));
+}
+.question-summary-decision::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  left: var(--space-1);
+  width: calc(1.5 * var(--space-1));
+  height: calc(4 * var(--space-1));
+  border-left: var(--hairline) solid var(--border-strong);
+  border-bottom: var(--hairline) solid var(--border-strong);
+  border-bottom-left-radius: var(--radius-sm);
+  pointer-events: none;
+}
+.question-summary-answer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+button.question-summary-answer { cursor: pointer; }
+.question-summary-answer-icon,
+.question-summary-answer .work-row-caret svg {
+  flex: none;
+  width: var(--fs-sm);
+  height: var(--fs-sm);
+  color: var(--text-dim);
+}
+.question-summary-options {
+  margin-top: var(--space-1);
+  padding: calc(2.5 * var(--space-1));
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.question-summary-options-title {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2) var(--space-1);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--text);
+}
+.question-summary-option-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.question-summary-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.question-summary-option.is-selected { background: var(--bg-hover); color: var(--text); }
+.question-summary-option-label { flex: 1; min-width: 0; }
+.question-summary-option-check { flex: none; width: var(--fs-sm); height: var(--fs-sm); }

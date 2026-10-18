@@ -96,23 +96,33 @@ describe("host chat mappers", () => {
     expect(promptFrom(chat({}))).toBeNull();
   });
 
-  it("an input request is a question prompt; allowFreeformInput adds the custom option", () => {
+  it("an input request is a question prompt, with VS Code's typed-answer slot last", () => {
     const one = promptFrom(asking({ id: "req-1", questions: [QUESTION] }))!;
     expect(one).toEqual({
       id: "req-1:q-color", agent: "copilot", kind: "question", title: "Color", question: "FICTIONAL which color?", body: null,
-      options: [{ label: "Red", description: null }, { label: "Blue", description: "the calm one" }],
-      multi_select: false, custom_option_index: null,
-      host: { request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue"] },
+      options: [{ label: "Red", description: null }, { label: "Blue", description: "the calm one" }, { label: "Other…", description: null }],
+      multi_select: false, custom_option_index: 2,
+      host: { request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue", ""] },
     });
-    const free = promptFrom(asking({ id: "req-1", questions: [{ ...QUESTION, allowFreeformInput: true }] }))!;
-    expect(free.options.map((option) => option.label)).toEqual(["Red", "Blue", "Other"]);
-    expect(free.custom_option_index).toBe(2);
-    expect(free.host).toEqual({ request_id: "req-1", question_id: "q-color", option_ids: ["red", "blue", ""] });
-    expect(free.steps).toBeUndefined();
+    expect(one.steps).toBeUndefined();
     // an answered request asks nothing
     expect(promptFrom(chat({ status: 8, activeTurn: { id: "t", startedAt: AT, message: user("x"), usage: undefined, responseParts: [
       { kind: "inputRequest", response: "accept", request: { id: "req-1", questions: [QUESTION] } },
     ] } }))).toBeNull();
+  });
+
+  it("freeform_offered_unless_false", () => {
+    // VS Code's rule (chatQuestionCarouselPart.ts): the typed answer shows unless the question says false
+    const slot = (allowFreeformInput: boolean | undefined) => {
+      const prompt = promptFrom(asking({ id: "req-1", questions: [{ ...QUESTION, ...(allowFreeformInput === undefined ? {} : { allowFreeformInput }) }] }))!;
+      return { labels: prompt.options.map((option) => option.label), custom: prompt.custom_option_index, ids: (prompt.host as { option_ids: string[] }).option_ids };
+    };
+    expect(slot(undefined)).toEqual({ labels: ["Red", "Blue", "Other…"], custom: 2, ids: ["red", "blue", ""] });
+    expect(slot(false)).toEqual({ labels: ["Red", "Blue"], custom: null, ids: ["red", "blue"] });
+    expect(slot(true)).toEqual({ labels: ["Red", "Blue", "Other…"], custom: 2, ids: ["red", "blue", ""] });
+    // a multi-select question takes one too
+    const many = promptFrom(asking({ id: "req-1", questions: [{ ...QUESTION, kind: "multi-select" }] }))!;
+    expect(many.options.map((option) => option.label)).toEqual(["Red", "Blue", "Other…"]);
   });
 
   it("a two-question form carries steps", () => {
@@ -226,6 +236,8 @@ const assistant = (state: ChatState) => turnsFrom(state)[1]!.parts;
 const call = (toolCallId: string, toolName = "bash", displayName = "Run in terminal") => ({ toolCallId, toolName, displayName, invocationMessage: `FICTIONAL running ${toolCallId}`, toolInput: "FICTIONAL input" });
 const done = (content: unknown[], success = true, past = "FICTIONAL ran it") => ({ success, pastTenseMessage: past, content }) as ToolCallResult;
 const tool = (parts: ConversationPart[]) => parts.find((part): part is Extract<ConversationPart, { kind: "tool" }> => part.kind === "tool")!;
+/** 1 for a call VS Code keeps out of a tool group while it waits for a confirmation. */
+const pendingCount = (part: Extract<ConversationPart, { kind: "tool" }>) => (part.state === "awaiting" ? 1 : 0);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x46, 0x49, 0x43, 0x54]).toString("base64");
 
 describe("host chat turns, whole", () => {
@@ -298,6 +310,58 @@ describe("host chat turns, whole", () => {
     expect((assistant(failed)[0] as { status: string }).status).toBe("failed");
   });
 
+  it("tool_carries_intention_and_outcome", () => {
+    // the intention a terminal call gives, before its command (chatTerminalToolProgressPart.ts)
+    const withIntention = reducedChat([started(), { type: "chat/toolCallStart", turnId: "turn-1", toolCallId: "c1", toolName: "bash", displayName: "Run in terminal", intention: "FICTIONAL check the build" } as StateAction,
+      ...toolCallActions("turn-1", call("c1"), done([])).slice(1), finished()]);
+    const part = tool(assistant(withIntention));
+    expect(part.intention).toBe("FICTIONAL check the build");
+    expect(part.state).toBeUndefined();
+    // a completed call has no state; one cancelled says why, as VS Code's summary counts it
+    const cancelled = (reason: string) => tool(assistant(reducedChat([started(),
+      { type: "chat/toolCallStart", turnId: "turn-1", toolCallId: "c2", toolName: "bash", displayName: "Run in terminal" } as StateAction,
+      { type: "chat/toolCallReady", turnId: "turn-1", toolCallId: "c2", invocationMessage: "FICTIONAL run", toolInput: "x" } as StateAction,
+      { type: "chat/toolCallConfirmed", turnId: "turn-1", toolCallId: "c2", approved: false, reason } as StateAction, finished()])));
+    expect({ state: cancelled("skipped").state, error: cancelled("skipped").error }).toEqual({ state: "skipped", error: false });
+    expect(cancelled("denied").state).toBe("denied");
+    expect(cancelled("result-denied").state).toBe("denied");
+    // still running, or waiting for a yes or no
+    const running = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c3"))])));
+    expect(running.state).toBe("running");
+    const awaiting = tool(assistant(reducedChat([started(),
+      { type: "chat/toolCallStart", turnId: "turn-1", toolCallId: "c4", toolName: "bash", displayName: "Run in terminal" } as StateAction,
+      { type: "chat/toolCallReady", turnId: "turn-1", toolCallId: "c4", invocationMessage: "FICTIONAL run", toolInput: "x" } as StateAction])));
+    expect(awaiting.state).toBe("awaiting");
+    expect(pendingCount(awaiting)).toBe(1);
+  });
+
+  it("subagent_model_only_when_different", () => {
+    const subagent = { type: "subagent", resource: "ahp-chat://default/fictional-sub", title: "Explore", agentName: "explore", description: "FICTIONAL find the config" };
+    const parent = (model: string) => reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: { ...user("FICTIONAL do it"), model: { id: model } } } as StateAction,
+      ...toolCallActions("turn-1", call("c3", "task", "Task"), done([subagent])), finished()]);
+    const sub = (model: string, startedAt = "2026-01-01T00:00:01.000Z", duration = 343_000) => reducedChat([
+      { type: "chat/turnStarted", turnId: "s-1", startedAt, message: { ...user("FICTIONAL find it"), model: { id: model } } } as StateAction,
+      { type: "chat/turnComplete", turnId: "s-1", duration } as StateAction,
+    ]);
+    const names = (id: string) => id === "fictional/model-b" ? "FICTIONAL Model B" : id;
+    const read = (parentModel: string, subModel: string | null) => {
+      const chats = (uri: string) => uri === subagent.resource && subModel !== null ? sub(subModel) : undefined;
+      return turnsFrom(parent(parentModel), { chat: chats, modelName: names })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
+    };
+    // a model the chat itself uses is not said again; another one is, by its name
+    expect(read("fictional/model-a", "fictional/model-a").model).toBeNull();
+    expect(read("fictional/model-a", "fictional/model-b").model).toBe("FICTIONAL Model B");
+    // under Auto, the concrete model always shows; an Auto subagent never does
+    expect(read("auto", "fictional/model-a").model).toBe("fictional/model-a");
+    expect(read("fictional/model-a", "auto").model).toBeNull();
+    // not read yet: unknown
+    expect(read("fictional/model-a", null).model).toBeNull();
+    // and its own chat's times, not the turn's (VS Code's getSubagentTiming)
+    const timed = read("fictional/model-a", "fictional/model-b");
+    expect({ started: timed.started, ended: timed.ended }).toEqual({ started: "2026-01-01T00:00:01.000Z", ended: "2026-01-01T00:05:44.000Z" });
+  });
+
   const QUESTIONS = [
     { ...QUESTION, allowFreeformInput: true },
     { id: "q-tags", kind: "multi-select", title: "Tags", message: "FICTIONAL which tags?", required: true, options: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }] },
@@ -320,7 +384,7 @@ describe("host chat turns, whole", () => {
     }));
     expect(parts).toEqual([
       { kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: ["Blue"], custom: "navy", skipped: false },
-      { kind: "question", text: "FICTIONAL which tags?", options: ["Alpha", "Beta"], chosen: ["Alpha", "Beta"], custom: null, skipped: false },
+      { kind: "question", text: "FICTIONAL which tags?", options: ["Alpha", "Beta"], chosen: ["Alpha", "Beta"], custom: null, skipped: false, multi: true },
       { kind: "question", text: "FICTIONAL go on?", options: ["Yes", "No"], chosen: ["No"], custom: null, skipped: false },
       { kind: "question", text: "FICTIONAL what size?", options: [], chosen: [], custom: "FICTIONAL large", skipped: false },
     ]);

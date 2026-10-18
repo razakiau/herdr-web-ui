@@ -25,8 +25,11 @@ export function splitTurn(parts: ConversationPart[]): SplitTurn {
     if (part?.kind !== "text" || part.phase === "commentary") lastAction = index;
   }
   const isProse = (part: ConversationPart): part is TextPart => part.kind === "text" && part.text.trim().length > 0;
+  // a host chat's subagent and answered question are rows of their own, never folded into the work
+  // (VS Code's); no other agent's reader makes these parts. They still end the narration before them
+  const ownRow = (part: ConversationPart): boolean => part.kind === "subagent" || part.kind === "question";
   return {
-    work: parts.filter((part, index) => part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction)),
+    work: parts.filter((part, index) => !ownRow(part) && (part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction))),
     answer: parts.filter((part, index): part is TextPart => isProse(part) && (part.phase === "final_answer" || index > lastAction)),
   };
 }

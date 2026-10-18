@@ -414,3 +414,17 @@
     padding-block: var(--space-1);
   }
 }
+
+/* a Copilot card's title, question and message in Markdown (the `markdown` prop): the type stays
+   the card's, the Markdown's own margins go; the message box keeps its scroll but reads as prose */
+.prompt-card-markdown .markdown { font: inherit; color: inherit; }
+.prompt-card-markdown .markdown > :first-child { margin-top: 0; }
+.prompt-card-markdown .markdown > :last-child { margin-bottom: 0; }
+.prompt-card-header h2.prompt-card-markdown .markdown p { margin: 0; }
+.prompt-card-body.prompt-card-markdown {
+  padding-bottom: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  white-space: normal;
+}
+.prompt-card-body.prompt-card-markdown::after { display: none; }

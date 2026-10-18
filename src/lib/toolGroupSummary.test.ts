@@ -142,3 +142,26 @@ describe("turnStyle", () => {
     expect(turnStyle("fictional-agent", false)).toBe("classic");
   });
 });
+
+describe("toolGroupSummary outcomes", () => {
+  it("counts skipped, denied and unfinished calls in VS Code's words, after the failed ones", () => {
+    expect(title([tool("bash", { command: "a" }, { state: "skipped" })])).toBe("1 tool call skipped");
+    expect(title([tool("bash", { command: "a" }, { state: "denied" }), tool("bash", { command: "b" }, { state: "denied" })])).toBe("2 tool calls denied");
+    expect(title([tool("bash", { command: "a" }, { state: "running" })])).toBe("1 unfinished tool call");
+    expect(title([tool("bash", { command: "a" }), tool("bash", { command: "b" }, { state: "skipped" }), tool("bash", { command: "c" }, { state: "denied" })]))
+      .toBe("Ran 1 command, 1 tool call skipped, 1 tool call denied");
+    // past three fragments they are outcomes of the other steps
+    expect(title([
+      tool("edit", { path: "x.ts" }), tool("bash", { command: "a" }), tool("view", { path: "y.md" }),
+      tool("bash", { command: "b" }, { state: "skipped" }), tool("bash", { command: "c" }, { state: "denied" }),
+    ])).toBe("Edited x.ts, ran 1 command, read y.md, 2 other steps (1 skipped, 1 denied)");
+    // a denied or skipped call counts as one even when it also says it failed
+    expect(title([tool("bash", { command: "a" }, { state: "denied", error: true })])).toBe("1 tool call denied");
+  });
+
+  it("a call waiting for a confirmation is never folded; a skipped call wears circle-slash", () => {
+    expect(neverFolded(tool("bash", { command: "a" }, { state: "awaiting" }))).toBe(true);
+    expect(neverFolded(tool("bash", { command: "a" }, { state: "running" }))).toBe(false);
+    expect(toolIcon("command", "skipped")).toBe(CircleSlash);
+  });
+});

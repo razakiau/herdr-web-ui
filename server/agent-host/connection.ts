@@ -117,6 +117,8 @@ class Coalescer {
 }
 
 interface Watch { count: number; chat: string | null; ready: Promise<void> }
+/** A chat watched on its own (a subagent's worker chat), for the session whose chat started it. */
+interface ChatWatch { count: number; session: string; ready: Promise<void> }
 interface Live { client: AhpClient; closed: Promise<void> }
 
 export class AgentHostConnection {
@@ -130,6 +132,7 @@ export class AgentHostConnection {
   private current: AgentHostState;
   private sessionList: SessionSummary[] = [];
   private readonly watches = new Map<string, Watch>();
+  private readonly chatWatches = new Map<string, ChatWatch>();
   /** Per channel: the snapshot's `fromSeq`; an action at or below it is already in the snapshot. */
   private readonly fromSeq = new Map<string, number>();
   /** Per channel whose subscribe is in flight: the actions that arrived before its snapshot. */
@@ -182,6 +185,52 @@ export class AgentHostConnection {
   chat(session: string): ChatState | undefined {
     const chat = this.watches.get(session)?.chat;
     return chat ? this.store.getChat(chat) : undefined;
+  }
+
+  /** A chat watched on its own (watchChat), as the mirror holds it; undefined when it is not watched. */
+  chatAt(uri: string): ChatState | undefined {
+    return this.chatWatches.has(uri) ? this.store.getChat(uri) : undefined;
+  }
+
+  /**
+   * Subscribes one chat that is not a session's default (a subagent's worker chat), shared and
+   * reference-counted like watch(). Its changes push as changes of `session`, the chat that started
+   * it, whose read shows its model and times. Read only: nothing is dispatched to it.
+   */
+  async watchChat(uri: string, session: string): Promise<() => void> {
+    const live = this.live;
+    if (!live) throw new AgentHostError("not_connected");
+    let watch = this.chatWatches.get(uri);
+    if (watch) {
+      watch.count += 1;
+    } else {
+      watch = { count: 1, session, ready: Promise.resolve() };
+      this.chatWatches.set(uri, watch);
+      watch.ready = this.subscribe(live.client, uri, "chat").then(() => undefined);
+    }
+    const own = watch;
+    try {
+      await own.ready;
+    } catch (error) {
+      if (--own.count === 0 && this.chatWatches.get(uri) === own) this.dropChat(uri);
+      throw coded(error);
+    }
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      if (--own.count === 0 && this.chatWatches.get(uri) === own) this.dropChat(uri);
+    };
+  }
+
+  /** Whether `uri` has a chat watch now. */
+  watchingChat(uri: string): boolean { return this.chatWatches.has(uri); }
+
+  private dropChat(uri: string): void {
+    this.chatWatches.delete(uri);
+    this.store.forget(uri);
+    this.fromSeq.delete(uri);
+    void this.live?.client.unsubscribe(uri).catch(() => {});
   }
 
   /** Subscribes `session` and its default chat, shared and reference-counted; the returned function releases this hold. */
@@ -342,6 +391,17 @@ export class AgentHostConnection {
       }
       this.changed({ kind: "chat", session });
     }
+    for (const [uri, watch] of [...this.chatWatches]) {
+      const live = this.live;
+      if (!live) return;
+      watch.ready = this.subscribe(live.client, uri, "chat").then(() => undefined);
+      try {
+        await watch.ready;
+      } catch {
+        if (this.chatWatches.get(uri) === watch) this.dropChat(uri);
+      }
+      this.changed({ kind: "chat", session: watch.session });
+    }
   }
 
   /** Whether `session` has a watch now: false once its lease expired or a resubscribe failed. */
@@ -399,11 +459,11 @@ export class AgentHostConnection {
     if (seen !== undefined) this.fromSeq.set(envelope.channel, envelope.serverSeq);
   }
 
-  /** The session whose watch covers `channel` (its own channel or its chat's). */
+  /** The session whose watch covers `channel` (its own channel or its chat's, or a worker chat it started). */
   private watcherOf(channel: string): string | null {
     if (this.watches.has(channel)) return channel;
     for (const [session, watch] of this.watches) if (watch.chat === channel) return session;
-    return null;
+    return this.chatWatches.get(channel)?.session ?? null;
   }
 
   /** Reads every event until the connection closes. */

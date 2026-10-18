@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { Turn } from "./ChatView.tsx";
+import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] } as ConversationTurn);
 const render = (paneId: string, turn: ConversationTurn): string => {
@@ -164,5 +165,83 @@ describe("a Copilot pane's turn (no fixture for one: rendered here)", () => {
     const out = html("classic", true);
     expect(out).toContain('<span class="work-row-name is-verb">Ran</span> <span class="work-row-summary">bun test</span>');
     expect(out).not.toContain("work-file-pill");
+  });
+});
+
+describe("subagents and answered questions in a Copilot turn", () => {
+  const settled = (parts: ConversationTurn["parts"]): ConversationTurn => ({ role: "assistant", ts: "2026-01-01T00:00:00.000Z", end_ts: "2026-01-01T00:00:07.000Z", parts });
+  const styled = (turn: ConversationTurn, style: "vscode" | "classic"): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "", turn, live: false, waiting: false, showThinking: false, style }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const subagent: ConversationTurn["parts"][number] = { kind: "subagent", id: "c3", agent: "explore", description: "FICTIONAL find the config", model: null, started: "2026-01-01T00:00:00.000Z", ended: "2026-01-01T00:00:05.000Z", status: "done", chat: "ahp-chat://default/fictional-sub" };
+  const question: ConversationTurn["parts"][number] = { kind: "question", text: "FICTIONAL which color?", options: ["Red", "Blue"], chosen: ["Blue"], custom: null, skipped: false };
+  const parts: ConversationTurn["parts"] = [
+    { kind: "tool", name: "bash", tool_id: "bash", summary: "", input: "{}", output: "", command: "make" },
+    subagent,
+    question,
+    { kind: "text", text: "FICTIONAL done" },
+  ];
+
+  it("a subagent is its own row and a question its summary, never inside the work block, in their place", () => {
+    const html = styled(settled(parts), "vscode");
+    expect(html).toContain("subagent-row");
+    expect(html).toContain("question-summary");
+    // the block counts only its own call
+    expect(html.replace(/<[^>]+>/g, "")).toContain("Ran 1 commandWorked for 7s");
+    expect(html).not.toContain("other step");
+    const block = html.indexOf("work-block");
+    expect(block).toBeLessThan(html.indexOf("subagent-row"));
+    expect(html.indexOf("subagent-row")).toBeLessThan(html.indexOf("question-summary"));
+    expect(html.indexOf("question-summary")).toBeLessThan(html.indexOf("FICTIONAL done"));
+  });
+
+  it("a turn that is only a subagent and a question has no work block, and its answer still reads", () => {
+    const html = styled(settled([subagent, question, { kind: "text", text: "FICTIONAL done" }]), "vscode");
+    expect(html).not.toContain("work-block");
+    expect(html).toContain("FICTIONAL done");
+  });
+});
+
+describe("a Copilot call's intention and outcome", () => {
+  const settled = (parts: ConversationTurn["parts"]): ConversationTurn => ({ role: "assistant", ts: "2026-01-01T00:00:00.000Z", end_ts: "2026-01-01T00:00:07.000Z", parts });
+  const open = (turn: ConversationTurn, style: "vscode" | "classic"): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    const memory = { toggles: new Map<string, boolean | null>([["work", true]]), outputs: new Map<string, string>() };
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(ChatRowMemoryContext.Provider, { value: memory, children: createElement(Turn, { paneId: "", turn, live: false, waiting: false, showThinking: false, style }) }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const text = (html: string) => html.replace(/<[^>]+>/g, "");
+  const call = (extra: Partial<Extract<ConversationTurn["parts"][number], { kind: "tool" }>>) => ({ kind: "tool" as const, name: "bash", tool_id: "bash", summary: "", input: "{}", output: "", command: "make test", ...extra });
+
+  it("an intention comes before the command, as VS Code titles a terminal call", () => {
+    const html = open(settled([call({ intention: "FICTIONAL check the build" }), { kind: "text", text: "ok" }]), "vscode");
+    expect(text(html)).toContain("FICTIONAL check the build make test");
+    expect(html).toContain("<code>make test</code>");
+  });
+
+  it("a skipped call says Skipped with circle-slash, and the head counts it", () => {
+    const html = open(settled([call({ state: "skipped", intention: "FICTIONAL not shown" }), { kind: "text", text: "ok" }]), "vscode");
+    expect(text(html)).toContain("Skipped make test");
+    expect(text(html)).not.toContain("FICTIONAL not shown");
+    expect(html).toContain("lucide-circle-slash");
+    expect(text(html)).toContain("1 tool call skipped");
+  });
+
+  it("a call waiting for a yes or no stays out of the fold", () => {
+    const html = open(settled([call({ command: "ls" }), call({ state: "awaiting", command: "rm x" }), { kind: "text", text: "ok" }]), "vscode");
+    expect(html.indexOf("rm x")).toBeGreaterThan(html.indexOf("work-standalone"));
+    expect(text(html)).toContain("Ran 1 command");
   });
 });

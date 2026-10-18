@@ -14,6 +14,7 @@ import {
   CustomizationType,
   ResponsePartKind,
   SessionStatus,
+  ToolCallCancellationReason,
   ToolCallStatus,
   ToolResultContentType,
   type ActiveTurn,
@@ -46,7 +47,7 @@ export const PROVIDER = "copilotcli";
 /** InteractivePrompt.agent for every host chat card. */
 const PROMPT_AGENT = "copilot";
 /** The typed-answer slot's label, after a question's own options. */
-export const OTHER_LABEL = "Other";
+export const OTHER_LABEL = "Other…";
 /** A text, number or integer question has only the typed-answer slot. */
 const ANSWER_LABEL = "Answer";
 /** In `option_ids`: the slot that has no host id (the typed answer, or a default Approve/Deny). */
@@ -111,29 +112,101 @@ const settled = (tool: ToolCallState): boolean => tool.status === ToolCallStatus
 interface TurnTimes { started: string | null; ended: string | null }
 
 /**
+ * What a read knows beyond the chat itself: a subagent's own chat when the bridge holds it (its
+ * model, its times, what it does now), and a model's display name. Without it a subagent row has
+ * its turn's times and no model.
+ */
+export interface ReadContext {
+  chat(uri: string): ChatState | undefined;
+  modelName(id: string): string;
+}
+
+/** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
+interface TurnRead { times: TurnTimes; running: boolean; model: string | null; context: ReadContext | undefined }
+
+const AUTO_MODEL = "auto";
+
+/**
+ * Whether a subagent's model is worth saying: VS Code's shouldShowSubagentModel by id. Not when it
+ * is the chat's own or Auto; always under an Auto chat (the concrete one is news).
+ */
+function shownModel(subagent: string | undefined, parent: string | null): boolean {
+  const own = subagent?.trim().toLowerCase();
+  if (!own || own === AUTO_MODEL) return false;
+  const parentId = parent?.trim().toLowerCase() ?? null;
+  if (parentId !== null && (parentId === AUTO_MODEL || parentId.slice(parentId.lastIndexOf(":") + 1) === AUTO_MODEL)) return true;
+  return own !== parentId;
+}
+
+/**
+ * A subagent chat's own times, as VS Code reads them (getSubagentTiming): from its first turn's
+ * start to its last finished turn's end; no end while a turn runs.
+ */
+function chatTiming(chat: ChatState): { started: string | null; ended: string | null } {
+  const all: Array<Turn | ActiveTurn> = chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns;
+  const starts = all.map((turn) => (turn.startedAt ? Date.parse(turn.startedAt) : Number.NaN)).filter(Number.isFinite);
+  if (starts.length === 0) return { started: null, ended: null };
+  const started = Math.min(...starts);
+  if (chat.activeTurn) return { started: new Date(started).toISOString(), ended: null };
+  const ends = chat.turns.flatMap((turn) => {
+    const at = turn.startedAt ? Date.parse(turn.startedAt) : Number.NaN;
+    return Number.isFinite(at) && typeof turn.duration === "number" && Number.isFinite(turn.duration) ? [at + Math.max(0, turn.duration)] : [];
+  });
+  return { started: new Date(started).toISOString(), ended: ends.length > 0 ? new Date(Math.max(...ends)).toISOString() : null };
+}
+
+/** What a running subagent does now: its newest tool call's words. */
+function activityOf(chat: ChatState): string | undefined {
+  const calls = (chat.activeTurn?.responseParts ?? []).flatMap((part) => (part.kind === ResponsePartKind.ToolCall ? [part.toolCall] : []));
+  const newest = calls.at(-1);
+  if (!newest) return undefined;
+  const words = plain("pastTenseMessage" in newest && newest.status === ToolCallStatus.Completed ? newest.pastTenseMessage : newest.invocationMessage).trim();
+  return words === "" ? newest.displayName : words;
+}
+
+/**
  * A subagent the call started. AHP gives a tool call no start or end time, so its times are its
  * turn's: started with the turn, ended when the turn ended (null while the turn runs on).
  */
-function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, times: TurnTimes): ConversationPart {
+function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, turn: TurnRead): ConversationPart {
   const failed = "success" in tool && tool.success === false;
   const status = !settled(tool) ? "running" : failed || tool.status === ToolCallStatus.Cancelled ? "failed" : "done";
+  // its own chat, when the bridge holds it: the real times and model, and what it does now
+  const own = turn.context?.chat(subagent.resource);
+  const timing = own ? chatTiming(own) : null;
+  const ownModel = own ? (own.activeTurn ?? own.turns.at(-1))?.message.model?.id : undefined;
+  const activity = own && status === "running" ? activityOf(own) : undefined;
+  const started = timing?.started ?? turn.times.started;
   return {
     kind: "subagent",
     id: tool.toolCallId,
     agent: subagent.agentName ?? subagent.title,
     description: subagent.description ?? "",
-    model: null,
-    started: times.started,
-    ended: status === "running" ? null : times.ended,
+    model: ownModel !== undefined && shownModel(ownModel, turn.model) ? turn.context!.modelName(ownModel) : null,
+    started,
+    ended: status === "running" ? null : timing?.started ? timing.ended ?? turn.times.ended : turn.times.ended,
     status,
     chat: subagent.resource,
+    ...(activity !== undefined ? { activity } : {}),
   };
 }
 
-function toolPart(tool: ToolCallState, times: TurnTimes): ConversationPart {
+/** A call that is not done, as the summary counts it (VS Code's skipped, denied and unfinished); none once completed. */
+function stateOf(tool: ToolCallState): Extract<ConversationPart, { kind: "tool" }>["state"] {
+  switch (tool.status) {
+    case ToolCallStatus.Completed: return undefined;
+    case ToolCallStatus.Cancelled: return tool.reason === ToolCallCancellationReason.Skipped ? "skipped" : "denied";
+    case ToolCallStatus.PendingConfirmation:
+    case ToolCallStatus.PendingResultConfirmation: return "awaiting";
+    default: return "running";
+  }
+}
+
+function toolPart(tool: ToolCallState, turn: TurnRead): ConversationPart {
   const content = contentOf(tool);
   const subagent = content.find((item): item is ToolResultSubagentContent => item.type === ToolResultContentType.Subagent);
-  if (subagent) return subagentPart(tool, subagent, times);
+  if (subagent) return subagentPart(tool, subagent, turn);
+  const state = stateOf(tool);
   const input = "toolInput" in tool && typeof tool.toolInput === "string" ? tool.toolInput : "";
   const terminal = content.find((item): item is ToolResultTerminalContent => item.type === ToolResultContentType.Terminal);
   const exitCode = terminal?.result?.exitCode;
@@ -152,6 +225,8 @@ function toolPart(tool: ToolCallState, times: TurnTimes): ConversationPart {
     ...(exitCode !== undefined ? { exit_code: exitCode } : {}),
     ...(images.length > 0 ? { images } : {}),
     ...(edits.length > 0 ? { edits } : {}),
+    ...(tool.intention ? { intention: tool.intention } : {}),
+    ...(state !== undefined ? { state } : {}),
   };
   // the cut the pane readers make; the rest is GET /api/host-chats/tool-output?ref=<the call's id>
   trimOutput(part, toolOutput(tool), tool.toolCallId);
@@ -192,7 +267,7 @@ function questionPart(question: ChatInputQuestion, answer: ChatInputAnswer | und
     case ChatInputAnswerValueKind.Selected:
       return { ...base, chosen: value.value ? [optionLabel(question, value.value)] : [], custom: joined(value.freeformValues), skipped: false };
     case ChatInputAnswerValueKind.SelectedMany:
-      return { ...base, chosen: value.value.map((id) => optionLabel(question, id)), custom: joined(value.freeformValues), skipped: false };
+      return { ...base, chosen: value.value.map((id) => optionLabel(question, id)), custom: joined(value.freeformValues), skipped: false, multi: true };
     case ChatInputAnswerValueKind.Boolean:
       return { ...base, chosen: [value.value ? YES : NO], custom: null, skipped: false };
     default:
@@ -227,12 +302,12 @@ function linkTo(uri: string): string {
   return `[${(name || uri).replace(/[[\]]/g, "\\$&")}](${destination})`;
 }
 
-function partsOf(part: ResponsePart, times: TurnTimes, running: boolean): ConversationPart[] {
+function partsOf(part: ResponsePart, turn: TurnRead): ConversationPart[] {
   switch (part.kind) {
     case ResponsePartKind.Markdown: return [{ kind: "text", text: part.content }];
     case ResponsePartKind.Reasoning: return [{ kind: "thinking", text: part.content }];
-    case ResponsePartKind.ToolCall: return [toolPart(part.toolCall, times)];
-    case ResponsePartKind.InputRequest: return questionParts(part, running);
+    case ResponsePartKind.ToolCall: return [toolPart(part.toolCall, turn)];
+    case ResponsePartKind.InputRequest: return questionParts(part, turn.running);
     case ResponsePartKind.ContentRef: return [{ kind: "text", text: linkTo(part.uri) }];
     case ResponsePartKind.SystemNotification: return [{ kind: "notice", text: plain(part.content), source: "system" }];
     // the turn stopped at it: never the turn's answer
@@ -248,13 +323,14 @@ function endOf(turn: Turn | ActiveTurn): string | undefined {
 }
 
 /** Each AHP turn as a user turn and an assistant turn; the running turn last. */
-export function turnsFrom(chat: ChatState): ConversationTurn[] {
+export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationTurn[] {
   const all: Array<Turn | ActiveTurn> = chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns;
   return all.flatMap((turn) => {
     const ts = turn.startedAt ?? null;
     const end = endOf(turn);
     const running = turn === chat.activeTurn;
-    const parts = turn.responseParts.flatMap((part) => partsOf(part, { started: ts, ended: end ?? null }, running));
+    const read: TurnRead = { times: { started: ts, ended: end ?? null }, running, model: turn.message.model?.id ?? null, context };
+    const parts = turn.responseParts.flatMap((part) => partsOf(part, read));
     return [
       { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts },
@@ -304,6 +380,19 @@ export function currentQuestion(request: ChatInputRequest): ChatInputQuestion | 
   return (request.questions ?? []).find((question) => !submitted(request.answers?.[question.id]));
 }
 
+/** The chats the chat's subagent calls started, newest last: the bridge subscribes them to read their model and times. */
+export function subagentChats(chat: ChatState): string[] {
+  const all: Array<Turn | ActiveTurn> = chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns;
+  const found = new Set<string>();
+  for (const turn of all) {
+    for (const part of turn.responseParts) {
+      if (part.kind !== ResponsePartKind.ToolCall) continue;
+      for (const item of contentOf(part.toolCall)) if (item.type === ToolResultContentType.Subagent) found.add(item.resource);
+    }
+  }
+  return [...found];
+}
+
 /** The open (unanswered) input requests of the running turn, in order. */
 export function openRequests(chat: ChatState): ChatInputRequest[] {
   return (chat.activeTurn?.responseParts ?? []).flatMap((part) =>
@@ -323,7 +412,8 @@ function questionOptions(question: ChatInputQuestion): { options: InteractivePro
     case ChatInputQuestionKind.MultiSelect: {
       const options = question.options.map((option) => ({ label: option.label, description: option.description ?? null }));
       const ids = question.options.map((option) => option.id);
-      if (!question.allowFreeformInput) return { options, ids, custom: null };
+      // VS Code's rule (chatQuestionCarouselPart.ts at 6d62b1d): a typed answer unless the question says no
+      if (question.allowFreeformInput === false) return { options, ids, custom: null };
       return { options: [...options, { label: OTHER_LABEL, description: null }], ids: [...ids, NO_ID], custom: options.length };
     }
     case ChatInputQuestionKind.Boolean:
@@ -447,15 +537,16 @@ function modelOf(chat: ChatState): HostChatRead["model"] {
   return { id: selection.id, effort: typeof effort === "string" ? effort : null };
 }
 
-export function readFrom(session: string, title: string, chat: ChatState): HostChatRead {
+export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext): HostChatRead {
   const prompt = promptFrom(chat);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const status = statusOf(chat.status);
+  const turns = turnsFrom(chat, context);
   const read: Omit<HostChatRead, "signature"> = {
     session,
     title: chat.title || title,
     status,
-    turns: turnsFrom(chat),
+    turns,
     cursor: chat.turnsNextCursor ?? null,
     prompt,
     model: modelOf(chat),
@@ -471,6 +562,8 @@ export function readFrom(session: string, title: string, chat: ChatState): HostC
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids,
+    // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
+    turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];
   return { ...read, signature: createHash("sha1").update(JSON.stringify(shape)).digest("hex").slice(0, 16) };
 }

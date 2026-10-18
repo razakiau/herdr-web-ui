@@ -160,3 +160,17 @@ it("says the open block waits for the user while the agent is blocked, and only 
   expect(isWaitingWorkTurn(false, "blocked")).toBe(false);
   expect(isWaitingWorkTurn(true, undefined)).toBe(false);
 });
+
+describe("splitTurn with a Copilot turn's own rows", () => {
+  const subagent: ConversationPart = { kind: "subagent", id: "c3", agent: "explore", description: "x", model: null, started: null, ended: null, status: "done", chat: null };
+  const question: ConversationPart = { kind: "question", text: "q", options: [], chosen: [], custom: "a", skipped: false };
+  it("keeps subagents and answered questions out of the work, and out of the answer", () => {
+    const parts: ConversationPart[] = [tool("bash"), subagent, question, { kind: "text", text: "done" }];
+    expect(splitTurn(parts)).toEqual({ work: [tool("bash")], answer: [{ kind: "text", text: "done" }] });
+  });
+
+  it("they still end the narration before them: words before a subagent are work, not the answer", () => {
+    const parts: ConversationPart[] = [{ kind: "text", text: "delegating" }, subagent, { kind: "text", text: "done" }];
+    expect(splitTurn(parts)).toEqual({ work: [{ kind: "text", text: "delegating" }], answer: [{ kind: "text", text: "done" }] });
+  });
+});

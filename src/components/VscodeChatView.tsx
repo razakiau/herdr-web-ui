@@ -46,7 +46,9 @@ export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, 
     const ref = prompt.host;
     if ("request_id" in ref) {
       const picked = choice.option_indices ?? (choice.option_index !== undefined ? [choice.option_index] : []);
-      const optionIds = picked.map((index) => ref.option_ids[index] ?? "").filter((id) => id !== "");
+      // a typed answer names the "Other…" slot, whose host id is empty: the text goes as freeformValues
+      const typed = choice.custom_text !== undefined && prompt.custom_option_index !== null ? [ref.option_ids[prompt.custom_option_index] ?? ""] : [];
+      const optionIds = [...picked.map((index) => ref.option_ids[index] ?? "").filter((id) => id !== ""), ...typed];
       await answerHost(machineId, {
         session, request_id: ref.request_id, question_id: ref.question_id,
         ...(optionIds.length > 0 ? { option_ids: optionIds } : {}),
@@ -61,7 +63,7 @@ export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, 
       ...(optionId !== "" ? { option_id: optionId } : {}),
     });
   };
-  return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} />;
+  return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown />;
 }
 
 export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
