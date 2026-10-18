@@ -1390,6 +1390,8 @@ export function Composer({
           </button>}
           {dictation.shown && <MicButton dictation={dictation} />}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
+          {/* a host chat's pickers take the row after the mic, where they have the width the status pill had */}
+          {pills !== undefined && <div className="composer-pickers">{pills}</div>}
         </div>
         {/* between the two control groups of the card's last row. The agent's name, its separator and the
             state word are read, not drawn: the mark and the header name the agent, and Stop, the live row and
@@ -1405,7 +1407,7 @@ export function Composer({
             {/* the mark, the model, the level and the context ring as one quiet pill. It only shows: no role,
                 no focus, nothing to press but the ring inside it. A pane that names no model draws no pill
                 (.is-bare): the mark, a level if it has one, and the ring stand in the row as they are */}
-{pills ?? (
+{pills === undefined && (
             <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
               {agent && <AgentMark agent={agent} size={14} />}
               {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>

@@ -33,6 +33,15 @@ export function providerMark(model: Pick<HostModel, "id" | "name" | "provider">)
   return "sparkle";
 }
 
+/**
+ * A model's name on the composer's trigger: its last "(…)" goes when the mark already names the
+ * provider ("Claude Opus 5.5 (Anthropic)" → "Claude Opus 5.5"); a model the mark cannot name keeps it.
+ */
+export function shortModelName(model: Pick<HostModel, "id" | "name" | "provider">): string {
+  if (providerMark(model) === "sparkle") return model.name;
+  return model.name.replace(/\s*\([^()]*\)\s*$/, "") || model.name;
+}
+
 /** A context window as the picker says it: 1M, 500K, 200K (a binary 1,048,576 is 1M too). */
 export function contextLabel(tokens: number): string {
   const unit = tokens % 1_048_576 === 0 ? 1_048_576 : tokens % 1_024 === 0 && tokens < 1_000_000 ? 1_024 : 0;

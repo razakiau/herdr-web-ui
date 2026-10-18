@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostModel } from "../../shared/host-chats.ts";
-import { contextLabel, filterModels, modelTabs, pickerSections, providerMark, rowDetail, rememberRecent, recentModels, togglePinned, pinnedModels } from "./modelProvider.ts";
+import { contextLabel, filterModels, shortModelName, modelTabs, pickerSections, providerMark, rowDetail, rememberRecent, recentModels, togglePinned, pinnedModels } from "./modelProvider.ts";
 
 const model = (id: string, name: string, provider = "copilotcli", extra: Partial<HostModel> = {}): HostModel => ({ id, name, provider, efforts: null, context: null, ...extra });
 
@@ -60,5 +60,17 @@ describe("the model picker's rows", () => {
     ]);
     togglePinned("desk", "g", storage);
     expect(pickerSections(models, [], []).map((section) => section.title)).toEqual(["All models"]);
+  });
+});
+
+describe("shortModelName: the trigger drops what the mark already says", () => {
+  it.each([
+    ["Claude Opus 5.5 (Anthropic)", "Claude Opus 5.5"],
+    ["DeepSeek V4 Pro (New) (OpenCode Go)", "DeepSeek V4 Pro (New)"],
+    ["GLM-5.3 (OpenCode Go)", "GLM-5.3"],
+    ["HydraFusion (Lab)", "HydraFusion (Lab)"],
+    ["GPT 5.6", "GPT 5.6"],
+  ] as [string, string][])("%s → %s", (name, short) => {
+    expect(shortModelName({ id: "fictional/x", name, provider: "copilotcli" })).toBe(short);
   });
 });

@@ -11,7 +11,7 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ListChecks, MessageSquare, Rocket } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
@@ -31,7 +31,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
-import { providerMark, rowDetail } from "../lib/modelProvider.ts";
+import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
 import { hostSlashItems, resolveHostSlash } from "../lib/hostSlash.ts";
 
 export interface HostChatViewProps { machineId: string; session: string }
@@ -191,20 +191,29 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
   const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
   const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
   const detail = modelEntry ? rowDetail(modelEntry, model?.effort ?? null) : model?.effort ?? "";
+  // VS Code's input toolbar: quiet triggers that say what the next message goes with, each opening its picker
+  const effortLabel = model?.effort ? model.effort.charAt(0).toUpperCase() + model.effort.slice(1) : null;
+  const ModeIcon = config?.mode === "plan" ? ListChecks : config?.mode === "autopilot" ? Rocket : MessageSquare;
+  const approvalsRaised = config?.approvals !== null && config?.approvals !== undefined && config.approvals !== "default";
   const pills = <span className="host-chat-pills">
-    <button type="button" className="composer-pill host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: detail ? `${modelLabel} · ${detail}` : modelLabel })} onClick={() => openSheet("model")}>
-      {modelEntry && <ModelMarkIcon mark={providerMark(modelEntry)} size={12} />}
-      <span className={`composer-model${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelLabel}</span>
+    <button type="button" className="host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"}
+      aria-label={t("Model: {model}", { model: detail ? `${modelLabel} · ${detail}` : modelLabel })} title={detail ? `${modelLabel} · ${detail}` : modelLabel} onClick={() => openSheet("model")}>
+      {modelEntry && <ModelMarkIcon mark={providerMark(modelEntry)} size={14} />}
+      <span className={`host-chat-pill-label${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelEntry ? shortModelName(modelEntry) : modelLabel}</span>
+      {effortLabel && <span className="host-chat-pill-aside">{effortLabel}</span>}
       <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>
-    {detail !== "" && <span className="host-chat-detail" aria-hidden="true">{detail}</span>}
-    <button type="button" className="composer-pill host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
-      <span className="composer-model">{agentLabel}</span>
+    <button type="button" className="host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
+      <span className="host-chat-pill-label">{agentLabel}</span>
       <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>
-    {(modeLabel !== null || approvalsLabel !== null) && <button type="button" className="composer-pill host-chat-pill host-chat-mode" aria-haspopup="dialog" aria-expanded={sheet === "mode"}
+    {(modeLabel !== null || approvalsLabel !== null) && <button type="button" className="host-chat-pill host-chat-mode" aria-haspopup="dialog" aria-expanded={sheet === "mode"}
+      data-approvals={config?.approvals ?? undefined} title={[modeLabel, approvalsLabel].filter(Boolean).join(" · ")}
       aria-label={t("Pick Mode and Permissions, {0}, {1}", { 0: modeLabel ?? "—", 1: approvalsLabel ?? "—" })} onClick={() => openSheet("mode")}>
-      <span className="composer-model">{[modeLabel, approvalsLabel].filter(Boolean).join(" · ")}</span>
+      <ModeIcon className="host-chat-pill-icon" aria-hidden="true" />
+      {modeLabel && <span className="host-chat-pill-label">{modeLabel}</span>}
+      {/* Manual is the default and says nothing; a raised level is named, as VS Code's summary does */}
+      {approvalsRaised && <span className="host-chat-pill-aside is-raised">{approvalsLabel}</span>}
       <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>}
   </span>;

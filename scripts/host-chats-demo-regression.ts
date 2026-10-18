@@ -449,7 +449,8 @@ try {
         await modelPill.waitFor();
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model A/);
         assert.equal(await modelPill.locator('svg[aria-label="claude"]').count(), 1, "the FICTIONAL Anthropic model wears the Claude mark");
-        assert.equal(await view.locator(".host-chat-detail").textContent(), "200K", "its context beside the pill");
+        assert.equal(await modelPill.getAttribute("title"), "FICTIONAL Model A (Anthropic) · 200K", "the trigger's tooltip has the whole name and its context");
+        assert.equal((await modelPill.locator(".host-chat-pill-label").textContent())?.trim(), "FICTIONAL Model A", "the trigger drops the provider the mark already says");
         await modelPill.click();
         const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
@@ -470,7 +471,7 @@ try {
         await sheet.locator('[data-effort="high"]').click();
         await sheet.waitFor({ state: "detached" });
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B/, "the pill says the model");
-        assert.equal(await view.locator(".host-chat-detail").textContent(), "High · 1M", "and the chip beside it its effort and context");
+        assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "and its effort beside the name");
         await view.locator(".host-chat-agent").click();
         const agents = page.getByRole("dialog", { name: "Agent", exact: true });
         await agents.waitFor();
@@ -487,7 +488,8 @@ try {
         await agents.waitFor({ state: "detached" });
         // the chat's mode and permissions: a third pill, set once on the chat (session/config)
         const modePill = view.locator(".host-chat-mode");
-        assert.equal((await modePill.textContent())?.trim(), "Interactive · Manual", "the pill reads the live mode and permissions");
+        assert.equal(await modePill.getAttribute("title"), "Interactive · Manual", "the trigger's tooltip says the mode and the permissions");
+        assert.equal(await modePill.getAttribute("aria-label"), "Pick Mode and Permissions, Interactive, Manual", "both are read out");
         await modePill.click();
         const modes = page.getByRole("dialog", { name: "Agent mode", exact: true });
         await modes.waitFor();
@@ -499,7 +501,7 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "task-9-mode-390.png") });
         await modes.locator('[data-mode="plan"]').click();
         await modes.waitFor({ state: "detached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.textContent?.trim() === "Plan · Manual");
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title") === "Plan · Manual");
         assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).map((post) => post.body), [{ session: SESSION, mode: "plan" }], "picking Plan posts the mode alone");
         console.log("PASS the model pill wears the Claude mark, search narrows to GLM, and Plan is the chat's mode");
         assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/);
@@ -547,7 +549,7 @@ try {
         const queuedRows = view.locator('.host-pending-group[data-kind="queued"]');
         await queuedRows.locator(".host-pending-row", { hasText: "FICTIONAL later" }).waitFor();
         await queuedRows.locator(".host-pending-divider", { hasText: "Queued" }).waitFor();
-        assert.equal(await view.locator(".host-chat-detail").textContent(), "High · 1M", "the pills still show model-b · high after the send");
+        assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "the pills still show model-b · high after the send");
         assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/, "and Report");
         assert.deepEqual(bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)), { session: SESSION, text: "FICTIONAL later", mode: "queue", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Add to Queue posts mode queue with the pills' model and agent");
         await menu.waitFor({ state: "detached" });
@@ -579,7 +581,8 @@ try {
         await view.locator(".composer-send-menu").click();
         await page.getByRole("dialog", { name: "Send", exact: true }).getByRole("button", { name: "Stop and Send" }).click();
         await page.getByRole("dialog", { name: "Send", exact: true }).waitFor({ state: "detached", timeout: 5000 });
-        await view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" }).waitFor();
+        // the new turn is in the transcript; it may sit under the New messages jump
+        await view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" }).waitFor({ state: "attached" });
         assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)?.body["mode"], "stop_and_send", "Stop and Send posts its mode");
         console.log("PASS Stop and Send cancels, then sends");
 
@@ -587,7 +590,7 @@ try {
         // back to Interactive (as if set in VS Code), so /plan has something to change; the turn ends
         await page.evaluate(() => { (window as unknown as { hostState: { mode: string } }).hostState.mode = "interactive"; });
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false));
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.textContent?.trim().startsWith("Interactive"));
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title")?.startsWith("Interactive"));
         const slashConfigsBefore = (await posts("/api/machines/remote/host-chats/session/config")).length;
         const slashSendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
         await box.fill("/");
@@ -599,14 +602,24 @@ try {
         assert.ok(labels.indexOf("/fictional-skill") > labels.findIndex((label) => label.startsWith("/plan")), "the config commands come first");
         await slashMenu.getByText("Create an implementation plan before coding").first().waitFor();
         await fits("the / menu");
+        // the pills say their words: none is cut at 390 px (the old status slot squeezed them to "FICTION…", "R…", "In…")
+        const cut = await view.locator(".host-chat-pill-label, .host-chat-pill-aside").evaluateAll((spans) => spans.filter((span) => span.scrollWidth > span.clientWidth + 1).map((span) => span.textContent));
+        assert.deepEqual(cut, [], "no pill's words are cut");
+        assert.equal(await view.locator(".composer-pickers").evaluate((row) => row.scrollWidth <= row.clientWidth + 1), true, "the pickers fit the row at 390 px: nothing scrolls out of sight");
         // a closed sheet slides out as a copy in an inert shadow host at the end of <body> (lib/sheets.ts leave): the picture waits for it to go
         await page.waitForFunction(() => ![...document.body.children].some((node) => node instanceof HTMLElement && node.inert && node.shadowRoot === null && node.getAttribute("aria-hidden") === "true" && node.childElementCount === 0));
         if (shots) await page.screenshot({ path: join(shots, "task-9b-slash-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
+        if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "task-9c-composer-390.png") });
+        // a desktop window: the same row with room, every word and caret shown
+        await page.setViewportSize({ width: 1280, height: 844 });
+        await page.waitForFunction(() => getComputedStyle(document.querySelector(".host-chat-mode .host-chat-pill-label")!).display !== "none");
+        if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "task-9c-composer-1280.png") });
+        await page.setViewportSize({ width: 390, height: 844 });
         await box.fill("/plan FICTIONAL task");
         await box.press("Escape");
         await view.getByRole("button", { name: "Send message" }).click();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL task" }).waitFor({ state: "attached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.textContent?.trim().startsWith("Plan"));
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title")?.startsWith("Plan"));
         const configs = (await posts("/api/machines/remote/host-chats/session/config")).slice(slashConfigsBefore);
         assert.deepEqual(configs.map((post) => post.body), [{ session: SESSION, mode: "plan" }], "/plan sets the mode, once");
         assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/send")).slice(slashSendsBefore).map((post) => post.body["text"]), ["FICTIONAL task"], "and the rest is the message, once");

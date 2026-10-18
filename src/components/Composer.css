@@ -1519,3 +1519,27 @@
   width: min(100%, var(--chat-w));
   margin: 0 auto var(--space-2);
 }
+
+/* a host chat's pickers (Composer's `pills`): they take the left group's room and the status cell
+   gives way; a narrow row drops words before it cuts any (HostChatView.css, @container pickers),
+   and only a row still too long scrolls sideways */
+.composer-surface:has(.composer-pickers) {
+  grid-template-columns: minmax(0, 1fr) 0 auto;
+}
+
+.composer-controls-left:has(> .composer-pickers) {
+  min-width: 0;
+}
+
+.composer-pickers {
+  flex: 1 1 0;
+  min-width: 0;
+  container: pickers / inline-size;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.composer-pickers::-webkit-scrollbar {
+  display: none;
+}

@@ -21,38 +21,83 @@
   white-space: nowrap;
 }
 
-/* the two pills, in the composer's status slot (Composer's `pills`) */
+/* the pickers, in the composer's row after the mic (Composer's `pills`): VS Code's input toolbar,
+   quiet triggers with no fill at rest, each a mark or glyph, its words, a dim aside and a caret */
 .host-chat-pills {
   display: flex;
-  gap: var(--space-1);
-  min-width: 0;
-  overflow: hidden;
+  align-items: center;
+  gap: 0;
+  width: max-content;
 }
 
-/* the composer's quiet pill, made a button: it presses, so it has a border to its hover and focus */
 .host-chat-pill {
-  flex: 0 1 auto;
-  max-width: 60%;
-  border: var(--hairline) solid transparent;
-  color: var(--text-dim);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
   font: inherit;
   font-size: var(--fs-xs);
+  white-space: nowrap;
   cursor: pointer;
-}
-
-.host-chat-agent {
-  flex-shrink: 2;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .host-chat-pill:hover,
 .host-chat-pill[aria-expanded="true"] {
-  border-color: var(--border-strong);
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.host-chat-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* a hairline between two triggers, as VS Code's toolbar parts its pickers */
+.host-chat-pill + .host-chat-pill::before {
+  content: "";
+  width: var(--hairline);
+  height: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1) var(--space-1);
+  background: var(--border-strong);
+}
+
+.host-chat-pill-label {
+  font-weight: var(--fw-medium);
+}
+
+.host-chat-pill-label.is-none,
+.host-chat-pill-aside {
+  color: var(--text-dim);
+  font-weight: var(--fw-regular);
+}
+
+.host-chat-pill-label.is-id {
+  font-family: var(--font-mono);
+}
+
+/* Assisted and Allow all are named, in the notice's color: approvals no longer stop for you */
+.host-chat-pill-aside.is-raised {
+  color: var(--notice);
+}
+
+.host-chat-pill-icon {
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
 }
 
 .host-chat-pill-caret {
   flex: none;
   width: var(--space-3);
   height: var(--space-3);
+  color: var(--text-dim);
 }
 
 
@@ -190,18 +235,8 @@
   resize: vertical;
 }
 
-/* the model pill's "High · 1M", a quiet chip of its own beside it */
-.host-chat-detail {
-  flex: none;
-  align-self: center;
-  color: var(--text-dim);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-}
 
-.host-chat-mode {
-  flex-shrink: 3;
-}
+
 
 /* the picker's search box, provider tabs and one-line model rows (ModelPicker.tsx) */
 .host-picker-search {
@@ -321,4 +356,21 @@ button.host-model-detail {
 
 .model-mark-sparkle {
   color: var(--text-dim);
+}
+
+/* a phone's row: the mode keeps its glyph (its name is in the tooltip and read out) and the carets go,
+   so the model and the agent keep their words */
+@container pickers (max-width: 300px) {
+  .host-chat-mode .host-chat-pill-label,
+  .host-chat-pill-caret {
+    display: none;
+  }
+
+  .host-chat-pill {
+    padding: 0 var(--space-1);
+  }
+
+  .host-chat-pill + .host-chat-pill::before {
+    margin-inline: calc(var(--space-1) * -1) var(--space-1);
+  }
 }
