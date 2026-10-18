@@ -4,6 +4,8 @@ import type { CreateWorktreeRequest, OpenWorktreeRequest, PaneDirection, PluginA
 import type { ZoomMode } from "./layoutMap.ts";
 export const MachineContext = createContext("local");
 export const useMachineId = () => useContext(MachineContext);
+/** The machine API bound to one PC (useMachineApi). */
+export type MachineApi = ReturnType<typeof useMachineApi>;
 /** Bound functions retain their owner across an async upload or a fast PC switch. */
 export function useMachineApi() {
   const id = useMachineId();

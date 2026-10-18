@@ -19,7 +19,7 @@ const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
   const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)};
   const calls = window.hostCalls = { posts: [], models: [] };
-  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false };
+  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [] };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const roster = (original) => ["local", "remote"].map((id) => {
@@ -30,13 +30,20 @@ const patch = `(() => {
     return machine;
   });
   const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
-  const read = (session) => {
+  const read = (session, before) => {
     const made = state.created.find((chat) => chat.session === session);
     if (made) {
       const turns = made.sent ? [{ role: "user", ts: at(0), parts: [{ kind: "text", text: made.text }] }, { role: "assistant", ts: at(0), parts: [] }] : [];
-      return { session, title: "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, signature: JSON.stringify(made) };
+      return { session, title: "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: made.sent ? ["new-1"] : [], signature: JSON.stringify(made) };
     }
+    // the host's window: a read with its cursor loads the turn before it, ahead of the rest
+    if (before === "c-older") state.older = true;
+    const older = state.older ? [
+      { role: "user", ts: at(30), parts: [{ kind: "text", text: "FICTIONAL an earlier ask" }] },
+      { role: "assistant", ts: at(30), parts: [{ kind: "text", text: "FICTIONAL an earlier answer" }] },
+    ] : [];
     const turns = [
+      ...older,
       { role: "user", ts: at(9), parts: [{ kind: "text", text: "FICTIONAL look at the build" }] },
       { role: "assistant", ts: at(9), end_ts: at(8), parts: [
         { kind: "tool", name: "runInTerminal", summary: "FICTIONAL make test", input: "{}", output: "FICTIONAL ok" },
@@ -45,20 +52,25 @@ const patch = `(() => {
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
       { role: "assistant", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL which way should I go?" }] },
     ];
+    for (const text of state.pushed) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: "FICTIONAL from the PC" }] }, { role: "assistant", ts: at(1), parts: [{ kind: "text", text }] });
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
+    const ids = [...(state.older ? ["h0"] : []), "h1", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick a direction",
       body: null, options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: null }],
       multi_select: false, custom_option_index: null,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east"] },
     };
-    return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: null, prompt,
-      model: state.model, agent: state.agent, busy: state.busy || prompt !== null, signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent]) };
+    return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
+      model: state.model, agent: state.agent, busy: state.busy || prompt !== null, message_ids: ids,
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed]) };
   };
   const push = (message) => {
     for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "remote", message }) }));
   };
   window.setHostBusy = (busy) => { state.busy = busy; push({ type: "host-chat-changed", session: SESSION }); };
+  // a turn made on the PC: only its push tells the phone
+  window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
   window.EventSource = class extends EventTarget {
     constructor(url, options) {
       super(); this.inner = new EventSourceDemo(url, options); this.readyState = 1; sources.add(this);
@@ -78,6 +90,9 @@ const patch = `(() => {
     const match = url.pathname.match(/^\\/api\\/machines\\/([^/]+)(\\/.*)$/);
     const machine = match ? decodeURIComponent(match[1]) : "local";
     const path = match ? "/api" + match[2] : url.pathname;
+    // a pane request without a pane: what a host chat's ChatView must never make
+    if (path.startsWith("/api/pane/") && url.searchParams.get("pane_id") === "") (calls.paneless ??= []).push(url.pathname + url.search);
+    if (path.startsWith("/api/pane/") && url.searchParams.get("pane_id") === null && init?.body && String(init.body).includes('"pane_id":""')) (calls.paneless ??= []).push(url.pathname);
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
@@ -87,7 +102,7 @@ const patch = `(() => {
         { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs" },
         ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd })),
       ] });
-      if (path === "/api/host-chats/chat") return json(read(url.searchParams.get("session")));
+      if (path === "/api/host-chats/chat") { if (url.searchParams.has("before")) calls.before = [...(calls.before ?? []), url.searchParams.get("before")]; return json(read(url.searchParams.get("session"), url.searchParams.get("before"))); }
       if (path === "/api/host-chats/chat/new") {
         const session = "fictional-new-" + (state.created.length + 1);
         state.created.push({ session, cwd: body.cwd, text: body.text, sent: state.newSent });
@@ -178,10 +193,13 @@ try {
         assert.equal(await page.locator('.host-chat-item[data-machine="local"]').count(), 0, "a PC whose bridge has the feature off has no chats");
         console.log("PASS the sidebar shows the remote PC's host chats under it, headed Copilot");
 
-        // 2. the chat: a user turn, an assistant's text and a folded tool row
+        // 2. the chat: the app's ChatView, with a user turn, an assistant's text and a folded tool row
         await row.locator(".agent-select").click();
         const view = page.locator(`.host-chat[data-host-session="${SESSION}"]`);
         await view.waitFor();
+        await view.locator(".chat-view").first().waitFor();
+        assert.equal(await page.locator(".vscode-chat").count(), 0, "no chat view of its own");
+        assert.equal(await view.locator('.chat-view[aria-label="Copilot chat FICTIONAL build chat"]').count(), 1, "one transcript, the app's ChatView, named for the chat");
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" }).waitFor();
         await view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).waitFor();
         const block = view.locator(".work-block").first();
@@ -193,7 +211,25 @@ try {
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/host-chats/chat/watch")));
         await fits("the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-5-chat-390.png") });
-        console.log("PASS the chat shows a user turn, an assistant text and a folded tool row, and is watched");
+        console.log("PASS the chat renders through ChatView: a user turn, an assistant text and a folded tool row, and is watched");
+
+        // 2b. earlier messages: the host's cursor loads the turn before, above the ones shown, once
+        // a chat shorter than the view asks for it on its own, as a pane's does (the button stays for a long one)
+        await view.locator(".chat-turn-agent", { hasText: "FICTIONAL an earlier answer" }).waitFor();
+        await view.locator(".chat-endcap", { hasText: "beginning of conversation" }).waitFor();
+        const earlierFirst = await view.locator(".chat-turn").allTextContents();
+        assert.ok(earlierFirst.findIndex((text) => text.includes("FICTIONAL an earlier answer")) < earlierFirst.findIndex((text) => text.includes("FICTIONAL look at the build")), "the earlier turn sits above");
+        assert.equal(earlierFirst.filter((text) => text.includes("FICTIONAL look at the build")).length, 1, "no turn twice");
+        assert.deepEqual(await page.evaluate(() => (window as unknown as { hostCalls: { before?: string[] } }).hostCalls.before), ["c-older"], "one read with the host's cursor");
+        console.log("PASS the host's cursor loads the older turn above the ones shown, once, to the beginning");
+
+        // 2c. a turn made on the PC: its push alone brings it, under the turns already shown
+        await page.evaluate(() => (window as unknown as { pushHostTurn(text: string): void }).pushHostTurn("FICTIONAL pushed answer"));
+        await view.locator(".chat-turn-agent", { hasText: "FICTIONAL pushed answer" }).waitFor({ timeout: 5_000 });
+        assert.equal(await view.locator(".chat-turn-agent", { hasText: "FICTIONAL an earlier answer" }).count(), 1, "the earlier page stays");
+        // no scrollback, terminal output, prompt state or skill list is read for it: it has no pane
+        assert.deepEqual(await page.evaluate(() => (window as unknown as { hostCalls: { paneless?: string[] } }).hostCalls.paneless ?? []), [], "no pane request for a host chat");
+        console.log("PASS a pushed change appears in the chat");
 
         // 3. the question card answers with option 2, and goes on the next read
         const card = page.locator(".prompt-card");

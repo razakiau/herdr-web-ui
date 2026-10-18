@@ -47,7 +47,7 @@ import { OpenFileContext } from "../lib/filePaths.ts";
 import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
-import { machinePath, paneStorageId } from "../../shared/machines.ts";
+import { machinePath } from "../../shared/machines.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
@@ -58,9 +58,10 @@ import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { shouldFoldUserMessage } from "../lib/userMessageFold.ts";
+import { paneSource, type ChatSource } from "../lib/chatSource.ts";
 
-/** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
-const ChatPaneContext = createContext<string | null>(null);
+/** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
+const ChatSourceContext = createContext<ChatSource | null>(null);
 const ChatHistoryContext = createContext("");
 /**
  * Opens the image viewer for a message's pictures. The viewer is held by ChatView, not by the row:
@@ -92,7 +93,17 @@ const PROMPT_POLL_MS = 2000;
 const LOAD_OLDER_PX = 400;
 
 export interface ChatViewProps {
+  /** "" with a `source` that is not a pane's (a host chat) */
   paneId: string;
+  /**
+   * Where the chat reads, when not the pane's conversation (lib/chatSource.ts: a host chat). With
+   * one, everything only a pane has is off: herdr's scrollback and the terminal output, the pane's
+   * prompt state, its conversation-watch and its skill list; the source's own watch and changes
+   * stand in for the last two. Its `key` is what the chat's memory is kept under.
+   */
+  source?: ChatSource;
+  /** the transcript's accessible name, when not "conversation of <pane>" */
+  label?: string;
   /** Only the active pane owns the chat-local Mod+F shortcut. */
   active?: boolean;
   /** false while the pane sits off-tab (a cached or retained pane): no reads, no conversation-watch */
@@ -314,13 +325,14 @@ function ToolInputView({ part }: { part: ToolPartType }) {
 
 /** A cut output's rest, fetched when asked for: the page carries the first few thousand characters. */
 function useWholeOutput(ref: string | undefined): { text: string | null; state: "idle" | "loading" | "failed"; load: () => void } {
-  const paneId = useContext(ChatPaneContext);
-  const machineId = useMachineId();
+  const source = useContext(ChatSourceContext);
   const history = useContext(ChatHistoryContext);
-  const url = ref === undefined || paneId === null ? null : machinePath(machineId, `pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref }).toString()}`);
+  // the target's identity: the chat's own (its PC and pane, or its host chat) and the call's
+  const target = ref === undefined || source === null ? null : `${source.key}\n${ref}`;
+  const read = useCallback((signal: AbortSignal) => source!.toolOutput(ref!, signal), [source, ref]);
   const memory = useContext(ChatRowMemoryContext);
   const saved = ref === undefined ? undefined : memory?.outputs.get(ref);
-  const result = useScopedOutput(saved === undefined ? url : null, history);
+  const result = useScopedOutput(saved === undefined ? target : null, history, read);
   useLayoutEffect(() => {
     if (ref !== undefined && result.text !== null && memory && memory.outputs.get(ref) !== result.text) {
       memory.outputs.set(ref, result.text);
@@ -348,13 +360,20 @@ function ImageGallery({ images, className }: { images: GalleryImage[]; className
   </div>;
 }
 
+/** A picture's URL by its ref: the chat's source names it; a row drawn alone (no source) names its pane's. */
+function useImageUrl(paneId: string): (ref: string) => string {
+  const source = useContext(ChatSourceContext);
+  const machineId = useMachineId();
+  return source !== null ? source.image : (ref) => machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref }).toString()}`);
+}
+
 /** Images a tool returned (pi reads a picture into the result); opened with the row. */
 function ToolImages({ paneId, part }: { paneId: string; part: ToolPartType }) {
   const t = useT();
-  const machineId = useMachineId();
+  const imageUrl = useImageUrl(paneId);
   if (part.images === undefined || part.images.length === 0) return null;
   const images = part.images.map((image, index): GalleryImage => ({
-    src: machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: image.ref }).toString()}`),
+    src: imageUrl(image.ref),
     name: t("Attached image"),
     file: attachmentFileName(image.media_type, index),
   }));
@@ -491,15 +510,15 @@ const IMAGE_MENTION = /(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi;
 function UserImages({ paneId, parts, text }: { paneId: string; parts: ConversationPart[]; text: string }) {
   const t = useT();
   const machineId = useMachineId();
-  // no pane (a host chat's turn): nothing is read through one, not even a mentioned file
-  if (paneId === "") return null;
+  const imageUrl = useImageUrl(paneId);
   const pasted = parts.filter((part): part is Extract<ConversationPart, { kind: "image" }> => part.kind === "image");
-  const mentioned = [...new Set([...text.matchAll(IMAGE_MENTION)].map((match) => match[1]!))];
+  // no pane (a host chat's turn): no file is read through one, so a mentioned file is not shown
+  const mentioned = paneId === "" ? [] : [...new Set([...text.matchAll(IMAGE_MENTION)].map((match) => match[1]!))];
   if (pasted.length === 0 && mentioned.length === 0) return null;
   // one gallery for the message: its pasted pictures first, then the files it mentioned
   const images: GalleryImage[] = [
     ...pasted.map((part, index): GalleryImage => ({
-      src: machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: part.ref }).toString()}`),
+      src: imageUrl(part.ref),
       name: t("Attached image"),
       file: attachmentFileName(part.media_type, index),
     })),
@@ -621,9 +640,9 @@ function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey:
   </ChatDetails>;
 }
 
-// a turn that did not change keeps its object across polls: skip re-rendering it. Also the VS Code
-// chat's row (VscodeChatView), with paneId "": its parts carry no image or output refs, and
-// UserImages shows no `@image` mention without a pane, so such a row reads no file
+// a turn that did not change keeps its object across polls: skip re-rendering it. A host chat's
+// row has paneId "": its pictures and outputs come through the chat's source, and UserImages shows
+// no `@image` mention without a pane, so such a row reads no file
 export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
@@ -732,12 +751,18 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   const machineId = useMachineId();
-  const skillMatcher = useSkillMatcher(paneId);
+  /** a host chat (or any source that is not the pane's): the pane-only reads below are off */
+  const hosted = source !== undefined;
+  const chat = useMemo(() => source ?? paneSource(machineId, paneId, { fetchPaneConversation }), [source, machineId, paneId, fetchPaneConversation]);
+  // what the chat's row identities and remembered rows are scoped by: a pane's as they always
+  // were, a host chat's its source's key, never a pane's
+  const scopeId = hosted ? chat.key : paneId;
+  const skillMatcher = useSkillMatcher(hosted ? null : paneId);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
   const visible = paneVisible && pageVisible;
@@ -798,7 +823,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const [older, setOlder] = useState<ConversationTurn[]>([]);
   const olderCount = useRef(0);
   const incarnation = useRef(0);
-  const slots = useRef(createChatRowSlots({ machineId, paneId, historyId: null, incarnation: 0 }, 0));
+  const slots = useRef(createChatRowSlots({ machineId, paneId: scopeId, historyId: null, incarnation: 0 }, 0));
   /** the page before everything shown; null at the conversation's beginning, undefined when unknown */
   const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined);
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
@@ -808,7 +833,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const olderGeneration = useRef(0);
   const history = useRef<string | undefined>(undefined);
   const [historyId, setHistoryId] = useState<string | undefined>(undefined);
-  const shownPane = useRef(paneId);
+  const shownPane = useRef(scopeId);
   const prependAnchor = useRef<{ key: string; offset: number } | null>(null);
   /** where the reader left this pane before (lib/chatScrollMemory.ts), until the first answer puts it back */
   const restoring = useRef<ChatPosition | null>(null);
@@ -834,7 +859,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
     heldFrom.current = null; olderCount.current = 0; setOlder([]); setOlderCursor(undefined); setOlderState("idle");
     incarnation.current += 1;
     prependAnchor.current = null;
-    slots.current = createChatRowSlots({ machineId, paneId, historyId: history.current ?? null, incarnation: incarnation.current }, 0);
+    slots.current = createChatRowSlots({ machineId, paneId: scopeId, historyId: history.current ?? null, incarnation: incarnation.current }, 0);
   };
 
   /** What an answer says beside its turns: where older pages start, its metadata, abandoned turns. */
@@ -849,7 +874,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
     if (next.source === "conversation") {
       const count = olderCount.current + next.turns.length;
       if (slots.current.scope.historyId !== (history.current ?? null) || lastAnswer.current?.source === "scrollback") {
-        slots.current = createChatRowSlots({ machineId, paneId, historyId: history.current ?? null, incarnation: ++incarnation.current }, count);
+        slots.current = createChatRowSlots({ machineId, paneId: scopeId, historyId: history.current ?? null, incarnation: ++incarnation.current }, count);
       } else if (count > slots.current.rows.length) {
         slots.current = appendChatRowSlots(slots.current, count - slots.current.rows.length);
       } else if (count < slots.current.rows.length) {
@@ -869,9 +894,9 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   };
 
   useLayoutEffect(() => {
-    shownPane.current = paneId;
+    shownPane.current = scopeId;
     stopRestore.current?.();
-    restoring.current = readChatPosition(paneStorageId(machineId, paneId)) ?? null;
+    restoring.current = readChatPosition(chat.key) ?? null;
     history.current = undefined; setHistoryId(undefined);
     pagingAway.current = false; stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setAway(false); setLoaded(false); setError(null); setErrorStatus(null); setPrompt(null); setAbandoned(null); setRestored(null);
     dropOlder();
@@ -880,13 +905,13 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
     wasConnected.current = connected;
     // Stale while revalidating: the last answer read for this pane draws before paint, and the
     // mount read still asks the server; an unchanged answer (a 304) is this object and is skipped.
-    const cached = peekPaneConversation(paneId);
+    const cached = hosted ? undefined : peekPaneConversation(paneId);
     if (cached !== undefined && cached.source !== "scrollback" && loadedChatTimeline() !== null) {
       history.current = cached.history_id; setHistoryId(cached.history_id);
       showAnswerDetails(cached);
       showAnswer(cached, conversationState(cached));
     }
-  }, [paneId, machineId]);
+  }, [paneId, machineId, chat.key]);
 
 
   useEffect(() => {
@@ -916,7 +941,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       try {
         for (let step = 0; step < 32 && before !== held; step++) {
           if (cancelled) return null;
-          const page = await fetchPaneConversation(paneId, { before, ...(held === null ? {} : { since: held }) });
+          const page = await chat.read({ before, ...(held === null ? {} : { since: held }) });
           if (page.cursor === held) {
             pages.unshift(page.turns);
             return pages.flat();
@@ -935,14 +960,14 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       try {
         let conversation;
         try {
-          conversation = await fetchPaneConversation(paneId, heldFrom.current === null ? undefined : { from: heldFrom.current });
+          conversation = await chat.read(heldFrom.current === null ? undefined : { from: heldFrom.current });
         } catch (cause) {
           // a new session or a Codex backtrack replaced the transcript the older pages came from
           if (heldFrom.current === null || !(cause instanceof ApiError) || cause.status !== 409) throw cause;
           if (cancelled || generation !== olderGeneration.current) return;
           dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
           generation = olderGeneration.current;
-          conversation = await fetchPaneConversation(paneId);
+          conversation = await chat.read();
         }
         if (cancelled || generation !== olderGeneration.current) return;
         // the timeline's chunk is in hand before any turn is: the list mounts once, with the refs bound
@@ -977,7 +1002,8 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
         }
         showAnswerDetails(conversation);
         let next: ChatState;
-        if (conversation.source !== "scrollback") next = conversationState(conversation);
+        // a host chat never answers with scrollback: the terminal reads below are a pane's only
+        if (conversation.source !== "scrollback" || hosted) next = conversationState(conversation);
         else if (agent !== null) next = { source: "scrollback", turns: [], messages: [], truncated: false };
         else {
           // The reader has rejected this history. Hide it before the separate terminal
@@ -1000,22 +1026,25 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       }
     };
     conversationRefresh.setRead(read);
-    onConversationWatch?.(paneId, true);
+    // shown, the chat is watched: a pane through its conversation-watch, a host chat by its source's lease
+    if (hosted) chat.watch?.(true);
+    else onConversationWatch?.(paneId, true);
     return () => {
       cancelled = true;
       // Older pages queued behind this reader must not start for a hidden/replaced screen.
       olderGeneration.current += 1;
       loadingOlder.current = false; setOlderState("idle");
-      onConversationWatch?.(paneId, false);
+      if (hosted) chat.watch?.(false);
+      else onConversationWatch?.(paneId, false);
       conversationRefresh.stop();
     };
-  }, [paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
+  }, [paneId, chat, hosted, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
 
   // Sends, status/history repairs and visibility return read immediately without cancelling
   // the answer in flight. The reader is installed before this effect requests its first read.
   useEffect(() => {
     if (visible) conversationRefresh.refresh();
-  }, [paneId, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
+  }, [paneId, chat, refreshKey, pollKey, visible, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
 
   // Mount/visibility return already read immediately; only a changed push key invalidates.
   useEffect(() => {
@@ -1024,15 +1053,21 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
     if (seen.pane === paneId && seen.key !== invalidationKey && visible) conversationRefresh.invalidate();
   }, [paneId, invalidationKey, visible, conversationRefresh]);
 
-  useEffect(() => { conversationRefresh.setPushes(conversationPushes); }, [conversationPushes, conversationRefresh]);
+  // a host chat's source pushes its changes: the backstop is the pushed chat's
+  useEffect(() => { conversationRefresh.setPushes(conversationPushes || hosted); }, [conversationPushes, hosted, conversationRefresh]);
+
+  // A source's own changes (a host chat's push, its host back, the page or the event stream back)
+  // read the newest page at once, one read at a time: changes during a read make exactly one more
+  // (ConversationRefresh's lane, as hostChats.coalesced did for the host chat's screen).
+  useEffect(() => chat.onChange?.(() => conversationRefresh.refresh()), [chat, conversationRefresh]);
 
   // A scrollback stand-in has no native file for the server to watch. Its source is the
   // pane's own screen, so terminal output is the invalidation, under the same 2s bound.
   useEffect(() => {
-    if (state.source !== "scrollback" || !visible || onTerminalOutput === undefined) return;
+    if (hosted || state.source !== "scrollback" || !visible || onTerminalOutput === undefined) return;
     onTerminalOutput(() => conversationRefresh.invalidate());
     return () => onTerminalOutput(null);
-  }, [state.source, visible, onTerminalOutput, conversationRefresh]);
+  }, [hosted, state.source, visible, onTerminalOutput, conversationRefresh]);
 
   // Catch writes made offline as soon as the existing socket is connected again. The first
   // connection after the pane shows (a fresh attach) is no reconnect: while the mount read is
@@ -1056,9 +1091,9 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
     setOlderState("loading");
     await conversationRefresh.page(async () => {
       try {
-        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
-        const page = await fetchPaneConversation(paneId, { before });
-        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+        if (shownPane.current !== scopeId || olderGeneration.current !== generation) return;
+        const page = await chat.read({ before });
+        if (shownPane.current !== scopeId || olderGeneration.current !== generation) return;
         if (page.history_id !== history.current) {
           dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
           setPollKey((key) => key + 1); return;
@@ -1080,7 +1115,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
         // the newest page may have slid since it was read: poll it from the held start now
         if (first) setPollKey((key) => key + 1);
       } catch (cause) {
-        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+        if (shownPane.current !== scopeId || olderGeneration.current !== generation) return;
         if (cause instanceof ApiError && cause.status === 409) {
           dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
           setPollKey((key) => key + 1);
@@ -1090,7 +1125,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
         if (olderGeneration.current === generation) loadingOlder.current = false;
       }
     });
-  }, [fetchPaneConversation, olderCursor, paneId, conversationRefresh]);
+  }, [chat, olderCursor, scopeId, conversationRefresh]);
 
   // Reconcile the estimated prepend with the actual reader row, through the list's
   // own scroll command. No scrollHeight delta or second virtualizer owns the position.
@@ -1104,7 +1139,8 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
 
   // Prompts belong to the visible screen, not the native transcript: a Codex directory-trust
   // menu can appear while idle without any file mutation. Keep their independent 2s poll.
-  const pollPrompt = connected && !ended && agent !== null;
+  // a host chat's question is its host's (the screen around the chat asks it): no pane to poll
+  const pollPrompt = !hosted && connected && !ended && agent !== null;
   useEffect(() => {
     if (!pollPrompt) { setPrompt(null); setRestored(null); onSuggestionRef.current?.(paneId, null); onRestoredRef.current?.(paneId, null); return; }
     if (!visible) return;
@@ -1227,7 +1263,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       if (rect.bottom > top && (first === null || rect.top < first.top)) first = { key: row.dataset.chatRow ?? "", top: rect.top };
     }
     const turn = first === null ? undefined : timelineRows.find((row) => row.key === first.key)?.turn;
-    rememberChatPosition(paneStorageId(machineId, paneId), {
+    rememberChatPosition(chat.key, {
       historyId: history.current ?? null,
       turn: turn === undefined ? "" : chatTurnAnchor(turn),
       offset: first === null ? 0 : first.top - top,
@@ -1359,10 +1395,10 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const renderTurn = useCallback((row: { key: string; turn: ConversationTurn }, index: number) => {
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
-    return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
+    return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t(hosted ? "This message can't be shown here." : "This message can't be shown here. The terminal has it.")}</p>}>
       <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher]);
   const header = <>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -1400,12 +1436,13 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
-  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
+  const transcriptLabel = label ?? t("conversation of {pane}", { pane: paneId });
+  return <ChatSourceContext.Provider value={chat}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
     <div className="chat-frame">
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
       // its chunk is still loading: no turn is read until it arrives, so this is the loading state
-      ? <div className="chat-view chat-view-virtual" role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
+      ? <div className="chat-view chat-view-virtual" role="log" aria-live="polite" aria-label={transcriptLabel}>
         <div className="chat-transcript chat-transcript-virtual">
           <div className="chat-virtual-header">{header}</div>
           <div className="chat-virtual-footer">{footer}</div>
@@ -1422,10 +1459,10 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       memories={rowMemories}
       header={header}
       footer={footer}
-      label={t("conversation of {pane}", { pane: paneId })}
+      label={transcriptLabel}
       onScroll={onScroll}
       renderRow={renderTurn}
-    /> : <div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
+    /> : <div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={transcriptLabel}>
       <div className="chat-transcript" data-conversation-source={state.conversationSource}>
         {agent !== null ? <TerminalFallback key={paneId} paneId={paneId} visible={visible} />
           : state.messages.map((message, index) => <FallbackTurn key={index} paneId={paneId} message={message} />)}
@@ -1449,5 +1486,5 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider>;
+  </ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatSourceContext.Provider>;
 });

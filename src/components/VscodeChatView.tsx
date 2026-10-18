@@ -4,44 +4,33 @@
  * waits on in the prompt card's look, and a composer whose two pills pick the next message's model
  * and effort, and its agent (VscodePickerSheet).
  *
- * The screen reads the chat when it opens and on each `host-chat-changed` push for it, and keeps
- * the bridge watching it (a 90 s lease, renewed every 30 s while the page is shown). A message goes
- * out once, on the user's tap: a send that fails leaves its text in the box and says so.
+ * The transcript is the app's ChatView, reading the chat through its host source
+ * (lib/chatSource.ts): the read when it opens, a re-read on each `host-chat-changed` push for it and
+ * on resume, the bridge's watch (a 90 s lease, renewed every 30 s while shown), and earlier pages.
+ * Every read the source makes is handed here too, for the title, the prompt card and the pills.
+ * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, LoaderCircle } from "lucide-react";
-import type { LegendListRef } from "@legendapp/list/react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
 import "./Composer.css";
 import "./VscodeChatView.css";
 
-import type { ConversationTurn } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostModel } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { useSettings } from "../lib/settings.ts";
-import { usePageVisible } from "../lib/visibility.ts";
-import type { ChatRowMemory } from "../lib/chatRowState.tsx";
+import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, choose, chosenFor, coalesced, confirmHost, errorText, fetchHostChat, fetchHostModels, keepHostDraft, onHostChatMessage, onHostChatResume, readHostDraft,
-  sendErrorText, sendHost, setHostDraftModel, settleChoice, watchHostChat, type HostChoice,
+  agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostModels, keepHostDraft, readHostDraft,
+  sendErrorText, sendHost, setHostDraftModel, settleChoice, type HostChoice,
 } from "../lib/hostChats.ts";
 import { AgentMark } from "./AgentMark.tsx";
-import { Turn } from "./ChatView.tsx";
-import { loadChatTimeline, useChatTimeline } from "./chatTimelineLoader.ts";
+import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
-import { RenderBoundary } from "./RenderBoundary.tsx";
 import { VscodePickerSheet } from "./VscodePickerSheet.tsx";
 
-/** How often the screen renews the bridge's watch on the chat; the lease is 90 s. */
-const WATCH_MS = 30_000;
-/** Scrolling this close to the top asks for the turns before. */
-const LOAD_OLDER_PX = 400;
-
 export interface VscodeChatViewProps { machineId: string; session: string }
-
-interface Row { key: string; beforeUser: boolean; turn: ConversationTurn }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
 
@@ -77,12 +66,13 @@ export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, 
 
 export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const t = useT();
-  const { settings } = useSettings();
-  const visible = usePageVisible();
-  const ChatTimeline = useChatTimeline();
-  const [chat, setChat] = useState<HostChatRead | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
+  // the chat's reads, its watch and its pushes: one source for as long as this chat is open
+  const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
+  const [chat, setChat] = useState<HostChatRead | null>(() => source.last());
+  // bumped to read the chat again now (a send, an answer); `sent` also tells the chat a message went
+  const [refresh, setRefresh] = useState(0);
+  const [sent, setSent] = useState(0);
+  const reread = (): void => setRefresh((key) => key + 1);
   const [choice, setChoice] = useState<HostChoice>(() => chosenFor(machineId, session));
   const [text, setText] = useState(() => readHostDraft(machineId, session));
   const [sending, setSending] = useState(false);
@@ -91,93 +81,15 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const [sheet, setSheet] = useState<"model" | "agent" | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
-  const scroller = useRef<HTMLDivElement | null>(null);
-  const listRef = useRef<LegendListRef | null>(null);
-  const following = useRef(true);
-  const memories = useMemo(() => new Map<string, ChatRowMemory>(), []);
-  // the row keys: the turn's place counted from the first one read, so a page of older turns
-  // takes keys of its own and the rows already drawn keep theirs
-  const base = useRef(0);
-  const count = useRef(0);
-  const generation = useRef(0);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // what each read says beside the turns; an unchanged one keeps the object shown
+  useEffect(() => source.onRead((next) => {
+    if (mounted.current) setChat((current) => current !== null && current.signature === next.signature ? current : next);
+  }), [source]);
 
-  const apply = useCallback((next: HostChatRead, older: boolean): void => {
-    if (older) base.current -= Math.max(0, next.turns.length - count.current);
-    count.current = next.turns.length;
-    setChat((current) => current !== null && current.signature === next.signature ? current : next);
-    setError(null);
-  }, []);
-
-  const read = useCallback(async (): Promise<void> => {
-    const turn = ++generation.current;
-    try {
-      const next = await fetchHostChat(machineId, session);
-      if (mounted.current && turn === generation.current) apply(next, false);
-    } catch (cause) {
-      if (mounted.current && turn === generation.current) setError(errorText(cause));
-    }
-  }, [machineId, session, apply]);
-
-  // a push re-reads the chat, one read at a time: pushes during it make exactly one more
-  const reread = useMemo(() => coalesced(read), [read]);
-  useEffect(() => {
-    void loadChatTimeline().catch(() => undefined);
-    void reread();
-    return onHostChatMessage((from, pushed) => {
-      if (from !== machineId) return;
-      if (pushed.type === "host-chat-changed" ? pushed.session === session : pushed.host.state === "connected") void reread();
-    });
-  }, [machineId, session, reread]);
-  // back on screen, or the event stream reopened: a push may have been missed meanwhile
-  useEffect(() => onHostChatResume(() => { void reread(); }), [reread]);
-
-  // the bridge watches the chat while it is on screen; a closed tab lets the lease run out
-  useEffect(() => {
-    if (!visible) return;
-    const renew = (): void => { void watchHostChat(machineId, session).catch(() => undefined); };
-    renew();
-    const timer = window.setInterval(renew, WATCH_MS);
-    return () => window.clearInterval(timer);
-  }, [machineId, session, visible]);
-
-  const loadOlder = useCallback(async (): Promise<void> => {
-    const cursor = chat?.cursor;
-    if (!cursor || olderState === "loading") return;
-    setOlderState("loading");
-    const turn = ++generation.current;
-    try {
-      const next = await fetchHostChat(machineId, session, cursor);
-      if (!mounted.current) return;
-      if (turn === generation.current) apply(next, true);
-      setOlderState("idle");
-    } catch {
-      if (mounted.current) setOlderState("failed");
-    }
-  }, [chat?.cursor, olderState, machineId, session, apply]);
-
-  const onScroll = (): void => {
-    const node = scroller.current;
-    if (node === null) return;
-    following.current = node.scrollHeight - node.clientHeight - node.scrollTop <= 48;
-    if (node.scrollTop < LOAD_OLDER_PX && olderState === "idle") void loadOlder();
-  };
-
-  const turns = chat?.turns ?? [];
-  const rows = useMemo<Row[]>(() => turns.map((turn, index) => ({
-    key: `${base.current + index}`,
-    turn,
-    beforeUser: turn.role === "assistant" && turns[index + 1]?.role === "user",
-  })), [turns]);
   const busy = chat?.busy === true;
   const status = chat?.prompt ? "blocked" : busy ? "working" : "idle";
-  const renderRow = useCallback((row: Row, index: number) => {
-    const live = index === rows.length - 1 && row.turn.role === "assistant" && status !== "idle";
-    return <RenderBoundary resetKey={row.turn} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here.")}</p>}>
-      <Turn paneId="" turn={row.turn} live={live} waiting={live && status === "blocked"} showThinking={settings.showThinking} />
-    </RenderBoundary>;
-  }, [rows.length, status, settings.showThinking, t]);
 
   // what the next message carries: the phone's pick, else what the chat used last
   const model = choice.model ? { id: choice.model.id, effort: choice.model.effort ?? null } : chat?.model ?? null;
@@ -233,9 +145,10 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
       // words typed while it was on its way stay in the box
       setText((current) => current.trim() === words ? "" : current);
       setQueued(result.queued);
-      following.current = true;
-      // the pills let a pick go only once the read names it as the chat's last
-      void reread();
+      // the chat reads it now (and follows it to the end); the pills let a pick go only once the
+      // read names it as the chat's last
+      setSent((key) => key + 1);
+      reread();
     } catch (cause) {
       // once, by the user's tap: the words stay in the box for the next one
       if (mounted.current) setSendError(sendErrorText(cause, t));
@@ -245,41 +158,20 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   useEffect(() => { if (!busy) setQueued(false); }, [busy]);
 
 
-  const header = <>
-    <p className="host-chat-title"><AgentMark agent="vscode" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
-    {chat?.cursor && (
-      <button type="button" className="btn btn-ghost chat-older" disabled={olderState === "loading"} onClick={() => void loadOlder()}>
-        {t(olderState === "loading" ? "Loading earlier messages…" : olderState === "failed" ? "Couldn't load earlier messages — retry" : "Earlier messages")}
-      </button>
-    )}
-    {chat !== null && chat.cursor === null && base.current < 0 && <p className="chat-endcap">{t("beginning of conversation")}</p>}
-  </>;
-  const footer = <>
-    {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{error}</p>}
-    {chat === null && error === null && <p className="chat-inline-state" role="status">{t("Loading conversation…")}</p>}
-    {chat !== null && turns.length === 0 && chat.prompt === null && <div className="chat-empty"><AgentMark agent="vscode" size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
-  </>;
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
   const statusLine = sendError !== null ? null : queued ? t("Queued: it goes out when this turn ends") : busy ? t("Copilot is working on this chat; Send queues the message") : null;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
+    <p className="host-chat-title"><AgentMark agent="vscode" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
     <div className="terminal-surface">
-      <div className="chat-frame"><div className="chat-frame-body">
-        {ChatTimeline === null
-          ? <div className="chat-view chat-view-virtual" role="log" aria-label={label}>
-            <div className="chat-transcript chat-transcript-virtual">
-              <div className="chat-virtual-header">{header}</div>
-              <div className="chat-virtual-footer">{footer}</div>
-            </div>
-          </div>
-          : <ChatTimeline rows={rows} scope={`${machineId}\n${session}`} source={undefined} scroller={scroller} listRef={listRef} following={following}
-            smoothFollow={false} memories={memories} header={header} footer={footer} label={label} onScroll={onScroll} renderRow={renderRow} />}
-      </div></div>
+      {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
+      <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}
+        connected ended={false} agent="vscode" agentStatus={status} />
     </div>
     <div className="prompt-dock" aria-live="polite">
-      {chat?.prompt && <VscodePromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={() => void reread()} onAnswered={() => {
+      {chat?.prompt && <VscodePromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={reread} onAnswered={() => {
         setChat((current) => current === null ? current : { ...current, prompt: null });
-        void reread();
+        reread();
       }} />}
     </div>
     <div className="composer host-composer" role="group" aria-label={t("Message composer")}>
