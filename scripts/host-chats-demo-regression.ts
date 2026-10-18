@@ -687,11 +687,17 @@ try {
         await view.locator(".composer-send-menu").click();
         await page.getByRole("dialog", { name: "Send", exact: true }).getByRole("button", { name: "Stop and Send" }).click();
         await page.getByRole("dialog", { name: "Send", exact: true }).waitFor({ state: "detached", timeout: 5000 });
-        // the new turn is in the transcript; it may sit under the New messages jump
-        // (the chat does not follow here yet: a ledgered minor) so the jump is pressed, as a user would
-        const jump = view.locator(".chat-new-messages");
-        if (await jump.count() > 0) await jump.click();
-        await view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" }).waitFor({ state: "attached" });
+        // the chat follows to the turn just sent: it is in view, with no New messages jump to press
+        const sentTurn = view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" });
+        await sentTurn.waitFor({ state: "attached" });
+        await page.waitForFunction(() => {
+          const turns = [...document.querySelectorAll(".host-chat .chat-turn-user")].filter((node) => node.textContent?.includes("FICTIONAL instead"));
+          const scroller = document.querySelector(".host-chat .chat-view");
+          if (turns.length === 0 || scroller === null) return false;
+          const box = turns[0]!.getBoundingClientRect(), view = scroller.getBoundingClientRect();
+          return box.bottom > view.top && box.top < view.bottom;
+        }, undefined, { timeout: 5000 }).catch(() => assert.fail("the chat did not follow to the turn just sent"));
+        assert.equal(await view.locator(".chat-new-messages").count(), 0, "no New messages jump after the user's own send");
         assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)?.body["mode"], "stop_and_send", "Stop and Send posts its mode");
         console.log("PASS Stop and Send cancels, then sends");
 

@@ -1111,6 +1111,9 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   useEffect(() => {
     if (seenSent.current === sentKey) return;
     seenSent.current = sentKey;
+    // a host chat follows the user's own message (VS Code does): read from wherever they were, the
+    // turn they just sent comes into view on its next read, with no "New messages" to press
+    if (hosted) { pagingAway.current = false; stickToBottom.current = true; setNewMessages(false); setAway(false); }
     // sent into a run (a queued message sent now): that turn is the one running, not one to finish
     const page = heldPage.current;
     const last = page[page.length - 1];
