@@ -192,6 +192,7 @@ const GETS: Record<string, Handler> = {
   "models": listModels,
   "image": readImage,
   "tool-output": readToolOutput,
+  "session/config": readConfig,
 };
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
@@ -206,6 +207,7 @@ const POSTS: Record<string, Handler> = {
   "chat/read": markRead,
   "chat/archive": markArchived,
   "chat/delete": deleteChat,
+  "session/config": writeConfig,
 };
 
 async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined): Promise<Response> {
@@ -214,8 +216,9 @@ async function answer(request: Request, route: string, host: AgentHost | null, c
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     return jsonResponse({ host: host.state() });
   }
-  const get = GETS[route];
-  const post = POSTS[route];
+  // a route both reads and writes (session/config) takes its handler by method
+  const get = request.method === "GET" || !POSTS[route] ? GETS[route] : undefined;
+  const post = request.method === "POST" || !GETS[route] ? POSTS[route] : undefined;
   if (!get && !post) return jsonResponse({ error: { code: "not_found", message: `unknown endpoint /api/host-chats/${route}` } }, 404);
   if (get && request.method !== "GET") return badRequest("method_not_allowed", "use GET");
   if (post && request.method !== "POST") return badRequest("method_not_allowed", "use POST");
@@ -511,6 +514,58 @@ async function ended(call: Call, session: string): Promise<void> {
     // a poll of the mirror, bounded by the clock's deadline above
     while (!late && call.host.chat(session)?.activeTurn !== undefined) await Bun.sleep(10); // fixed wait: one poll step
   } finally { call.clock.clearTimeout(timer); }
+}
+
+// ─── The session's mode and permissions ──────────────────────────────────────
+
+/** The host's config keys for the chat's mode and its approvals (VS Code's SessionConfigKey). */
+const MODE_KEY = "mode";
+const APPROVALS_KEY = "autoApprove";
+const APPROVAL_MODES_KEY = "availableApprovalModes";
+
+interface SessionConfig { schema: { properties: Record<string, { enum?: unknown[] }> }; values: Record<string, unknown> }
+const configOf = (host: AgentHost, session: string): SessionConfig | undefined =>
+  (host.mirror().getSession(session) as { config?: SessionConfig } | undefined)?.config;
+const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
+
+/** What the chat's mode and approvals can be, and are: approvals the host offers this session (availableApprovalModes), else its schema's. */
+function configChoices(config: SessionConfig | undefined): { mode: string | null; approvals: string | null; modes: string[]; approvalModes: string[] } {
+  const value = (key: string): string | null => typeof config?.values[key] === "string" ? config.values[key] as string : null;
+  const offered = strings(config?.values[APPROVAL_MODES_KEY]);
+  return {
+    mode: value(MODE_KEY),
+    approvals: value(APPROVALS_KEY),
+    modes: strings(config?.schema.properties[MODE_KEY]?.enum),
+    approvalModes: offered.length > 0 ? offered : strings(config?.schema.properties[APPROVALS_KEY]?.enum),
+  };
+}
+
+async function readConfig(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  await watched(call, session);
+  return jsonResponse(configChoices(configOf(call.host, session)));
+}
+
+/** Sets the chat's mode or approvals: only the keys given, merged (session/configChanged), as VS Code's pickers do. */
+async function writeConfig(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  await watched(call, session);
+  const choices = configChoices(configOf(call.host, session));
+  const config: Record<string, string> = {};
+  const mode = call.body["mode"];
+  if (mode !== undefined) {
+    if (!text(mode) || !choices.modes.includes(mode)) return badRequest("invalid_mode", `mode must be one of ${choices.modes.join(", ") || "(none on this chat)"}`);
+    config[MODE_KEY] = mode;
+  }
+  const approvals = call.body["approvals"];
+  if (approvals !== undefined) {
+    if (!text(approvals) || !choices.approvalModes.includes(approvals)) return badRequest("invalid_approvals", `approvals must be one of ${choices.approvalModes.join(", ") || "(none on this chat)"}`);
+    config[APPROVALS_KEY] = approvals;
+  }
+  if (Object.keys(config).length === 0) return badRequest("missing_config", "give mode or approvals");
+  call.host.dispatch(session, { type: ActionType.SessionConfigChanged, config } as StateAction);
+  return jsonResponse({ ok: true });
 }
 
 async function stopTurn(call: Call): Promise<Response> {

@@ -74,6 +74,10 @@ function labelMapKeys(): string[] {
     ...grab("lib/usage.ts", "WINDOW_LABEL", value),
     ...grab("lib/toolVerbs.ts", "VERB_LABEL", value),
     ...grab("lib/compose.ts", "HOST_SEND_MENU", /label: "([^"]+)"/g),
+    ...grab("components/ModelPicker.tsx", "MODE_LABEL", value),
+    ...grab("components/ModelPicker.tsx", "APPROVALS_LABEL", value),
+    ...grab("components/ModelPicker.tsx", "APPROVALS_HINT", value),
+    ...grab("lib/modelProvider.ts", "SECTION_TITLES", /"([^"]+)"/g),
   ];
 }
 

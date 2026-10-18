@@ -86,3 +86,9 @@ export interface HostNew { id?: string; cwd: string; text: string; model?: { id:
  * did not go out: open that chat (keep the text in its composer), never create another.
  */
 export interface HostNewResult { session: string; sent?: false }
+
+/**
+ * GET /api/host-chats/session/config: the chat's mode and approvals (the session's config, which VS
+ * Code's mode picker sets too), and what each can be on this host. Null where the host sends none.
+ */
+export interface HostSessionConfig { mode: string | null; approvals: string | null; modes: string[]; approvalModes: string[] }

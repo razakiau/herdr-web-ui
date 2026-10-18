@@ -11,7 +11,7 @@ import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
-import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult } from "../../shared/host-chats.ts";
+import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
@@ -89,6 +89,15 @@ async function post<T>(machineId: string, path: string, body: unknown): Promise<
 /** The models the PC's Copilot offers, and the custom agents enabled in this chat. */
 export function fetchHostModels(machineId: string, session: string): Promise<{ models: HostModel[]; agents: HostAgent[] }> {
   return getJson(machinePath(machineId, `host-chats/models?${new URLSearchParams({ session }).toString()}`));
+}
+
+export function fetchHostConfig(machineId: string, session: string): Promise<HostSessionConfig> {
+  return getJson(machinePath(machineId, `host-chats/session/config?${new URLSearchParams({ session }).toString()}`));
+}
+
+/** Sets the chat's mode or approvals on its host (only what is given): it stays the chat's, as in VS Code. */
+export function setHostConfig(machineId: string, session: string, change: { mode?: string; approvals?: string }): Promise<{ ok: true }> {
+  return post(machineId, "host-chats/session/config", { session, ...change });
 }
 
 /** Keeps the bridge subscribed to this chat for its lease (90 s): the screen renews it while it is shown. */

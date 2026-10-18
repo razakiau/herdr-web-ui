@@ -189,3 +189,136 @@
   padding: var(--space-2) var(--space-3);
   resize: vertical;
 }
+
+/* the model pill's "High · 1M", a quiet chip of its own beside it */
+.host-chat-detail {
+  flex: none;
+  align-self: center;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.host-chat-mode {
+  flex-shrink: 3;
+}
+
+/* the picker's search box, provider tabs and one-line model rows (ModelPicker.tsx) */
+.host-picker-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.host-picker-search > svg {
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.host-picker-search .input {
+  width: 100%;
+  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
+}
+
+.host-picker-tabs {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.host-picker-tab {
+  flex: none;
+  min-height: var(--chip-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.host-picker-tab.is-picked {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.host-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  border-radius: var(--radius-lg);
+}
+
+.host-model-row.is-picked {
+  background: var(--accent-tint);
+}
+
+.host-model-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--row-h);
+  padding: 0 var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.host-model-check {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--accent);
+}
+
+.host-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-model-pin {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--text-dim);
+}
+
+.host-model-detail {
+  padding: 0 var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+button.host-model-detail {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.host-model-row > .host-picker-chips {
+  grid-column: 1 / -1;
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) * 2 + var(--space-4));
+}
+
+.model-mark-sparkle {
+  color: var(--text-dim);
+}

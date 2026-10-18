@@ -1133,6 +1133,50 @@ describe("host chat send modes: steer, queue, stop and send", () => {
   });
 });
 
+describe("host chat session config: mode and permissions", () => {
+  // the live shape (the Mac's agent host, 2026-10-18): mode and autoApprove with labels, the
+  // approval modes this host offers, and the one in effect
+  const CONFIG = {
+    schema: { type: "object", properties: {
+      mode: { type: "string", title: "Agent Mode", enum: ["interactive", "plan", "autopilot"], enumLabels: ["Interactive", "Plan", "Autopilot"], sessionMutable: true },
+      autoApprove: { type: "string", title: "Approvals", enum: ["default", "assisted", "autoApprove"], enumLabels: ["Manual permissions", "Assisted permissions", "Allow all"], sessionMutable: true },
+      availableApprovalModes: { type: "array", title: "Available Permissions" },
+      isolation: { type: "string", title: "Isolation", enum: ["folder"], sessionMutable: false },
+    } },
+    values: { mode: "interactive", autoApprove: "default", availableApprovalModes: ["default", "assisted", "autoApprove"], isolation: "folder" },
+  };
+  const configured = () => rig({ states: { [sessionUri(1)]: { ...sessionState(1), config: CONFIG } as unknown as SessionState, [sessionUri(2)]: sessionState(2) } });
+
+  it("config_reads_live_values", async () => {
+    const r = await configured();
+    const read = await call(r, `/api/host-chats/session/config?session=${encodeURIComponent(sessionUri(1))}`);
+    expect(read).toEqual({ status: 200, json: { mode: "interactive", approvals: "default", modes: ["interactive", "plan", "autopilot"], approvalModes: ["default", "assisted", "autoApprove"] } });
+    // a session whose host sends no config: nothing to pick
+    expect((await call(r, `/api/host-chats/session/config?session=${encodeURIComponent(sessionUri(2))}`)).json).toEqual({ mode: null, approvals: null, modes: [], approvalModes: [] });
+  });
+
+  it("config_change_merges: dispatches only the changed key, and the read follows", async () => {
+    const r = await configured();
+    expect(await call(r, "/api/host-chats/session/config", { session: sessionUri(1), mode: "plan" })).toEqual({ status: 200, json: { ok: true } });
+    await until("the config change", () => actions(r.fake, "session/configChanged").length > 0);
+    expect(actions(r.fake, "session/configChanged")).toEqual([{ channel: sessionUri(1), action: { type: "session/configChanged", config: { mode: "plan" } } }]);
+    await until("the mirror", () => (r.conn.mirror().getSession(sessionUri(1)) as { config?: { values: Record<string, unknown> } } | undefined)?.config?.values["mode"] === "plan");
+    expect((await call(r, `/api/host-chats/session/config?session=${encodeURIComponent(sessionUri(1))}`)).json).toMatchObject({ mode: "plan", approvals: "default" });
+    expect(await call(r, "/api/host-chats/session/config", { session: sessionUri(1), approvals: "autoApprove" })).toEqual({ status: 200, json: { ok: true } });
+    await until("the second change", () => actions(r.fake, "session/configChanged").length === 2);
+    expect(actions(r.fake, "session/configChanged")[1]!.action).toEqual({ type: "session/configChanged", config: { autoApprove: "autoApprove" } });
+  });
+
+  it("config_unknown_mode_400, an approval mode this host does not offer is 400, and nothing goes", async () => {
+    const r = await configured();
+    for (const [body, code] of [[{ mode: "FICTIONAL" }, "invalid_mode"], [{ approvals: "yolo" }, "invalid_approvals"], [{}, "missing_config"]] as const) {
+      const refused = await call(r, "/api/host-chats/session/config", { session: sessionUri(1), ...body });
+      expect({ code, status: refused.status, got: refused.json.error.code }).toEqual({ code, status: 400, got: code });
+    }
+    expect(actions(r.fake, "session/configChanged")).toEqual([]);
+  });
+});
+
 describe("host chat image and tool-output routes", () => {
   it("image_route_serves_png_bytes", async () => {
     const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });

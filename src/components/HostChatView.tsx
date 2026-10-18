@@ -18,19 +18,20 @@ import "./ChatTimeline.css";
 import "./Composer.css";
 import "./HostChatView.css";
 
-import type { HostAgent, HostChatRead, HostModel } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostModels, hostDraftKey, removeHostPending,
-  sendErrorText, sendHost, setHostDraftModel, settleChoice, stopHost, type HostChoice,
+  agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostModels, hostDraftKey, removeHostPending,
+  sendErrorText, sendHost, setHostConfig, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
 import { Composer } from "./Composer.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
-import { VscodePickerSheet } from "./VscodePickerSheet.tsx";
+import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
+import { providerMark, rowDetail } from "../lib/modelProvider.ts";
 
 export interface HostChatViewProps { machineId: string; session: string }
 
@@ -79,7 +80,8 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
   const reread = (): void => setRefresh((key) => key + 1);
   const [choice, setChoice] = useState<HostChoice>(() => chosenFor(machineId, session));
   const [joined, setJoined] = useState(false);
-  const [sheet, setSheet] = useState<"model" | "agent" | null>(null);
+  const [sheet, setSheet] = useState<"model" | "agent" | "mode" | null>(null);
+  const [config, setConfig] = useState<HostSessionConfig | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -99,7 +101,24 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
   const modelLabel = model === null ? t("Model —") : modelEntry?.name ?? model.id;
   const agentLabel = agent === null ? t("Agent") : catalog?.agents.find((each) => each.uri === agent)?.name ?? agentName(agent);
 
-  const openSheet = (part: "model" | "agent"): void => {
+  // the chat's mode and permissions, as its host has them: read with each read of the chat, so a
+  // change made in VS Code shows here
+  useEffect(() => {
+    if (chat === null) return;
+    void fetchHostConfig(machineId, session).then((value) => { if (mounted.current) setConfig((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value); }, () => undefined);
+  }, [chat, machineId, session]);
+  const pickConfig = (change: { mode?: string; approvals?: string }): void => {
+    setSheetError(null);
+    setConfig((current) => current === null ? current : { ...current, ...(change.mode ? { mode: change.mode } : {}), ...(change.approvals ? { approvals: change.approvals } : {}) });
+    setSheet(null);
+    void setHostConfig(machineId, session, change).then(() => fetchHostConfig(machineId, session)).then((value) => { if (mounted.current) setConfig(value); }, (cause: unknown) => {
+      if (!mounted.current) return;
+      setSheetError(errorText(cause));
+      void fetchHostConfig(machineId, session).then((value) => { if (mounted.current) setConfig(value); }, () => undefined);
+    });
+  };
+
+  const openSheet = (part: "model" | "agent" | "mode"): void => {
     setSheet(part);
     setSheetError(null);
     if (catalog === null) {
@@ -124,9 +143,8 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
     setChoice(chosenFor(machineId, session));
     setSheetError(null);
     void setHostDraftModel(machineId, session, next).catch((cause: unknown) => { if (mounted.current) setSheetError(errorText(cause)); });
-    // a model with an effort to pick keeps the sheet open for it
-    const entry = catalog?.models.find((each) => each.id === next.id);
-    if (!entry?.efforts || next.effort !== undefined) setSheet(null);
+    // the row picks; its effort is the row's right side (ModelPicker), so a pick is done
+    setSheet(null);
   };
   const pickAgent = (next: string | null): void => {
     choose(machineId, session, { agent: next });
@@ -157,16 +175,25 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
   const sendMenu = useMemo(() => ({ default: "steer" as const, onPick: (mode: HostSendPick, text: string) => sendAs(mode, text) }), [sendAs]);
 
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
+  const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
+  const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
+  const detail = modelEntry ? rowDetail(modelEntry, model?.effort ?? null) : model?.effort ?? "";
   const pills = <span className="host-chat-pills">
-    <button type="button" className="composer-pill host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: model?.effort ? `${modelLabel} · ${model.effort}` : modelLabel })} onClick={() => openSheet("model")}>
+    <button type="button" className="composer-pill host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: detail ? `${modelLabel} · ${detail}` : modelLabel })} onClick={() => openSheet("model")}>
+      {modelEntry && <ModelMarkIcon mark={providerMark(modelEntry)} size={12} />}
       <span className={`composer-model${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelLabel}</span>
-      {model?.effort && <span className="composer-reasoning"><span className="composer-reasoning-dot" aria-hidden="true">·</span><span className="composer-reasoning-short">{model.effort}</span></span>}
       <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>
+    {detail !== "" && <span className="host-chat-detail" aria-hidden="true">{detail}</span>}
     <button type="button" className="composer-pill host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
       <span className="composer-model">{agentLabel}</span>
       <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>
+    {(modeLabel !== null || approvalsLabel !== null) && <button type="button" className="composer-pill host-chat-pill host-chat-mode" aria-haspopup="dialog" aria-expanded={sheet === "mode"}
+      aria-label={t("Pick Mode and Permissions, {0}, {1}", { 0: modeLabel ?? "—", 1: approvalsLabel ?? "—" })} onClick={() => openSheet("mode")}>
+      <span className="composer-model">{[modeLabel, approvalsLabel].filter(Boolean).join(" · ")}</span>
+      <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
+    </button>}
   </span>;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
@@ -189,7 +216,7 @@ export function HostChatView({ machineId, session }: HostChatViewProps) {
       pendingNote={joined ? t("Added to your steer") : null}
       onSend={(text) => sendAs("send", text)}
       onAbort={() => { void stopHost(machineId, session).finally(reread); }} />
-    {sheet !== null && <VscodePickerSheet focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} error={sheetError}
-      onModel={pickModel} onAgent={pickAgent} onClose={() => setSheet(null)} />}
+    {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
+      onModel={pickModel} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
   </div>;
 }

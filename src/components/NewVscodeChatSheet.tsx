@@ -23,7 +23,7 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { RecentFolderChips } from "./RecentFolderChips.tsx";
-import { VscodePickerSheet } from "./VscodePickerSheet.tsx";
+import { ModelPicker } from "./ModelPicker.tsx";
 
 export interface NewVscodeChatSheetProps {
   /** the PCs that offer host chats, and each one's chats */
@@ -194,13 +194,11 @@ export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, c
           <button type="submit" className="btn btn-primary" disabled={pending || cwd.trim() === "" || text.trim() === ""}>{t("Start chat")}</button>
         </footer>
       </form>
-      {picker !== null && <VscodePickerSheet focus={picker} models={catalog?.models ?? null} agents={catalog?.agents ?? null}
-        model={model ? { id: model.id, effort: model.effort ?? null } : null} agent={agent} error={catalogError}
+      {picker !== null && <ModelPicker machineId={machineId} focus={picker} models={catalog?.models ?? null} agents={catalog?.agents ?? null}
+        model={model ? { id: model.id, effort: model.effort ?? null } : null} agent={agent} config={null} error={catalogError} onConfig={() => undefined}
         onModel={(next) => {
           setModel(next);
-          // a model with an effort to pick keeps the picker open for it
-          const picked = catalog?.models.find((each) => each.id === next.id);
-          if (!picked?.efforts || next.effort !== undefined) setPicker(null);
+          setPicker(null);
         }}
         onAgent={(next) => { setAgent(next); setPicker(null); }}
         onClose={() => setPicker(null)} />}

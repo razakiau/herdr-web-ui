@@ -24,7 +24,7 @@ const patch = `(() => {
   const calls = window.hostCalls = { posts: [], models: [] };
   // a chat's actions (Task 7): titles given, chats marked unread, read, done and deleted
   const edits = window.hostEdits = { titles: {}, unread: {}, archived: {}, deleted: [], failRead: false };
-  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [], pending: [], stopped: 0 };
+  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [], pending: [], stopped: 0, mode: "interactive", approvals: "default" };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const SIX = new URLSearchParams(location.search).get("pcs") === "6";
@@ -177,11 +177,15 @@ const patch = `(() => {
       if (path === "/api/host-chats/models") return json({
         models: [
           { id: "fictional-own", name: "FICTIONAL Own", provider: "copilotcli", efforts: null, context: null },
-          { id: "fictional/model-a", name: "FICTIONAL Model A", provider: "copilotcli", efforts: null, context: null },
-          { id: "fictional/model-b", name: "FICTIONAL Model B", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null },
+          { id: "fictional/model-a", name: "FICTIONAL Model A (Anthropic)", provider: "copilotcli", efforts: null, context: 200000 },
+          { id: "fictional/model-b", name: "FICTIONAL Model B", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: 1000000 },
+          { id: "fictional/glm-x", name: "FICTIONAL GLM-X (FICTIONAL Go)", provider: "fictional-router", efforts: null, context: null },
         ],
         agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
       });
+      // the session's mode and permissions, as the live host shapes them
+      if (path === "/api/host-chats/session/config" && init?.method === "POST") { if (body.mode) state.mode = body.mode; if (body.approvals) state.approvals = body.approvals; return json({ ok: true }); }
+      if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: ["default", "assisted", "autoApprove"] });
       if (path === "/api/host-chats/chat/watch" || path === "/api/host-chats/chat/draft" || path === "/api/host-chats/chat/confirm") return json({ ok: true });
       if (path === "/api/host-chats/chat/answer") { if (state.holdAnswer) return json({ error: { code: "prompt_changed", message: "FICTIONAL changed" } }, 409); state.answered = true; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/send") {
@@ -441,19 +445,34 @@ try {
         const modelPill = view.locator(".host-chat-model");
         await modelPill.waitFor();
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model A/);
+        assert.equal(await modelPill.locator('svg[aria-label="claude"]').count(), 1, "the FICTIONAL Anthropic model wears the Claude mark");
+        assert.equal(await view.locator(".host-chat-detail").textContent(), "200K", "its context beside the pill");
         await modelPill.click();
-        const sheet = page.getByRole("dialog", { name: "Model and agent" });
+        const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        assert.deepEqual(await sheet.locator(".host-picker-group .host-picker-provider").allTextContents(), ["Copilot", "fictional"], "the host's own models (no provider in the id) stand first, as Copilot");
-        await sheet.locator('[data-model="fictional/model-b"]').click();
+        assert.deepEqual(await sheet.getByRole("tab").allTextContents(), ["All", "copilotcli", "fictional-router"], "a tab per provider");
+        await sheet.getByRole("searchbox", { name: "Search models" }).fill("glm");
+        assert.deepEqual(await sheet.locator("[data-model]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-model"))), ["fictional/glm-x"], "the search keeps the GLM row only");
+        assert.equal(await sheet.locator('[data-model="fictional/glm-x"] svg[aria-label="zhipu"]').count(), 1, "GLM wears Zhipu's mark");
+        await sheet.getByRole("searchbox", { name: "Search models" }).fill("");
+        assert.match(await sheet.locator('[data-model="fictional/model-b"] .host-model-detail').textContent() ?? "", /^1M$/, "a row says its context");
+        await sheet.locator('[data-model="fictional/model-b"] .host-model-pick').click();
+        await sheet.waitFor({ state: "detached" });
+        await modelPill.click();
+        // the pick is Recent now, above All models
+        const recent = sheet.getByRole("region", { name: "Recent" });
+        assert.deepEqual(await recent.locator("[data-model]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-model"))), ["fictional/model-b"], "the pick heads Recent");
+        await recent.locator('[data-model="fictional/model-b"] button.host-model-detail').click();
         await sheet.locator('[data-effort="high"]').click();
         await sheet.waitFor({ state: "detached" });
-        assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pill says the model and its effort");
+        assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B/, "the pill says the model");
+        assert.equal(await view.locator(".host-chat-detail").textContent(), "High · 1M", "and the chip beside it its effort and context");
         await view.locator(".host-chat-agent").click();
-        await sheet.waitFor();
-        assert.equal(await sheet.locator(".host-picker-option[data-agent]").first().textContent(), "Agent", '"Agent" comes first');
-        await sheet.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
+        const agents = page.getByRole("dialog", { name: "Agent", exact: true });
+        await agents.waitFor();
+        assert.equal(await agents.locator(".host-picker-option[data-agent]").first().textContent(), "Agent", '"Agent" comes first');
+        await agents.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
         // the sheet slides up from the bottom edge: measured and drawn once it has settled
         await page.waitForFunction(() => {
           const surface = document.querySelector(".host-picker");
@@ -461,8 +480,25 @@ try {
         });
         await fits("the open sheet");
         if (shots) await page.screenshot({ path: join(shots, "task-5-sheet-390.png") });
-        await sheet.locator(`[data-agent="${REPORT}"]`).click();
-        await sheet.waitFor({ state: "detached" });
+        await agents.locator(`[data-agent="${REPORT}"]`).click();
+        await agents.waitFor({ state: "detached" });
+        // the chat's mode and permissions: a third pill, set once on the chat (session/config)
+        const modePill = view.locator(".host-chat-mode");
+        assert.equal((await modePill.textContent())?.trim(), "Interactive · Manual", "the pill reads the live mode and permissions");
+        await modePill.click();
+        const modes = page.getByRole("dialog", { name: "Agent mode", exact: true });
+        await modes.waitFor();
+        await page.waitForFunction(() => {
+          const surface = document.querySelector(".host-picker");
+          return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
+        });
+        await fits("the open mode sheet");
+        if (shots) await page.screenshot({ path: join(shots, "task-9-mode-390.png") });
+        await modes.locator('[data-mode="plan"]').click();
+        await modes.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.textContent?.trim() === "Plan · Manual");
+        assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).map((post) => post.body), [{ session: SESSION, mode: "plan" }], "picking Plan posts the mode alone");
+        console.log("PASS the model pill wears the Claude mark, search narrows to GLM, and Plan is the chat's mode");
         assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/);
         const drafts = await posts("/api/machines/remote/host-chats/chat/draft");
         assert.deepEqual(drafts.at(-1)?.body, { session: SESSION, model: { id: "fictional/model-b", effort: "high" } }, "the model pick is written to the chat's draft");
@@ -508,7 +544,7 @@ try {
         const queuedRows = view.locator('.host-pending-group[data-kind="queued"]');
         await queuedRows.locator(".host-pending-row", { hasText: "FICTIONAL later" }).waitFor();
         await queuedRows.locator(".host-pending-divider", { hasText: "Queued" }).waitFor();
-        assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pills still show model-b · high after the send");
+        assert.equal(await view.locator(".host-chat-detail").textContent(), "High · 1M", "the pills still show model-b · high after the send");
         assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/, "and Report");
         assert.deepEqual(bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)), { session: SESSION, text: "FICTIONAL later", mode: "queue", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Add to Queue posts mode queue with the pills' model and agent");
         await menu.waitFor({ state: "detached" });
@@ -618,8 +654,8 @@ try {
         assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the chip fills the folder");
         assert.equal(await nextModelRead(readsBefore + 2, "/tmp/fictional-repo"), SESSION, "back in /tmp/fictional-repo, its newest chat's models");
         await form.locator(".host-chat-model").click();
-        const picker = page.getByRole("dialog", { name: "Model and agent" });
-        await picker.locator('[data-model="fictional/model-a"]').click();
+        const picker = page.getByRole("dialog", { name: "Model", exact: true });
+        await picker.locator('[data-model="fictional/model-a"] .host-model-pick').click();
         await picker.waitFor({ state: "detached" });
         assert.match(await form.locator(".host-chat-model").textContent() ?? "", /FICTIONAL Model A/);
         await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL first");
