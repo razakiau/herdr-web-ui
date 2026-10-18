@@ -25,7 +25,7 @@ import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
-import { VscodeChatView } from "./components/VscodeChatView.tsx";
+import { HostChatView } from "./components/HostChatView.tsx";
 import { basename, errorText, noteHostChatStreamOpen, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
@@ -1672,7 +1672,7 @@ export function App() {
                 <main className="terminal-host">
                   {/* a host chat picked in the sidebar takes the pane's place in the active half */}
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
-                    <VscodeChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} />
+                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}

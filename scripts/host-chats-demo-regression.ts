@@ -24,7 +24,7 @@ const patch = `(() => {
   const calls = window.hostCalls = { posts: [], models: [] };
   // a chat's actions (Task 7): titles given, chats marked unread, read, done and deleted
   const edits = window.hostEdits = { titles: {}, unread: {}, archived: {}, deleted: [], failRead: false };
-  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [] };
+  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [], pending: [], stopped: 0 };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const SIX = new URLSearchParams(location.search).get("pcs") === "6";
@@ -92,8 +92,8 @@ const patch = `(() => {
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
-      model: state.model, agent: state.agent, busy: state.busy || prompt !== null, message_ids: ids,
-      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed]) };
+      model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending, message_ids: ids,
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
     ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
@@ -152,6 +152,8 @@ const patch = `(() => {
         { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
         ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
       ]) });
+      if (path === "/api/host-chats/chat/stop") { state.stopped += 1; state.busy = false; return json({ ok: true }); }
+      if (path === "/api/host-chats/chat/pending/remove") { state.pending = state.pending.filter((each) => each.id !== body.id); return json({ ok: true }); }
       // the row and tab menus' actions: the host has them, and says so on its next list
       const action = { "/api/host-chats/chat/rename": "rename", "/api/host-chats/chat/read": "read", "/api/host-chats/chat/archive": "archive", "/api/host-chats/chat/delete": "delete" }[path];
       if (action) {
@@ -186,6 +188,19 @@ const patch = `(() => {
         // the proxy's 502 after the bridge got it: the message went, the answer did not
         const lost = state.failNextSend;
         state.failNextSend = false;
+        // VS Code's send modes on a busy chat: a steer joins the one set, a queue waits, Stop and Send ends the turn first
+        if (state.busy && body.mode !== "stop_and_send") {
+          if (lost) { state.failNextSend = false; }
+          if (body.model) state.model = { id: body.model.id, effort: body.model.effort ?? null };
+          if ("agent" in body) state.agent = body.agent;
+          const kind = body.mode === "steer" ? "steering" : "queued";
+          const steering = kind === "steering" ? state.pending.find((each) => each.kind === "steering") : undefined;
+          if (steering) steering.text = steering.text + "\\n\\n" + body.text;
+          else if (!state.pending.some((each) => each.id === body.id)) state.pending.push({ id: body.id, kind, text: body.text });
+          if (lost) return json({ error: { code: "bad_gateway", message: "FICTIONAL proxy" } }, 502);
+          return json(steering ? { queued: true, joined: true } : { queued: true });
+        }
+        if (body.mode === "stop_and_send") { state.stopped += 1; state.busy = false; }
         const queued = state.busy;
         state.sent.push(body.text);
         if (body.model) state.model = { id: body.model.id, effort: body.model.effort ?? null };
@@ -226,7 +241,7 @@ try {
     try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on" })));
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -460,33 +475,75 @@ try {
         assert.equal(await box.inputValue(), "", "a sent message leaves the box");
         console.log("PASS the pills pick model-b · high and Report; the send carries both and the draft the model");
 
-        // 5. a busy chat: the composer says it works, and Send queues
+        // 5. a busy chat: VS Code's send menu. Send steers by default, a second steer joins the first,
+        // Add to Queue waits for the turn, and Stop and Send ends the turn and sends
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
-        await view.locator(".host-chat-status", { hasText: "Copilot is working on this chat" }).waitFor();
+        assert.equal(await view.locator(".composer-send-menu").count(), 0, "no send menu while the box is empty");
+        await box.fill("FICTIONAL steer one");
+        await view.locator(".composer-send-menu").waitFor();
+        await view.getByRole("button", { name: "Send message" }).click();
+        const steering = view.locator('.host-pending-group[data-kind="steering"]');
+        await steering.locator(".host-pending-divider", { hasText: "Steering" }).waitFor();
+        await steering.locator(".host-pending-row", { hasText: "FICTIONAL steer one" }).waitFor();
+        assert.equal(await box.inputValue(), "", "a steer leaves the box");
+        const steered = await posts("/api/machines/remote/host-chats/chat/send");
+        assert.deepEqual(bare(steered.at(-1)), { session: SESSION, text: "FICTIONAL steer one", mode: "steer", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Send on a busy chat steers, with the pills' model and agent");
+        console.log("PASS a send while busy steers by default, and the Steering row shows");
+        await box.fill("FICTIONAL steer two");
+        await box.press("Enter");
+        await view.locator(".host-pending-note", { hasText: "Added to your steer" }).waitFor();
+        assert.equal(await steering.locator(".host-pending-row").count(), 1, "one steering row");
+        assert.match(await steering.locator(".host-pending-text").textContent() ?? "", /FICTIONAL steer one\s+FICTIONAL steer two/, "holding both texts in order");
+        console.log("PASS a second steer says it was added to your steer, one row holding both");
         await box.fill("FICTIONAL later");
-        await view.getByRole("button", { name: "Queue message" }).click();
-        await view.locator(".host-chat-status", { hasText: "Queued" }).waitFor();
-        const queued = await posts("/api/machines/remote/host-chats/chat/send");
-        assert.equal(queued.length, 2);
+        await view.locator(".composer-send-menu").click();
+        // at 390 px the menu is the app's bottom sheet (RowMenu)
+        const menu = page.getByRole("dialog", { name: "Send", exact: true });
+        await menu.waitFor();
+        assert.deepEqual((await menu.locator(".row-sheet-item").allInnerTexts()).map((text) => text.trim()), ["Stop and Send", "Add to Queue", "Steer with Message"], "VS Code's menu, in its order");
+        assert.equal(await menu.locator('.row-sheet-item[aria-current="true"]').innerText().then((text) => text.trim()), "Steer with Message", "the default (steer) is marked");
+        await fits("the open send menu");
+        if (shots) await page.screenshot({ path: join(shots, "task-8-send-menu-390.png") });
+        await menu.getByRole("button", { name: "Add to Queue" }).click();
+        const queuedRows = view.locator('.host-pending-group[data-kind="queued"]');
+        await queuedRows.locator(".host-pending-row", { hasText: "FICTIONAL later" }).waitFor();
+        await queuedRows.locator(".host-pending-divider", { hasText: "Queued" }).waitFor();
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B.*high/, "the pills still show model-b · high after the send");
         assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/, "and Report");
-        assert.deepEqual(bare(queued[1]), { session: SESSION, text: "FICTIONAL later", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "the next send carries the model and agent the pills show");
-        console.log("PASS a busy chat says it is working, and Send queues the message with the model and agent the pills show");
+        assert.deepEqual(bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)), { session: SESSION, text: "FICTIONAL later", mode: "queue", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Add to Queue posts mode queue with the pills' model and agent");
+        await menu.waitFor({ state: "detached" });
+        if (shots) await page.screenshot({ path: join(shots, "task-8-pending-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
+        console.log("PASS Add to Queue adds a Queued row");
+        await queuedRows.getByRole("button", { name: "Remove from Queue" }).click();
+        await queuedRows.waitFor({ state: "detached" });
+        assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/pending/remove")).map((post) => post.body["session"]), [SESSION], "the row's remove posts once");
+        console.log("PASS a pending row's remove takes it off");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
+        const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;
         await page.evaluate(() => { (window as unknown as { hostState: { failNextSend: boolean } }).hostState.failNextSend = true; });
         await box.fill("FICTIONAL maybe");
-        await view.getByRole("button", { name: "Queue message" }).click();
+        await view.getByRole("button", { name: "Send message" }).click();
         await view.getByRole("alert").filter({ hasText: "Couldn't confirm it was sent. Send again: it won't go twice." }).waitFor();
         assert.equal(await box.inputValue(), "FICTIONAL maybe", "the words stay in the box");
-        await view.getByRole("button", { name: "Queue message" }).click();
-        await view.locator(".host-chat-status", { hasText: "Queued" }).waitFor();
-        const retried = (await posts("/api/machines/remote/host-chats/chat/send")).slice(2);
+        await view.getByRole("button", { name: "Send message" }).click();
+        await page.waitForFunction((count) => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.filter((post) => post.path.endsWith("/chat/send")).length >= count + 2, before);
+        const retried = (await posts("/api/machines/remote/host-chats/chat/send")).slice(before);
         assert.equal(retried.length, 2);
         assert.match(String(retried[0]!.body["id"]), UUID);
         assert.equal(retried[1]!.body["id"], retried[0]!.body["id"], "the retry of the same words reuses the id");
-        assert.notEqual(retried[0]!.body["id"], (await posts("/api/machines/remote/host-chats/chat/send"))[1]!.body["id"], "a new message has a new id");
+        assert.notEqual(retried[0]!.body["id"], (await posts("/api/machines/remote/host-chats/chat/send"))[before - 1]!.body["id"], "a new message has a new id");
         console.log("PASS a send whose answer was lost says to send again, and the retry reuses its id");
+
+        // 5c. Stop and Send: the turn is cancelled and the text starts the next one
+        await box.fill("FICTIONAL instead");
+        await view.locator(".composer-send-menu").click();
+        await page.getByRole("dialog", { name: "Send", exact: true }).getByRole("button", { name: "Stop and Send" }).click();
+        await view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" }).waitFor();
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)?.body["mode"], "stop_and_send", "Stop and Send posts its mode");
+        console.log("PASS Stop and Send cancels, then sends");
+        assert.equal(await view.locator(".composer .voice-mic").count(), 1, "the mic button is there");
+        console.log("PASS the mic button is present");
 
         // 6. nothing wider than the phone
         await fits("the busy chat");

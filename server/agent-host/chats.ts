@@ -555,6 +555,10 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     model: modelOf(chat),
     agent: newest?.message.agent?.uri ?? null,
     busy: chat.activeTurn !== undefined,
+    pending: [
+      ...(chat.steeringMessage ? [{ id: chat.steeringMessage.id, kind: "steering" as const, text: chat.steeringMessage.message.text }] : []),
+      ...(chat.queuedMessages ?? []).map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),
+    ],
     message_ids: [
       ...chat.turns.map((turn) => turn.id), ...(chat.activeTurn ? [chat.activeTurn.id] : []),
       ...(chat.steeringMessage ? [chat.steeringMessage.id] : []), ...(chat.queuedMessages ?? []).map((pending) => pending.id),
@@ -564,7 +568,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
-    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids,
+    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];

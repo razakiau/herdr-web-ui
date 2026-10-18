@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage } from "./compose.ts";
+import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage, HOST_SEND_MENU, hostSendKey } from "./compose.ts";
 
 describe("composerMessage and submitNote", () => {
   it("keeps the message as written for agent.prompt: inner newlines stay, the composer's own trailing ones go", () => {
@@ -329,5 +329,26 @@ describe("commands the chat cannot finish", () => {
     expect(terminalOnlyCommand("claude", "/tree")).toBeNull();
     expect(terminalOnlyCommand("codex", "/tree")).toBeNull();
     expect(terminalOnlyCommand(null, "/tree")).toBeNull();
+  });
+});
+
+describe("the host send menu (VS Code's queue picker)", () => {
+  it("lists Stop and Send, Add to Queue, Steer with Message in that order, with VS Code's icons", () => {
+    expect(HOST_SEND_MENU.map((item) => [item.mode, item.label])).toEqual([
+      ["stop_and_send", "Stop and Send"], ["queue", "Add to Queue"], ["steer", "Steer with Message"],
+    ]);
+  });
+  it("Enter while working steers (the default), Alt+Enter queues; the default queue swaps them", () => {
+    const key = (over: Partial<{ altKey: boolean; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }> = {}) => ({ key: "Enter", altKey: false, shiftKey: false, metaKey: false, ctrlKey: false, ...over });
+    expect(hostSendKey(key(), "steer", true)).toBe("steer");
+    expect(hostSendKey(key({ altKey: true }), "steer", true)).toBe("queue");
+    expect(hostSendKey(key(), "queue", true)).toBe("queue");
+    expect(hostSendKey(key({ altKey: true }), "queue", true)).toBe("steer");
+    expect(hostSendKey(key({ shiftKey: true }), "steer", true)).toBeNull();
+    expect(hostSendKey({ ...key(), key: "a" }, "steer", true)).toBeNull();
+    // with Enter not sending (the setting), Cmd/Ctrl+Enter is the send and Alt goes with it
+    expect(hostSendKey(key(), "steer", false)).toBeNull();
+    expect(hostSendKey(key({ metaKey: true }), "steer", false)).toBe("steer");
+    expect(hostSendKey(key({ ctrlKey: true, altKey: true }), "steer", false)).toBe("queue");
   });
 });

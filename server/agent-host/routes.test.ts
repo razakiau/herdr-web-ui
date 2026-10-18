@@ -11,7 +11,7 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { LEASE_MS, hostChatsRoute, type LeaseClock, type AgentHost } from "./routes.ts";
+import { LEASE_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, type LeaseClock, type AgentHost } from "./routes.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -994,6 +994,144 @@ const withResults = (): ChatState => {
   ], chatState(1));
 };
 const imagePath = (ref: string, n = 1) => `/api/host-chats/image?session=${encodeURIComponent(sessionUri(n))}&ref=${encodeURIComponent(ref)}`;
+
+describe("host chat send modes: steer, queue, stop and send", () => {
+  const busy = (overrides: Record<string, unknown> = {}) => rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active(), ...overrides }), [chatUri(2)]: chatState(2) } });
+  const sendAs = (r: Rig, mode: string, text: string, id: string = crypto.randomUUID()) =>
+    call(r, "/api/host-chats/chat/send", { id, session: sessionUri(1), text, mode });
+
+  it("steer_sets_steering_pending", async () => {
+    const r = await busy();
+    const id = crypto.randomUUID();
+    expect(await sendAs(r, "steer", "FICTIONAL steer", id)).toEqual({ status: 200, json: { queued: true } });
+    await until("the steering message", () => r.conn.chat(sessionUri(1))?.steeringMessage?.id === id);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", id, message: { text: "FICTIONAL steer" } });
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("queue_sets_queued", async () => {
+    const r = await busy();
+    expect((await sendAs(r, "queue", "FICTIONAL later")).json).toEqual({ queued: true });
+    await until("the queued message", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "queued", message: { text: "FICTIONAL later" } });
+  });
+
+  it("send while busy queues, as before; steer or queue on an idle chat starts a turn", async () => {
+    const r = await busy();
+    expect((await sendAs(r, "send", "FICTIONAL plain")).json).toEqual({ queued: true });
+    await until("the queued message", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")["kind"]).toBe("queued");
+    const idle = await rig();
+    for (const mode of ["steer", "queue", "stop_and_send"]) {
+      expect((await call(idle, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(2), text: `FICTIONAL ${mode}`, mode })).json).toEqual({ queued: false });
+      await until(`the ${mode} turn`, () => idle.conn.chat(sessionUri(2))?.activeTurn !== undefined);
+      idle.fake.push(chatUri(2), { type: "chat/turnComplete", turnId: idle.conn.chat(sessionUri(2))!.activeTurn!.id, duration: 1 } as unknown as StateAction);
+      await until(`the ${mode} turn to end`, () => idle.conn.chat(sessionUri(2))?.activeTurn === undefined);
+    }
+    expect(actions(idle.fake, "chat/turnStarted").length).toBe(3);
+    expect(actions(idle.fake, "chat/pendingMessageSet")).toEqual([]);
+  });
+
+  it("second_steer_joins_the_first: one steering message holds both texts in order, under the first id", async () => {
+    const first = uuid(41);
+    const r = await busy({ steeringMessage: { id: first, message: user("FICTIONAL first") } });
+    const second = await sendAs(r, "steer", "FICTIONAL second");
+    expect(second).toEqual({ status: 200, json: { queued: true, joined: true } });
+    await until("the joined steer", () => r.conn.chat(sessionUri(1))?.steeringMessage?.message.text === "FICTIONAL first\n\nFICTIONAL second");
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", id: first, message: { text: "FICTIONAL first\n\nFICTIONAL second" } });
+  });
+
+  it("stop_and_send_waits_for_turn_end: cancels, then starts a turn with the text; queued messages stay queued", async () => {
+    const queued = { id: uuid(42), message: user("FICTIONAL waiting") };
+    const r = await busy({ queuedMessages: [queued] });
+    const id = crypto.randomUUID();
+    const pending = sendAs(r, "stop_and_send", "FICTIONAL instead", id);
+    await until("the cancel", () => actions(r.fake, "chat/turnCancelled").length > 0);
+    expect(only(r.fake, "chat/turnCancelled")).toMatchObject({ turnId: "turn-live" });
+    // the host ends the turn on the cancel (the fake's reducer did, on the dispatched action)
+    expect((await pending).json).toEqual({ queued: false });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === id);
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ turnId: id, message: { text: "FICTIONAL instead" } });
+    expect(r.conn.chat(sessionUri(1))?.queuedMessages).toEqual([queued] as unknown as NonNullable<ChatState["queuedMessages"]>);
+  });
+
+  it("stop_and_send_times_out_10s_without_sending", async () => {
+    const r = await busy();
+    // a host that never ends the turn: its cancel is swallowed
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    let cancelled = 0;
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => { if (action.type === "chat/turnCancelled") cancelled += 1; else dispatch(channel, action); };
+    const pending = call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL never", mode: "stop_and_send" });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await until("the cancel", () => cancelled === 1);
+    r.clock.advance(STOP_AND_SEND_WAIT_MS - 1);
+    // fixed wait: proving the answer does not come before the deadline (nothing arrives)
+    await Bun.sleep(50);
+    expect(settled).toBe(false);
+    r.clock.advance(1);
+    const answer = await pending;
+    expect(answer.status).toBe(409);
+    expect(answer.json.error.code).toBe("turn_still_running");
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+  });
+
+  it("same_id_twice_dispatches_once for each mode", async () => {
+    for (const mode of ["send", "steer", "queue"]) {
+      const r = await busy();
+      const id = crypto.randomUUID();
+      expect((await sendAs(r, mode, `FICTIONAL ${mode}`, id)).json).toMatchObject({ queued: true });
+      await until(`the ${mode} message`, () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+      expect((await sendAs(r, mode, `FICTIONAL ${mode}`, id)).json).toMatchObject({ queued: true });
+      expect({ mode, sets: actions(r.fake, "chat/pendingMessageSet").length }).toEqual({ mode, sets: 1 });
+    }
+    const r = await busy();
+    const id = crypto.randomUUID();
+    expect((await sendAs(r, "stop_and_send", "FICTIONAL once", id)).json).toEqual({ queued: false });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === id);
+    expect((await sendAs(r, "stop_and_send", "FICTIONAL once", id)).json).toEqual({ queued: false });
+    expect(actions(r.fake, "chat/turnCancelled").length).toBe(1);
+    expect(actions(r.fake, "chat/turnStarted").length).toBe(1);
+  });
+
+  it("an unknown mode is refused before anything goes", async () => {
+    const r = await busy();
+    const refused = await sendAs(r, "FICTIONAL-mode", "FICTIONAL x");
+    expect({ status: refused.status, code: refused.json.error.code }).toEqual({ status: 400, code: "invalid_mode" });
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+  });
+
+  it("stop cancels the running turn, and does nothing on an idle chat", async () => {
+    const r = await busy();
+    expect(await call(r, "/api/host-chats/chat/stop", { session: sessionUri(1) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the cancel", () => actions(r.fake, "chat/turnCancelled").length > 0);
+    expect(only(r.fake, "chat/turnCancelled")).toMatchObject({ type: "chat/turnCancelled", turnId: "turn-live" });
+    expect(await call(r, "/api/host-chats/chat/stop", { session: sessionUri(2) })).toEqual({ status: 200, json: { ok: true } });
+    expect(actions(r.fake, "chat/turnCancelled").length).toBe(1);
+  });
+
+  it("pending/remove takes a steering or queued message off by its id, and refuses one the chat does not hold", async () => {
+    const r = await busy({ steeringMessage: { id: uuid(43), message: user("FICTIONAL steer") }, queuedMessages: [{ id: uuid(44), message: user("FICTIONAL queued") }] });
+    expect(await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(44) })).toEqual({ status: 200, json: { ok: true } });
+    expect(await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(43) })).toEqual({ status: 200, json: { ok: true } });
+    await until("both removals", () => actions(r.fake, "chat/pendingMessageRemoved").length === 2);
+    expect(actions(r.fake, "chat/pendingMessageRemoved").map((entry) => entry.action)).toEqual([
+      { type: "chat/pendingMessageRemoved", kind: "queued", id: uuid(44) }, { type: "chat/pendingMessageRemoved", kind: "steering", id: uuid(43) },
+    ]);
+    await until("both gone", () => r.conn.chat(sessionUri(1))?.steeringMessage === undefined && (r.conn.chat(sessionUri(1))?.queuedMessages ?? []).length === 0);
+    const gone = await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(45) });
+    expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
+  });
+
+  it("a read lists the pending messages, steering first, in the chat's order", async () => {
+    const r = await busy({ steeringMessage: { id: uuid(46), message: user("FICTIONAL steer") }, queuedMessages: [{ id: uuid(47), message: user("FICTIONAL q1") }, { id: uuid(48), message: user("FICTIONAL q2") }] });
+    const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    expect(read.json.pending).toEqual([
+      { id: uuid(46), kind: "steering", text: "FICTIONAL steer" }, { id: uuid(47), kind: "queued", text: "FICTIONAL q1" }, { id: uuid(48), kind: "queued", text: "FICTIONAL q2" },
+    ]);
+  });
+});
 
 describe("host chat image and tool-output routes", () => {
   it("image_route_serves_png_bytes", async () => {

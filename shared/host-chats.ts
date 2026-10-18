@@ -52,6 +52,8 @@ export interface HostChatRead {
   agent: string | null;
   /** a turn is running: a send now queues */
   busy: boolean;
+  /** what waits for the running turn: the one steering message first, then the queue in its order */
+  pending: { id: string; kind: "steering" | "queued"; text: string }[];
   /**
    * The ids the chat holds its messages under: its turns' (past, the loaded page, and the running
    * one) and its pending messages'. A phone whose send lost its answer sees here that it went.
@@ -66,7 +68,11 @@ export interface HostChatRead {
  * failure: the bridge dispatches an id once (it becomes the turn's id, or the queued message's).
  * Send one to make a retry safe; without it the bridge mints one, and a retry may go twice.
  */
-export interface HostSend { session: string; id?: string; text: string; model?: { id: string; effort?: string }; agent?: string | null }
+/** `mode`: VS Code's send menu; absent is `send` (starts a turn, or queues behind a running one). */
+export type HostSendMode = "send" | "steer" | "queue" | "stop_and_send";
+export interface HostSend { session: string; id?: string; text: string; model?: { id: string; effort?: string }; agent?: string | null; mode?: HostSendMode }
+/** POST /api/host-chats/chat/send: `queued` when it waits for the running turn; `joined` when a steer joined the one already set. */
+export interface HostSendResult { queued: boolean; joined?: true }
 export interface HostAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true }
 /** `option_id`: the host's confirmation option the user picked, when it offered some. */
 export interface HostConfirm { session: string; turn_id: string; tool_call_id: string; approved: boolean; option_id?: string }

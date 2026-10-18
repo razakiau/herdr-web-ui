@@ -69,6 +69,8 @@ export interface LeaseClock {
 export const LEASE_MS = 90_000;
 /** How long a read with `before` waits for the host's older turns to arrive after fetchTurns answers. */
 const OLDER_TURNS_WAIT_MS = 5_000;
+/** How long Stop and Send waits for the cancelled turn to end before it gives up and sends nothing. */
+export const STOP_AND_SEND_WAIT_MS = 10_000;
 const PREFIX = "/api/host-chats/";
 
 const realClock: LeaseClock = {
@@ -181,7 +183,7 @@ export function hostChatsRoute(request: Request, pathname: string, host: AgentHo
 }
 
 type Handler = (call: Call) => Promise<Response>;
-interface Call { host: AgentHost; leases: HostLeases; url: URL; body: Record<string, unknown> }
+interface Call { host: AgentHost; leases: HostLeases; clock: LeaseClock; url: URL; body: Record<string, unknown> }
 
 const GETS: Record<string, Handler> = {
   // the connection keeps its last list after a disconnect: a down host says so instead of a stale list
@@ -194,6 +196,8 @@ const GETS: Record<string, Handler> = {
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
   "chat/send": sendMessage,
+  "chat/stop": stopTurn,
+  "chat/pending/remove": removePending,
   "chat/answer": answerQuestion,
   "chat/confirm": confirmTool,
   "chat/draft": writeDraft,
@@ -223,7 +227,7 @@ async function answer(request: Request, route: string, host: AgentHost | null, c
     body = payload;
   }
   try {
-    return await (get ?? post)!({ host, leases: leasesOf(host, clock), url: new URL(request.url), body });
+    return await (get ?? post)!({ host, leases: leasesOf(host, clock), clock: clock ?? realClock, url: new URL(request.url), body });
   } catch (error) {
     if (error instanceof Refusal) return error.response;
     return failure(error, host);
@@ -274,6 +278,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function idOf(value: unknown): string {
   if (value === undefined) return randomUUID();
   return text(value) && UUID.test(value) ? value.toLowerCase() : refuse(badRequest("invalid_id", "id must be a UUID"));
+}
+
+/**
+ * How a message goes (VS Code's send menu, ChatSendMode): `send` starts a turn, or queues behind a
+ * running one; `steer` and `queue` set a pending message of that kind on a busy chat; `stop_and_send`
+ * cancels the running turn and starts one with the text. On an idle chat each of them starts a turn.
+ */
+type SendMode = "send" | "steer" | "queue" | "stop_and_send";
+const SEND_MODES: readonly SendMode[] = ["send", "steer", "queue", "stop_and_send"];
+function modeOf(value: unknown): SendMode {
+  if (value === undefined) return "send";
+  return SEND_MODES.includes(value as SendMode) ? value as SendMode : refuse(badRequest("invalid_mode", `mode must be one of ${SEND_MODES.join(", ")}`));
 }
 
 function messageText(value: unknown): string {
@@ -445,22 +461,25 @@ function alreadyHas(chat: ChatState, id: string): { queued: boolean } | null {
  * a queued message (its id). An id this host already sent, or the chat already has, dispatches
  * nothing: the answer is the first one's (queued while still pending).
  */
-function send(host: AgentHost, session: string, channel: string, chat: ChatState, message: Message, id: string): { queued: boolean } {
+function send(host: AgentHost, session: string, channel: string, chat: ChatState, message: Message, id: string, mode: "send" | "steer" | "queue" = "send"): { queued: boolean; joined?: true } {
   const had = alreadyHas(chat, id);
   if (had) return had;
   // sent by this bridge, and no longer in the chat under its id: a queued message that has since
   // started its turn (under a turn id of the host's own)
   if (sentOf(host).get(id)) return { queued: false };
   const queued = chat.activeTurn !== undefined;
+  // a chat holds one steering message: a second steer joins it, under its id (VS Code's rule)
+  const steering = queued && mode === "steer" ? chat.steeringMessage : undefined;
+  const pending = steering ? { ...message, text: `${steering.message.text}\n\n${message.text}` } : message;
   host.dispatch(channel, (queued
-    ? { type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Queued, id, message }
+    ? { type: ActionType.ChatPendingMessageSet, kind: mode === "steer" ? PendingMessageKind.Steering : PendingMessageKind.Queued, id: steering?.id ?? id, message: pending }
     : { type: ActionType.ChatTurnStarted, turnId: id, startedAt: new Date().toISOString(), message }) as StateAction);
   sentOf(host).add(id, session);
   if (message.model) {
     // the message is out; a draft that fails to follow must not make the phone think it was not sent
     try { host.dispatch(channel, draftWith(chat, message.model)); } catch { /* the next model choice writes it */ }
   }
-  return { queued };
+  return steering ? { queued, joined: true } : { queued };
 }
 
 async function sendMessage(call: Call): Promise<Response> {
@@ -469,8 +488,48 @@ async function sendMessage(call: Call): Promise<Response> {
   const words = messageText(call.body["text"]);
   const model = modelOf(call.body["model"]);
   const agent = agentOf(call.body["agent"]);
+  const mode = modeOf(call.body["mode"]);
   const { channel, chat } = await watched(call, session);
-  return jsonResponse(send(call.host, session, channel, chat, messageFrom(call.host.mirror().root, words, model, agent), id));
+  const message = messageFrom(call.host.mirror().root, words, model, agent);
+  if (mode !== "stop_and_send" || chat.activeTurn === undefined || alreadyHas(chat, id) || sentOf(call.host).get(id)) {
+    return jsonResponse(send(call.host, session, channel, chat, message, id, mode === "stop_and_send" ? "send" : mode));
+  }
+  // Stop and Send: the running turn is cancelled, and the text starts the next one once it has ended
+  // (queued messages stay queued); a turn that does not end in time sends nothing
+  call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+  await ended(call, session);
+  const now = call.host.chat(session);
+  if (!now || now.activeTurn !== undefined) return conflictResponse("turn_still_running", "the turn did not stop in time: nothing was sent");
+  return jsonResponse(send(call.host, session, channel, now, message, id));
+}
+
+/** Polls the mirror until the session's turn has ended, or STOP_AND_SEND_WAIT_MS on the call's clock. */
+async function ended(call: Call, session: string): Promise<void> {
+  let late = false;
+  const timer = call.clock.setTimeout(() => { late = true; }, STOP_AND_SEND_WAIT_MS);
+  try {
+    // a poll of the mirror, bounded by the clock's deadline above
+    while (!late && call.host.chat(session)?.activeTurn !== undefined) await Bun.sleep(10); // fixed wait: one poll step
+  } finally { call.clock.clearTimeout(timer); }
+}
+
+async function stopTurn(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const { channel, chat } = await watched(call, session);
+  if (chat.activeTurn) call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+async function removePending(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const id = call.body["id"];
+  if (!text(id) || id === "") return badRequest("missing_id", "id is required");
+  const { channel, chat } = await watched(call, session);
+  const kind = chat.steeringMessage?.id === id ? PendingMessageKind.Steering
+    : (chat.queuedMessages ?? []).some((pending) => pending.id === id) ? PendingMessageKind.Queued : null;
+  if (kind === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
+  call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind, id } as StateAction);
+  return jsonResponse({ ok: true });
 }
 
 async function writeDraft(call: Call): Promise<Response> {

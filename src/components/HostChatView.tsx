@@ -1,8 +1,8 @@
 /**
- * One host chat, read from its PC's agent host through the bridge (lib/hostChats.ts): its
- * turns in the chat's own rows (ChatView's Turn inside ChatTimeline), the question or approval it
- * waits on in the prompt card's look, and a composer whose two pills pick the next message's model
- * and effort, and its agent (VscodePickerSheet).
+ * One host chat, read from its PC's agent host through the bridge (lib/hostChats.ts): its turns in
+ * the app's ChatView, the question or approval it waits on in the prompt card's look, and the app's
+ * Composer, with VS Code's send menu (steer, queue, stop and send), the messages waiting for the
+ * running turn, and two pills that pick the next message's model and effort, and its agent.
  *
  * The transcript is the app's ChatView, reading the chat through its host source
  * (lib/chatSource.ts): the read when it opens, a re-read on each `host-chat-changed` push for it and
@@ -10,27 +10,29 @@
  * Every read the source makes is handed here too, for the title, the prompt card and the pills.
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, LoaderCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
 import "./Composer.css";
-import "./VscodeChatView.css";
+import "./HostChatView.css";
 
 import type { HostAgent, HostChatRead, HostModel } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostModels, keepHostDraft, readHostDraft,
-  sendErrorText, sendHost, setHostDraftModel, settleChoice, type HostChoice,
+  agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostModels, hostDraftKey, removeHostPending,
+  sendErrorText, sendHost, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
+import type { HostSendPick } from "../lib/compose.ts";
+import { Composer } from "./Composer.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
 import { VscodePickerSheet } from "./VscodePickerSheet.tsx";
 
-export interface VscodeChatViewProps { machineId: string; session: string }
+export interface HostChatViewProps { machineId: string; session: string }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
 
@@ -39,7 +41,7 @@ type HostPrompt = NonNullable<HostChatRead["prompt"]>;
  * answered through the host: a question by its option ids (the typed answer as text), an approval
  * by whether the picked option approves, with the host's own option id when it offered one.
  */
-export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, onAnswered }: {
+export function HostPromptCard({ machineId, session, prompt, onPromptChanged, onAnswered }: {
   machineId: string; session: string; prompt: HostPrompt; onPromptChanged(): void; onAnswered(): void;
 }) {
   const submit = async (choice: PromptChoice): Promise<void> => {
@@ -66,7 +68,7 @@ export function VscodePromptCard({ machineId, session, prompt, onPromptChanged, 
   return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown />;
 }
 
-export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
+export function HostChatView({ machineId, session }: HostChatViewProps) {
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
@@ -76,10 +78,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const [sent, setSent] = useState(0);
   const reread = (): void => setRefresh((key) => key + 1);
   const [choice, setChoice] = useState<HostChoice>(() => chosenFor(machineId, session));
-  const [text, setText] = useState(() => readHostDraft(machineId, session));
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [queued, setQueued] = useState(false);
+  const [joined, setJoined] = useState(false);
   const [sheet, setSheet] = useState<"model" | "agent" | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
@@ -135,33 +134,40 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
     setSheet(null);
   };
 
-  const send = async (): Promise<void> => {
+  // One message, once, on the user's tap, as `mode`. True: it went (the composer clears what it
+  // carried); a string: it did not, and says why (the words stay in the box).
+  const sendAs = useCallback(async (mode: HostSendPick | "send", text: string): Promise<boolean | string> => {
     const words = text.trim();
-    if (words === "" || sending) return;
-    setSending(true);
-    setSendError(null);
     try {
       // sent: sendHost lets the stored draft go even if this screen is gone by now
-      const result = await sendHost(machineId, { session, text: words }, { model: chat?.model ?? null, agent: chat?.agent ?? null });
-      if (!mounted.current) return;
-      // words typed while it was on its way stay in the box
-      setText((current) => current.trim() === words ? "" : current);
-      setQueued(result.queued);
-      // the chat reads it now (and follows it to the end); the pills let a pick go only once the
-      // read names it as the chat's last
-      setSent((key) => key + 1);
-      reread();
+      const result = await sendHost(machineId, { session, text: words, ...(mode === "send" ? {} : { mode }) }, { model: chat?.model ?? null, agent: chat?.agent ?? null }, true);
+      if (mounted.current) {
+        setJoined(result.joined === true);
+        // the chat reads it now (and follows it to the end); the pills let a pick go only once the
+        // read names it as the chat's last
+        setSent((key) => key + 1);
+        reread();
+      }
+      return true;
     } catch (cause) {
-      // once, by the user's tap: the words stay in the box for the next one
-      if (mounted.current) setSendError(sendErrorText(cause, t));
+      return sendErrorText(cause, t);
     }
-    if (mounted.current) setSending(false);
-  };
-  useEffect(() => { if (!busy) setQueued(false); }, [busy]);
-
+  }, [chat?.agent, chat?.model, machineId, session, t]);
+  useEffect(() => { if (!busy) setJoined(false); }, [busy]);
+  const sendMenu = useMemo(() => ({ default: "steer" as const, onPick: (mode: HostSendPick, text: string) => sendAs(mode, text) }), [sendAs]);
 
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
-  const statusLine = sendError !== null ? null : queued ? t("Queued: it goes out when this turn ends") : busy ? t("Copilot is working on this chat; Send queues the message") : null;
+  const pills = <span className="host-chat-pills">
+    <button type="button" className="composer-pill host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: model?.effort ? `${modelLabel} · ${model.effort}` : modelLabel })} onClick={() => openSheet("model")}>
+      <span className={`composer-model${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelLabel}</span>
+      {model?.effort && <span className="composer-reasoning"><span className="composer-reasoning-dot" aria-hidden="true">·</span><span className="composer-reasoning-short">{model.effort}</span></span>}
+      <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
+    </button>
+    <button type="button" className="composer-pill host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
+      <span className="composer-model">{agentLabel}</span>
+      <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
+    </button>
+  </span>;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
     <p className="host-chat-title"><AgentMark agent="copilot" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
@@ -171,43 +177,18 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
         connected ended={false} agent="vscode" agentStatus={status} />
     </div>
     <div className="prompt-dock" aria-live="polite">
-      {chat?.prompt && <VscodePromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={reread} onAnswered={() => {
+      {chat?.prompt && <HostPromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={reread} onAnswered={() => {
         setChat((current) => current === null ? current : { ...current, prompt: null });
         reread();
       }} />}
     </div>
-    <div className="composer host-composer" role="group" aria-label={t("Message composer")}>
-      {statusLine !== null && <p className="host-chat-status" role="status" data-status={queued ? "queued" : "working"}>{statusLine}</p>}
-      {sendError !== null && <p className="composer-note host-chat-error" role="alert"><span className="composer-note-text">{sendError}</span></p>}
-      <div className="composer-surface">
-        <textarea className="composer-text" rows={1} value={text} placeholder={t("Message Copilot")} aria-label={t("Message")} spellCheck autoCapitalize="sentences" autoCorrect="on"
-          onChange={(event) => { setText(event.target.value); keepHostDraft(machineId, session, event.target.value); }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && !window.matchMedia?.("(pointer: coarse)").matches) {
-              event.preventDefault();
-              void send();
-            }
-          }} />
-        <div className="composer-controls composer-controls-left host-chat-pills">
-          <button type="button" className="composer-pill host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"} aria-label={t("Model: {model}", { model: model?.effort ? `${modelLabel} · ${model.effort}` : modelLabel })} onClick={() => openSheet("model")}>
-            <span className={`composer-model${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelLabel}</span>
-            {model?.effort && <span className="composer-reasoning"><span className="composer-reasoning-dot" aria-hidden="true">·</span><span className="composer-reasoning-short">{model.effort}</span></span>}
-            <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
-          </button>
-          <button type="button" className="composer-pill host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
-            <span className="composer-model">{agentLabel}</span>
-            <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
-          </button>
-        </div>
-        <div className="composer-controls composer-controls-right">
-          <button type="button" className="composer-action composer-send" aria-label={busy ? t("Queue message") : t("Send message")} title={sending ? t("Sending…") : busy ? t("Queue message") : t("Send message")}
-            aria-busy={sending || undefined} disabled={sending || text.trim().length === 0}
-            onPointerDown={(event) => event.preventDefault()} onClick={() => void send()}>
-            {sending ? <LoaderCircle className="composer-send-progress" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
-          </button>
-        </div>
-      </div>
-    </div>
+    <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
+      draftKey={hostDraftKey(machineId, session)} noMenus keywords={catalog?.agents.map((each) => each.name) ?? []}
+      pills={pills} sendMenu={sendMenu}
+      pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}
+      pendingNote={joined ? t("Added to your steer") : null}
+      onSend={(text) => sendAs("send", text)}
+      onAbort={() => { void stopHost(machineId, session).finally(reread); }} />
     {sheet !== null && <VscodePickerSheet focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} error={sheetError}
       onModel={pickModel} onAgent={pickAgent} onClose={() => setSheet(null)} />}
   </div>;

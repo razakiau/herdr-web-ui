@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
-import "./VscodeChatView.css";
+import "./HostChatView.css";
 
 import type { Machine } from "../../shared/machines.ts";
 import type { HostAgent, HostModel } from "../../shared/host-chats.ts";

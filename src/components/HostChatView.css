@@ -1,5 +1,5 @@
-/* A host chat in the pane's place (VscodeChatView.tsx): the chat lens's stack, transcript and
-   composer (ChatView.css, Composer.css), with two pills to press and the picker sheet. */
+/* A host chat in the pane's place (HostChatView.tsx): the chat lens's stack, transcript and the
+   app's composer (ChatView.css, Composer.css), with two pills to press and the picker sheet. */
 .host-chat {
   height: 100%;
 }
@@ -21,15 +21,10 @@
   white-space: nowrap;
 }
 
-/* the composer's box with no status sentence between its two control groups: the pills take the
-   left group's place and the round button stays on the right */
-.host-composer .composer-surface {
-  grid-template-areas:
-    "text text text"
-    "left left right";
-}
-
+/* the two pills, in the composer's status slot (Composer's `pills`) */
 .host-chat-pills {
+  display: flex;
+  gap: var(--space-1);
   min-width: 0;
   overflow: hidden;
 }
@@ -60,17 +55,6 @@
   height: var(--space-3);
 }
 
-.host-chat-status,
-.host-chat-error {
-  width: min(100%, var(--chat-w));
-  margin: 0 auto var(--space-2);
-  color: var(--status-working);
-  font-size: var(--fs-xs);
-}
-
-.host-chat-error {
-  color: var(--status-blocked);
-}
 
 /* the picker: one column of choices, a bottom sheet on a phone (styles.css .modal) */
 .host-picker-body {

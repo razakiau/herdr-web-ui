@@ -10,7 +10,8 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
-import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, AgentHostState, HostModel, HostNew, HostNewResult, HostSend } from "../../shared/host-chats.ts";
+import { composerDrafts } from "./composerDraft.ts";
+import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult } from "../../shared/host-chats.ts";
 import { ApiError, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
@@ -167,18 +168,20 @@ function clearChoice(machineId: string, session: string): void {
 
 // ─── The composer's draft ────────────────────────────────────────────────────
 
-const draftKey = (machineId: string, session: string): string => `herdr-web-ui:host-chat-draft:${machineId}:${session}`;
+/** Where a host chat's box keeps its words (the app's Composer draft store reads and writes it too). */
+export const hostDraftKey = (machineId: string, session: string): string => `herdr-web-ui:host-chat-draft:${machineId}:${session}`;
+const draftKey = hostDraftKey;
 
-/** What the chat's box held when it was last left: its words wait there until sent or cleared. */
+/**
+ * What the chat's box held when it was last left: its words wait there until sent or cleared. The
+ * app's composer draft store holds it, as it holds a pane's, so the box and these read one draft.
+ */
 export function readHostDraft(machineId: string, session: string): string {
-  try { return storage()?.getItem(draftKey(machineId, session)) ?? ""; } catch { return ""; }
+  return composerDrafts.read(draftKey(machineId, session)).text;
 }
 
 export function keepHostDraft(machineId: string, session: string, text: string): void {
-  try {
-    if (text === "") storage()?.removeItem(draftKey(machineId, session));
-    else storage()?.setItem(draftKey(machineId, session), text);
-  } catch { /* the box still holds it */ }
+  composerDrafts.set(draftKey(machineId, session), text);
 }
 
 // ─── One id per attempt ──────────────────────────────────────────────────────
@@ -258,7 +261,8 @@ export function carriedChoice(choice: HostChoice, last: HostLast): Pick<HostSend
  * pending pick stays until a read shows it as the chat's last (settleChoice), so a queued message,
  * a read that is a moment behind, or a pick made during the send never lose it.
  */
-export async function sendHost(machineId: string, body: Omit<HostSend, "id">, last: HostLast): Promise<{ queued: boolean }> {
+/** `composer`: the app's Composer sent it and settles its own draft; else the words sent leave the draft here. */
+export async function sendHost(machineId: string, body: Omit<HostSend, "id">, last: HostLast, composer = false): Promise<HostSendResult> {
   // the same words again after a failure go under the same id (kept with the draft, so leaving
   // the screen keeps it too); other words, or the next message after a sent one, get a new one
   const previous = storedAttempt(machineId, body.session);
@@ -266,10 +270,20 @@ export async function sendHost(machineId: string, body: Omit<HostSend, "id">, la
   // the first try's time stands: a retry does not stretch the window it is reused in
   if (attempt !== previous) keepAttempt(machineId, body.session, attempt);
   const full: HostSend = { ...body, id: attempt.id, ...carriedChoice(chosenFor(machineId, body.session), last) };
-  const result = await post<{ queued: boolean }>(machineId, "host-chats/chat/send", full);
+  const result = await post<HostSendResult>(machineId, "host-chats/chat/send", full);
   dropAttempt(machineId, body.session, attempt.id);
-  if (readHostDraft(machineId, body.session).trim() === body.text.trim()) keepHostDraft(machineId, body.session, "");
+  if (!composer && readHostDraft(machineId, body.session).trim() === body.text.trim()) keepHostDraft(machineId, body.session, "");
   return result;
+}
+
+/** Stops the chat's running turn (a chat with none is left be). */
+export async function stopHost(machineId: string, session: string): Promise<void> {
+  await post(machineId, "host-chats/chat/stop", { session });
+}
+
+/** Takes a steering or queued message off before it goes. */
+export async function removeHostPending(machineId: string, session: string, id: string): Promise<void> {
+  await post(machineId, "host-chats/chat/pending/remove", { session, id });
 }
 
 /**

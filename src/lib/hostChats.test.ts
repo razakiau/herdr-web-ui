@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, openHostChatClosed } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
-import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
+import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -107,6 +107,19 @@ describe("the phone's model and agent choice", () => {
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: null }).agent).toBe("file:///tmp/fictional/agents/Report.agent.md");
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md" })).toEqual({});
     expect(session.has("herdr-web-ui:host-chat-choice:desk:s1")).toBe(false);
+  });
+
+  it("sendHost carries the mode; stopHost and removeHostPending post their routes", async () => {
+    let calls = record(200, { queued: true, joined: true });
+    expect(await sendHost("desk", { session: "s1", text: "FICTIONAL steer", mode: "steer" }, NONE)).toEqual({ queued: true, joined: true });
+    expect(calls[0]).toMatchObject({ url: "/api/machines/desk/host-chats/chat/send", body: { session: "s1", text: "FICTIONAL steer", mode: "steer" } });
+    calls = record(200, { ok: true });
+    await stopHost("desk", "s1");
+    await removeHostPending("desk", "s1", "p1");
+    expect(calls).toEqual([
+      { url: "/api/machines/desk/host-chats/chat/stop", body: { session: "s1" } },
+      { url: "/api/machines/desk/host-chats/chat/pending/remove", body: { session: "s1", id: "p1" } },
+    ]);
   });
 
   it("createHostChat posts once and answers the session; the text and choice wait in the chat when the first message did not go", async () => {

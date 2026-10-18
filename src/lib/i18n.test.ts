@@ -73,6 +73,7 @@ function labelMapKeys(): string[] {
     ...grab("lib/workBlocks.ts", "CATEGORY_LABEL", /\["([^"]+)", "([^"]+)"\]/g),
     ...grab("lib/usage.ts", "WINDOW_LABEL", value),
     ...grab("lib/toolVerbs.ts", "VERB_LABEL", value),
+    ...grab("lib/compose.ts", "HOST_SEND_MENU", /label: "([^"]+)"/g),
   ];
 }
 

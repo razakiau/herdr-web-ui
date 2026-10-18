@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, Minimize2, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowRight, ArrowUp, ChevronDown, CornerDownLeft, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, Minimize2, Plus, Square, TriangleAlert, X, type LucideIcon } from "lucide-react";
 
 import "./Composer.css";
 
@@ -37,6 +37,9 @@ import {
   rankSlashCommands,
   submitNote,
   terminalOnlyCommand,
+  hostSendKey,
+  HOST_SEND_MENU,
+  type HostSendPick,
 } from "../lib/compose.ts";
 import { compactCommandText } from "../lib/compactContext.ts";
 import { composerStrip } from "../lib/composerStrip.ts";
@@ -51,6 +54,7 @@ import { resolveComposerMenuActiveItemId } from "../lib/composerMenuHighlight.ts
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
 import { composerUsage, formatPercent, formatResetIn, HIGH_PERCENT, meterPercent, meterText, providerForAgent, statusWindows, usageName, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { cachedPaneCommands } from "../lib/paneCommandCache.ts";
@@ -94,10 +98,34 @@ export interface ComposerProps {
    * where it named none, with `sendAnyway`; a promise settles to any of them */
   onSend: (text: string, clearDraft?: string, sendAnyway?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
-  onUploadImage: (file: File) => Promise<string>;
+  /** absent: no attaching (the button, a paste or a drop of files does nothing) */
+  onUploadImage?: (file: File) => Promise<string>;
+  /**
+   * A host chat's send menu (VS Code's queue picker): while the agent works and the box has text,
+   * Send goes as `default` (Enter), Alt+Enter as the other, and the caret beside Send (a long press
+   * on a phone) offers Stop and Send, Add to Queue and Steer with Message. `onPick` sends the box's
+   * text that way and settles like `onSend`. Absent: Send is the pane's.
+   */
+  sendMenu?: { default: "steer" | "queue"; onPick(mode: HostSendPick, text: string): Promise<boolean | string> };
+  /** A host chat's messages waiting for the running turn: rows above the box under "Steering" and "Queued". */
+  pending?: { id: string; kind: "steering" | "queued"; text: string }[];
+  onRemovePending?: (id: string) => void;
+  /** a note under the pending rows (a steer that joined the one set: "Added to your steer") */
+  pendingNote?: string | null;
+  /** where the box's draft is kept, in place of the pane's (a host chat has no pane) */
+  draftKey?: string;
+  /** the words dictation listens for beside the agent's name (a host chat's agents) */
+  keywords?: readonly string[];
+  /** no `/` commands or `@` files: a host chat's come from its host (Task 9b) */
+  noMenus?: boolean;
+  /** drawn in the status pill's place: a host chat's model and agent pills, which press */
+  pills?: ReactNode;
 }
 
 const UPLOADS_AT_ONCE = 3;
+/** How long a press on Send opens a host chat's send menu instead of sending. */
+const LONG_PRESS_MS = 500;
+const SEND_ICONS: Record<HostSendPick, LucideIcon> = { stop_and_send: ArrowRight, queue: Plus, steer: CornerDownLeft };
 /** files one paste, pick or drop takes; the rest are left out with a note */
 const ATTACH_LIMIT = 100;
 /**
@@ -258,6 +286,14 @@ export function Composer({
   onSend,
   onAbort,
   onUploadImage,
+  sendMenu,
+  pending,
+  onRemovePending,
+  pendingNote = null,
+  draftKey: hostDraftKey,
+  keywords,
+  noMenus = false,
+  pills,
 }: ComposerProps) {
   const t = useT();
   const activeRef = useRef(active);
@@ -278,6 +314,9 @@ export function Composer({
   /** the card's own width: a narrow one shows the task chip's count */
   const [cardWidth, setCardWidth] = useState(0);
   const [contextShown, setContextShown] = useState(false);
+  /** the host send menu's anchor while it is open */
+  const [sendMenuAt, setSendMenuAt] = useState<HTMLElement | null>(null);
+  const longPress = useRef<{ timer: ReturnType<typeof setTimeout>; fired: boolean } | null>(null);
   const composingRef = useRef(false);
   // the chat lens's input surface takes the keyboard when it appears (a pane switch remounts
   // it), as the grid does in the terminal lens: a pane picked from the drawer is typed into
@@ -289,7 +328,7 @@ export function Composer({
   const attachmentsRef = useRef<Attachment[]>([]);
   const removedAttachments = useRef(new Set<number>());
   const fileRequest = useRef(0);
-  const draftKey = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
+  const draftKey = hostDraftKey ?? `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
   const mounted = useRef(true);
@@ -363,6 +402,7 @@ export function Composer({
   }, [restored]);
 
   useEffect(() => {
+    if (noMenus) return;
     let live = true;
     void cachedPaneCommands(paneId, machineId, fetchPaneCommands)
       .then((next) => {
@@ -378,7 +418,7 @@ export function Composer({
 
   useEffect(() => {
     const request = ++fileRequest.current;
-    if (trigger?.kind !== "file") {
+    if (noMenus || trigger?.kind !== "file") {
       setFiles([]);
       return;
     }
@@ -629,7 +669,7 @@ export function Composer({
     [filteredCommands, groupedBySource],
   );
   const choices: readonly (SlashCommand | string)[] = trigger?.kind === "slash" ? orderedCommands : files;
-  const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
+  const menuOpen = !noMenus && !menuDismissed && trigger !== null && choices.length > 0;
   // clamped as the list is drawn, not by an effect after it: a Tab or Enter typed before that
   // effect's render found no row at the old index and did nothing
   const choiceIds = choices.map((choice) => trigger?.kind === "slash"
@@ -657,7 +697,7 @@ export function Composer({
     connected,
     phone: mobile,
     polish: settings.voicePolishChat,
-    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name)],
+    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name), ...(keywords ?? [])],
     box: textareaRef,
     read: () => textRef.current,
     // a dictation that does not fit is refused whole: cutting would drop the draft after the caret
@@ -785,6 +825,7 @@ export function Composer({
     while (mounted.current && uploadsRunning.current < UPLOADS_AT_ONCE && uploadQueue.current.length > 0) {
       const attachment = uploadQueue.current.shift()!;
       if (removedAttachments.current.has(attachment.id)) continue;
+      if (!onUploadImage) continue;
       uploadsRunning.current += 1;
       void onUploadImage(attachment.file)
         .then(
@@ -812,7 +853,7 @@ export function Composer({
   const uploadImages = useCallback(
     (incoming: readonly File[]) => {
       const images = incoming.slice(0, ATTACH_LIMIT);
-      if (images.length === 0) return;
+      if (images.length === 0 || !onUploadImage) return;
 
       // the files left out of this pick: told now, and again beside an upload error of this batch
       const leftOut = images.length < incoming.length
@@ -836,7 +877,7 @@ export function Composer({
       uploadQueue.current.push(...added);
       pumpUploads();
     },
-    [pumpUploads, t],
+    [onUploadImage, pumpUploads, t],
   );
 
   const removeAttachment = useCallback((attachment: Attachment) => {
@@ -861,7 +902,7 @@ export function Composer({
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. False: nothing went out */
-  const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
+  const send = useCallback((clearDraft?: string, sendAnyway = false, pick?: HostSendPick): boolean => {
     if (composingRef.current) return false;
     if (!connected || uploading || roomless || sending || text.trim().length === 0) return false;
     const sent = text;
@@ -885,7 +926,9 @@ export function Composer({
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
-      const result = onSend(text, clearDraft, sendAnyway);
+      // a host chat at work: a plain Send goes as its menu's default
+      const how = sendMenu && (pick ?? (agentStatus === "working" ? sendMenu.default : undefined));
+      const result = how ? sendMenu.onPick(how, text) : onSend(text, clearDraft, sendAnyway);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return true; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
@@ -893,7 +936,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [attachments, connected, dictation.forget, draftKey, onSend, roomless, sending, text, uploading]);
+  }, [agentStatus, attachments, connected, dictation.forget, draftKey, onSend, roomless, sendMenu, sending, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
@@ -1019,6 +1062,14 @@ export function Composer({
         return;
       }
       if (event.key !== "Enter") return;
+      // a host chat at work: Enter goes as its menu's default, Alt+Enter as the other (VS Code's keys)
+      if (sendMenu && agentStatus === "working") {
+        const pick = hostSendKey(event, sendMenu.default, settings.enterSends);
+        if (pick === null) return;
+        event.preventDefault();
+        send(undefined, false, pick);
+        return;
+      }
       const shouldSend = settings.enterSends
         ? !event.shiftKey && !event.metaKey && !event.ctrlKey
         : (event.metaKey || event.ctrlKey) && !event.shiftKey;
@@ -1026,7 +1077,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
+    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, sendMenu, setTextAndCaret, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
@@ -1068,6 +1119,8 @@ export function Composer({
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
   const sendShown = sending || composerSendShown({ working: isWorking, text });
+  // VS Code offers its send menu while the chat works and the box has text
+  const hostMenuShown = sendMenu !== undefined && isWorking && text.trim().length > 0;
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1100,6 +1153,8 @@ export function Composer({
     <div className={`composer${notices ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
       {greeting}
       {notices}
+      {pending && pending.length > 0 && <HostPending pending={pending} onRemove={onRemovePending} />}
+      {pendingNote !== null && <p className="composer-note host-pending-note" role="status"><span className="composer-note-text">{pendingNote}</span></p>}
       {/* no Tab key on a phone: the suggestion is a chip there that fills the box */}
       {offered !== null && text === "" && (
         <div className="composer-quick composer-suggestion-row">
@@ -1299,7 +1354,7 @@ export function Composer({
               void uploadImages(picked);
             }}
           />
-          <button
+          {onUploadImage && <button
             type="button"
             className="icon-button composer-attach"
             aria-label={t("Attach files")}
@@ -1308,7 +1363,7 @@ export function Composer({
             onClick={() => fileInputRef.current?.click()}
           >
             <Plus aria-hidden="true" />
-          </button>
+          </button>}
           {dictation.shown && <MicButton dictation={dictation} />}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
         </div>
@@ -1326,6 +1381,7 @@ export function Composer({
             {/* the mark, the model, the level and the context ring as one quiet pill. It only shows: no role,
                 no focus, nothing to press but the ring inside it. A pane that names no model draws no pill
                 (.is-bare): the mark, a level if it has one, and the ring stand in the row as they are */}
+{pills ?? (
             <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
               {agent && <AgentMark agent={agent} size={14} />}
               {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
@@ -1351,6 +1407,7 @@ export function Composer({
                 <span className="visually-hidden">{usageAccessible}</span>
               </span>}
             </span>
+            )}
             {/* the chip is a button in the left controls; its count is still said here, where a change is announced */}
             {backgroundTasks > 0 && <span className="composer-task-count visually-hidden">{t(backgroundTasks === 1 ? "{n} background task" : "{n} background tasks", { n: backgroundTasks })}</span>}
           </span>
@@ -1382,12 +1439,36 @@ export function Composer({
               disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
               // focus stays in the text box: leaving it closes the soft keyboard and moves the button
               // out from under the tap before the click lands
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={sendTapped}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                // a phone has no caret to aim at: a long press on Send opens the host's send menu
+                if (!hostMenuShown) return;
+                const button = event.currentTarget;
+                const press = { fired: false, timer: setTimeout(() => { press.fired = true; setSendMenuAt(button); }, LONG_PRESS_MS) };
+                longPress.current = press;
+              }}
+              onPointerUp={() => { if (longPress.current && !longPress.current.fired) clearTimeout(longPress.current.timer); }}
+              onPointerLeave={() => { if (longPress.current && !longPress.current.fired) clearTimeout(longPress.current.timer); }}
+              onClick={() => {
+                const press = longPress.current;
+                longPress.current = null;
+                if (press?.fired) return;
+                sendTapped();
+              }}
             >
               {sending ? <LoaderCircle className="composer-send-progress" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
             </button>
           )}
+          {hostMenuShown && sendShown && (
+            <button type="button" className="composer-action composer-send-menu" aria-haspopup="menu" aria-expanded={sendMenuAt !== null}
+              aria-label={t("More send options")} title={t("More send options")} disabled={!connected || uploading || roomless !== undefined || sending}
+              onPointerDown={(event) => event.preventDefault()} onClick={(event) => setSendMenuAt(event.currentTarget)}>
+              <ChevronDown aria-hidden="true" />
+            </button>
+          )}
+          {sendMenuAt !== null && sendMenu && <RowMenu anchor={sendMenuAt} title={t("Send")} align="end" onClose={() => setSendMenuAt(null)}
+            items={HOST_SEND_MENU.map((item): RowMenuItem => ({ id: item.mode, label: t(item.label), icon: SEND_ICONS[item.mode], current: item.mode === sendMenu.default,
+              run: () => { setSendMenuAt(null); send(undefined, false, item.mode); } }))} />}
         </div>
       </div>
       {/* the strip tucked under the card (t3code's composer context strip): the pane's working folder and its
@@ -1421,4 +1502,23 @@ export function Composer({
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
     </div>
   );
+}
+
+/** A host chat's messages waiting for its running turn, under VS Code's "Steering" and "Queued" dividers. */
+function HostPending({ pending, onRemove }: { pending: NonNullable<ComposerProps["pending"]>; onRemove?: (id: string) => void }) {
+  const t = useT();
+  const groups = (["steering", "queued"] as const).map((kind) => ({ kind, rows: pending.filter((each) => each.kind === kind) })).filter((group) => group.rows.length > 0);
+  return <div className="host-pending" aria-label={t("Waiting messages")} role="group">
+    {groups.map((group) => <section key={group.kind} className="host-pending-group" data-kind={group.kind}>
+      <p className="host-pending-divider">{t(group.kind === "steering" ? "Steering" : "Queued")}</p>
+      <ul className="host-pending-list">
+        {group.rows.map((row) => <li key={row.id} className="host-pending-row" data-pending={row.id}>
+          <span className="host-pending-text">{row.text}</span>
+          {onRemove && <button type="button" className="icon-button host-pending-remove" aria-label={t("Remove from Queue")} title={t("Remove from Queue")} onClick={() => onRemove(row.id)}>
+            <X aria-hidden="true" />
+          </button>}
+        </li>)}
+      </ul>
+    </section>)}
+  </div>;
 }
