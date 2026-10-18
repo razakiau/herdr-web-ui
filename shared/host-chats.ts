@@ -15,6 +15,10 @@ export type AgentHostState =
 export interface HostChatRow {
   session: string; title: string; status: "working" | "asks" | "idle" | "error";
   modified_at: string; cwd: string | null;
+  /** finished since anyone last looked at it: the host's `IsRead` bit is clear (SessionStatus) */
+  unread: boolean;
+  /** put away as done: the host's `IsArchived` bit */
+  archived: boolean;
 }
 
 /**

@@ -164,7 +164,7 @@ export function VscodeChatView({ machineId, session }: VscodeChatViewProps) {
   const statusLine = sendError !== null ? null : queued ? t("Queued: it goes out when this turn ends") : busy ? t("Copilot is working on this chat; Send queues the message") : null;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
-    <p className="host-chat-title"><AgentMark agent="vscode" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
+    <p className="host-chat-title"><AgentMark agent="copilot" size={16} /><span>{chat?.title.trim() || t("Copilot chat")}</span></p>
     <div className="terminal-surface">
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
       <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}

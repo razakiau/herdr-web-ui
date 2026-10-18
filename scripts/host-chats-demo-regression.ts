@@ -6,12 +6,14 @@ import { chromium } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// One fictional host chat on a remote demo PC, at 390 px: the sidebar group, the chat's rows,
+// One fictional host chat on a remote demo PC, at 390 px: a Copilot tab in the workspace whose pane
+// works in its folder, a folder row for a chat no workspace holds, "All agents on Build PC…", the chat's rows,
 // the question card, the model · effort and agent pills with their sheet, a send that queues, and
 // "+ New Copilot chat" (made and sent, and made with its first message not sent).
 // The roster's `remote` is the fixture's `local` cloned; this patched fetch answers that PC's
 // /api/host-chats routes itself and records what the app posts. No live session or agent host is read.
 // HOST_CHATS_SHOTS=<dir> also saves the chat, the open sheet and the new-chat sheet as screenshots.
+// A second fixture (?pcs=6) has six PCs: five fold under "Other PCs (5)", and one with a question waiting stays open.
 const SESSION = "fictional-session-1";
 const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
 const SUB = "ahp-chat://default/fictional-sub";
@@ -23,11 +25,18 @@ const patch = `(() => {
   const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [] };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
-  const roster = (original) => ["local", "remote"].map((id) => {
+  const SIX = new URLSearchParams(location.search).get("pcs") === "6";
+  const ids = SIX ? ["local", "remote", "pc-c", "pc-d", "pc-e", "pc-f"] : ["local", "remote"];
+  const NAMES = { local: "Laptop", remote: "Build PC", "pc-c": "FICTIONAL PC C", "pc-d": "FICTIONAL PC D", "pc-e": "FICTIONAL PC E", "pc-f": "FICTIONAL PC F" };
+  const roster = (original) => ids.map((id) => {
     const machine = structuredClone(original.find((item) => item.id === "local"));
     machine.id = id; machine.kind = id === "local" ? "local" : "ssh";
-    machine.name = id === "local" ? "Laptop" : "Build PC";
+    machine.name = NAMES[id];
     machine.state = "connected";
+    // the Build PC's first workspace works in the build chat's folder: that chat is one of its tabs
+    if (id === "remote") { const pane = machine.snapshot.panes.find((item) => item.workspace_id === machine.snapshot.workspaces[0].workspace_id); pane.cwd = "/tmp/fictional-repo/"; pane.foreground_cwd = "/tmp/fictional-repo/"; }
+    // the six-PC fixture: no pane asks anywhere, so only a host chat's question keeps a folded PC open
+    if (SIX) for (const pane of machine.snapshot.panes) if (pane.agent_status === "blocked") pane.agent_status = "idle";
     return machine;
   });
   const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -87,6 +96,11 @@ const patch = `(() => {
   const push = (message) => {
     for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "remote", message }) }));
   };
+  // the six-PC fixture: FICTIONAL PC E's chat starts asking, and its push says so
+  window.askOnPcE = () => {
+    state.peAsks = true;
+    for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "pc-e", message: { type: "host-chat-changed", session: null } }) }));
+  };
   window.setHostBusy = (busy) => { state.busy = busy; push({ type: "host-chat-changed", session: SESSION }); };
   // a turn made on the PC: only its push tells the phone
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
@@ -112,14 +126,20 @@ const patch = `(() => {
     // a pane request without a pane: what a host chat's ChatView must never make
     if (path.startsWith("/api/pane/") && url.searchParams.get("pane_id") === "") (calls.paneless ??= []).push(url.pathname + url.search);
     if (path.startsWith("/api/pane/") && url.searchParams.get("pane_id") === null && init?.body && String(init.body).includes('"pane_id":""')) (calls.paneless ??= []).push(url.pathname);
+    // the six-PC fixture: FICTIONAL PC E's host chat waits on a question
+    if (SIX && machine === "pc-e" && path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
+    if (SIX && machine === "pc-e" && path === "/api/host-chats/chats") return json({ chats: [{ session: "fictional-pc-e", title: "FICTIONAL waits on you", status: state.peAsks ? "asks" : "idle", modified_at: at(1), cwd: "/tmp/fictional-e", unread: false, archived: false }] });
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
       if (path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
       if (path === "/api/host-chats/chats") return json({ chats: [
-        { session: SESSION, title: "FICTIONAL build chat", status: state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo" },
-        { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs" },
-        ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd })),
+        { session: SESSION, title: "FICTIONAL build chat", status: SIX || state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo", unread: false, archived: false },
+        { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs", unread: false, archived: false },
+        // 20 days old: only "All agents on Build PC…" lists it
+        { session: "fictional-session-old", title: "FICTIONAL old release notes", status: "idle", modified_at: at(60 * 24 * 20), cwd: "/tmp/fictional-repo", unread: false, archived: false },
+        { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
+        ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
       ] });
       // the docs chat's host is down: the bridge says why in its own words
       if (path === "/api/host-chats/chat" && url.searchParams.get("session") === "fictional-session-0") return json({ error: { code: "agent_host_down", message: "FICTIONAL the agent host is down" } }, 503);
@@ -206,20 +226,55 @@ try {
         await page.goto(`http://127.0.0.1:${server.port}/`);
         await page.locator(".conn-live").waitFor({ state: "attached" });
 
-        // 1. the sidebar's group under the PC, still with the vscode mark (Task 6 drops it)
+        // 1. a host chat is a Copilot agent: no Copilot section, a tab in the workspace whose pane works
+        // in its folder, a folder row for the one whose folder no workspace holds, nothing that says VS Code
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-        await page.getByRole("heading", { name: "Copilot", exact: true }).first().waitFor();
-        assert.equal(await page.getByRole("region", { name: "Copilot on Build PC", exact: true }).count(), 1, "the group's landmark names its PC");
-        const row = page.locator(`.host-chat-item[data-machine="remote"][data-host-session="${SESSION}"]`).first();
-        await row.waitFor();
-        assert.equal(await row.locator('svg[aria-label="vscode"]').count(), 1, "the chat's row wears the vscode mark until the sidebar redraw (Task 6)");
-        assert.equal(await page.locator('.host-chat-item[data-machine="local"]').count(), 0, "a PC whose bridge has the feature off has no chats");
-        console.log("PASS the sidebar shows the remote PC's host chats under it, headed Copilot");
+        const remoteGroup = page.getByRole("region", { name: "PC Build PC", exact: true });
+        const folderRow = remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]');
+        await folderRow.waitFor();
+        assert.equal(await page.getByRole("heading", { name: "Copilot", exact: true }).count(), 0, "no Copilot heading");
+        assert.equal(await page.locator(".host-chats").count(), 0, "no Copilot section");
+        assert.equal((await folderRow.locator(".workspace-name").first().innerText()).trim().length > 0, true, "the folder row has a name");
+        assert.equal(await folderRow.locator('svg[aria-label="copilot"]').count(), 1, "the folder row leads with Copilot's mark");
+        assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no vscode mark");
+        assert.equal(await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-repo"]').count(), 0, "a folder a workspace works in is no folder row");
+        assert.equal(await page.locator('[data-machine="local"].host-chat-item').count(), 0, "a PC whose bridge has the feature off has no chats");
+        const noVsCode = async (what: string) => assert.doesNotMatch(await page.locator("body").innerText(), /VS Code|Copilot chats/, `${what}: no "VS Code" or "Copilot chats" text`);
+        await noVsCode("the sidebar");
+        // the build chat asks: the Agents list shows it, with Copilot's mark
+        const agentsRow = page.locator(`.agents-sidebar .host-chat-item[data-machine="remote"][data-host-session="${SESSION}"]`);
+        await page.locator(".agents-sidebar .agent-section-toggle").click();
+        await agentsRow.waitFor();
+        assert.equal(await agentsRow.locator('svg[aria-label="copilot"]').count(), 1, "an Agents row wears Copilot's mark");
+        assert.equal(await page.locator('.agents-sidebar [data-host-session="fictional-session-0"]').count(), 0, "an idle, read chat is not in the Agents list");
+        // the workspace's row counts its asking chat: a "?" in its state
+        const workspaceRow = remoteGroup.locator(".workspace-group").first();
+        assert.equal(await workspaceRow.locator('.sidebar-status[data-status="blocked"]').count(), 1, "the workspace's roll-up counts its asking host chat");
+        await fits("the sidebar");
+        await folderRow.scrollIntoViewIfNeeded();
+        if (shots) await page.screenshot({ path: join(shots, "task-6-folder-row-390.png") });
+        console.log("PASS a host chat is a Copilot agent: a folder row, an Agents row, a counted workspace, no Copilot section and no VS Code text");
 
-        // 2. the chat: the app's ChatView, with a user turn, an assistant's text and a folded tool row
-        await row.locator(".agent-select").click();
+        // 2. the chat: the app's ChatView, with a user turn, an assistant's text and a folded tool row,
+        // opened from the Agents list, as a tab of its workspace after the panes' tabs
+        await agentsRow.locator(".agent-select").click();
         const view = page.locator(`.host-chat[data-host-session="${SESSION}"]`);
         await view.waitFor();
+        const hostTab = page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"]`);
+        await hostTab.waitFor();
+        assert.equal(await hostTab.locator('[role="tab"]').getAttribute("aria-selected"), "true", "its tab is the open one");
+        assert.equal(await hostTab.locator('svg[aria-label="copilot"]').count(), 1, "the tab wears Copilot's mark");
+        assert.equal(await hostTab.locator(".host-chat-tab-glyph").count(), 0, "no host glyph: no Copilot pane in the workspace");
+        assert.equal(await hostTab.locator('.tab-strip-dot[data-status="blocked"]').count(), 1, "its status dot says it asks");
+        assert.equal(await page.locator('.tab-strip-item:not(.host-chat-tab) [role="tab"][aria-selected="true"]').count(), 0, "no pane's tab is open beside it");
+        assert.ok(await page.locator(".tab-strip-item:not(.host-chat-tab)").count() > 0, "the workspace's pane tabs stand before it");
+        await noVsCode("the open chat");
+        await fits("the workspace with its Copilot tab");
+        // the pick puts the drawer away: the shot waits for it to have gone
+        await page.waitForFunction(() => { const drawer = document.querySelector("#workspace-drawer"); return drawer !== null && !drawer.classList.contains("is-open") && drawer.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running"); });
+        await page.waitForTimeout(400);
+        // the demo's own alerts (a Laptop agent finishing) float over the strip: hidden for the picture alone
+        if (shots) await page.screenshot({ path: join(shots, "task-6-workspace-tab-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
         // only ChatView reading a host source draws these: its transcript tagged with the source's
         // kind, and rows keyed by the source's key (the old screen tagged none and keyed by place)
         const transcript = view.locator('.terminal-surface > .chat-frame .chat-view[data-conversation-source="agent-host"]');
@@ -244,6 +299,8 @@ try {
         assert.equal(await head.locator(".work-block-summary").count(), 0, "no classic counts");
         // the tool's picture: under the block, outside the fold, through the host source
         const thumb = view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).locator(":scope > .work-images .chat-user-image img");
+        // the workspace's tab strip stands above the chat now: the turn is brought into view, where its lazy picture loads
+        await view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).scrollIntoViewIfNeeded();
         await thumb.waitFor();
         assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
@@ -406,24 +463,55 @@ try {
         await fits("the busy chat");
         console.log("PASS no horizontal overflow at 390 px");
 
-        // 6b. a chat whose read fails says the bridge's words, not the request's URL
+        // 6b. the folder row opens its chat, whose tab is the folder's; a read that fails says the bridge's words, not the request's URL
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-        await page.locator('.host-chat-item[data-machine="remote"][data-host-session="fictional-session-0"] .agent-select').first().click();
+        await folderRow.locator(".workspace-select").click();
         const down = page.locator('.host-chat[data-host-session="fictional-session-0"]');
         await down.locator(".chat-inline-error").waitFor();
         assert.equal(await down.locator(".chat-inline-error").textContent(), "FICTIONAL the agent host is down", "the bridge's detail, without the URL and status");
-        console.log("PASS a host chat whose read fails says the bridge's own words");
+        assert.equal(await page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-0"] [role="tab"]').getAttribute("aria-selected"), "true", "the folder row's chat is its tab");
+        console.log("PASS a folder row opens its chat as its tab; a read that fails says the bridge's own words");
+
+        // 6c. "All agents on Build PC…": search finds the month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
+        const pcMenu = async () => {
+          await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await remoteGroup.getByRole("button", { name: "More for Build PC", exact: true }).click();
+        };
+        await pcMenu();
+        await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        const all = page.getByRole("dialog", { name: "All agents on Build PC", exact: true });
+        await all.waitFor();
+        assert.equal(await all.getByRole("button", { name: "Archived" }).getAttribute("aria-expanded"), "false", "Archived starts folded");
+        assert.equal(await all.locator('[data-host-session="fictional-session-done"]').count(), 0, "an archived chat waits under the fold");
+        assert.ok((await all.locator('[data-host-session="fictional-session-old"]').innerText()).includes("20 days ago"), "relative time");
+        await page.waitForFunction(() => {
+          const surface = document.querySelector(".all-agents");
+          return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
+        });
+        await fits("the All agents sheet");
+        await noVsCode("the All agents sheet");
+        if (shots) await page.screenshot({ path: join(shots, "task-6-all-agents-390.png") });
+        await all.getByRole("searchbox", { name: "Search agents" }).fill("release notes");
+        assert.equal(await all.locator(".host-chat-item").count(), 1, "the search keeps the one it finds");
+        await all.locator('[data-host-session="fictional-session-old"] .agent-select').click();
+        await all.waitFor({ state: "detached" });
+        await page.locator('.host-chat[data-host-session="fictional-session-old"]').waitFor();
+        await page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-old"]').waitFor();
+        // its pills read its models: settled before the new-chat sheet counts its own reads
+        await page.waitForFunction(() => (window as unknown as { hostCalls: { models: string[] } }).hostCalls.models.includes("fictional-session-old"));
+        console.log("PASS All agents on Build PC… finds an old chat by search and opens it as a tab of its workspace");
 
         // 7. "+ New Copilot chat" on the remote PC: a folder chip, a model, the first message, Start chat
         const newChats = () => posts("/api/machines/remote/host-chats/chat/new");
+        // until the "+" dialog offers Copilot (Task 11), the PC's menu opens the new-chat sheet
         const openNewSheet = async () => {
-          await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-          await page.getByRole("button", { name: "New Copilot chat on Build PC", exact: true }).click();
+          await pcMenu();
+          await page.getByRole("button", { name: "New Copilot chat…", exact: true }).click();
           const form = page.getByRole("dialog", { name: "New Copilot chat · Build PC" });
           await form.waitFor();
           return form;
         };
-        assert.equal(await page.getByRole("button", { name: "New Copilot chat on Laptop" }).count(), 0, "a PC without the feature has no new-chat button");
+        assert.equal(await page.getByRole("region", { name: "PC Laptop", exact: true }).getByRole("button", { name: "More for Laptop" }).count(), 0, "a PC without the feature has no host menu");
         // the models and agents are a session's: the newest chat in the folder picked, else the PC's newest
         const modelReads = async (): Promise<string[]> => page.evaluate(() => [...(window as unknown as { hostCalls: { models: string[] } }).hostCalls.models]);
         const nextModelRead = async (after: number, what: string): Promise<string | undefined> => {
@@ -477,7 +565,51 @@ try {
         await fits("the chat made unsent");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a chat made with its first message unsent opens with the words in its composer, once");
+
+        // 8. six PCs: five fold under "Other PCs (5)"; the one whose chat asks stays open outside it
       } finally { await context.close(); }
+      // a fresh device: the PC in use is the first, and the fold has never been opened
+      const sixContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
+      try {
+        await sixContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        const errors: string[] = [];
+        const fits = async (what: string) => {
+          const width = await six.evaluate(() => document.documentElement.scrollWidth);
+          assert.ok(width <= 390, `${what}: no horizontal overflow at 390 px (scrollWidth ${width})`);
+        };
+        const six = await sixContext.newPage();
+        six.on("pageerror", (error) => errors.push(error.message));
+        await six.goto(`http://127.0.0.1:${server.port}/?pcs=6`);
+        await six.locator(".conn-live").waitFor({ state: "attached" });
+        await six.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        const fold = six.getByRole("region", { name: "Other PCs", exact: true });
+        await fold.getByRole("button", { name: /^Other PCs \(5\)/ }).waitFor();
+        assert.equal(await six.locator(".machine-group").count(), 1, "only the PC in use is a full group");
+        if (shots) await six.screenshot({ path: join(shots, "task-6-other-pcs-closed-390.png") });
+        // a question waits on FICTIONAL PC E: it opens outside the fold, until it no longer needs you
+        await six.evaluate(() => (window as unknown as { askOnPcE(): void }).askOnPcE());
+        const asking = six.getByRole("region", { name: "PC FICTIONAL PC E", exact: true });
+        await asking.waitFor();
+        await fold.getByRole("button", { name: /^Other PCs \(4\)/ }).waitFor();
+        assert.equal(await six.locator(".machine-group").count(), 2, "the PC in use and the one that needs you are open");
+        assert.equal(await six.getByRole("region", { name: "PC Laptop", exact: true }).count(), 1, "the PC in use is open");
+        const toggle = fold.locator(".other-pcs-toggle");
+        assert.equal(await toggle.getAttribute("aria-expanded"), "false", "the fold starts closed");
+        await toggle.click();
+        assert.deepEqual(await fold.locator(".other-pcs-name").allInnerTexts(), ["Build PC", "FICTIONAL PC C", "FICTIONAL PC D", "FICTIONAL PC F"], "each folded PC is a one-line row");
+        await fits("the Other PCs fold");
+        await six.evaluate(() => document.querySelector(".other-pcs")?.scrollIntoView({ block: "center" }));
+        if (shots) await six.screenshot({ path: join(shots, "task-6-other-pcs-390.png") });
+        await six.reload();
+        await six.locator(".conn-live").waitFor({ state: "attached" });
+        await six.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        assert.equal(await six.getByRole("region", { name: "Other PCs", exact: true }).locator(".other-pcs-toggle").getAttribute("aria-expanded"), "true", "the fold's open state is kept on this device");
+        // a PC picked from the fold opens as a full group
+        await six.getByRole("region", { name: "Other PCs", exact: true }).locator('.other-pcs-item[data-machine="pc-c"] .other-pcs-row').click();
+        await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).waitFor();
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS six PCs: Other PCs folds the ones not in use, the one that needs you stays open, and the fold is remembered");
+      } finally { await sixContext.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }
 } finally { rmSync(app, { recursive: true, force: true }); }

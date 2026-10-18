@@ -208,10 +208,24 @@ describe("host chat mappers", () => {
       row(4, "copilotcli", 2, "2026-01-01T00:00:02.000Z"),
       row(5, "copilotcli", 1 | 32, "2026-01-01T00:00:00.000Z"),
     ])).toEqual([
-      { session: "copilotcli:/2", title: "FICTIONAL_2", status: "working", modified_at: "2026-01-01T00:00:03.000Z", cwd: null },
-      { session: "copilotcli:/4", title: "FICTIONAL_4", status: "error", modified_at: "2026-01-01T00:00:02.000Z", cwd: null },
-      { session: "copilotcli:/1", title: "FICTIONAL_1", status: "asks", modified_at: "2026-01-01T00:00:01.000Z", cwd: "/tmp/fictional-repo" },
-      { session: "copilotcli:/5", title: "FICTIONAL_5", status: "idle", modified_at: "2026-01-01T00:00:00.000Z", cwd: null },
+      { session: "copilotcli:/2", title: "FICTIONAL_2", status: "working", modified_at: "2026-01-01T00:00:03.000Z", cwd: null, unread: false, archived: false },
+      { session: "copilotcli:/4", title: "FICTIONAL_4", status: "error", modified_at: "2026-01-01T00:00:02.000Z", cwd: null, unread: true, archived: false },
+      { session: "copilotcli:/1", title: "FICTIONAL_1", status: "asks", modified_at: "2026-01-01T00:00:01.000Z", cwd: "/tmp/fictional-repo", unread: true, archived: false },
+      { session: "copilotcli:/5", title: "FICTIONAL_5", status: "idle", modified_at: "2026-01-01T00:00:00.000Z", cwd: null, unread: false, archived: false },
+    ]);
+  });
+
+  it("rowsFrom_reads_read_and_archived_flags", () => {
+    // SessionStatus: IsRead = 32 and IsArchived = 64 sit beside the activity bits
+    const row = (n: number, status: number): SessionSummary => ({ resource: `copilotcli:/${n}`, provider: "copilotcli", title: `FICTIONAL_${n}`, status, createdAt: AT, modifiedAt: `2026-01-01T00:00:0${n}.000Z` } as SessionSummary);
+    const flags = rowsFrom([row(1, 1), row(2, 1 | 32), row(3, 1 | 64), row(4, 1 | 32 | 64), row(5, 24 | 32)])
+      .map(({ session, status, unread, archived }) => ({ session, status, unread, archived }));
+    expect(flags).toEqual([
+      { session: "copilotcli:/5", status: "asks", unread: false, archived: false },
+      { session: "copilotcli:/4", status: "idle", unread: false, archived: true },
+      { session: "copilotcli:/3", status: "idle", unread: true, archived: true },
+      { session: "copilotcli:/2", status: "idle", unread: false, archived: false },
+      { session: "copilotcli:/1", status: "idle", unread: true, archived: false },
     ]);
   });
 

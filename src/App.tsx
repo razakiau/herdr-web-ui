@@ -15,7 +15,7 @@ import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
 import { passingFolder, recentDirectories } from "./lib/recent-directories.ts";
 import { usePreferencesSync } from "./lib/preferencesSync.ts";
-import { TabStrip } from "./components/TabStrip.tsx";
+import { HostChatTabStrip, TabStrip } from "./components/TabStrip.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { loadedOnSettingsEntry, onSettingsHistory, recordSettings, settingsEntry } from "./lib/settingsHistory.ts";
 import { fileFromLink, isNavigation, linkSearch, linksSomewhere, NAV_KEY, readLink, resolveLink, slugOf, type AppLink, type CreateDraft, type LinkNote } from "./lib/deepLink.ts";
@@ -26,7 +26,10 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { VscodeChatView } from "./components/VscodeChatView.tsx";
-import { noteHostChatStreamOpen, takeHostChatEvent } from "./lib/hostChats.ts";
+import { basename, noteHostChatStreamOpen, takeHostChatEvent, useHostChats, useMinuteClock } from "./lib/hostChats.ts";
+import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
+import { currentSidebarPins, hostChatPinKey, subscribeSidebarPins } from "./lib/sidebarPins.ts";
+import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -864,6 +867,23 @@ export function App() {
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
+  // each PC's host chats (lib/hostChats.ts), read once for the sidebar and the tab strip
+  const hostChats = useHostChats(machines);
+  const hostPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  const hostNow = useMinuteClock();
+  // where the selected PC's host chats stand (lib/hostPlacement.ts): the open one is kept placed
+  const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [],
+    (session) => hostPins.includes(hostChatPinKey(selectedMachineId, session)),
+    selectedHostChat?.machineId === selectedMachineId ? selectedHostChat.session : null, hostNow), [snapshot, hostChats, hostPins, selectedMachineId, selectedHostChat, hostNow]);
+  const hostHome = selectedHostChat !== null && selectedHostChat.machineId === selectedMachineId ? hostChatHome(hostPlacement, selectedHostChat.session) : null;
+  // a host chat open in a workspace: that workspace's strip, with none of its panes' tabs open
+  const hostWorkspace = hostHome && "workspace" in hostHome ? snapshot?.workspaces.find((workspace) => workspace.workspace_id === hostHome.workspace) ?? null : null;
+  const hostWorkspacePane = hostWorkspace ? (() => {
+    const own = snapshot?.panes.filter((pane) => pane.workspace_id === hostWorkspace.workspace_id) ?? [];
+    const remembered = lastViewedPane("workspace", selectedMachineId, hostWorkspace.workspace_id);
+    return own.find((pane) => pane.pane_id === remembered) ?? own[0] ?? null;
+  })() : null;
+  const hostFolder = hostHome && "folder" in hostHome ? hostPlacement.folders.find((group) => group.cwd === hostHome.folder) ?? null : null;
   const selectedLayout = snapshot?.layouts.find((layout) => layout.tab_id === selectedPane?.tab_id);
   useLayoutEffect(() => {
     if (selectedLayout?.zoomed && selectedLayout.focused_pane_id !== selectedPaneId
@@ -1502,7 +1522,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1584,8 +1604,17 @@ export function App() {
                     another pane tries again */}
                 <RenderBoundary resetKey={`${machineId}:${paneId ?? ""}`} fallback={(retry) => <RegionCrash message={t("This pane can't be shown.")} retry={retry} onShown={active ? paneLost : undefined} />}>
                 <CrashProbe region="pane" />
+                {/* a host chat open in its folder row: its folder's chats are the tabs */}
+                {active && hostFolder && selectedHostChat && <HostChatTabStrip folder={basename(hostFolder.cwd)} chats={hostFolder.chats} selectedSession={selectedHostChat.session} onSelect={(session) => selectHostChat({ machineId, session })} />}
+                {active && !pane && hostWorkspace && hostWorkspacePane && slotSnapshot && selectedHostChat && (
+                  <TabStrip snapshot={slotSnapshot} workspace={hostWorkspace} selectedPane={hostWorkspacePane} panelId={slotPanelId} onSelectPane={onSelect}
+                    onNewTab={() => actions.openNewTab()} hostTabs={hostPlacement.tabs.get(hostWorkspace.workspace_id)} selectedHostSession={selectedHostChat.session}
+                    onSelectHostChat={(session) => selectHostChat({ machineId, session })} />
+                )}
                 {slotSnapshot && pane && workspace && (
                   <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect}
+                    // a workspace's host chats are tabs after its panes' (lib/hostPlacement.ts)
+                    hostTabs={active ? hostPlacement.tabs.get(workspace.workspace_id) : undefined} onSelectHostChat={(session) => selectHostChat({ machineId, session })}
                     onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
                     paneActions={active ? (paneId) => {
                       const target = snapshot?.panes.find((item) => item.pane_id === paneId);

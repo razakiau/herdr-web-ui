@@ -27,33 +27,10 @@ export function isHostChatsOff(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404 && (error.code === "host_chats_off" || error.code === "not_found");
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const RECENT_DAYS = 7;
-const RECENT_MAX = 20;
-
 const modified = (row: HostChatRow): number => {
   const at = Date.parse(row.modified_at);
   return Number.isFinite(at) ? at : 0;
 };
-
-/**
- * The chats one PC adds to the cross-PC Agents list (Settings → Copilot chats in Agents). `live`:
- * the working, the asking and the pinned. `recent`: those, and at most 20 of the rest modified in
- * the last 7 days (a live one is never cut), newest first.
- */
-export function agentsListRows(rows: HostChatRow[], mode: "live" | "recent", pinned: (session: string) => boolean, now: number): HostChatRow[] {
-  const live = (row: HostChatRow): boolean => row.status === "working" || row.status === "asks" || pinned(row.session);
-  const newest = [...rows].sort((a, b) => modified(b) - modified(a));
-  if (mode === "live") return newest.filter(live);
-  const since = now - RECENT_DAYS * DAY_MS;
-  let room = RECENT_MAX;
-  return newest.filter((row) => {
-    if (live(row)) return true;
-    if (modified(row) < since || room === 0) return false;
-    room -= 1;
-    return true;
-  });
-}
 
 /**
  * What a PC's group says over its chats while its host is not ready, in the user's words; null
@@ -78,6 +55,7 @@ export function chatAge(row: HostChatRow, now: number, t: Translate): string {
   if (minutes < 2) return t("just now");
   if (minutes < 60) return t("{n} min ago", { n: minutes });
   if (minutes < 60 * 48) return t("{n} h ago", { n: Math.round(minutes / 60) });
+  if (minutes < 60 * 24 * 30) return t("{n} days ago", { n: Math.round(minutes / (60 * 24)) });
   return new Date(at).toLocaleDateString(currentLocale());
 }
 

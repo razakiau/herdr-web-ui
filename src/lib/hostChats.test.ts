@@ -3,7 +3,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS } from "./hostChats.ts";
-import { agentsListRows, attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
+import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -11,33 +11,7 @@ const NONE: HostLast = { model: null, agent: null };
 const withoutId = (body: unknown): unknown => { const { id: _, ...rest } = body as Record<string, unknown>; return rest; };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = (session: string, status: HostChatRow["status"], ageMs: number): HostChatRow => ({
-  session, title: session, status, modified_at: new Date(NOW - ageMs).toISOString(), cwd: "/home/user/project",
-});
-
-describe("host chats in the Agents list", () => {
-  it("agentsListRows live keeps working, asks and pinned only", () => {
-    const rows = [row("a", "idle", 1000), row("b", "working", 5000), row("c", "asks", 2 * DAY), row("d", "error", 1000), row("e", "idle", 30 * DAY)];
-    const pinned = (session: string) => session === "e";
-    expect(agentsListRows(rows, "live", pinned, NOW).map((r) => r.session)).toEqual(["b", "c", "e"]);
-    expect(agentsListRows(rows, "live", () => false, NOW).map((r) => r.session)).toEqual(["b", "c"]);
-  });
-
-  it("recent adds the last 7 days, at most 20, newest first", () => {
-    const old = row("old", "idle", 8 * DAY);
-    const recent = Array.from({ length: 25 }, (_, i) => row(`r${i}`, "idle", (i + 1) * 60_000));
-    const rows = [old, ...[...recent].reverse(), row("w", "working", 3 * DAY)];
-    const listed = agentsListRows(rows, "recent", () => false, NOW).map((r) => r.session);
-    // the live ones are never cut: 20 of the rest, and the working one
-    expect(listed).toHaveLength(21);
-    expect(listed.filter((session) => session.startsWith("r"))).toHaveLength(20);
-    expect(listed.slice(0, 3)).toEqual(["r0", "r1", "r2"]);
-    expect(listed).toContain("w");
-    expect(listed).not.toContain("old");
-    // a pinned chat stays however old it is, past the cap too
-    const withPin = agentsListRows(rows, "recent", (session) => session === "old", NOW).map((r) => r.session);
-    expect(withPin).toContain("old");
-    expect(withPin).toContain("w");
-  });
+  session, title: session, status, modified_at: new Date(NOW - ageMs).toISOString(), cwd: "/home/user/project", unread: false, archived: false,
 });
 
 describe("host chats per PC", () => {

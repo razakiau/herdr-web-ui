@@ -6,7 +6,7 @@ import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
-import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { SETTING_SCOPE, loadSettings, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
@@ -37,14 +37,20 @@ it("keeps sidebar rows on two lines unless one line was chosen", () => {
   }
 });
 
-it("sanitizeSettings keeps live and recent, and turns anything else into live", () => {
-  expect(DEFAULT_SETTINGS.vscodeChatsInAgents).toBe("live");
-  expect(SETTING_SCOPE.vscodeChatsInAgents).toBe("shared");
-  expect(sanitizeSettings({}).vscodeChatsInAgents).toBe("live");
-  expect(sanitizeSettings({ vscodeChatsInAgents: "recent" }).vscodeChatsInAgents).toBe("recent");
-  expect(sanitizeSettings({ vscodeChatsInAgents: "live" }).vscodeChatsInAgents).toBe("live");
-  for (const vscodeChatsInAgents of [null, "all", "Recent", 1, true]) {
-    expect(sanitizeSettings({ vscodeChatsInAgents }).vscodeChatsInAgents).toBe("live");
+it("drops the old host-chats-in-Agents setting, and its stored key on load", () => {
+  expect("vscodeChatsInAgents" in DEFAULT_SETTINGS).toBe(false);
+  expect("vscodeChatsInAgents" in SETTING_SCOPE).toBe(false);
+  expect((SHARED_SETTING_KEYS as readonly string[]).includes("vscodeChatsInAgents")).toBe(false);
+  expect("vscodeChatsInAgents" in sanitizeSettings({ vscodeChatsInAgents: "recent" })).toBe(false);
+  const stored = new Map([["herdr-web-ui:settings", JSON.stringify({ density: "compact", vscodeChatsInAgents: "recent" })]]);
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } } } });
+  try {
+    expect(loadSettings().density).toBe("compact");
+    expect(JSON.parse(stored.get("herdr-web-ui:settings")!)).toEqual({ density: "compact" });
+  } finally {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else delete (globalThis as { window?: unknown }).window;
   }
 });
 

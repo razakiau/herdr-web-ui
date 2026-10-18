@@ -22,11 +22,23 @@ export function isWorkspacePinKey(key: string): boolean {
   return machineId !== null && key.startsWith(WORKSPACE_MARK, machineId.length + 1);
 }
 
+/** what follows the PC in a host chat's key: herdr's pane ids never start with it either */
+const HOST_CHAT_MARK = "host:";
+/** the word a host chat's key had before (ZAC-182): read as `host:` and written back that way (migratePins) */
+const OLD_HOST_CHAT_MARK = "vscode:";
+
 /**
- * what follows the PC in a host chat's key: herdr's pane ids never start with it either. It keeps
- * its old word: pins are a shared preference, and a new one would drop every pinned chat.
+ * Pins as this version keys them: a host chat's old `machine:vscode:<session>` becomes
+ * `machine:host:<session>` in its place, once (pins are a shared preference: dropping the old word
+ * would unpin every chat). Only the word right after the PC changes; a pane's id is left alone.
  */
-const HOST_CHAT_MARK = "vscode:";
+export function migratePins(keys: readonly string[]): string[] {
+  return [...new Set(keys.map((key) => {
+    const machineId = pinMachineId(key);
+    return machineId !== null && key.startsWith(OLD_HOST_CHAT_MARK, machineId.length + 1)
+      ? `${machineId}:${HOST_CHAT_MARK}${key.slice(machineId.length + 1 + OLD_HOST_CHAT_MARK.length)}` : key;
+  }))];
+}
 
 /** A host chat's pin: the PC, then the host's session URI, which pins it on every browser of the server. */
 export function hostChatPinKey(machineId: string, session: string): string {
@@ -61,7 +73,12 @@ export function loadSidebarPins(): string[] {
     const value = storage()?.getItem(STORAGE_KEY);
     if (value === undefined || value === null) return [];
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? [...new Set(parsed.filter((key): key is string => typeof key === "string" && key.length > 0))] : [];
+    if (!Array.isArray(parsed)) return [];
+    const keys = [...new Set(parsed.filter((key): key is string => typeof key === "string" && key.length > 0))];
+    const migrated = migratePins(keys);
+    // the old word is written back in the new one, so it is read once
+    if (migrated.length !== keys.length || migrated.some((key, index) => key !== keys[index])) saveSidebarPins(migrated);
+    return migrated;
   } catch { return []; }
 }
 
@@ -83,7 +100,8 @@ export function currentSidebarPins(): string[] {
 }
 
 export function setSidebarPins(keys: readonly string[]): void {
-  const next = [...new Set(keys)];
+  // another browser of an older version may still share the old word
+  const next = migratePins(keys);
   const current = currentSidebarPins();
   if (next.length === current.length && next.every((key, index) => key === current[index])) return;
   pins = next;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Download, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Ellipsis, ListTree, MessageSquarePlus, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -8,9 +8,14 @@ import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismisse
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
-import { AgentSidebar, VscodeChatItem, type HostChatTarget } from "./AgentSidebar.tsx";
-import { currentSidebarPins, setSidebarPins, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
-import { hostLine, useMinuteClock, useHostChats, type HostPc } from "../lib/hostChats.ts";
+import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
+import { currentSidebarPins, subscribeSidebarPins, hostChatPinKey } from "../lib/sidebarPins.ts";
+import { useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { foldPcs, pcPlacement } from "../lib/hostPlacement.ts";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
+import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
+import type { SidebarActivity } from "../lib/sidebarActivity.tsx";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageMeters } from "./UsageMeters.tsx";
 import { NewVscodeChatSheet } from "./NewVscodeChatSheet.tsx";
@@ -32,6 +37,20 @@ interface Props {
   /** the host chat the app shows instead of a pane, and the pick of one (App.tsx) */
   selectedHostChat?: HostChatTarget | null;
   onSelectHostChat?(target: HostChatTarget): void;
+  /** each PC's host chats, for the PCs whose bridge has them (lib/hostChats.ts useHostChats, read in App.tsx) */
+  hostChats?: ReadonlyMap<string, HostPc>;
+}
+
+const NO_HOST_CHATS: ReadonlyMap<string, HostPc> = new Map();
+
+/** What works and what asks on a PC: its agents' panes and its host chats. */
+function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarActivity): PcActivity {
+  const statuses = machine.state === "connected" ? (machine.snapshot?.panes ?? []).map((pane) => activity.status(machine.id, pane)) : [];
+  const chats = (pc?.chats ?? []).filter((chat) => !chat.archived);
+  return {
+    working: statuses.filter((status) => status === "working").length + chats.filter((chat) => chat.status === "working").length,
+    asking: statuses.filter((status) => status === "blocked").length + chats.filter((chat) => chat.status === "asks").length,
+  };
 }
 export function MachineSidebar(props: Props) {
   const t = useT();
@@ -39,14 +58,25 @@ export function MachineSidebar(props: Props) {
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   // both lists draw from it: live counters per PC (lib/sidebarActivity.tsx)
   const activity = useSidebarActivityState(props.machines);
-  // each PC's host chats, for the PCs whose bridge has them (lib/hostChats.ts)
-  const hostChats = useHostChats(props.machines);
-  // the PC whose "+ New Copilot chat" is open (NewVscodeChatSheet), over the drawer until the chat is made
-  const [newChatOn, setNewChatOn] = useState<string | null>(null);
+  const hostChats = props.hostChats ?? NO_HOST_CHATS;
+  // the PC whose "New Copilot chat…" is open (NewVscodeChatSheet, until the "+" dialog offers Copilot), over the drawer until the chat is made
+  const [newChatOn, setNewChatOn] = useState<{ machineId: string; cwd: string | null } | null>(null);
+  // the PC whose "All agents on <PC>…" is open
+  const [allOn, setAllOn] = useState<string | null>(null);
+  // a PC picked from "Other PCs": a full group until another one is picked
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => { setPicked(null); }, [props.selectedMachineId]);
+  // with three PCs or more, the ones not in use fold (lib/hostPlacement.ts foldPcs): the current PC,
+  // the one picked from the fold, and every PC with a question or an approval waiting stay open
+  const { open: openPcs, folded } = foldPcs(props.machines, props.selectedMachineId,
+    (id) => id === picked || pcActivity(props.machines.find((machine) => machine.id === id)!, hostChats.get(id), activity).asking > 0);
+  const allPc = allOn !== null ? hostChats.get(allOn) : undefined;
+  const allMachine = props.machines.find((machine) => machine.id === allOn);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
   return <SidebarActivityProvider value={activity}><div className="sidebar-shell">
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={setNewChatOn} />)}
+      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => setNewChatOn({ machineId: machine.id, cwd })} onAllAgents={() => setAllOn(machine.id)} />)}
+      {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={setPicked} />}
       {!props.machines.length && <p className="tree-state" role="status">{t("Loading PCs…")}</p>}
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect}
@@ -60,14 +90,30 @@ export function MachineSidebar(props: Props) {
         <UsageMeters />
       </div>
     </footer>
-    {newChatOn !== null && hostChats.has(newChatOn) && <NewVscodeChatSheet machines={props.machines} pcs={hostChats} machineId={newChatOn} onClose={() => setNewChatOn(null)}
+    {allOn !== null && allPc && allMachine && <AllAgentsSheet machineName={allMachine.name} pc={allPc}
+      selected={props.selectedHostChat?.machineId === allOn ? props.selectedHostChat.session : null} onClose={() => setAllOn(null)}
+      // the chat opens as a tab of its workspace or its folder row; on a phone the drawer goes as a pick's does
+      onOpen={(session) => { setAllOn(null); props.onSelectHostChat?.({ machineId: allOn, session }); }} />}
+    {newChatOn !== null && hostChats.has(newChatOn.machineId) && <NewVscodeChatSheet machines={props.machines} pcs={hostChats} machineId={newChatOn.machineId} cwd={newChatOn.cwd} onClose={() => setNewChatOn(null)}
       // the app opens the chat made, and on a phone puts the drawer away as a pick does
       onCreated={(target) => { setNewChatOn(null); props.onSelectHostChat?.(target); }} />}
   </div></SidebarActivityProvider>;
 }
 
-function MachineGroup({ machine, hostChats, onNewHostChat, ...props }: Props & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(machineId: string): void }) {
+function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onAllAgents(): void }) {
   const t = useT();
+  const [pcMenu, setPcMenu] = useState<HTMLElement | null>(null);
+  const now = useMinuteClock();
+  const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  const openSession = props.selectedHostChat?.machineId === machine.id ? props.selectedHostChat.session : null;
+  // a PC whose bridge has host chats: they stand as tabs of its workspaces, or as folder rows (lib/hostPlacement.ts)
+  const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, (session) => pins.includes(hostChatPinKey(machine.id, session)), openSession, now) : null;
+  // a host that is not up cannot make a chat: the sheet's list says what it needs
+  const canStart = hostChats?.host?.state === "connected";
+  const hostItems = (cwd: string | null): RowMenuItem[] => [
+    ...(canStart ? [{ id: "new-host-chat", label: t("New Copilot chat…"), icon: MessageSquarePlus, run: () => onNewHostChat(cwd) }] : []),
+    { id: "all-agents", label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: onAllAgents },
+  ];
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`herdr-web-ui:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(machine.name);
@@ -110,6 +156,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, ...props }: Props & {
       {machine.kind === "ssh" && <button className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}
       {/* the fold over this PC's workspaces sits beside the + */}
       <button className="sidebar-row-action machine-toggle" aria-expanded={!collapsed} aria-label={collapsed ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} title={collapsed ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>{collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
+      {hostChats && <button type="button" className="sidebar-row-action machine-menu" aria-label={t("More for {title}", { title: machine.name })} aria-haspopup="menu" aria-expanded={pcMenu !== null} onClick={(event) => setPcMenu(pcMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
       <button className="sidebar-row-action machine-new" disabled={!online} aria-label={t("New workspace on {name}", { name: machine.name })} title={t("New workspace")} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
     </header>
     {/* connected is the norm and says nothing new; every other state is spelled out */}
@@ -130,37 +177,10 @@ function MachineGroup({ machine, hostChats, onNewHostChat, ...props }: Props & {
     </div>}
     {error && <p className="machine-error" role="alert">{error}</p>}
     {!collapsed && <div className={online ? "" : "machine-offline"} inert={!online}>
-      {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions} /></MachineContext.Provider>}
+      {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions}
+        hostChats={placement ? { placement, selected: openSession, onSelect: (session) => props.onSelectHostChat?.({ machineId: machine.id, session }), folderMenu: (cwd) => hostItems(cwd) } : undefined} /></MachineContext.Provider>}
     </div>}
-    {!collapsed && online && hostChats && <VscodeChatsGroup machine={machine} pc={hostChats} selected={props.selectedHostChat ?? null} onSelect={(target) => props.onSelectHostChat?.(target)} onNew={() => onNewHostChat(machine.id)} />}
-  </section>;
-}
-
-/**
- * A PC's "Copilot": what its host needs while it is not ready, every chat of the host (newest
- * first), and "+ New Copilot chat". Only a PC whose bridge has the feature on has the group.
- */
-function VscodeChatsGroup({ machine, pc, selected, onSelect, onNew }: { machine: Machine; pc: HostPc; selected: HostChatTarget | null; onSelect(target: HostChatTarget): void; onNew(): void }) {
-  const t = useT();
-  const now = useMinuteClock();
-  // the same pins as the Agents list's, shared with the other browsers (lib/preferencesSync.ts)
-  const pinned = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
-  const line = pc.host ? hostLine(pc.host, t) : null;
-  // one landmark per PC: its name tells them apart
-  return <section className="host-chats" aria-label={t("Copilot on {name}", { name: machine.name })}>
-    <h3 className="sidebar-section-label host-chats-label">{t("Copilot")}</h3>
-    {line && <p className="tree-state host-chats-state" role="status">{line}</p>}
-    {pc.chats.length > 0 && <ul className="agent-list host-chats-list">
-      {pc.chats.map((chat) => <VscodeChatItem key={chat.session} machine={machine} chat={chat} now={now}
-        // the group sits under its PC: the PC's name would say it twice
-        machineName={null}
-        selected={selected?.machineId === machine.id && selected.session === chat.session}
-        pinned={pinned.includes(hostChatPinKey(machine.id, chat.session))}
-        onSelect={onSelect} onTogglePin={(key) => setSidebarPins(toggleSidebarPin(currentSidebarPins(), key))} />)}
-    </ul>}
-    {/* a host that is not up cannot make one: the line above says what it needs */}
-    <button type="button" className="btn btn-ghost host-chats-new" disabled={pc.host?.state !== "connected"} aria-haspopup="dialog"
-      aria-label={t("New Copilot chat on {name}", { name: machine.name })} onClick={onNew}>{t("+ New Copilot chat")}</button>
+    {pcMenu && <RowMenu anchor={pcMenu} title={machine.name} items={hostItems(null)} onClose={() => setPcMenu(null)} />}
   </section>;
 }
 

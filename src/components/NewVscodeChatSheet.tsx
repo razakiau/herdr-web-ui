@@ -31,18 +31,20 @@ export interface NewVscodeChatSheetProps {
   pcs: ReadonlyMap<string, HostPc>;
   /** the PC whose "+ New Copilot chat" was tapped */
   machineId: string;
+  /** the folder it starts in (a folder row's), else the PC's newest chat's */
+  cwd?: string | null;
   onClose(): void;
   /** the chat made: the app opens it */
   onCreated(target: { machineId: string; session: string }): void;
 }
 
-export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, onClose, onCreated }: NewVscodeChatSheetProps) {
+export function NewVscodeChatSheet({ machines, pcs, machineId: initialMachine, cwd: initialCwd = null, onClose, onCreated }: NewVscodeChatSheetProps) {
   const t = useT();
   const id = useId();
   const [machineId, setMachineId] = useState(initialMachine);
   const chats = pcs.get(machineId)?.chats ?? [];
   const folders = folderChoices(chats);
-  const [cwd, setCwd] = useState(() => folders[0] ?? "");
+  const [cwd, setCwd] = useState(() => initialCwd ?? folders[0] ?? "");
   const [text, setText] = useState("");
   const [model, setModel] = useState<{ id: string; effort?: string } | null>(null);
   // null: "Agent", VS Code's own (sent as no agent at all)

@@ -23,8 +23,6 @@ export type Density = "compact" | "comfortable";
 export type SidebarRows = "one" | "two";
 /** the Agents list's order: herdr's workspace order, or a waiting agent first and then the latest change */
 export type AgentOrder = "workspace" | "activity";
-/** Which host chats the Agents list shows: the live ones (working, asking, or pinned), or the recent ones too. */
-export type HostChatsInAgents = "live" | "recent";
 /** how agent logos are drawn: in their brand colors, or without color: Claude's in the text color, the others in grey (data-marks on <html>) */
 export type AgentMarks = "color" | "mono";
 /** what the plan meters count: the share of a limit used, or what is left of it */
@@ -72,8 +70,6 @@ export interface Settings {
   sidebarRows: SidebarRows;
   /** The Agents list's order. Activity is display-only: herdr's own order never changes. */
   agentOrder: AgentOrder;
-  /** host chats in the Agents list: live only, or every chat of the last days too (each PC's group lists them all) */
-  vscodeChatsInAgents: HostChatsInAgents;
   /** Agent logos: brand colors, or without color, so a list of one agent is not a stripe of tiles */
   agentMarks: AgentMarks;
   /** the sidebar's state marks: this app's own, or herdr's dots or symbols, as its `[ui] status_indicators` (lib/status.ts) */
@@ -165,9 +161,7 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
  * Settings field in the projection makes a new field require an explicit collection decision. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden"
-  // a fork setting: the shared telemetry schema (shared/telemetry.ts) checks its exact key set
-  | "vscodeChatsInAgents">;
+  | "quickReplies" | "usageOrder" | "usageHidden">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -234,7 +228,7 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
  * must be placed here, or the build fails; when in doubt it is the device's.
  */
 export const SETTING_SCOPE = {
-  theme: "shared", palette: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared", vscodeChatsInAgents: "shared",
+  theme: "shared", palette: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared",
   agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device",
@@ -263,7 +257,6 @@ export const DEFAULT_SETTINGS: Settings = {
   density: "comfortable",
   sidebarRows: "two",
   agentOrder: "workspace",
-  vscodeChatsInAgents: "live",
   agentMarks: "color",
   statusIndicators: "classic",
   palette: "amber",
@@ -343,6 +336,8 @@ export function alertPrefs(settings: Settings): AlertPrefs {
 const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
 
 const STORAGE_KEY = "herdr-web-ui:settings";
+/** settings that are gone: "Copilot chats in Agents" (a host chat is an agent now, listed by the agents' rule) */
+const REMOVED_KEYS: readonly string[] = ["vscodeChatsInAgents"];
 export const TERMINAL_FONT_MIN = 10;
 export const TERMINAL_FONT_MAX = 22;
 export const TERMINAL_WHEEL_SPEED_MIN = 1;
@@ -429,7 +424,6 @@ export function sanitizeSettings(raw: unknown): Settings {
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,
     agentOrder: record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
-    vscodeChatsInAgents: record["vscodeChatsInAgents"] === "live" || record["vscodeChatsInAgents"] === "recent" ? record["vscodeChatsInAgents"] : DEFAULT_SETTINGS.vscodeChatsInAgents,
     agentMarks: record["agentMarks"] === "color" || record["agentMarks"] === "mono" ? record["agentMarks"] : DEFAULT_SETTINGS.agentMarks,
     statusIndicators: record["statusIndicators"] === "classic" || record["statusIndicators"] === "dots" || record["statusIndicators"] === "symbols" ? record["statusIndicators"] : DEFAULT_SETTINGS.statusIndicators,
     palette,
@@ -483,7 +477,14 @@ export function sanitizeSettings(raw: unknown): Settings {
 export function loadSettings(): Settings {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw === null ? DEFAULT_SETTINGS : sanitizeSettings(JSON.parse(raw));
+    if (raw === null) return DEFAULT_SETTINGS;
+    const parsed: unknown = JSON.parse(raw);
+    // a setting this version removed leaves the stored record too
+    if (typeof parsed === "object" && parsed !== null && REMOVED_KEYS.some((key) => key in parsed)) {
+      const kept = Object.fromEntries(Object.entries(parsed).filter(([key]) => !REMOVED_KEYS.includes(key)));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+    }
+    return sanitizeSettings(parsed);
   } catch {
     return DEFAULT_SETTINGS;
   }

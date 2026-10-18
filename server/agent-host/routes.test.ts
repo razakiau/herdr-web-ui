@@ -315,7 +315,7 @@ describe("host chat read and write routes", () => {
     const r = await rig();
     const chats = await call(r, "/api/host-chats/chats");
     expect(chats.json.chats.map((row: { session: string }) => row.session)).toEqual([sessionUri(2), sessionUri(1)]);
-    expect(chats.json.chats[0]).toEqual({ session: sessionUri(2), title: "FICTIONAL_chat_2", status: "idle", modified_at: "2026-01-01T00:00:02.000Z", cwd: "/tmp/fictional-repo" });
+    expect(chats.json.chats[0]).toEqual({ session: sessionUri(2), title: "FICTIONAL_chat_2", status: "idle", modified_at: "2026-01-01T00:00:02.000Z", cwd: "/tmp/fictional-repo", unread: true, archived: false });
     const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
     expect(read.status).toBe(200);
     expect(read.json).toMatchObject({ session: sessionUri(1), title: "FICTIONAL_chat_1", status: "idle", turns: [], cursor: null, prompt: null, busy: false });

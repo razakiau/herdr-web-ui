@@ -78,6 +78,9 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
       status: statusOf(summary.status),
       modified_at: summary.modifiedAt,
       cwd: pathOf(summary.workingDirectories?.[0] ?? summary.project?.uri),
+      // the flags beside the activity bits (VS Code's isSessionStatusRead / isSessionStatusArchived)
+      unread: (summary.status & SessionStatus.IsRead) === 0,
+      archived: (summary.status & SessionStatus.IsArchived) !== 0,
     }))
     .sort((a, b) => (a.modified_at < b.modified_at ? 1 : a.modified_at > b.modified_at ? -1 : 0));
 }
