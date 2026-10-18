@@ -1283,4 +1283,6 @@ export const KO: Record<string, string> = {
   "{label}, selected": "{label}, 선택됨",
   "Answered chat questions": "답변한 채팅 질문",
   "Skipped": "건너뜀",
+  "Other…": "기타…",
+  "Answer": "답변",
 };

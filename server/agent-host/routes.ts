@@ -84,7 +84,8 @@ interface Watcher { watch(key: string): Promise<() => void>; watching(key: strin
 /** Per session (or worker chat): one watch, held while a phone keeps renewing it. */
 class Leases {
   private readonly held = new Map<string, Lease>();
-  constructor(private readonly host: Watcher, private readonly clock: LeaseClock) {}
+  /** `onExpire`: a lease ran out (not renewed in LEASE_MS), after its watch is released. */
+  constructor(private readonly host: Watcher, private readonly clock: LeaseClock, private readonly onExpire?: (key: string) => void) {}
 
   async take(session: string): Promise<void> {
     let lease = this.held.get(session);
@@ -114,6 +115,7 @@ class Leases {
     if (this.held.get(session) !== lease) return;
     this.held.delete(session);
     void lease.taking.then((release) => release(), () => {});
+    this.onExpire?.(session);
   }
 }
 
@@ -148,7 +150,9 @@ function leasesOf(host: AgentHost, clock: LeaseClock | undefined): HostLeases {
       watch: (uri) => host.watchChat ? host.watchChat(uri, workers.get(uri) ?? "") : Promise.reject(new AgentHostError("rpc_error")),
       watching: (uri) => host.watchingChat?.(uri) ?? false,
     };
-    leases = { sessions: new Leases(host, clock ?? realClock), chats: new Leases(chats, clock ?? realClock), workers };
+    // a session no phone keeps watching forgets its worker chats: its next read finds them again
+    const forget = (session: string): void => { for (const [uri, owner] of workers) if (owner === session) workers.delete(uri); };
+    leases = { sessions: new Leases(host, clock ?? realClock, forget), chats: new Leases(chats, clock ?? realClock), workers };
     leaseSets.set(host, leases);
   }
   return leases;
@@ -302,19 +306,19 @@ async function settle(ready: () => boolean, ms: number): Promise<void> {
   for (const deadline = Date.now() + ms; !ready() && Date.now() < deadline;) await Bun.sleep(10);
 }
 
-/** How many of a chat's subagents a read follows: their own chats give their rows a model and times. */
-const SUBAGENTS_FOLLOWED = 20;
+/** How many of a chat's subagents a read subscribes: their own chats give their rows a model and times. */
+export const SUBAGENTS_FOLLOWED = 20;
 
 /**
- * Leases the worker chats `chat`'s subagent calls started (the newest SUBAGENTS_FOLLOWED), and
- * remembers them as `session`'s: from then on each reads through the chat route too. One the host
- * will not give is left out; its row keeps its turn's times.
+ * Remembers every worker chat `chat`'s subagent calls started as `session`'s, so each reads through
+ * the chat route (an older one subscribes when its row opens: workerChat), and leases the newest
+ * SUBAGENTS_FOLLOWED now. One the host will not give is left out; its row keeps its turn's times.
  */
 async function followSubagents(call: Call, session: string, chat: ChatState): Promise<void> {
   if (!call.host.watchChat) return;
-  const uris = subagentChats(chat).slice(-SUBAGENTS_FOLLOWED);
+  const uris = subagentChats(chat);
   for (const uri of uris) call.leases.workers.set(uri, session);
-  await Promise.all(uris.map((uri) => call.leases.chats.take(uri).catch(() => undefined)));
+  await Promise.all(uris.slice(-SUBAGENTS_FOLLOWED).map((uri) => call.leases.chats.take(uri).catch(() => undefined)));
 }
 
 /** What a read of `session`'s chat knows beside it: its subagents' own chats, and the models' names. */

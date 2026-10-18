@@ -1287,4 +1287,6 @@ export const ZH: Record<string, string> = {
   "{label}, selected": "{label}，已选择",
   "Answered chat questions": "已回答的聊天问题",
   "Skipped": "已跳过",
+  "Other…": "其他…",
+  "Answer": "回答",
 };

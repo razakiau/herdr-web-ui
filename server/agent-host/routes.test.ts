@@ -483,6 +483,91 @@ describe("host chat read and write routes", () => {
     expect({ status: sent.status, code: sent.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
   });
 
+  /** A parent chat whose turn started `n` subagents, worker-0 oldest, and their worker chats. */
+  const manySubagents = (n: number) => {
+    const workers = Array.from({ length: n }, (_, i) => `ahp-chat://default/fictional-worker-${i}`);
+    const parent = reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: user("FICTIONAL fan out") } as StateAction,
+      ...workers.flatMap((resource, i) => toolCallActions("turn-1", { toolCallId: `c${i}`, toolName: "task", displayName: "Task", invocationMessage: "FICTIONAL delegating" },
+        { success: true, pastTenseMessage: "FICTIONAL delegated", content: [{ type: "subagent", resource, title: "Explore", agentName: "explore", description: `FICTIONAL task ${i}` }] } as ToolCallResult)),
+      { type: "chat/turnComplete", turnId: "turn-1", duration: 1_000 } as StateAction,
+    ], chatState(1));
+    const chats = Object.fromEntries(workers.map((resource, i) => [resource, reducedChat([
+      { type: "chat/turnStarted", turnId: `w-${i}`, startedAt: AT, message: user(`FICTIONAL task ${i}`) } as StateAction,
+      { type: "chat/turnComplete", turnId: `w-${i}`, duration: 1_000 } as StateAction,
+    ], chatState(3, { resource }))]));
+    return { workers, parent, chats };
+  };
+  /** The rig's connection, its worker-chat subscribes counted by chat. */
+  const counting = (conn: AgentHostConnection) => {
+    const watched: string[] = [];
+    const host: AgentHost = {
+      state: () => conn.state(), mirror: () => conn.mirror(), summaries: () => conn.summaries(), chat: (s) => conn.chat(s),
+      watch: (s) => conn.watch(s), watching: (s) => conn.watching(s), request: (method, params) => conn.request(method, params),
+      dispatch: (channel, action) => conn.dispatch(channel, action),
+      watchChat: (uri, session) => { watched.push(uri); return conn.watchChat(uri, session); },
+      watchingChat: (uri) => conn.watchingChat(uri), chatAt: (uri) => conn.chatAt(uri),
+    };
+    return { host, watched };
+  };
+  const chatPath = (session: string) => `/api/host-chats/chat?session=${encodeURIComponent(session)}`;
+
+  it("a read subscribes its newest 20 subagent chats, and an older one still reads when its row opens", async () => {
+    const { workers, parent, chats } = manySubagents(21);
+    const r = await rig({ chats: { [chatUri(1)]: parent, [chatUri(2)]: chatState(2), ...chats } });
+    const { host, watched } = counting(r.conn);
+    const rr = { conn: host, clock: r.clock };
+    expect((await call(rr, chatPath(sessionUri(1)))).status).toBe(200);
+    expect(watched.length).toBe(20);
+    expect(watched).not.toContain(workers[0]);
+    expect(new Set(watched)).toEqual(new Set(workers.slice(1)));
+    // the oldest is known, so it reads, subscribing then
+    const oldest = await call(rr, chatPath(workers[0]!));
+    expect(oldest.status).toBe(200);
+    expect((oldest.json as HostChatRead).turns[0]!.parts).toEqual([{ kind: "text", text: "FICTIONAL task 0" }]);
+    expect(watched.length).toBe(21);
+    expect(r.conn.watchingChat(workers[0]!)).toBe(true);
+  });
+
+  it("an expired lease releases its worker watches, and the session forgets its worker chats", async () => {
+    const { workers, parent, chats } = manySubagents(2);
+    const r = await rig({ chats: { [chatUri(1)]: parent, [chatUri(2)]: chatState(2), ...chats } });
+    await call(r, chatPath(sessionUri(1)));
+    expect(workers.map((uri) => r.conn.watchingChat(uri))).toEqual([true, true]);
+    r.clock.advance(LEASE_MS + 1);
+    await until("the worker watches to go", () => workers.every((uri) => !r.conn.watchingChat(uri)));
+    expect(r.conn.watching(sessionUri(1))).toBe(false);
+    // no longer remembered: a worker read without its parent read again is missing
+    expect((await call(r, chatPath(workers[0]!))).json.error.code).toBe("host_chat_missing");
+    // the parent's next read finds them again
+    await call(r, chatPath(sessionUri(1)));
+    expect((await call(r, chatPath(workers[0]!))).status).toBe(200);
+  });
+
+  it("a worker chat stops reading once its parent session is no longer known", async () => {
+    const { workers, parent, chats } = manySubagents(1);
+    const r = await rig({ chats: { [chatUri(1)]: parent, [chatUri(2)]: chatState(2), ...chats } });
+    // the host as the routes see it, with the parent hidden on request (gone from the list and the mirror)
+    let hidden = false;
+    const { host } = counting(r.conn);
+    const hiding: AgentHost = {
+      ...host,
+      summaries: () => r.conn.summaries().filter((summary) => !hidden || summary.resource !== sessionUri(1)),
+      mirror: () => ({ root: r.conn.mirror().root, getSession: (uri: string) => hidden && uri === sessionUri(1) ? undefined : r.conn.mirror().getSession(uri) }),
+    };
+    const rr = { conn: hiding, clock: r.clock };
+    await call(rr, chatPath(sessionUri(1)));
+    expect((await call(rr, chatPath(workers[0]!))).status).toBe(200);
+    hidden = true;
+    // still remembered as the session's, still subscribed: refused all the same, as the session is
+    expect(r.conn.watchingChat(workers[0]!)).toBe(true);
+    const gone = await call(rr, chatPath(workers[0]!));
+    expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
+    for (const path of [`/api/host-chats/tool-output?session=${encodeURIComponent(workers[0]!)}&ref=x`, `/api/host-chats/image?session=${encodeURIComponent(workers[0]!)}&ref=x:0`]) {
+      expect((await call(rr, path)).json.error.code).toBe("host_chat_missing");
+    }
+  });
+
   it("a two-question form answers step one with inputAnswerChanged and completes on step two with both answers", async () => {
     const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
     const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;

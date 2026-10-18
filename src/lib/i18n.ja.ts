@@ -1285,4 +1285,6 @@ export const JA: Record<string, string> = {
   "{label}, selected": "{label}、選択済み",
   "Answered chat questions": "回答済みのチャットの質問",
   "Skipped": "スキップ",
+  "Other…": "その他…",
+  "Answer": "回答",
 };

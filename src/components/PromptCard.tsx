@@ -8,7 +8,7 @@ import { useMachineApi } from "../lib/machineContext.tsx";
 import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
 import { focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
-import { useT } from "../lib/i18n.ts";
+import { useT, type Translate } from "../lib/i18n.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { Markdown } from "./Markdown.tsx";
 
@@ -40,6 +40,16 @@ export function PromptCard({ paneId, ...props }: PromptCardProps) {
     await answerPanePrompt({ pane_id: paneId, prompt_id: props.prompt.id, ...choice });
   };
   return <PromptCardView {...props} submit={submit} />;
+}
+
+/**
+ * A Copilot card's typed-answer slot names the field: the bridge sends it in English
+ * (server/agent-host/chats.ts OTHER_LABEL / ANSWER_LABEL), so the card says it in the user's language.
+ */
+function copilotSlot(label: string | undefined, t: Translate): string {
+  if (label === "Other…") return t("Other…");
+  if (label === "Answer") return t("Answer");
+  return label ?? t("Type an answer");
 }
 
 /** One answer as the card gives it: an option, several, or typed words. */
@@ -229,7 +239,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         <div className="prompt-card-custom">
           {hasChoices && <span className="prompt-card-custom-label" id={customLabelId}>{t("Or type your own answer")}</span>}
           <div className="prompt-card-custom-row">
-            <input className="input" value={custom} disabled={pending} placeholder={prompt.options[prompt.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
+            <input className="input" value={custom} disabled={pending} placeholder={markdown ? copilotSlot(prompt.options[prompt.custom_option_index]?.label, t) : prompt.options[prompt.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
               // an IME's Enter commits the candidate; WebKit can send it after compositionend, as key code 229
               if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && custom.trim().length > 0) void answer({ custom_text: custom.trim() });
             }} />
