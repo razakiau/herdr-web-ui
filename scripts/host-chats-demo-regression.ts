@@ -102,6 +102,8 @@ const patch = `(() => {
         { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs" },
         ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd })),
       ] });
+      // the docs chat's host is down: the bridge says why in its own words
+      if (path === "/api/host-chats/chat" && url.searchParams.get("session") === "fictional-session-0") return json({ error: { code: "agent_host_down", message: "FICTIONAL the agent host is down" } }, 503);
       if (path === "/api/host-chats/chat") { if (url.searchParams.has("before")) calls.before = [...(calls.before ?? []), url.searchParams.get("before")]; return json(read(url.searchParams.get("session"), url.searchParams.get("before"))); }
       if (path === "/api/host-chats/chat/new") {
         const session = "fictional-new-" + (state.created.length + 1);
@@ -197,9 +199,13 @@ try {
         await row.locator(".agent-select").click();
         const view = page.locator(`.host-chat[data-host-session="${SESSION}"]`);
         await view.waitFor();
-        await view.locator(".chat-view").first().waitFor();
-        assert.equal(await page.locator(".vscode-chat").count(), 0, "no chat view of its own");
-        assert.equal(await view.locator('.chat-view[aria-label="Copilot chat FICTIONAL build chat"]').count(), 1, "one transcript, the app's ChatView, named for the chat");
+        // only ChatView reading a host source draws these: its transcript tagged with the source's
+        // kind, and rows keyed by the source's key (the old screen tagged none and keyed by place)
+        const transcript = view.locator('.terminal-surface > .chat-frame .chat-view[data-conversation-source="agent-host"]');
+        await transcript.waitFor();
+        assert.equal(await view.locator(".chat-view").count(), 1, "one transcript");
+        assert.equal(await transcript.getAttribute("aria-label"), "Copilot chat FICTIONAL build chat", "named for the chat");
+        assert.ok((await transcript.locator("[data-chat-row]").first().getAttribute("data-chat-row"))?.includes(`host:remote:${SESSION}`), "its rows are keyed by the host source's key");
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" }).waitFor();
         await view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).waitFor();
         const block = view.locator(".work-block").first();
@@ -308,6 +314,14 @@ try {
         // 6. nothing wider than the phone
         await fits("the busy chat");
         console.log("PASS no horizontal overflow at 390 px");
+
+        // 6b. a chat whose read fails says the bridge's words, not the request's URL
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await page.locator('.host-chat-item[data-machine="remote"][data-host-session="fictional-session-0"] .agent-select').first().click();
+        const down = page.locator('.host-chat[data-host-session="fictional-session-0"]');
+        await down.locator(".chat-inline-error").waitFor();
+        assert.equal(await down.locator(".chat-inline-error").textContent(), "FICTIONAL the agent host is down", "the bridge's detail, without the URL and status");
+        console.log("PASS a host chat whose read fails says the bridge's own words");
 
         // 7. "+ New Copilot chat" on the remote PC: a folder chip, a model, the first message, Start chat
         const newChats = () => posts("/api/machines/remote/host-chats/chat/new");

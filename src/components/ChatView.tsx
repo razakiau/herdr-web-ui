@@ -59,6 +59,7 @@ import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTask
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { shouldFoldUserMessage } from "../lib/userMessageFold.ts";
 import { paneSource, type ChatSource } from "../lib/chatSource.ts";
+import { errorText } from "../lib/hostChats.ts";
 
 /** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
 const ChatSourceContext = createContext<ChatSource | null>(null);
@@ -1021,7 +1022,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
       } catch (cause) {
         if (cancelled || generation !== olderGeneration.current) return;
         setLoaded(true);
-        setError(cause instanceof Error ? cause.message : String(cause));
+        // a host chat says the bridge's own words, as its screen always did; a pane keeps the full message
+        setError(hosted ? errorText(cause) : cause instanceof Error ? cause.message : String(cause));
         setErrorStatus(cause instanceof ApiError ? cause.status : null);
       }
     };
@@ -1058,7 +1060,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
 
   // A source's own changes (a host chat's push, its host back, the page or the event stream back)
   // read the newest page at once, one read at a time: changes during a read make exactly one more
-  // (ConversationRefresh's lane, as hostChats.coalesced did for the host chat's screen).
+  // (ConversationRefresh's lane; chatSource.test.ts holds a host chat's pushes to it).
   useEffect(() => chat.onChange?.(() => conversationRefresh.refresh()), [chat, conversationRefresh]);
 
   // A scrollback stand-in has no native file for the server to watch. Its source is the

@@ -63,9 +63,12 @@ const changed = (detail: string): ApiError => new ApiError("host-chats/chat", 40
  * remembered with the turn the window started at when the host gave it (message_ids: one id per
  * host turn, and each host turn is a user turn and an assistant turn), and:
  *
- * - the newest page (no `from`) starts where the first read's window started, and keeps starting
- *   there while that turn is in the chat: another phone paging the same chat back on the bridge
- *   does not move it. Its cursor is that window's;
+ * - the newest page (no `from`) starts at the first turn of the window it was first read from, and
+ *   keeps starting there while that turn is in the chat: another phone paging the same chat back on
+ *   the bridge does not move it. Its cursor is that window's. A window read at the chat's beginning
+ *   (no cursor) is anchored on its first turn too, and read again from the new window once it no
+ *   longer starts there or gets a cursor (the host restarted and loaded a later page): else the
+ *   page would shrink to the new window with nothing older to reach;
  * - `from` a cursor: the turns from where the window started when that cursor was given, the cursor
  *   itself back (no turns to fill in between);
  * - `before` a cursor: only the turns the host put ahead of that start, under its next cursor.
@@ -77,7 +80,7 @@ export function hostSource(machineId: string, session: string): HostChatSource {
   const query = (ref: string): string => new URLSearchParams({ session, ref }).toString();
   /** the turn id each cursor's window started at */
   const starts = new Map<string, string | null>();
-  /** where the newest page starts: null before the first read, an id of null for the window's start */
+  /** where the newest page starts: null before the first read; its first turn's id (null: the chat had none) */
   let newest: { cursor: string | null; id: string | null } | null = null;
   let lastRead: HostChatRead | null = null;
   /** the last newest page answered: an unchanged read hands back this very object (ChatView skips it) */
@@ -92,6 +95,7 @@ export function hostSource(machineId: string, session: string): HostChatSource {
   };
   /** the ids of the host turns the read holds, in order (pending messages come after them) */
   const turnIds = (read: HostChatRead): string[] => (read.message_ids ?? []).slice(0, Math.floor(read.turns.length / 2));
+  /** where turn `id` is in the read's turns; null (a chat with no turn yet) is the start */
   const at = (read: HostChatRead, id: string | null): number => id === null ? 0 : turnIds(read).indexOf(id);
   const remember = (read: HostChatRead): void => {
     if (read.cursor !== null) starts.set(read.cursor, turnIds(read)[0] ?? null);
@@ -126,9 +130,13 @@ export function hostSource(machineId: string, session: string): HostChatSource {
         if (start === undefined || at(read, start) < 0) throw changed(`no such cursor: ${page.from}`);
         from = { cursor: page.from, id: start };
       } else {
-        if (newest === null || at(read, newest.id) < 0) {
+        const first = turnIds(read)[0] ?? null;
+        const moved = newest === null || newest.id === null || at(read, newest.id) < 0
+          // anchored at the chat's beginning: the window must still start there, with no cursor
+          || (newest.cursor === null && (read.cursor !== null || first !== newest.id));
+        if (moved || newest === null) {
           remember(read);
-          newest = { cursor: read.cursor, id: read.cursor === null ? null : turnIds(read)[0] ?? null };
+          newest = { cursor: read.cursor, id: first };
         }
         from = newest;
       }

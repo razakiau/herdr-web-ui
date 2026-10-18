@@ -1,14 +1,24 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
 
 import type { HostChatRead } from "../../shared/host-chats.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError } from "./api.ts";
 import { hostSource, paneSource, HOST_WATCH_MS } from "./chatSource.ts";
+import { ConversationRefresh } from "./conversationRefresh.ts";
 import { noteHostChatMessage, noteHostChatStreamOpen } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
 
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; jest.useRealTimers(); });
+const globals = globalThis as unknown as { window?: unknown };
+const realWindow = globals.window;
+let restoreClock: (() => void) | undefined;
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  jest.useRealTimers();
+  globals.window = realWindow;
+  restoreClock?.();
+  restoreClock = undefined;
+});
 
 const said = (role: ConversationTurn["role"], text: string): ConversationTurn => ({ role, ts: null, parts: [{ kind: "text", text }] });
 /** A host chat's read: each host turn is a user turn and an assistant turn, under the host turn's id. */
@@ -93,6 +103,63 @@ describe("hostSource", () => {
     expect(newest.cursor).toBe("c1");
   });
 
+  it("a window that restarts with a cursor (the host restarted) is the newest page from then on, not a shrunk page at the beginning", async () => {
+    answering(hostRead(["t1", "t2", "t3"], null), hostRead(["t3"], "c9"), hostRead(["t2", "t3"], "c8"));
+    const source = hostSource("m", "s");
+    expect((await source.read()).cursor).toBeNull();
+    const restarted = await source.read();
+    expect(texts(restarted)).toEqual(["FICTIONAL ask t3", "FICTIONAL answer t3"]);
+    // the older turns are reachable again: through the new window's cursor
+    expect(restarted.cursor).toBe("c9");
+    const older = await source.read({ before: "c9" });
+    expect(texts(older)).toEqual(["FICTIONAL ask t2", "FICTIONAL answer t2"]);
+  });
+
+  it("anchored at the chat's beginning, a window that gets a cursor or a turn ahead of its first is read from again", async () => {
+    // the first turn stays, but the host now says there are turns before it
+    answering(hostRead(["t1", "t2"], null), hostRead(["t1", "t2", "t3"], "c5"));
+    let source = hostSource("m", "s");
+    await source.read();
+    const cursored = await source.read();
+    expect(cursored.cursor).toBe("c5");
+    expect(cursored.turns).toHaveLength(6);
+    // a turn came in ahead of the first one shown (the window grew back): no turn is left out of reach
+    answering(hostRead(["t1", "t2"], null), hostRead(["t0", "t1", "t2"], null));
+    source = hostSource("m", "s");
+    await source.read();
+    const grownBack = await source.read();
+    expect(texts(grownBack)[0]).toBe("FICTIONAL ask t0");
+    expect(grownBack.cursor).toBeNull();
+  });
+
+  it("a newest page whose first turn is gone from the chat is read from the window the host has now", async () => {
+    answering(hostRead(["t2", "t3"], "c1"), hostRead(["x9"], "c7"));
+    const source = hostSource("m", "s");
+    await source.read();
+    const replaced = await source.read();
+    expect(texts(replaced)).toEqual(["FICTIONAL ask x9", "FICTIONAL answer x9"]);
+    expect(replaced.cursor).toBe("c7");
+  });
+
+  it("a window read with no turn but a cursor is no anchor: the next read's window is the newest page", async () => {
+    answering(hostRead([], "c1"), hostRead(["t5"], "c2"));
+    const source = hostSource("m", "s");
+    expect((await source.read()).cursor).toBe("c1");
+    const next = await source.read();
+    expect(texts(next)).toEqual(["FICTIONAL ask t5", "FICTIONAL answer t5"]);
+    expect(next.cursor).toBe("c2");
+  });
+
+  it("a newest page anchored at the window's beginning keeps it while that turn stays, and an empty chat anchors on its first turn", async () => {
+    answering(hostRead([], null), hostRead(["t1"], null), hostRead(["t1", "t2"], null));
+    const source = hostSource("m", "s");
+    expect((await source.read()).turns).toEqual([]);
+    expect(texts(await source.read())).toEqual(["FICTIONAL ask t1", "FICTIONAL answer t1"]);
+    const grown = await source.read();
+    expect(grown.turns).toHaveLength(4);
+    expect(grown.cursor).toBeNull();
+  });
+
   it("a cursor whose turn the chat no longer holds is a changed history (409), so the chat reads it again", async () => {
     answering(hostRead(["t2", "t3"], "c1"), hostRead(["x9"], null));
     const source = hostSource("m", "s");
@@ -153,6 +220,76 @@ describe("hostSource", () => {
     jest.advanceTimersByTime(HOST_WATCH_MS * 3);
     expect(watches()).toBe(3);
     expect(urls.find((url) => url.includes("chat/watch"))).toBe('POST /api/machines/m/host-chats/chat/watch {"session":"s"}');
+  });
+});
+
+/** The browser timer ChatView's refresh lane uses, advanced without sleeping or a DOM. */
+function laneClock(): { advance(ms: number): void } {
+  let now = 0;
+  let next = 1;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  const clock = spyOn(performance, "now").mockImplementation(() => now);
+  restoreClock = () => { clock.mockRestore(); };
+  globals.window = {
+    setTimeout(callback: () => void, delay: number): number { const id = next++; timers.set(id, { at: now + delay, callback }); return id; },
+    clearTimeout(id: number | undefined): void { if (id !== undefined) timers.delete(id); },
+  };
+  return {
+    advance(ms: number): void {
+      now += ms;
+      for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.callback(); }
+    },
+  };
+}
+
+const settle = async (): Promise<void> => { for (let step = 0; step < 20; step++) await Promise.resolve(); };
+
+describe("a host chat's pushes in ChatView's lane", () => {
+  it("pushes during one read make exactly one more read, however many come", async () => {
+    const clock = laneClock();
+    const held: (() => void)[] = [];
+    let reads = 0;
+    globalThis.fetch = (async () => {
+      reads += 1;
+      await new Promise<void>((resolve) => held.push(resolve));
+      return new Response(JSON.stringify(hostRead(["t1"], null)), { headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    // wired as ChatView wires a source: its reader on the lane, its changes refreshing it
+    const source = hostSource("m", "s");
+    const lane = new ConversationRefresh();
+    lane.setPushes(true);
+    lane.setRead(async () => { await source.read().catch(() => undefined); });
+    const stop = source.onChange(() => lane.refresh());
+    lane.refresh();
+    await settle();
+    expect(reads).toBe(1);
+    for (let push = 0; push < 10; push++) noteHostChatMessage("m", { type: "host-chat-changed", session: "s" });
+    noteHostChatStreamOpen();
+    await settle();
+    expect(reads).toBe(1);
+    held.shift()!();
+    await settle();
+    expect(reads).toBe(2);
+    held.shift()!();
+    await settle();
+    expect(reads).toBe(2);
+    // idle again: the next push reads at once
+    noteHostChatMessage("m", { type: "host-chat-changed", session: "s" });
+    await settle();
+    expect(reads).toBe(3);
+    held.shift()!();
+    await settle();
+    // a failed read does not stop the one after it
+    globalThis.fetch = (async () => { reads += 1; throw new TypeError("FICTIONAL offline"); }) as unknown as typeof fetch;
+    noteHostChatMessage("m", { type: "host-chat-changed", session: "s" });
+    await settle();
+    noteHostChatMessage("m", { type: "host-chat-changed", session: "s" });
+    await settle();
+    expect(reads).toBe(5);
+    stop();
+    lane.stop();
+    clock.advance(60_000);
+    expect(reads).toBe(5);
   });
 });
 

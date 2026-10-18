@@ -3,7 +3,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS } from "./hostChats.ts";
-import { agentsListRows, attemptFor, choose, chosenFor, coalesced, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
+import { agentsListRows, attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -390,32 +390,6 @@ describe("the pushes", () => {
     expect(taken).toBeGreaterThan(0);
     expect(invalidated).toBeGreaterThan(taken);
     expect(handler.slice(taken, handler.indexOf("\n", taken))).toContain(") return;");
-  });
-
-  it("coalesced runs one at a time, and calls during a run make exactly one more", async () => {
-    let runs = 0;
-    let release: () => void = () => undefined;
-    const run = coalesced(() => { runs += 1; return new Promise<void>((resolve) => { release = resolve; }); });
-    const first = run();
-    for (let i = 0; i < 10; i += 1) void run();
-    expect(runs).toBe(1);
-    release();
-    await until(() => runs === 2);
-    release();
-    await first;
-    expect(runs).toBe(2);
-    // idle again: the next call runs at once
-    const next = run();
-    expect(runs).toBe(3);
-    release();
-    await next;
-    // a failed run does not stop the one after it
-    let failures = 0;
-    const flaky = coalesced(async () => { failures += 1; if (failures === 1) throw new Error("FICTIONAL"); });
-    await flaky();
-    expect(failures).toBe(1);
-    await flaky();
-    expect(failures).toBe(2);
   });
 });
 
