@@ -938,7 +938,9 @@
   font-size: var(--fs-xs);
 }
 
-.chat-inline-error { color: var(--status-blocked); }
+/* .chat-compact dims its divider later in this file: an error notice keeps the error colour over it */
+.chat-inline-error,
+.chat-compact.chat-notice-error { color: var(--status-blocked); }
 
 .chat-activity {
   display: flex;

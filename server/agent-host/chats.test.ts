@@ -3,6 +3,7 @@ import type { ChatState, RootState, SessionState, SessionSummary, StateAction, T
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
 import { agentsFrom, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
+import { parseInline } from "../../src/lib/markdown.ts";
 import { reducedChat, toolCallActions } from "./fake-host.ts";
 
 const AT = "2026-01-01T00:00:00.000Z";
@@ -373,6 +374,13 @@ describe("host chat turns, whole", () => {
       { kind: "text", text: "[plan.md](file:///tmp/fictional-repo/plan.md)" },
       { kind: "text", text: "[doc](https://example.com/fictional/doc)" },
     ]);
+    // a space or a `)` in the uri stays inside the link's destination: the app's markdown reads one file pill
+    const odd = assistant(reducedChat([started(),
+      { type: "chat/responsePart", turnId: "turn-1", part: { kind: "contentRef", uri: "file:///tmp/fictional repo/notes (draft).md" } } as StateAction,
+      finished()]));
+    expect(odd).toEqual([{ kind: "text", text: "[notes (draft).md](file:///tmp/fictional%20repo/notes%20%28draft%29.md)" }]);
+    const text = (odd[0] as { text: string }).text;
+    expect(parseInline(text)).toEqual([{ type: "file", path: "/tmp/fictional repo/notes (draft).md", children: [{ type: "text", value: "notes (draft).md" }] }]);
   });
 
   it("a long tool output is cut at the pane readers' length, with its call's id as output_ref", () => {

@@ -215,11 +215,16 @@ function questionParts(part: InputRequestResponsePart, running: boolean): Conver
   return questions.map((question) => questionPart(question, request.answers?.[question.id], accepted));
 }
 
-/** A reference to content elsewhere, as a markdown link named by its last path segment (a file:// one reads as a file pill). */
+/**
+ * A reference to content elsewhere, as a markdown link named by its last path segment (a file:// one
+ * reads as a file pill). The destination has its space, `(`, `)`, `<` and `>` percent-encoded: no
+ * such character can end the link early, and the app's markdown reads no `<…>` destination.
+ */
 function linkTo(uri: string): string {
   let name = "";
   try { name = decodeURIComponent(new URL(uri).pathname.replace(/\/+$/, "").split("/").at(-1) ?? ""); } catch { /* the uri itself */ }
-  return `[${(name || uri).replace(/[[\]]/g, "\\$&")}](${uri})`;
+  const destination = uri.replace(/[\s()<>]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+  return `[${(name || uri).replace(/[[\]]/g, "\\$&")}](${destination})`;
 }
 
 function partsOf(part: ResponsePart, times: TurnTimes, running: boolean): ConversationPart[] {
@@ -274,8 +279,10 @@ function toolCallOf(chat: ChatState, toolCallId: string): ToolCallState | undefi
  */
 export function imageOf(chat: ChatState, ref: string): { media_type: string; bytes: Buffer } | null {
   const at = ref.lastIndexOf(":");
-  const index = at < 0 ? NaN : Number(ref.slice(at + 1));
-  if (!Number.isInteger(index) || index < 0) return null;
+  const digits = at < 0 ? "" : ref.slice(at + 1);
+  // one spelling per image: `c1:0`, never `c1:`, `c1:00` or `c1:0x0`
+  if (!/^(?:0|[1-9]\d*)$/.test(digits)) return null;
+  const index = Number(digits);
   const tool = toolCallOf(chat, ref.slice(0, at));
   const image = tool ? imagesOf(tool)[index] : undefined;
   if (!tool || !image) return null;

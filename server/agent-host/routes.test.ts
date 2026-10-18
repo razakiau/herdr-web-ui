@@ -762,6 +762,8 @@ describe("host chat image and tool-output routes", () => {
   it("image_route_serves_png_bytes", async () => {
     const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
     const read = (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+    // the transcript carries a ref, never the bytes
+    expect(JSON.stringify(read)).not.toContain(PNG_BYTES.toString("base64"));
     const image = read.turns[1]!.parts.flatMap((part) => (part.kind === "tool" ? part.images ?? [] : []))[0]!;
     expect(image).toEqual({ media_type: "image/png", ref: "c1:0" });
     const served = await fetchRaw(r, imagePath(image.ref));
@@ -772,7 +774,7 @@ describe("host chat image and tool-output routes", () => {
 
   it("image_route_unknown_ref_404", async () => {
     const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
-    for (const ref of ["c1:1", "c9:0", "c1", "c2:0", "c1:-1"]) {
+    for (const ref of ["c1:1", "c9:0", "c1", "c2:0", "c1:-1", "c1:", "c1:0x0", "c1:00", "c1: 0"]) {
       const answer = await call(r, imagePath(ref));
       expect({ ref, status: answer.status, code: answer.json.error.code }).toEqual({ ref, status: 404, code: "not_found" });
     }

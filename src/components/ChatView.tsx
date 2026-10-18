@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target,
@@ -609,6 +609,18 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
   return first.length > 96 ? `${first.slice(0, 95)}…` : first;
 }
 
+type NoticePart = Extract<ConversationPart, { kind: "notice" }>;
+const isNotice = (part: ConversationPart): part is NoticePart => part.kind === "notice";
+
+/** A notice as the quiet divider, its label in the rule and its text on request; a host chat's error in the error colour. */
+function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey: string; time: ReactNode }) {
+  const t = useT();
+  return <ChatDetails memoryKey={memoryKey} className={`chat-compact chat-notice${notice.source === "error" ? " chat-notice-error" : ""}`}>
+    <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>
+    <pre className="chat-compact-text chat-notice-text">{notice.text}</pre>
+  </ChatDetails>;
+}
+
 // a turn that did not change keeps its object across polls: skip re-rendering it. Also the VS Code
 // chat's row (VscodeChatView), with paneId "": its parts carry no image or output refs, and
 // UserImages shows no `@image` mention without a pane, so such a row reads no file
@@ -635,14 +647,10 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       {ended.tasks.map((task) => <TaskResultRow key={task.id} task={task} />)}
     </section>;
   }
-  // the runtime spoke, not the user: a quiet divider like a compaction, the text on request
-  const notice = turn.parts.find((part): part is Extract<ConversationPart, { kind: "notice" }> => part.kind === "notice");
-  if (notice !== undefined) {
-    return <ChatDetails memoryKey="notice" className="chat-compact chat-notice">
-      <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>
-      <pre className="chat-compact-text chat-notice-text">{notice.text}</pre>
-    </ChatDetails>;
-  }
+  // the runtime spoke, not the user: a quiet divider like a compaction, the text on request. Only a
+  // turn that is nothing but notices: a host chat's notice inside an answer is a row among its parts
+  const notices = turn.parts.filter(isNotice);
+  if (notices.length > 0 && notices.length === turn.parts.length) return <NoticeRow notice={notices[0]!} memoryKey="notice" time={time} />;
   if (turn.role === "user") {
     const text = turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n");
     return <article className="chat-turn chat-turn-user">
@@ -657,14 +665,22 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { work, answer } = splitTurn(turn.parts);
+  // a notice is neither work nor answer: the turn splits as if it were not there, and each notice
+  // sits after the work when it came before the answer, else after the answer
+  const said = turn.parts.filter((part) => !isNotice(part));
+  const { work, answer } = splitTurn(said);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
+  const firstAnswer = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
+  const noticeRows = (before: boolean) => turn.parts.flatMap((part, index) =>
+    isNotice(part) && (firstAnswer >= 0 && index < firstAnswer) === before ? [<NoticeRow key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} time={null} />] : []);
   return <article className="chat-turn chat-turn-agent">
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
-    {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}
+    {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />}
+    {noticeRows(true)}
     {answer.map((part, index) => <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
+    {noticeRows(false)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
