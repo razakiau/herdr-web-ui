@@ -1327,4 +1327,12 @@ export const JA: Record<string, string> = {
   "An LLM judge evaluates each tool call. Tools it doesn't approve require your approval.": "LLM の判定者が各ツール呼び出しを評価します。承認されなかったツールにはあなたの承認が必要です。",
   "Copilot runs all tools without asking for approval.": "Copilot は承認を求めずにすべてのツールを実行します。",
   "All models": "すべてのモデル",
+  "Set permissions to bypass approvals": "承認をバイパスするアクセス許可に設定",
+  "Set permissions back to default": "アクセス許可を既定に戻す",
+  "Switch to autopilot mode": "自動操縦モードに切り替え",
+  "Switch to interactive mode": "対話モードに切り替え",
+  "Switch to autopilot mode with an objective": "目標を指定して自動操縦モードに切り替え",
+  "Create an implementation plan before coding": "コーディングの前に実装計画を作成",
+  "objective": "目標",
+  "Describe what you want to plan or research": "計画または調査したい内容を説明してください",
 };

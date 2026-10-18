@@ -92,7 +92,8 @@ const patch = `(() => {
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
-      model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending, message_ids: ids,
+      model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending,
+      commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }], message_ids: ids,
       signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
@@ -111,7 +112,8 @@ const patch = `(() => {
   window.pushHostList = () => push({ type: "host-chat-changed", session: null });
   // the PC's agent host stops (VS Code closed) and comes back: its state and list say so
   window.setHostDown = (down) => { state.hostDown = down; push({ type: "host-chat-state", host: down ? { state: "no_server" } : { state: "connected", signed_in: true, protocol: "1.0.0" } }); };
-  window.setHostBusy = (busy) => { state.busy = busy; push({ type: "host-chat-changed", session: SESSION }); };
+  // a turn that ends takes its steering and queued messages with it, as a host does
+  window.setHostBusy = (busy) => { state.busy = busy; if (!busy) state.pending = []; push({ type: "host-chat-changed", session: SESSION }); };
   // a turn made on the PC: only its push tells the phone
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
   window.EventSource = class extends EventTarget {
@@ -183,6 +185,7 @@ const patch = `(() => {
         ],
         agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
       });
+      if (path === "/api/host-chats/files") return json({ files: ["src/fictional-build.ts", "README.md"].filter((file) => file.includes(url.searchParams.get("q") ?? "")) });
       // the session's mode and permissions, as the live host shapes them
       if (path === "/api/host-chats/session/config" && init?.method === "POST") { if (body.mode) state.mode = body.mode; if (body.approvals) state.approvals = body.approvals; return json({ ok: true }); }
       if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: ["default", "assisted", "autoApprove"] });
@@ -575,9 +578,43 @@ try {
         await box.fill("FICTIONAL instead");
         await view.locator(".composer-send-menu").click();
         await page.getByRole("dialog", { name: "Send", exact: true }).getByRole("button", { name: "Stop and Send" }).click();
+        await page.getByRole("dialog", { name: "Send", exact: true }).waitFor({ state: "detached", timeout: 5000 });
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL instead" }).waitFor();
         assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)?.body["mode"], "stop_and_send", "Stop and Send posts its mode");
         console.log("PASS Stop and Send cancels, then sends");
+
+        // 5d. "/" and "@": VS Code's config commands, then the host's; /plan sets Plan and sends the rest
+        // back to Interactive (as if set in VS Code), so /plan has something to change; the turn ends
+        await page.evaluate(() => { (window as unknown as { hostState: { mode: string } }).hostState.mode = "interactive"; });
+        await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false));
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.textContent?.trim().startsWith("Interactive"));
+        const slashConfigsBefore = (await posts("/api/machines/remote/host-chats/session/config")).length;
+        const slashSendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
+        await box.fill("/");
+        const slashMenu = view.locator(".composer-menu");
+        await slashMenu.waitFor();
+        const labels = (await slashMenu.locator(".menu-item-main").allInnerTexts()).map((text) => text.trim());
+        assert.ok(labels.some((label) => label.startsWith("/plan")), "the menu offers /plan");
+        assert.ok(labels.includes("/fictional-skill"), "and the host's skill");
+        assert.ok(labels.indexOf("/fictional-skill") > labels.findIndex((label) => label.startsWith("/plan")), "the config commands come first");
+        await slashMenu.getByText("Create an implementation plan before coding").first().waitFor();
+        await fits("the / menu");
+        // a closed sheet slides out as a copy in an inert shadow host at the end of <body> (lib/sheets.ts leave): the picture waits for it to go
+        await page.waitForFunction(() => ![...document.body.children].some((node) => node instanceof HTMLElement && node.inert && node.shadowRoot === null && node.getAttribute("aria-hidden") === "true" && node.childElementCount === 0));
+        if (shots) await page.screenshot({ path: join(shots, "task-9b-slash-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
+        await box.fill("/plan FICTIONAL task");
+        await box.press("Escape");
+        await view.getByRole("button", { name: "Send message" }).click();
+        await view.locator(".chat-turn-user", { hasText: "FICTIONAL task" }).waitFor({ state: "attached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.textContent?.trim().startsWith("Plan"));
+        const configs = (await posts("/api/machines/remote/host-chats/session/config")).slice(slashConfigsBefore);
+        assert.deepEqual(configs.map((post) => post.body), [{ session: SESSION, mode: "plan" }], "/plan sets the mode, once");
+        assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/send")).slice(slashSendsBefore).map((post) => post.body["text"]), ["FICTIONAL task"], "and the rest is the message, once");
+        console.log("PASS / offers /plan and the host's skill; /plan FICTIONAL task turns the pill to Plan and sends FICTIONAL task");
+        await box.fill("look at @build");
+        await view.locator(".composer-menu").getByText("src/fictional-build.ts").waitFor();
+        await box.fill("");
+        console.log("PASS @ lists a file of the chat's folder");
         assert.equal(await view.locator(".composer .voice-mic").count(), 1, "the mic button is there");
         console.log("PASS the mic button is present");
 

@@ -1325,4 +1325,12 @@ export const KO: Record<string, string> = {
   "An LLM judge evaluates each tool call. Tools it doesn't approve require your approval.": "LLM 판정자가 각 도구 호출을 평가합니다. 승인하지 않은 도구는 사용자의 승인이 필요합니다.",
   "Copilot runs all tools without asking for approval.": "Copilot은 승인을 요청하지 않고 모든 도구를 실행합니다.",
   "All models": "모든 모델",
+  "Set permissions to bypass approvals": "승인을 건너뛰도록 권한 설정",
+  "Set permissions back to default": "권한을 기본값으로 되돌리기",
+  "Switch to autopilot mode": "자동 조종 모드로 전환",
+  "Switch to interactive mode": "대화형 모드로 전환",
+  "Switch to autopilot mode with an objective": "목표를 정해 자동 조종 모드로 전환",
+  "Create an implementation plan before coding": "코딩 전에 구현 계획 만들기",
+  "objective": "목표",
+  "Describe what you want to plan or research": "계획하거나 조사할 내용을 설명하세요",
 };

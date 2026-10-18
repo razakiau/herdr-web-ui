@@ -95,6 +95,11 @@ export function fetchHostConfig(machineId: string, session: string): Promise<Hos
   return getJson(machinePath(machineId, `host-chats/session/config?${new URLSearchParams({ session }).toString()}`));
 }
 
+/** The chat's folder's files matching `query`, for "@" (as a pane chat lists its own). */
+export async function fetchHostFiles(machineId: string, session: string, query: string, limit = 20): Promise<string[]> {
+  return (await getJson<{ files: string[] }>(machinePath(machineId, `host-chats/files?${new URLSearchParams({ session, q: query, limit: String(limit) }).toString()}`))).files;
+}
+
 /** Sets the chat's mode or approvals on its host (only what is given): it stays the chat's, as in VS Code. */
 export function setHostConfig(machineId: string, session: string, change: { mode?: string; approvals?: string }): Promise<{ ok: true }> {
   return post(machineId, "host-chats/session/config", { session, ...change });

@@ -1329,4 +1329,12 @@ export const ZH: Record<string, string> = {
   "An LLM judge evaluates each tool call. Tools it doesn't approve require your approval.": "由 LLM 评判每次工具调用。未获其批准的工具需要你的批准。",
   "Copilot runs all tools without asking for approval.": "Copilot 会在不请求批准的情况下运行所有工具。",
   "All models": "所有模型",
+  "Set permissions to bypass approvals": "将权限设为跳过批准",
+  "Set permissions back to default": "将权限恢复为默认",
+  "Switch to autopilot mode": "切换到自动驾驶模式",
+  "Switch to interactive mode": "切换到交互模式",
+  "Switch to autopilot mode with an objective": "带目标切换到自动驾驶模式",
+  "Create an implementation plan before coding": "在编码前创建实现计划",
+  "objective": "目标",
+  "Describe what you want to plan or research": "描述你想计划或研究的内容",
 };

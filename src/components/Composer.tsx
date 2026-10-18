@@ -41,6 +41,7 @@ import {
   HOST_SEND_MENU,
   type HostSendPick,
 } from "../lib/compose.ts";
+import type { HostSlashItem } from "../lib/hostSlash.ts";
 import { compactCommandText } from "../lib/compactContext.ts";
 import { composerStrip } from "../lib/composerStrip.ts";
 import { composerLabelDraw } from "../lib/composerLabelFit.ts";
@@ -116,8 +117,11 @@ export interface ComposerProps {
   draftKey?: string;
   /** the words dictation listens for beside the agent's name (a host chat's agents) */
   keywords?: readonly string[];
-  /** no `/` commands or `@` files: a host chat's come from its host (Task 9b) */
-  noMenus?: boolean;
+  /**
+   * A host chat's `/` and `@` sources, in place of the pane's: its "/" menu (VS Code's config
+   * commands, then the host's commands) and its folder's files.
+   */
+  hostMenus?: { slash(query: string): HostSlashItem[]; files(query: string): Promise<string[]> };
   /** drawn in the status pill's place: a host chat's model and agent pills, which press */
   pills?: ReactNode;
 }
@@ -292,7 +296,7 @@ export function Composer({
   pendingNote = null,
   draftKey: hostDraftKey,
   keywords,
-  noMenus = false,
+  hostMenus,
   pills,
 }: ComposerProps) {
   const t = useT();
@@ -402,7 +406,7 @@ export function Composer({
   }, [restored]);
 
   useEffect(() => {
-    if (noMenus) return;
+    if (hostMenus) return;
     let live = true;
     void cachedPaneCommands(paneId, machineId, fetchPaneCommands)
       .then((next) => {
@@ -418,12 +422,12 @@ export function Composer({
 
   useEffect(() => {
     const request = ++fileRequest.current;
-    if (noMenus || trigger?.kind !== "file") {
+    if (trigger?.kind !== "file") {
       setFiles([]);
       return;
     }
     const timer = window.setTimeout(() => {
-      void fetchPaneFiles(paneId, trigger.query, 20)
+      void (hostMenus ? hostMenus.files(trigger.query) : fetchPaneFiles(paneId, trigger.query, 20))
         .then((next) => {
           if (request === fileRequest.current) setFiles(next);
         })
@@ -668,12 +672,15 @@ export function Composer({
     () => groupedBySource ? COMMAND_SOURCES.flatMap((source) => filteredCommands.filter((command) => command.source === source)) : filteredCommands,
     [filteredCommands, groupedBySource],
   );
-  const choices: readonly (SlashCommand | string)[] = trigger?.kind === "slash" ? orderedCommands : files;
-  const menuOpen = !noMenus && !menuDismissed && trigger !== null && choices.length > 0;
+  // a host chat's "/" lists its host's at the message start only (VS Code's leading command)
+  const hostItems = useMemo(() => hostMenus && trigger?.kind === "slash" && trigger.start === 0 ? hostMenus.slash(trigger.query) : [],
+    [hostMenus, trigger?.kind, trigger?.start, trigger?.query]);
+  const choices: readonly (SlashCommand | HostSlashItem | string)[] = trigger?.kind === "slash" ? (hostMenus ? hostItems : orderedCommands) : files;
+  const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
   // clamped as the list is drawn, not by an effect after it: a Tab or Enter typed before that
   // effect's render found no row at the old index and did nothing
   const choiceIds = choices.map((choice) => trigger?.kind === "slash"
-    ? `${(choice as SlashCommand).source}:${(choice as SlashCommand).name}`
+    ? hostMenus ? `host:${(choice as HostSlashItem).label}` : `${(choice as SlashCommand).source}:${(choice as SlashCommand).name}`
     : choice as string);
   const activeItemId = resolveComposerMenuActiveItemId({
     items: choiceIds.map((id) => ({ id })),
@@ -799,7 +806,14 @@ export function Composer({
   }, [placeWaitingMentions, text]);
 
   const selectCompletion = useCallback(
-    (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
+    (choice: SlashCommand | HostSlashItem | string, currentTrigger: ActiveTrigger) => {
+      if (typeof choice === "object" && "insert" in choice) {
+        // a host command: an on/off is whole and goes as typed; one that takes words leaves the caret after it
+        const completed = applyCompletion(text, currentTrigger, choice.insert);
+        setTextAndCaret(completed.text, completed.caret);
+        setMenuDismissed(true);
+        return;
+      }
       const replacement = currentTrigger.kind === "slash" ? `${(choice as SlashCommand).trigger ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
       const completed = applyCompletion(text, currentTrigger, replacement);
       setTextAndCaret(completed.text, completed.caret);
@@ -1223,7 +1237,17 @@ export function Composer({
         />
         {menuOpen && trigger && (
           <div id={menuId} className="menu composer-menu" role="listbox" aria-label={t(trigger.kind === "slash" ? "Slash commands" : "Files")}>
-            {trigger.kind === "slash" ? (
+            {trigger.kind === "slash" && hostMenus ? (
+              <div className="composer-menu-group">
+                {hostItems.map((item, index) => (
+                  <button id={`${menuId}-${index}`} key={item.label} type="button" className="menu-item" role="option" data-host-command={item.kind}
+                    aria-selected={index === selectedIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => selectCompletion(item, trigger)}>
+                    <span className="menu-item-main">{item.label}{item.hint && <span className="menu-item-arg"> {t(item.hint)}</span>}</span>
+                    <span className="menu-item-hint">{item.kind === "config" ? t(item.description) : item.description}</span>
+                  </button>
+                ))}
+              </div>
+            ) : trigger.kind === "slash" ? (
               (() => {
                 const row = (command: SlashCommand, withSource: boolean) => {
                   const index = orderedCommands.indexOf(command);

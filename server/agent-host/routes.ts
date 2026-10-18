@@ -39,6 +39,7 @@ import {
   type StateAction,
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState } from "../../shared/host-chats.ts";
+import { paneFiles } from "../files.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
@@ -193,6 +194,7 @@ const GETS: Record<string, Handler> = {
   "image": readImage,
   "tool-output": readToolOutput,
   "session/config": readConfig,
+  "files": listFiles,
 };
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
@@ -352,9 +354,9 @@ async function followSubagents(call: Call, session: string, chat: ChatState): Pr
 }
 
 /** What a read of `session`'s chat knows beside it: its subagents' own chats, and the models' names. */
-function contextOf(host: AgentHost): ReadContext {
+function contextOf(host: AgentHost, session?: string): ReadContext {
   const names = new Map(modelsFrom(host.mirror().root).map((model) => [model.id, model.name]));
-  return { chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id };
+  return { chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, ...(session ? { session: () => host.mirror().getSession(session) } : {}) };
 }
 
 /**
@@ -393,7 +395,7 @@ async function readChat(call: Call): Promise<Response> {
     chat = call.host.chat(session) ?? chat;
   }
   await followSubagents(call, session, chat);
-  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host)));
+  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session)));
 }
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
@@ -538,6 +540,19 @@ function configChoices(config: SessionConfig | undefined): { mode: string | null
     modes: strings(config?.schema.properties[MODE_KEY]?.enum),
     approvalModes: offered.length > 0 ? offered : strings(config?.schema.properties[APPROVALS_KEY]?.enum),
   };
+}
+
+/** The chat's folder's files for "@", as a pane chat lists its own (server/files.ts paneFiles). */
+async function listFiles(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  connected(call.host);
+  if (!known(call.host, session)) missing();
+  const limit = Number(call.url.searchParams.get("limit") ?? "20");
+  if (!Number.isInteger(limit) || limit < 1) return badRequest("invalid_limit", "limit must be a positive integer");
+  const cwd = rowsFrom(call.host.summaries()).find((row) => row.session === session)?.cwd ?? null;
+  if (cwd === null) return jsonResponse({ files: [] });
+  return jsonResponse({ files: await paneFiles(cwd, call.url.searchParams.get("q") ?? "", Math.min(limit, 100)) });
 }
 
 async function readConfig(call: Call): Promise<Response> {

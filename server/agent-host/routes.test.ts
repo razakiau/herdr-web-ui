@@ -1124,6 +1124,25 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
   });
 
+  it("a read lists the session's / commands: its enabled skills, prompts and agents", async () => {
+    const r = await rig();
+    const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    expect(read.json.commands).toEqual([{ name: "Report", description: "FICTIONAL writes a report", kind: "agent" }]);
+  });
+
+  it("files lists the chat's folder for @, and refuses a session it does not know", async () => {
+    const folder = temp();
+    mkdirSync(join(folder, "src"), { recursive: true });
+    await Bun.write(join(folder, "src", "fictional-build.ts"), "x");
+    await Bun.write(join(folder, "README.md"), "x");
+    const where = (n: number) => ({ ...summary(n), workingDirectories: [`file://${folder}`] });
+    const r = await rig({ sessions: [where(1), summary(2)] });
+    const found = await call(r, `/api/host-chats/files?session=${encodeURIComponent(sessionUri(1))}&q=build&limit=5`);
+    expect(found).toEqual({ status: 200, json: { files: ["src/fictional-build.ts"] } });
+    const missing = await call(r, `/api/host-chats/files?session=${encodeURIComponent(sessionUri(9))}&q=x`);
+    expect({ status: missing.status, code: missing.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
+  });
+
   it("a read lists the pending messages, steering first, in the chat's order", async () => {
     const r = await busy({ steeringMessage: { id: uuid(46), message: user("FICTIONAL steer") }, queuedMessages: [{ id: uuid(47), message: user("FICTIONAL q1") }, { id: uuid(48), message: user("FICTIONAL q2") }] });
     const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);

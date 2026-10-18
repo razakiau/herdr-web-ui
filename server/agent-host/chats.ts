@@ -39,7 +39,7 @@ import {
   type Turn,
 } from "@microsoft/agent-host-protocol";
 import type { ConversationPart, ConversationTurn, InteractivePromptOption } from "../../shared/protocol.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostModel } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostCommand, HostModel } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
 
@@ -122,6 +122,8 @@ interface TurnTimes { started: string | null; ended: string | null }
 export interface ReadContext {
   chat(uri: string): ChatState | undefined;
   modelName(id: string): string;
+  /** the chat's session state, for its "/" commands (absent: none) */
+  session?(): SessionState | undefined;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -528,6 +530,29 @@ export function agentsFrom(session: SessionState | undefined): HostAgent[] {
   return [...found.values()];
 }
 
+/** VS Code's isCustomizationEnabled: the first enablement decision, else enabled (and the older `enabled: false`). */
+function enabled(entry: { enabled?: boolean; enablement?: readonly { enabled?: boolean }[] }): boolean {
+  return entry.enabled !== false && (entry.enablement?.[0]?.enabled ?? true);
+}
+
+const COMMAND_KINDS: Record<string, HostCommand["kind"]> = { [CustomizationType.Skill]: "skill", [CustomizationType.Prompt]: "prompt", [CustomizationType.Agent]: "agent" };
+
+/** The session's skills, prompts and custom agents, enabled ones, each name once: a host chat's "/" commands. */
+export function commandsFrom(session: SessionState | undefined): HostCommand[] {
+  const found = new Map<string, HostCommand>();
+  const visit = (entries: readonly unknown[]): void => {
+    for (const raw of entries) {
+      const entry = raw as Customization & { enabled?: boolean; enablement?: { enabled?: boolean }[]; description?: string; children?: unknown[] };
+      if (!enabled(entry)) continue;
+      const kind = COMMAND_KINDS[entry.type as string];
+      if (kind) { if (!found.has(entry.name)) found.set(entry.name, { name: entry.name, description: entry.description ?? "", kind }); }
+      else if (Array.isArray(entry.children)) visit(entry.children);
+    }
+  };
+  visit(session?.customizations ?? []);
+  return [...found.values()];
+}
+
 // ─── A chat, read ────────────────────────────────────────────────────────────
 
 /** The newest turn's model (its effort read from the config's one value), else the draft's. */
@@ -555,6 +580,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     model: modelOf(chat),
     agent: newest?.message.agent?.uri ?? null,
     busy: chat.activeTurn !== undefined,
+    commands: commandsFrom(context?.session?.()),
     pending: [
       ...(chat.steeringMessage ? [{ id: chat.steeringMessage.id, kind: "steering" as const, text: chat.steeringMessage.message.text }] : []),
       ...(chat.queuedMessages ?? []).map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),
@@ -568,7 +594,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
-    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending,
+    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];

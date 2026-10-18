@@ -54,6 +54,8 @@ export interface HostChatRead {
   busy: boolean;
   /** what waits for the running turn: the one steering message first, then the queue in its order */
   pending: { id: string; kind: "steering" | "queued"; text: string }[];
+  /** the session's skills, prompts and agents, offered after "/" (VS Code's customizations) */
+  commands: HostCommand[];
   /**
    * The ids the chat holds its messages under: its turns' (past, the loaded page, and the running
    * one) and its pending messages'. A phone whose send lost its answer sees here that it went.
@@ -92,3 +94,6 @@ export interface HostNewResult { session: string; sent?: false }
  * Code's mode picker sets too), and what each can be on this host. Null where the host sends none.
  */
 export interface HostSessionConfig { mode: string | null; approvals: string | null; modes: string[]; approvalModes: string[] }
+
+/** A command the host publishes for a chat: its skills, prompts and custom agents, called as `/name`. */
+export interface HostCommand { name: string; description: string; kind: "skill" | "prompt" | "agent" }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatState, RootState, SessionState, SessionSummary, StateAction, ToolCallResult } from "@microsoft/agent-host-protocol";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
-import { agentsFrom, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
+import { agentsFrom, commandsFrom, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
 import { parseInline } from "../../src/lib/markdown.ts";
 import { reducedChat, toolCallActions } from "./fake-host.ts";
 
@@ -194,6 +194,30 @@ describe("host chat mappers", () => {
       { uri: "file:///tmp/fictional/agents/Review.agent.md", name: "Review", description: "FICTIONAL Review" },
     ]);
     expect(agentsFrom(undefined)).toEqual([]);
+  });
+
+  it("customizations_become_commands: skills, prompts and agents, enabled ones, named once", () => {
+    const item = (type: string, name: string, extra: Record<string, unknown> = {}) => ({ id: name, type, name, uri: `file:///tmp/fictional/${type}/${name}.md`, description: `FICTIONAL ${name}`, ...extra });
+    const session = {
+      provider: "copilotcli", title: "", status: 1, lifecycle: "ready", activeClients: [], chats: [],
+      customizations: [
+        { id: "dir", type: "directory", name: "skills", uri: "file:///tmp/fictional/skills", children: [
+          item("skill", "fictional-skill"),
+          item("skill", "off-skill", { enabled: false }),
+          item("skill", "scoped-off", { enablement: [{ kind: "workspace", enabled: false }] }),
+          item("rule", "a-rule"), item("hook", "a-hook"), item("mcpServer", "a-server"),
+        ] },
+        item("prompt", "fictional-prompt"),
+        item("agent", "Report"),
+        { id: "plugin", type: "plugin", name: "Plugin", uri: "file:///tmp/fictional/plugin", children: [item("skill", "fictional-skill")] },
+      ],
+    } as unknown as SessionState;
+    expect(commandsFrom(session)).toEqual([
+      { name: "fictional-skill", description: "FICTIONAL fictional-skill", kind: "skill" },
+      { name: "fictional-prompt", description: "FICTIONAL fictional-prompt", kind: "prompt" },
+      { name: "Report", description: "FICTIONAL Report", kind: "agent" },
+    ]);
+    expect(commandsFrom(undefined)).toEqual([]);
   });
 
   it("rowsFrom keeps copilotcli sessions only and maps InputNeeded to asks", () => {

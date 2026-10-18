@@ -79,8 +79,10 @@ describe("machine boundaries", () => {
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/split", "pane/zoom", "pane/swap", "pane/resize", "pane/clear", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
   });
   it("MACHINE_PROXY_PATH proxies host-chats routes and nothing past them", () => {
-    for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models", "host-chats/image", "host-chats/tool-output"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
-    for (const path of ["vscode/state", "vscode/chat/send", "host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth", "host-chats/image/extra", "host-chats/tool-output/x"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+    for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models", "host-chats/image", "host-chats/tool-output",
+      "host-chats/chat/rename", "host-chats/chat/read", "host-chats/chat/archive", "host-chats/chat/delete", "host-chats/chat/stop", "host-chats/chat/pending/remove",
+      "host-chats/session/config", "host-chats/files"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["vscode/state", "vscode/chat/send", "host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth", "host-chats/image/extra", "host-chats/tool-output/x", "host-chats/chat/pending", "host-chats/chat/pending/remove/x", "host-chats/session", "host-chats/files/x"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
   });
 });
 
