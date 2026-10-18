@@ -1291,4 +1291,18 @@ export const JA: Record<string, string> = {
   "Skipped": "スキップ",
   "Other…": "その他…",
   "Answer": "回答",
+  // a host chat's own actions (components/HostChatActions.tsx)
+  "Rename…": "名前を変更…",
+  "Rename chat…": "チャットの名前を変更…",
+  "Rename chat": "チャットの名前を変更",
+  "Chat name": "チャット名",
+  "A chat needs a name.": "チャットには名前が必要です。",
+  "Mark as read": "既読にする",
+  "Mark as unread": "未読にする",
+  "Mark as done": "完了にする",
+  "Restore": "元に戻す",
+  "Delete…": "削除…",
+  "Delete “{title}”?": "「{title}」を削除しますか？",
+  "This removes it from VS Code too.": "VS Code からも削除されます。",
+  "{what} failed: {reason}": "失敗しました（{what}）: {reason}",
 };

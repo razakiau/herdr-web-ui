@@ -141,7 +141,7 @@ async function rig(overrides: Partial<FakeAgentHostSeed> = {}): Promise<Rig> {
   return { fake, conn, clock: manualClock(), entries };
 }
 
-const actions = (fake: FakeAgentHost, type: string) => fake.dispatched.filter((entry) => entry.action.type === type);
+const actions = (fake: FakeAgentHost, type: string): Array<{ channel: string; action: unknown }> => fake.dispatched.filter((entry) => entry.action.type === type);
 const only = (fake: FakeAgentHost, type: string): Record<string, any> => {
   const found = actions(fake, type);
   expect(found.length).toBe(1);
@@ -842,6 +842,113 @@ describe("host chat read and write routes", () => {
     expect({ status: read.status, session: read.json.session }).toEqual({ status: 200, session: sessionUri(1) });
     // nothing was re-sent: only the watch's active-client mark
     expect(second.dispatched.map((entry) => String(entry.action.type))).toEqual(["session/activeClientSet"]);
+  });
+
+  it("rename dispatches session/titleChanged on the session's channel, as VS Code's renameSession does, and the list shows the new title", async () => {
+    const r = await rig();
+    expect(await call(r, "/api/host-chats/chat/rename", { session: sessionUri(1), title: "  FICTIONAL renamed  " })).toEqual({ status: 200, json: { ok: true } });
+    await until("the title action", () => actions(r.fake, "session/titleChanged").length > 0);
+    expect(actions(r.fake, "session/titleChanged")).toEqual([{ channel: sessionUri(1), action: { type: "session/titleChanged", title: "FICTIONAL renamed" } }]);
+    await until("the list to follow", () => r.conn.summaries().find((s) => s.resource === sessionUri(1))?.title === "FICTIONAL renamed");
+    const row = (await call(r, "/api/host-chats/chats")).json.chats.find((each: { session: string }) => each.session === sessionUri(1));
+    expect(row.title).toBe("FICTIONAL renamed");
+  });
+
+  it("rename_empty_title_400", async () => {
+    const r = await rig();
+    for (const title of ["", "   ", undefined, 7]) {
+      const answer = await call(r, "/api/host-chats/chat/rename", { session: sessionUri(1), title });
+      expect({ title, status: answer.status, code: answer.json.error.code }).toEqual({ title, status: 400, code: "missing_title" });
+    }
+    expect(actions(r.fake, "session/titleChanged")).toEqual([]);
+  });
+
+  it("read dispatches chat/isReadChanged on the chat's channel, and the row's unread follows both ways", async () => {
+    const r = await rig();
+    const row = async () => (await call(r, "/api/host-chats/chats")).json.chats.find((each: { session: string }) => each.session === sessionUri(1));
+    expect((await row()).unread).toBe(true);
+    expect(await call(r, "/api/host-chats/chat/read", { session: sessionUri(1), read: true })).toEqual({ status: 200, json: { ok: true } });
+    await until("read", () => (r.conn.summaries().find((s) => s.resource === sessionUri(1))!.status & 32) !== 0);
+    expect((await row()).unread).toBe(false);
+    expect(await call(r, "/api/host-chats/chat/read", { session: sessionUri(1), read: false })).toEqual({ status: 200, json: { ok: true } });
+    await until("unread", () => (r.conn.summaries().find((s) => s.resource === sessionUri(1))!.status & 32) === 0);
+    expect((await row()).unread).toBe(true);
+    expect(actions(r.fake, "chat/isReadChanged")).toEqual([
+      { channel: chatUri(1), action: { type: "chat/isReadChanged", isRead: true } },
+      { channel: chatUri(1), action: { type: "chat/isReadChanged", isRead: false } },
+    ]);
+    const bad = await call(r, "/api/host-chats/chat/read", { session: sessionUri(1), read: "yes" });
+    expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_read" });
+  });
+
+  it("archive dispatches chat/isArchivedChanged on the chat's channel, and the row's archived follows both ways", async () => {
+    const r = await rig();
+    const row = async () => (await call(r, "/api/host-chats/chats")).json.chats.find((each: { session: string }) => each.session === sessionUri(1));
+    expect(await call(r, "/api/host-chats/chat/archive", { session: sessionUri(1), archived: true })).toEqual({ status: 200, json: { ok: true } });
+    await until("archived", () => (r.conn.summaries().find((s) => s.resource === sessionUri(1))!.status & 64) !== 0);
+    expect((await row()).archived).toBe(true);
+    expect(await call(r, "/api/host-chats/chat/archive", { session: sessionUri(1), archived: false })).toEqual({ status: 200, json: { ok: true } });
+    await until("restored", () => (r.conn.summaries().find((s) => s.resource === sessionUri(1))!.status & 64) === 0);
+    expect((await row()).archived).toBe(false);
+    expect(actions(r.fake, "chat/isArchivedChanged")).toEqual([
+      { channel: chatUri(1), action: { type: "chat/isArchivedChanged", isArchived: true } },
+      { channel: chatUri(1), action: { type: "chat/isArchivedChanged", isArchived: false } },
+    ]);
+    const bad = await call(r, "/api/host-chats/chat/archive", { session: sessionUri(1) });
+    expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_archived" });
+  });
+
+  it("delete asks the host to disposeSession, cancels nothing on an idle chat, and the chat leaves the list", async () => {
+    const r = await rig();
+    expect(await call(r, "/api/host-chats/chat/delete", { session: sessionUri(1) })).toEqual({ status: 200, json: { ok: true } });
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession").map((entry) => entry.params)).toEqual([{ channel: sessionUri(1) }]);
+    expect(actions(r.fake, "chat/turnCancelled")).toEqual([]);
+    await until("the list to drop it", () => !r.conn.summaries().some((s) => s.resource === sessionUri(1)));
+    expect((await call(r, "/api/host-chats/chats")).json.chats.map((row: { session: string }) => row.session)).toEqual([sessionUri(2)]);
+    // it is gone: a second delete finds nothing
+    const again = await call(r, "/api/host-chats/chat/delete", { session: sessionUri(1) });
+    expect({ status: again.status, code: again.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
+  });
+
+  it("delete_running_chat_cancels_first", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    expect(await call(r, "/api/host-chats/chat/delete", { session: sessionUri(1) })).toEqual({ status: 200, json: { ok: true } });
+    expect(actions(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId: "turn-live", duration: 0 } }]);
+    // the cancel is on the wire before the dispose
+    const order = r.fake.requests.map((entry) => entry.method === "dispatchAction" ? String((entry.params as { action: { type: string } }).action.type) : entry.method)
+      .filter((each) => each === "chat/turnCancelled" || each === "disposeSession");
+    expect(order).toEqual(["chat/turnCancelled", "disposeSession"]);
+  });
+
+  it("the session actions take only a known Copilot session, and answer 503 with the host down", async () => {
+    const other = "claude:/fictional-other";
+    const r = await rig({
+      sessions: [summary(1), { ...summary(2), resource: other, provider: "claude" }],
+      states: { [sessionUri(1)]: sessionState(1), [other]: { ...sessionState(2), provider: "claude" } as SessionState },
+    });
+    const bodies = (session: string) => [
+      ["/api/host-chats/chat/rename", { session, title: "FICTIONAL x" }], ["/api/host-chats/chat/read", { session, read: true }],
+      ["/api/host-chats/chat/archive", { session, archived: true }], ["/api/host-chats/chat/delete", { session }],
+    ] as const;
+    for (const session of [other, sessionUri(9)]) {
+      for (const [path, body] of bodies(session)) {
+        const answer = await call(r, path, body);
+        expect({ path, session, status: answer.status, code: answer.json.error?.code }).toEqual({ path, session, status: 404, code: "host_chat_missing" });
+      }
+    }
+    for (const [path] of bodies("")) {
+      const answer = await call(r, path, {});
+      expect({ path, status: answer.status, code: answer.json.error?.code }).toEqual({ path, status: 400, code: "missing_session" });
+    }
+    expect(r.fake.dispatched.filter((entry) => entry.channel !== "ahp-root://" && entry.action.type !== "session/activeClientSet")).toEqual([]);
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession")).toEqual([]);
+    const { home, env } = homeWithRegistry();
+    const down = { conn: connectionAt(home, env), clock: manualClock() };
+    await until("the connection to wait", () => down.conn.state().state === "waiting");
+    for (const [path, body] of bodies(sessionUri(1))) {
+      const answer = await call(down, path, body);
+      expect({ path, status: answer.status, code: answer.json.error.code }).toEqual({ path, status: 503, code: "agent_host_down" });
+    }
   });
 
   it("no route response carries the host's token", async () => {

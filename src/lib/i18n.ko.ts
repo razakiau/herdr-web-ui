@@ -1289,4 +1289,18 @@ export const KO: Record<string, string> = {
   "Skipped": "건너뜀",
   "Other…": "기타…",
   "Answer": "답변",
+  // a host chat's own actions (components/HostChatActions.tsx)
+  "Rename…": "이름 바꾸기…",
+  "Rename chat…": "채팅 이름 바꾸기…",
+  "Rename chat": "채팅 이름 바꾸기",
+  "Chat name": "채팅 이름",
+  "A chat needs a name.": "채팅 이름을 입력하세요.",
+  "Mark as read": "읽음으로 표시",
+  "Mark as unread": "읽지 않음으로 표시",
+  "Mark as done": "완료로 표시",
+  "Restore": "복원",
+  "Delete…": "삭제…",
+  "Delete “{title}”?": "“{title}”을(를) 삭제할까요?",
+  "This removes it from VS Code too.": "VS Code에서도 삭제됩니다.",
+  "{what} failed: {reason}": "{what} 실패: {reason}",
 };

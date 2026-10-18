@@ -90,7 +90,7 @@ export function MachineSidebar(props: Props) {
         <UsageMeters />
       </div>
     </footer>
-    {allOn !== null && allPc && allMachine && <AllAgentsSheet machineName={allMachine.name} pc={allPc}
+    {allOn !== null && allPc && allMachine && <AllAgentsSheet machineId={allOn} machineName={allMachine.name} pc={allPc}
       selected={props.selectedHostChat?.machineId === allOn ? props.selectedHostChat.session : null} onClose={() => setAllOn(null)}
       // the chat opens as a tab of its workspace or its folder row; on a phone the drawer goes as a pick's does
       onOpen={(session) => { setAllOn(null); props.onSelectHostChat?.({ machineId: allOn, session }); }} />}

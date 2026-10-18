@@ -6,7 +6,7 @@
  */
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -21,8 +21,12 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { AgentRowBody } from "./AgentSidebar.tsx";
+import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
+import { RowMenu } from "./RowMenu.tsx";
+import { onRowContextMenu } from "./Sidebar.tsx";
 
 export interface AllAgentsSheetProps {
+  machineId: string;
   machineName: string;
   pc: HostPc;
   /** the chat open now, marked in the list */
@@ -30,6 +34,12 @@ export interface AllAgentsSheetProps {
   onOpen(session: string): void;
   onClose(): void;
 }
+
+/** The focus is in something over the sheet (a chat's menu, its rename or delete), not on the page under it. */
+const outside = (surface: HTMLElement | null): boolean => {
+  const active = document.activeElement;
+  return active !== null && active !== document.body && !(surface?.contains(active) ?? false);
+};
 
 const modified = (row: HostChatRow): number => {
   const at = Date.parse(row.modified_at);
@@ -46,18 +56,25 @@ function byFolder(rows: readonly HostChatRow[]): { cwd: string | null; chats: Ho
   return [...groups].map(([cwd, chats]) => ({ cwd, chats })).sort((a, b) => (a.cwd === null ? 1 : 0) - (b.cwd === null ? 1 : 0));
 }
 
-export function AllAgentsSheet({ machineName, pc, selected, onOpen, onClose }: AllAgentsSheetProps) {
+export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, onClose }: AllAgentsSheetProps) {
   const t = useT();
   const id = useId();
   const now = useMinuteClock();
   const [query, setQuery] = useState("");
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // each chat's menu: its own actions (HostChatActions.tsx), over the sheet
+  const actions = useHostChatActions();
+  const [menu, setMenu] = useState<{ session: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null } | null>(null);
+  const menuRow = menu ? pc.chats.find((row) => row.session === menu.session) : undefined;
   const surface = useFocusTrap<HTMLDivElement>(true);
   useSheetSwipe(surface, onClose);
-  usePhoneSheetBack(() => onClose());
+  // a chat's menu, or the rename or delete it opened, takes the sheet's Back entry while it is up:
+  // its close would otherwise step back off the sheet's entry and close the sheet with it
+  usePhoneSheetBack(() => onClose(), menu === null && !(actions?.asking ?? false));
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || nativeModalOver(surface.current)) return;
+      // a chat's menu, or the rename or delete it opened over the sheet, takes its own Escape
+      if (event.key !== "Escape" || nativeModalOver(surface.current) || outside(surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
       onClose();
@@ -75,12 +92,22 @@ export function AllAgentsSheet({ machineName, pc, selected, onOpen, onClose }: A
   const showArchived = archivedOpen || (words !== "" && archived.length > 0);
 
   const item = (row: HostChatRow) => {
-    const title = row.title.trim() || t("Copilot chat");
+    const title = hostChatTitle(row, t);
     const context = [row.status === "error" ? t("Error") : null, chatAge(row, now, t)].filter(Boolean).join(" · ");
-    return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}`} data-host-session={row.session}>
+    const menuOpen = menu?.session === row.session;
+    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
+      setMenu(menuOpen ? null : { session: row.session, anchor, point, previousFocus });
+    return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}`} data-host-session={row.session}
+      onMouseDownCapture={actions ? (event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); } : undefined}
+      onContextMenu={actions ? (event) => onRowContextMenu(event, toggleMenu) : undefined}>
       <button type="button" className="agent-select agent-row" aria-current={row.session === selected ? "true" : undefined} title={[title, row.cwd].filter(Boolean).join("\n")} onClick={() => onOpen(row.session)}>
-        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} status={hostChatStatus(row)} />
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} status={hostChatStatus(row)} pinned={actions?.pinned(machineId, row.session)} />
       </button>
+      {actions && <div className="agent-actions">
+        <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
+          <Ellipsis aria-hidden="true" />
+        </button>
+      </div>}
     </li>;
   };
 
@@ -110,6 +137,8 @@ export function AllAgentsSheet({ machineName, pc, selected, onOpen, onClose }: A
           </section>}
         </div>
       </div>
+      {menu && menuRow && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={hostChatTitle(menuRow, t)} subtitle={menuRow.cwd ?? undefined}
+        items={hostChatItems(actions, { machineId, chat: menuRow }, t)} onClose={() => setMenu(null)} />}
     </div>,
     document.body,
   );

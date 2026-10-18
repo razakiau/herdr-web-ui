@@ -1293,4 +1293,18 @@ export const ZH: Record<string, string> = {
   "Skipped": "已跳过",
   "Other…": "其他…",
   "Answer": "回答",
+  // a host chat's own actions (components/HostChatActions.tsx)
+  "Rename…": "重命名…",
+  "Rename chat…": "重命名聊天…",
+  "Rename chat": "重命名聊天",
+  "Chat name": "聊天名称",
+  "A chat needs a name.": "聊天需要一个名称。",
+  "Mark as read": "标记为已读",
+  "Mark as unread": "标记为未读",
+  "Mark as done": "标记为完成",
+  "Restore": "恢复",
+  "Delete…": "删除…",
+  "Delete “{title}”?": "删除“{title}”？",
+  "This removes it from VS Code too.": "这也会将它从 VS Code 中删除。",
+  "{what} failed: {reason}": "{what}失败：{reason}",
 };

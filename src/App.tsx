@@ -1,5 +1,5 @@
 import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Pencil, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
@@ -26,9 +26,11 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { VscodeChatView } from "./components/VscodeChatView.tsx";
-import { basename, noteHostChatStreamOpen, takeHostChatEvent, useHostChats, useMinuteClock } from "./lib/hostChats.ts";
+import { basename, errorText, noteHostChatStreamOpen, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
+import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
+import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
-import { currentSidebarPins, hostChatPinKey, subscribeSidebarPins } from "./lib/sidebarPins.ts";
+import { currentSidebarPins, hostChatPinKey, setSidebarPins, subscribeSidebarPins, toggleSidebarPin } from "./lib/sidebarPins.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
@@ -868,8 +870,45 @@ export function App() {
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
   // each PC's host chats (lib/hostChats.ts), read once for the sidebar and the tab strip
-  const hostChats = useHostChats(machines);
+  const { pcs: hostChats, tracker: hostTracker } = useHostChatPcs(machines);
   const hostPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  // a host chat's own actions (components/HostChatActions.tsx), for its tab, its rows and the header
+  const [hostRename, setHostRename] = useState<HostChatRef | null>(null);
+  const [hostDelete, setHostDelete] = useState<HostChatRef | null>(null);
+  const [hostNotice, setHostNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hostNotice) return;
+    const timer = window.setTimeout(() => setHostNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [hostNotice]);
+  const hostActions = useMemo((): HostChatActions => {
+    // the row shows the change at once (HostPcs); a refusal puts it back, and says so here
+    const said = (what: string) => (cause: unknown): void => setHostNotice(t("{what} failed: {reason}", { what, reason: errorText(cause) }));
+    return {
+      pinned: (machineId, session) => hostPins.includes(hostChatPinKey(machineId, session)),
+      togglePin: (machineId, session) => setSidebarPins(toggleSidebarPin(currentSidebarPins(), hostChatPinKey(machineId, session))),
+      askRename: (target) => setHostRename(target),
+      rename: (machineId, session, title) => { void hostTracker.rename(machineId, session, title).catch(said(t("Rename"))); },
+      setRead: (machineId, session, read) => { void hostTracker.setRead(machineId, session, read).catch(said(t(read ? "Mark as read" : "Mark as unread"))); },
+      setArchived: (machineId, session, archived) => { void hostTracker.setArchived(machineId, session, archived).catch(said(t(archived ? "Mark as done" : "Restore"))); },
+      askDelete: (target) => setHostDelete(target),
+      asking: hostRename !== null || hostDelete !== null,
+    };
+  }, [hostTracker, hostPins, t, hostRename, hostDelete]);
+  // the open chat marked done (archived chats are not placed) or deleted, here or on the PC: it is
+  // let go as a closed pane is, and the PC's first pane is opened in its place. Only that change
+  // does it: a chat just made (not listed yet) or opened from Archived stays open
+  const openHostRow = selectedHostChat ? hostChats.get(selectedHostChat.machineId)?.chats.find((chat) => chat.session === selectedHostChat.session) : undefined;
+  const openHostKey = selectedHostChat ? `${selectedHostChat.machineId}\n${selectedHostChat.session}` : null;
+  const openHostLive = openHostRow !== undefined && !openHostRow.archived;
+  const openHostWas = useRef<{ key: string | null; live: boolean }>({ key: null, live: false });
+  useEffect(() => {
+    const was = openHostWas.current;
+    openHostWas.current = { key: openHostKey, live: openHostLive };
+    if (openHostKey === null || was.key !== openHostKey || !was.live || openHostLive) return;
+    setSelectedHostChat(null);
+    setAutoSelected(true);
+  }, [openHostKey, openHostLive]);
   const hostNow = useMinuteClock();
   // where the selected PC's host chats stand (lib/hostPlacement.ts): the open one is kept placed
   const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [],
@@ -1361,6 +1400,8 @@ export function App() {
   const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewFields(null); }, []);
 
   const moreItems: RowMenuItem[] = [
+    // the open host chat's name, in the same sheet its row's Rename… opens
+    ...(selectedHostChat && openHostRow ? [{ id: "rename-chat", label: t("Rename chat…"), icon: Pencil, run: () => setHostRename({ machineId: selectedHostChat.machineId, chat: openHostRow }) }] : []),
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
     ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
@@ -1401,7 +1442,7 @@ export function App() {
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
   return (
-    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
+    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><HostChatActionsContext.Provider value={hostActions}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
       <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}`}>
         {/* is-zoned tells this header from the connecting shell's, which has no zones to draw.
             .header-side is the sidebar's own top row from 769px (styles.css); below that its
@@ -1538,6 +1579,7 @@ export function App() {
         <TelemetryNotice enabled={locked === false} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
         {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
+        {hostNotice && <p className="pane-notice" role="alert">{hostNotice}</p>}
         {health?.lan_exposure && <LanExposureNotice host={health.lan_exposure.host} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {/* the pane's tab, or two tabs side by side (lib/split.ts): a tab dragged down out of its strip,
             or a sidebar row dragged over this area, opens its pane in the half it is dropped on */}
@@ -1722,7 +1764,12 @@ export function App() {
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
+      {hostRename && <RenameHostChatSheet title={hostRename.chat.title} onClose={() => setHostRename(null)}
+        onSave={(title) => hostActions.rename(hostRename.machineId, hostRename.chat.session, title)} />}
+      {/* the one place the product's name is said: it names where else the chat goes */}
+      {hostDelete && <ConfirmDialog title={t("Delete “{title}”?", { title: hostChatTitle(hostDelete.chat, t) })} body={t("This removes it from VS Code too.")} confirmLabel={t("Delete")}
+        onConfirm={() => hostTracker.remove(hostDelete.machineId, hostDelete.chat.session).then(() => setHostDelete(null))} onClose={() => setHostDelete(null)} />}
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
-    </div></MachineContext.Provider></MachineSessionsProvider>
+    </div></HostChatActionsContext.Provider></MachineContext.Provider></MachineSessionsProvider>
   );
 }

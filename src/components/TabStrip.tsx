@@ -4,6 +4,7 @@
  * A phone keeps an ellipsis on the selected tab as a touch entry to its trimmed menu. Where the
  * canvas shows a split tab's panes one at a time (SOLO_PANE_QUERY), that menu lists them first.
  * That menu also carries the open pane's actions, so a lone pane shows no ellipsis of its own.
+ * A host chat's tab has the chat's own menu instead (HostChatTab).
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, Server, Terminal, X } from "lucide-react";
@@ -29,6 +30,7 @@ import { useTabReorder } from "../lib/useTabReorder.ts";
 import { indicatorGlyph, paneStatus, rollupStatus } from "../lib/status.ts";
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -59,23 +61,80 @@ export interface TabStripProps {
 /**
  * A host chat's tab: Copilot's mark, its title and its state, as an agent's tab. `hosted` adds a
  * small server glyph, drawn only where the workspace also runs Copilot in a pane, so the two never
- * look the same.
+ * look the same. Its menu (the ⋯ on a phone's open tab, a right-click, Shift+F10) is the chat's own
+ * (HostChatActions.tsx); Rename… and F2 name it in place, as a pane's tab is named, and Delete asks.
  */
 function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void }) {
   const t = useT();
   const { settings } = useSettings();
+  const machineId = useMachineId();
+  const actions = useHostChatActions();
+  const touchMenu = useMediaQuery("(pointer: coarse), (max-width: 768px)");
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus: HTMLElement | null } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const tabButton = useRef<HTMLButtonElement>(null);
   const status = hostChatStatus(chat);
-  const title = chat.title.trim() || t("Copilot chat");
-  return <div className={`tab-strip-item host-chat-tab${selected ? " is-active" : ""}`} data-host-session={chat.session}>
-    <button type="button" role="tab" className="tab-strip-tab" aria-selected={selected} tabIndex={selected ? 0 : -1} title={[title, chat.cwd].filter(Boolean).join("\n")}
-      onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); if (!selected) onSelect(); }}>
+  const title = hostChatTitle(chat, t);
+  const target = { machineId, chat };
+  const beginRename = (): void => { setError(null); setMenu(null); setEditing(chat.title.trim()); };
+  const endRename = (): void => { setEditing(null); window.requestAnimationFrame(() => tabButton.current?.focus({ preventScroll: true })); };
+  const saveRename = (): void => {
+    const next = editing?.trim() ?? "";
+    if (next === "") { setError(t("A chat needs a name.")); return; }
+    endRename();
+    if (next !== chat.title.trim()) actions?.rename(machineId, chat.session, next);
+  };
+  const openMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus: HTMLElement | null = anchor): void =>
+    setMenu(menu ? null : { anchor, point, previousFocus });
+  return <div className={`tab-strip-item host-chat-tab${selected ? " is-active" : ""}${editing !== null ? " is-editing" : ""}`} data-host-session={chat.session}>
+    {editing !== null ? <>
+      <input className="input tab-strip-rename" aria-label={t("Chat name")} autoFocus size={Math.max(8, editing.length + 1)} maxLength={MAX_LABEL_CHARS}
+        placeholder={title} value={editing} aria-invalid={error !== null || undefined}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => { setEditing(event.target.value); setError(null); }}
+        onBlur={() => setEditing(null)}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === "Enter") saveRename();
+          if (event.key === "Escape") endRename();
+        }} />
+      {error && <span className="tab-strip-error" role="alert">{error}</span>}
+    </> : <button ref={tabButton} type="button" role="tab" className="tab-strip-tab" aria-selected={selected} tabIndex={selected ? 0 : -1} title={[title, chat.cwd].filter(Boolean).join("\n")}
+      aria-haspopup={actions ? "menu" : undefined} aria-keyshortcuts={actions ? "Shift+F10 F2 Delete" : undefined}
+      onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); if (!selected) onSelect(); }}
+      onDoubleClick={actions ? beginRename : undefined}
+      onMouseDown={(event) => { if (actions && (event.button === 2 || (event.button === 0 && event.ctrlKey))) event.preventDefault(); }}
+      onContextMenu={actions ? (event) => {
+        event.preventDefault();
+        openMenu(event.currentTarget, event.clientX !== 0 || event.clientY !== 0 ? { x: event.clientX, y: event.clientY } : undefined,
+          document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      } : undefined}
+      onKeyDown={actions ? (event) => {
+        // the strip's own keys are a pane tab's: these three are the chat's
+        const key = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey) ? "menu" : event.key === "F2" ? "rename" : event.key === "Delete" ? "delete" : null;
+        if (key === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (key === "menu") openMenu(event.currentTarget);
+        else if (key === "rename") beginRename();
+        else actions.askDelete(target);
+      } : undefined}>
       {status !== "idle" && (settings.statusIndicators === "classic"
         ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" />
         : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true">{indicatorGlyph(status, settings.statusIndicators)}</span>)}
       <AgentMark agent="copilot" size={14} />
       {hosted && <Server className="host-chat-tab-glyph" aria-hidden="true" />}
       <span className="tab-strip-label">{title}</span>
-    </button>
+    </button>}
+    {actions && touchMenu && selected && editing === null && <button type="button" className="tab-strip-menu" aria-label={t("Actions for {tab}", { tab: title })} aria-haspopup="menu" aria-expanded={menu !== null}
+      onClick={(event) => openMenu(event.currentTarget, undefined, tabButton.current)}>
+      <Ellipsis aria-hidden="true" />
+    </button>}
+    {menu && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={title} subtitle={chat.cwd ?? undefined}
+      items={hostChatItems(actions, target, t, beginRename)} align="start" onClose={() => setMenu(null)} />}
   </div>;
 }
 

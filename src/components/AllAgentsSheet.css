@@ -13,6 +13,8 @@
 .all-agents-group { min-width: 0; }
 .all-agents-folder { padding-top: var(--space-2); }
 .all-agents .agent-item { padding-right: 0; }
+/* a row with a chat's ⋯ keeps the state cell's room after it, as an Agents row does */
+.all-agents .agent-item:has(> .agent-actions) { padding-right: var(--side-box); }
 .all-agents .agent-row { gap: var(--space-2); }
 .all-agents-group .agent-list { margin: 0; padding: 0; list-style: none; }
 .all-agents-folder,

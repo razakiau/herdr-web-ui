@@ -108,6 +108,21 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
     const state = states[channel];
     if (state) states[channel] = sessionReducer(state, action as SessionAction, () => {});
   };
+  /**
+   * What a host does to its catalog after a client's title, read or archived action: the session's
+   * summary follows (the default chat's flags are the session's), announced as root/sessionSummaryChanged.
+   */
+  const follow = (channel: string, action: StateAction) => {
+    const owner = sessions.find((s) => s.resource === channel || s.defaultChat === channel);
+    if (!owner) return;
+    const bit = action.type === "chat/isReadChanged" ? 32 : action.type === "chat/isArchivedChanged" ? 64 : 0;
+    if (action.type === "session/titleChanged" && owner.resource === channel) {
+      notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { title: (action as { title: string }).title } });
+    } else if (bit !== 0 && owner.defaultChat === channel) {
+      const on = action.type === "chat/isReadChanged" ? (action as { isRead: boolean }).isRead : (action as { isArchived: boolean }).isArchived;
+      notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { status: on ? owner.status | bit : owner.status & ~bit } });
+    }
+  };
   const notice = (channel: string, item: FakeRootNotice) => {
     if (item.type === "root/sessionAdded") sessions.push(item.summary);
     else if (item.type === "root/sessionRemoved") sessions.splice(0, sessions.length, ...sessions.filter((s) => s.resource !== item.session));
@@ -163,6 +178,16 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         notice(ROOT, { type: "root/sessionAdded", summary });
         return;
       }
+      case "disposeSession": {
+        const channel = String(params["channel"]);
+        const summary = sessions.find((s) => s.resource === channel);
+        if (!summary) { fail(-32008, `no such session ${channel}`); return; }
+        ok(null);
+        if (summary.defaultChat) delete chats[summary.defaultChat];
+        delete states[channel];
+        notice(ROOT, { type: "root/sessionRemoved", session: channel });
+        return;
+      }
       case "fetchTurns": {
         const channel = String(params["channel"]);
         ok({});
@@ -202,6 +227,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
           dispatched.push({ channel, action });
           apply(channel, action);
           announce(channel, action, { clientId: ws.data.clientId ?? "", clientSeq: Number(params["clientSeq"]) });
+          follow(channel, action);
         }
       },
     },

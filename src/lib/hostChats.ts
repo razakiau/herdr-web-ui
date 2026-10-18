@@ -103,6 +103,29 @@ export function confirmHost(machineId: string, body: HostConfirm): Promise<{ ok:
   return post(machineId, "host-chats/chat/confirm", body);
 }
 
+// ─── A chat's actions ─────────────────────────────────────────────────────────
+// The row and tab menus' Rename, Mark as read / unread, Mark as done / Restore and Delete: the
+// bridge sends each to the PC's host as VS Code would, so VS Code shows the change too. Pins are
+// this app's own (lib/sidebarPins.ts): the host has none.
+
+export function renameHostChat(machineId: string, session: string, title: string): Promise<{ ok: true }> {
+  return post(machineId, "host-chats/chat/rename", { session, title });
+}
+
+export function markHostChatRead(machineId: string, session: string, read: boolean): Promise<{ ok: true }> {
+  return post(machineId, "host-chats/chat/read", { session, read });
+}
+
+/** Mark as done (archived) or Restore. */
+export function archiveHostChat(machineId: string, session: string, archived: boolean): Promise<{ ok: true }> {
+  return post(machineId, "host-chats/chat/archive", { session, archived });
+}
+
+/** Deletes the chat on its PC (a running turn is cancelled first): VS Code loses it too. */
+export function deleteHostChat(machineId: string, session: string): Promise<{ ok: true }> {
+  return post(machineId, "host-chats/chat/delete", { session });
+}
+
 /** Writes the model into the chat's shared draft, so VS Code's own picker shows it too. */
 export async function setHostDraftModel(machineId: string, session: string, model: { id: string; effort?: string }): Promise<void> {
   await post(machineId, "host-chats/chat/draft", { session, model });
@@ -420,8 +443,22 @@ function hostDownError(error: unknown): boolean {
  * - Every other online PC is read again on its list pushes, and on `resume()`: the page shown
  *   again, or the app's event stream (re)opened, after which any push may have been missed.
  */
+/**
+ * A chat's row as an action of this page left it, until the PC's list says the same: the bridge
+ * answers once it has sent the action, and the host's list follows a moment later.
+ */
+interface RowEdit { change: Partial<HostChatRow> | "gone"; settled: boolean; until: number }
+/** How long a settled edit outlives reads that do not show it yet: then the PC's list wins. */
+export const ROW_EDIT_MS = 10_000;
+
+const editShown = (row: HostChatRow | undefined, change: RowEdit["change"]): boolean =>
+  change === "gone" ? row === undefined : row !== undefined && Object.entries(change).every(([key, value]) => row[key as keyof HostChatRow] === value);
+
 export class HostPcs {
   private pcs: ReadonlyMap<string, HostPc> = new Map();
+  /** each PC as its bridge last listed it, before this page's edits */
+  private read = new Map<string, HostPc>();
+  private readonly edits = new Map<string, Map<string, RowEdit>>();
   private online: readonly string[] = [];
   private readonly off = new Set<string>();
   private readonly generation = new Map<string, number>();
@@ -444,6 +481,7 @@ export class HostPcs {
   setRoster(online: readonly string[]): void {
     this.online = online;
     this.off.clear();
+    this.read = new Map([...this.read].filter(([id]) => online.includes(id)));
     this.set(new Map([...this.pcs].filter(([id]) => online.includes(id))));
     for (const id of online) this.refresh(id);
   }
@@ -473,11 +511,16 @@ export class HostPcs {
   refresh(machineId: string, host?: AgentHostState): void {
     const turn = (this.generation.get(machineId) ?? 0) + 1;
     this.generation.set(machineId, turn);
-    if (host) this.set(withPc(this.pcs, machineId, { host, chats: this.pcs.get(machineId)?.chats ?? [] }));
+    if (host) {
+      const read = this.read.get(machineId);
+      if (read) this.read.set(machineId, { ...read, host });
+      this.set(withPc(this.pcs, machineId, { host, chats: this.pcs.get(machineId)?.chats ?? [] }));
+    }
     const read = Promise.allSettled([host ? Promise.resolve(host) : fetchHostState(machineId), fetchHostChats(machineId)]).then(([state, chats]) => {
       if (this.generation.get(machineId) !== turn || !this.online.includes(machineId)) return;
       if ((state.status === "rejected" && isHostChatsOff(state.reason)) || (chats.status === "rejected" && isHostChatsOff(chats.reason))) {
         this.off.add(machineId);
+        this.read.delete(machineId);
         this.set(withoutPc(this.pcs, machineId));
         return;
       }
@@ -488,11 +531,76 @@ export class HostPcs {
       const nextHost = state.status === "fulfilled" ? state.value : previous?.host ?? null;
       // a host that is down (503) has no list; any other failure keeps what was shown
       const down = chats.status === "rejected" && chats.reason instanceof ApiError && chats.reason.status === 503;
-      const nextChats = chats.status === "fulfilled" ? newestFirst(chats.value) : down ? [] : previous?.chats ?? [];
-      this.set(withPc(this.pcs, machineId, { host: nextHost, chats: nextChats }));
+      const nextChats = chats.status === "fulfilled" ? newestFirst(chats.value) : down ? [] : this.read.get(machineId)?.chats ?? previous?.chats ?? [];
+      this.read.set(machineId, { host: nextHost, chats: nextChats });
+      this.show(machineId);
     });
     this.reads.add(read);
     void read.finally(() => this.reads.delete(read));
+  }
+
+  rename(machineId: string, session: string, title: string): Promise<void> {
+    return this.act(machineId, session, { title }, () => renameHostChat(machineId, session, title));
+  }
+
+  /** Mark as read (true) or unread: the row says so at once, and goes back if the PC refuses. */
+  setRead(machineId: string, session: string, read: boolean): Promise<void> {
+    return this.act(machineId, session, { unread: !read }, () => markHostChatRead(machineId, session, read));
+  }
+
+  /**
+   * Mark as done (true) or Restore. Shown once the bridge has it: a done chat leaves its tab, and
+   * the open one is let go, which a refusal could not undo.
+   */
+  setArchived(machineId: string, session: string, archived: boolean): Promise<void> {
+    return this.act(machineId, session, { archived }, () => archiveHostChat(machineId, session, archived), false);
+  }
+
+  /** Deletes the chat; its row goes once the bridge has deleted it (a refusal leaves it be). */
+  remove(machineId: string, session: string): Promise<void> {
+    return this.act(machineId, session, "gone", () => deleteHostChat(machineId, session), false);
+  }
+
+  /**
+   * Sends the action and shows `change` on the chat's row: at once when `early` (a refusal then
+   * takes it back), else once the bridge has it. A refusal is thrown to the caller, which says so.
+   * The row keeps the change until the PC's list shows it too; a later action on it replaces this one.
+   */
+  private async act(machineId: string, session: string, change: RowEdit["change"], send: () => Promise<unknown>, early = true): Promise<void> {
+    const rows = this.edits.get(machineId) ?? new Map<string, RowEdit>();
+    this.edits.set(machineId, rows);
+    const edit: RowEdit = { change, settled: false, until: 0 };
+    // a refusal puts back what was shown before: an earlier edit of this row the list has not caught up with too
+    const before = rows.get(session);
+    if (early) { rows.set(session, edit); this.show(machineId); }
+    try {
+      await send();
+    } catch (error) {
+      if (early && rows.get(session) === edit) { if (before) rows.set(session, before); else rows.delete(session); }
+      this.show(machineId);
+      throw error;
+    }
+    if (!early && rows.has(session) && rows.get(session) !== before) return; // a later action has the row
+    edit.settled = true;
+    edit.until = Date.now() + ROW_EDIT_MS;
+    rows.set(session, edit);
+    this.show(machineId);
+  }
+
+  /** A PC's group: its last read, with the edits it does not show yet laid over it. */
+  private show(machineId: string): void {
+    const read = this.read.get(machineId) ?? this.pcs.get(machineId);
+    if (!read) return;
+    const rows = this.edits.get(machineId);
+    let chats = read.chats;
+    for (const [session, edit] of rows ?? []) {
+      const row = chats.find((each) => each.session === session);
+      // the PC's list caught up, or had its time: the edit goes
+      if (edit.settled && (editShown(row, edit.change) || Date.now() > edit.until)) { rows!.delete(session); continue; }
+      if (!row) continue;
+      chats = edit.change === "gone" ? chats.filter((each) => each !== row) : chats.map((each) => each === row ? { ...each, ...edit.change as Partial<HostChatRow> } : each);
+    }
+    this.set(withPc(this.pcs, machineId, { host: read.host, chats }));
   }
 
   private set(next: ReadonlyMap<string, HostPc>): void {
@@ -504,13 +612,18 @@ export class HostPcs {
 
 /** The host chats of every connected PC whose bridge has them (HostPcs, in React). */
 export function useHostChats(machines: readonly Machine[]): ReadonlyMap<string, HostPc> {
+  return useHostChatPcs(machines).pcs;
+}
+
+/** useHostChats, with the tracker whose actions (rename, read, done, delete) edit what it shows. */
+export function useHostChatPcs(machines: readonly Machine[]): { pcs: ReadonlyMap<string, HostPc>; tracker: HostPcs } {
   const [tracker] = useState(() => new HostPcs());
   const pcs = useSyncExternalStore(tracker.subscribe, tracker.get);
   const online = useMemo(() => machines.filter((machine) => machine.state === "connected").map((machine) => machine.id), [machines]);
   const roster = online.join("\n");
   useEffect(() => { tracker.setRoster(online); }, [roster]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => tracker.listen(), [tracker]);
-  return pcs;
+  return { pcs, tracker };
 }
 
 function newestFirst(rows: HostChatRow[]): HostChatRow[] {

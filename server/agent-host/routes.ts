@@ -111,11 +111,18 @@ class Leases {
     }
   }
 
-  private expire(session: string, lease: Lease): void {
-    if (this.held.get(session) !== lease) return;
+  /** Lets the session's watch go now (its session is gone): the next take subscribes again. */
+  release(session: string): void {
+    const lease = this.held.get(session);
+    if (!lease) return;
+    this.clock.clearTimeout(lease.timer);
     this.held.delete(session);
     void lease.taking.then((release) => release(), () => {});
     this.onExpire?.(session);
+  }
+
+  private expire(session: string, lease: Lease): void {
+    if (this.held.get(session) === lease) this.release(session);
   }
 }
 
@@ -191,6 +198,10 @@ const POSTS: Record<string, Handler> = {
   "chat/confirm": confirmTool,
   "chat/draft": writeDraft,
   "chat/new": newChat,
+  "chat/rename": renameChat,
+  "chat/read": markRead,
+  "chat/archive": markArchived,
+  "chat/delete": deleteChat,
 };
 
 async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined): Promise<Response> {
@@ -605,5 +616,55 @@ async function confirmTool(call: Call): Promise<Response> {
   call.host.dispatch(channel, (approved
     ? { type: ActionType.ChatToolCallConfirmed, turnId, toolCallId, approved: true, confirmed: ToolCallConfirmationReason.UserAction, ...selected }
     : { type: ActionType.ChatToolCallConfirmed, turnId, toolCallId, approved: false, reason: ToolCallCancellationReason.Denied, ...selected }) as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+// ─── Session actions ─────────────────────────────────────────────────────────
+// What VS Code 1.142 sends a host at protocol 1.0 for the same menu items
+// (baseAgentHostSessionsProvider.ts): the title on the session's channel (renameSession, as its
+// sessions list renames), read and archived on the chat's channel (setChatReadState, archiveChat),
+// and delete as disposeSession. Each takes the session's lease first: a known Copilot session only.
+
+const flag = (value: unknown, name: string): boolean =>
+  typeof value === "boolean" ? value : refuse(badRequest(`invalid_${name}`, `${name} must be true or false`));
+
+async function renameChat(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const raw = call.body["title"];
+  const title = text(raw) ? raw.trim() : "";
+  if (title === "") return badRequest("missing_title", "title is required");
+  await watched(call, session);
+  call.host.dispatch(session, { type: ActionType.SessionTitleChanged, title } as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+async function markRead(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const isRead = flag(call.body["read"], "read");
+  const { channel } = await watched(call, session);
+  call.host.dispatch(channel, { type: ActionType.ChatIsReadChanged, isRead } as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+async function markArchived(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const isArchived = flag(call.body["archived"], "archived");
+  const { channel } = await watched(call, session);
+  call.host.dispatch(channel, { type: ActionType.ChatIsArchivedChanged, isArchived } as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+/**
+ * A running turn is cancelled first (VS Code's archive cancels a chat's active request the same
+ * way), so the agent stops before its session goes. The duration is 0: this bridge did not time the
+ * turn, and AHP forbids deriving it from timestamps (VS Code sends 0 without its own stopwatch).
+ */
+async function deleteChat(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const { channel, chat } = await watched(call, session);
+  if (chat.activeTurn) call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+  await call.host.request("disposeSession", { channel: session });
+  // its watch would keep the gone session in the mirror, and known() with it
+  call.leases.sessions.release(session);
   return jsonResponse({ ok: true });
 }

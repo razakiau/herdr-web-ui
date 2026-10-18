@@ -3,6 +3,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS } from "./hostChats.ts";
+import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -484,5 +485,94 @@ describe("each PC's group (HostPcs)", () => {
     page.dispatchEvent(new Event("visibilitychange"));
     await pcs.idle();
     expect(urls).toEqual([]);
+  });
+});
+
+describe("a chat's actions (rename, read, done, delete)", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+  const CONNECTED = { state: "connected", signed_in: true, protocol: "1.0.0" } as const;
+  /** The PC's list and state; each POST answers `post` (a status) and is kept. */
+  const serve = (rows: () => HostChatRow[], post: () => number) => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts.push({ url, body: JSON.parse(String(init.body)) });
+        const status = post();
+        return new Response(JSON.stringify(status === 200 ? { ok: true } : { error: { code: "agent_host_failed", message: "FICTIONAL failed" } }), { status, headers: { "content-type": "application/json" } });
+      }
+      const body = url.endsWith("/state") ? { host: CONNECTED } : { chats: rows() };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return posts;
+  };
+
+  it("posts each action to its route with the session", async () => {
+    const posts = serve(() => [], () => 200);
+    await renameHostChat("desk", "c1", "FICTIONAL new name");
+    await markHostChatRead("desk", "c1", false);
+    await archiveHostChat("desk", "c1", true);
+    await deleteHostChat("desk", "c1");
+    expect(posts).toEqual([
+      { url: "/api/machines/desk/host-chats/chat/rename", body: { session: "c1", title: "FICTIONAL new name" } },
+      { url: "/api/machines/desk/host-chats/chat/read", body: { session: "c1", read: false } },
+      { url: "/api/machines/desk/host-chats/chat/archive", body: { session: "c1", archived: true } },
+      { url: "/api/machines/desk/host-chats/chat/delete", body: { session: "c1" } },
+    ]);
+  });
+
+  it("mark as unread shows at once, and a refusal puts the row back as it was", async () => {
+    const listed = [{ ...row("c1", "idle", 0), unread: false }, row("c2", "idle", 1000)];
+    let status = 200;
+    const posts = serve(() => listed, () => status);
+    const pcs = new HostPcs();
+    pcs.setRoster(["desk"]);
+    await until(() => pcs.get().has("desk"));
+    const unread = (): boolean | undefined => pcs.get().get("desk")?.chats.find((r) => r.session === "c1")?.unread;
+    let pending = pcs.setRead("desk", "c1", false);
+    // optimistic: the row says unread before the bridge has answered
+    expect(unread()).toBe(true);
+    await pending;
+    expect(unread()).toBe(true);
+    expect(posts.map((p) => p.body)).toEqual([{ session: "c1", read: false }]);
+    // refused: back to read, and the failure goes to the caller (its toast)
+    listed[0] = { ...listed[0]!, unread: true };
+    status = 502;
+    pending = pcs.setRead("desk", "c1", true);
+    expect(unread()).toBe(false);
+    await expect(pending).rejects.toBeInstanceOf(ApiError);
+    expect(unread()).toBe(true);
+  });
+
+  it("rename shows at once; done and delete show once the bridge has them, and a read that lags keeps them", async () => {
+    let status = 200;
+    serve(() => [row("c1", "idle", 0), row("c2", "idle", 1000)], () => status);
+    const pcs = new HostPcs();
+    pcs.setRoster(["desk"]);
+    await until(() => pcs.get().has("desk"));
+    const chats = () => pcs.get().get("desk")!.chats;
+    await pcs.setArchived("desk", "c1", true);
+    expect(chats().find((r) => r.session === "c1")?.archived).toBe(true);
+    await pcs.rename("desk", "c1", "FICTIONAL renamed");
+    expect(chats().find((r) => r.session === "c1")?.title).toBe("FICTIONAL renamed");
+    // done and delete wait for the bridge: a refusal leaves the row (and the open chat) as it was
+    status = 502;
+    const gone = pcs.remove("desk", "c2");
+    expect(chats().map((r) => r.session).sort()).toEqual(["c1", "c2"]);
+    await expect(gone).rejects.toBeInstanceOf(ApiError);
+    expect(chats().map((r) => r.session).sort()).toEqual(["c1", "c2"]);
+    await expect(pcs.setArchived("desk", "c2", true)).rejects.toBeInstanceOf(ApiError);
+    expect(chats().find((r) => r.session === "c2")?.archived).toBe(false);
+    status = 200;
+    const going = pcs.remove("desk", "c2");
+    expect(chats().map((r) => r.session).sort()).toEqual(["c1", "c2"]);
+    await going;
+    expect(chats().map((r) => r.session)).toEqual(["c1"]);
+    // a read that has not caught up yet does not bring it back
+    pcs.resume();
+    await pcs.idle();
+    expect(chats().map((r) => r.session)).toEqual(["c1"]);
+    expect(chats().find((r) => r.session === "c1")?.title).toBe("FICTIONAL renamed");
   });
 });

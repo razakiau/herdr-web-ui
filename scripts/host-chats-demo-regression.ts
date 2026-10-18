@@ -22,6 +22,8 @@ const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
   const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)}, SUB = ${JSON.stringify(SUB)};
   const calls = window.hostCalls = { posts: [], models: [] };
+  // a chat's actions (Task 7): titles given, chats marked unread, read, done and deleted
+  const edits = window.hostEdits = { titles: {}, unread: {}, archived: {}, deleted: [], failRead: false };
   const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [] };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -52,7 +54,7 @@ const patch = `(() => {
     const made = state.created.find((chat) => chat.session === session);
     if (made) {
       const turns = made.sent ? [{ role: "user", ts: at(0), parts: [{ kind: "text", text: made.text }] }, { role: "assistant", ts: at(0), parts: [] }] : [];
-      return { session, title: "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: made.sent ? ["new-1"] : [], signature: JSON.stringify(made) };
+      return { session, title: edits.titles[session] ?? "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: made.sent ? ["new-1"] : [], signature: JSON.stringify([made, edits.titles[session] ?? null]) };
     }
     // the host's window: a read with its cursor loads the turn before it, ahead of the rest
     if (before === "c-older") state.older = true;
@@ -93,6 +95,10 @@ const patch = `(() => {
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, message_ids: ids,
       signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed]) };
   };
+  const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
+    ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
+    ...(row.session in edits.unread ? { unread: edits.unread[row.session] } : {}),
+    ...(row.session in edits.archived ? { archived: edits.archived[row.session] } : {}) }));
   const push = (message) => {
     for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "remote", message }) }));
   };
@@ -101,6 +107,8 @@ const patch = `(() => {
     state.peAsks = true;
     for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "pc-e", message: { type: "host-chat-changed", session: null } }) }));
   };
+  // the list's push, as the bridge sends one when the host adds a chat
+  window.pushHostList = () => push({ type: "host-chat-changed", session: null });
   window.setHostBusy = (busy) => { state.busy = busy; push({ type: "host-chat-changed", session: SESSION }); };
   // a turn made on the PC: only its push tells the phone
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
@@ -133,14 +141,25 @@ const patch = `(() => {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
       if (path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
-      if (path === "/api/host-chats/chats") return json({ chats: [
+      if (path === "/api/host-chats/chats") return json({ chats: edited([
         { session: SESSION, title: "FICTIONAL build chat", status: SIX || state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo", unread: false, archived: false },
         { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs", unread: false, archived: false },
         // 20 days old: only "All agents on Build PC…" lists it
         { session: "fictional-session-old", title: "FICTIONAL old release notes", status: "idle", modified_at: at(60 * 24 * 20), cwd: "/tmp/fictional-repo", unread: false, archived: false },
         { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
         ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
-      ] });
+      ]) });
+      // the row and tab menus' actions: the host has them, and says so on its next list
+      const action = { "/api/host-chats/chat/rename": "rename", "/api/host-chats/chat/read": "read", "/api/host-chats/chat/archive": "archive", "/api/host-chats/chat/delete": "delete" }[path];
+      if (action) {
+        if (action === "read" && edits.failRead) return json({ error: { code: "agent_host_failed", message: "FICTIONAL the host said no" } }, 502);
+        if (action === "rename") edits.titles[body.session] = body.title;
+        if (action === "read") edits.unread[body.session] = !body.read;
+        if (action === "archive") edits.archived[body.session] = body.archived;
+        if (action === "delete") edits.deleted.push(body.session);
+        setTimeout(() => { push({ type: "host-chat-changed", session: body.session }); push({ type: "host-chat-changed", session: null }); }, 50);
+        return json({ ok: true });
+      }
       // the docs chat's host is down: the bridge says why in its own words
       if (path === "/api/host-chats/chat" && url.searchParams.get("session") === "fictional-session-0") return json({ error: { code: "agent_host_down", message: "FICTIONAL the agent host is down" } }, 503);
       if (path === "/api/host-chats/chat") { if (url.searchParams.has("before")) calls.before = [...(calls.before ?? []), url.searchParams.get("before")]; return json(read(url.searchParams.get("session"), url.searchParams.get("before"))); }
@@ -565,6 +584,106 @@ try {
         await fits("the chat made unsent");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a chat made with its first message unsent opens with the words in its composer, once");
+
+        // 7c. a chat's own actions (Task 7): rename from its tab's menu and the header's ⋯, mark it
+        // unread (and a refusal undone), mark it done, delete it; a pane's tab keeps its own menu
+        const keptTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-new-2"]');
+        const actionPosts = async (route: string) => (await posts(`/api/machines/remote/host-chats/chat/${route}`)).map((post) => post.body);
+        const sheetItems = async () => (await page.locator(".row-sheet .row-sheet-item").allInnerTexts()).map((text) => text.trim());
+        // a pane's tab: the menu it always had, none of a chat's items
+        // the list's push carries the chats made, so they stand as tabs of their workspace; the drawer and sheet have gone
+        await page.evaluate(() => (window as unknown as { pushHostList(): void }).pushHostList());
+        await keptTab.waitFor();
+        await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null && document.querySelector(".new-host-chat") === null);
+        await page.waitForTimeout(400);
+        await page.locator('.tab-strip-item:not(.host-chat-tab) [role="tab"]').first().click({ button: "right" });
+        await page.locator(".row-sheet").waitFor();
+        const paneItems = await sheetItems();
+        for (const item of ["Rename…", "Mark as done", "Mark as read", "Mark as unread", "Delete…"]) assert.ok(!paneItems.includes(item), `a pane's tab menu has no "${item}"`);
+        await page.keyboard.press("Escape");
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        // the open chat's tab: ⋯ opens the chat's menu
+        await keptTab.getByRole("button", { name: "Actions for FICTIONAL new chat" }).click();
+        await page.locator(".row-sheet").waitFor();
+        assert.deepEqual(await sheetItems(), ["Pin agent", "Rename…", "Mark as unread", "Mark as done", "Delete…"], "the chat's menu: pin, rename, unread, done, delete");
+        await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false);
+        await fits("the chat tab's menu");
+        await noVsCode("the chat tab's menu");
+        if (shots) await page.screenshot({ path: join(shots, "task-7-tab-menu-390.png") });
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename…" }).click();
+        const nameField = keptTab.getByRole("textbox", { name: "Chat name" });
+        await nameField.waitFor();
+        await nameField.fill("   ");
+        await nameField.press("Enter");
+        await keptTab.locator(".tab-strip-error", { hasText: "A chat needs a name." }).waitFor();
+        await nameField.fill("FICTIONAL renamed chat");
+        await nameField.press("Enter");
+        await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL renamed chat" }).waitFor();
+        await kept.locator(".host-chat-title", { hasText: "FICTIONAL renamed chat" }).waitFor();
+        assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-2", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
+        // the header's ⋯: Rename chat… in the sheet, the same route
+        await page.getByRole("button", { name: "More", exact: true }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename chat…" }).click();
+        const renameSheet = page.getByRole("dialog", { name: "Rename chat" });
+        await renameSheet.getByRole("textbox", { name: "Chat name" }).fill("FICTIONAL named in the header");
+        await renameSheet.getByRole("button", { name: "Save", exact: true }).click();
+        await renameSheet.waitFor({ state: "detached" });
+        await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL named in the header" }).waitFor();
+        await kept.locator(".host-chat-title", { hasText: "FICTIONAL named in the header" }).waitFor();
+        assert.equal((await actionPosts("rename")).length, 2, "the header's rename went too");
+        console.log("PASS rename from the tab's menu and the header's ⋯: the new title on the tab and over the chat");
+
+        // read and unread: shown at once; a refusal puts it back and says so
+        await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as unread" }).click();
+        await keptTab.locator('.tab-strip-dot[data-status="done"]').waitFor();
+        assert.deepEqual(await actionPosts("read"), [{ session: "fictional-new-2", read: false }]);
+        await page.evaluate(() => { (window as unknown as { hostEdits: { failRead: boolean } }).hostEdits.failRead = true; });
+        await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as read" }).click();
+        await page.locator(".pane-notice", { hasText: "Mark as read failed: FICTIONAL the host said no" }).waitFor();
+        await keptTab.locator('.tab-strip-dot[data-status="done"]').waitFor();
+        await page.evaluate(() => { (window as unknown as { hostEdits: { failRead: boolean } }).hostEdits.failRead = false; });
+        console.log("PASS mark as unread shows at once; a refused mark as read is put back and said");
+
+        // mark as done: its tab goes, the chat is let go, and All agents lists it under Archived
+        await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as done" }).click();
+        await keptTab.waitFor({ state: "detached" });
+        await kept.waitFor({ state: "detached" });
+        assert.deepEqual(await actionPosts("archive"), [{ session: "fictional-new-2", archived: true }]);
+        await pcMenu();
+        await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        await all.waitFor();
+        await all.getByRole("button", { name: "Archived" }).click();
+        const archivedRow = all.getByRole("region", { name: "Archived" }).locator('[data-host-session="fictional-new-2"]');
+        await archivedRow.waitFor();
+        await archivedRow.getByRole("button", { name: "More for FICTIONAL named in the header" }).click();
+        assert.ok((await sheetItems()).includes("Restore"), "an archived chat's menu offers Restore");
+        await page.keyboard.press("Escape");
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        console.log("PASS mark as done: the tab goes and the chat waits under Archived in All agents");
+
+        // delete: the confirm names the chat (the one place the product's name is said); it goes everywhere
+        const madeRow = all.locator('.host-chat-item[data-host-session="fictional-new-1"]');
+        await madeRow.getByRole("button", { name: "More for FICTIONAL new chat" }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Delete…" }).click();
+        const confirmDelete = page.getByRole("alertdialog", { name: "Delete “FICTIONAL new chat”?" });
+        await confirmDelete.waitFor();
+        assert.equal((await confirmDelete.locator(".confirm-body").innerText()).trim(), "This removes it from VS Code too.");
+        await page.waitForFunction(() => document.querySelector(".confirm-dialog")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false);
+        await fits("the delete confirm");
+        if (shots) await page.screenshot({ path: join(shots, "task-7-delete-confirm-390.png") });
+        await confirmDelete.getByRole("button", { name: "Delete", exact: true }).click();
+        await confirmDelete.waitFor({ state: "detached" });
+        await madeRow.waitFor({ state: "detached" });
+        assert.deepEqual(await actionPosts("delete"), [{ session: "fictional-new-1" }], "one delete");
+        await page.keyboard.press("Escape");
+        await all.waitFor({ state: "detached" });
+        assert.equal(await page.locator('[data-host-session="fictional-new-1"]').count(), 0, "the deleted chat is gone from every surface");
+        await noVsCode("after the delete");
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS delete asks, naming the chat, and the chat is gone");
 
         // 8. six PCs: five fold under "Other PCs (5)"; the one whose chat asks stays open outside it
       } finally { await context.close(); }

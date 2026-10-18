@@ -17,6 +17,7 @@ import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
 import { RowMenu } from "./RowMenu.tsx";
+import { hostChatItems, useHostChatActions, type HostChatRef } from "./HostChatActions.tsx";
 import { BackgroundBadge, displayPaneTitle, onRowContextMenu, PlanBadge, StatusBadge } from "./Sidebar.tsx";
 import "./AgentSidebar.css";
 
@@ -85,7 +86,7 @@ interface ChatRow { machine: Machine; chat: HostChatRow; entry?: undefined }
 type ListRow = AgentRow | ChatRow;
 const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machine.id, row.chat.session) : sidebarPinKey(row.machine.id, row.entry.pane.pane_id);
 /** The row whose menu is open, by its pin key: at its ⋯, or at the pointer for a right-click */
-interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; title: string; place: string }
+interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; title: string; place: string; host?: HostChatRef }
 
 /**
  * All PCs' live agents form a second list; workspace and PC folds do not hide these rows.
@@ -101,6 +102,8 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const { settings } = useSettings();
   // shared with the other browsers of this server (lib/preferencesSync.ts)
   const pinned = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  // a host chat's row menu has the chat's own actions too (HostChatActions.tsx)
+  const hostActions = useHostChatActions();
   const activity = useSidebarActivity();
   // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes)
   const byActivity = settings.agentOrder === "activity";
@@ -150,7 +153,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const pinKey = hostChatPinKey(machine.id, chat.session);
     const menuOpen = menu?.key === pinKey;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
-      setMenu(menuOpen ? null : { key: pinKey, anchor, point, previousFocus, title, place: context });
+      setMenu(menuOpen ? null : { key: pinKey, anchor, point, previousFocus, title, place: context, host: { machineId: machine.id, chat } });
     return <li className={`agent-item host-chat-item${selected ? " is-selected" : ""}`} key={pinKey} data-machine={machine.id} data-host-session={chat.session} data-pin-key={pinKey}
       onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
       onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
@@ -228,10 +231,13 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
         {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(listItem)}</ul>}
       </>}
     </div>
-    {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} onClose={closeMenu} items={[
-      menuPinned
-        ? { id: "unpin", label: t("Unpin agent"), icon: PinOff, run: () => runPin(menu) }
-        : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) },
-    ]} />}
+    {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} onClose={closeMenu} items={menu.host && hostActions
+      // the pin keeps this list's own toggle, which hands the focus back to the moved row
+      ? hostChatItems(hostActions, menu.host, t).map((item) => item.id === "pin" || item.id === "unpin" ? { ...item, run: () => runPin(menu) } : item)
+      : [
+        menuPinned
+          ? { id: "unpin", label: t("Unpin agent"), icon: PinOff, run: () => runPin(menu) }
+          : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) },
+      ]} />}
   </section>;
 }
