@@ -2778,21 +2778,17 @@ button {
   .view-switch .header-desktop-only { display: none; }
 }
 
-/* phones: every header control is a full thumb target, the lens buttons too (the track loses
-   its inset so the bar still holds them) */
+/* phones: every header control is a full thumb target */
 @media (max-width: 768px) {
   .app-header .icon-button {
     width: var(--touch-target-header);
     height: var(--touch-target-header);
   }
 
-  .app-header .view-switch {
-    padding: 0;
-  }
-
+  /* zhomelab fork: the track keeps its height (it had filled the bar since #1220); each lens is a
+     finger wide and reaches a full target through the segmented expander above */
   .app-header .view-switch > button {
     min-width: var(--touch-target-header);
-    height: var(--touch-target-header);
   }
 }
 

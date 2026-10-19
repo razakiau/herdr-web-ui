@@ -304,7 +304,6 @@ export function App() {
   // a host chat shown in the pane's place (lib/hostChats.ts): picking one clears the pane, and a pane picked clears it
   const [selectedHostChat, setSelectedHostChat] = useState<HostChatTarget | null>(null);
   // the open host chat's last read: went through (true), failed (false), not read yet (null)
-  const [hostReadOk, setHostReadOk] = useState<boolean | null>(null);
   // and its title as its reads give it (a chat just made is not on its PC's list yet)
   const [hostReadTitle, setHostReadTitle] = useState<string | null>(null);
   // the folder a chat just made from "+" was started in, until its PC's list has the chat
@@ -864,7 +863,6 @@ export function App() {
   const selectHostChat = useCallback((target: HostChatTarget) => {
     selectTarget(target.machineId, null);
     setSelectedHostChat(target);
-    setHostReadOk(null);
     setHostReadTitle(null);
     setHostMadeIn(null);
   }, [selectTarget]);
@@ -1401,7 +1399,7 @@ export function App() {
   const alertsOffDot = bellVisible && !bell.on;
   // a host chat has no pane, whose terminal stream says live: its chip follows its own reads
   const hostShown = selectedHostChat !== null && selectedPane === null;
-  const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId), hostReadOk) : connected;
+  const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId)) : connected;
   const connWord = t(live ? "live" : !hostShown && outputStopped ? "disconnected" : hostShown || connectedBefore ? "reconnecting" : "connecting");
   const hostTitle = hostShown ? (openHostRow?.title ?? hostReadTitle)?.trim() || t("Copilot chat") : null;
   const crumb = selectedPane && selectedTitle !== null
@@ -1866,7 +1864,7 @@ export function App() {
                 <main className="terminal-host">
                   {/* a host chat picked in the sidebar takes the pane's place in the active half */}
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
-                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onReadHealth={setHostReadOk} onTitle={setHostReadTitle} />
+                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}

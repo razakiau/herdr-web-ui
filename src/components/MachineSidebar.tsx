@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Download, Ellipsis, ListTree, MessageSquarePlus, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, ListTree, MessageSquarePlus, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -12,7 +12,7 @@ import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
 import { currentSidebarPins, subscribeSidebarPins, hostChatPinKey } from "../lib/sidebarPins.ts";
 import { useMinuteClock, type HostPc } from "../lib/hostChats.ts";
 import { foldPcs, pcPlacement } from "../lib/hostPlacement.ts";
-import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import type { RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
 import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
 import type { SidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -84,7 +84,9 @@ export function MachineSidebar(props: Props) {
       <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect}
-      hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat} />
+      hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
+      // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
+      allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn(machine.id) }))} />
     <footer className="sidebar-footer">
       {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
       {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />{t("Install app")}</button>}
@@ -103,7 +105,6 @@ export function MachineSidebar(props: Props) {
 
 function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onAllAgents(): void }) {
   const t = useT();
-  const [pcMenu, setPcMenu] = useState<HTMLElement | null>(null);
   const now = useMinuteClock();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const openSession = props.selectedHostChat?.machineId === machine.id ? props.selectedHostChat.session : null;
@@ -166,7 +167,6 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props
       {machine.kind === "ssh" && <button className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}
       {/* the fold over this PC's workspaces sits beside the + */}
       <button className="sidebar-row-action machine-toggle" aria-expanded={!collapsed} aria-label={collapsed ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} title={collapsed ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>{collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
-      {hostChats && <button type="button" className="sidebar-row-action machine-menu" aria-label={t("More for {title}", { title: machine.name })} aria-haspopup="menu" aria-expanded={pcMenu !== null} onClick={(event) => setPcMenu(pcMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
       <button className="sidebar-row-action machine-new" disabled={!online} aria-label={t("New workspace on {name}", { name: machine.name })} title={t("New workspace")} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
     </header>
     {/* connected is the norm and says nothing new; every other state is spelled out */}
@@ -192,7 +192,6 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props
       {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions}
         hostChats={placement ? { placement, selected: openSession, onSelect: (session) => props.onSelectHostChat?.({ machineId: machine.id, session }), folderMenu: (cwd) => hostItems(cwd) } : undefined} /></MachineContext.Provider>}
     </div>}
-    {pcMenu && <RowMenu anchor={pcMenu} title={machine.name} items={hostItems(null)} onClose={() => setPcMenu(null)} />}
   </section>;
 }
 

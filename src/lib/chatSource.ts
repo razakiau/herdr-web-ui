@@ -54,8 +54,6 @@ export interface HostChatSource extends ChatSource {
   /** each read of the chat, as the host said it (its title, prompt, model, agent, busy) */
   onRead(listener: (read: HostChatRead) => void): () => void;
   last(): HostChatRead | null;
-  /** whether each read went through (true) or failed (false): the header's connection chip */
-  onHealth(listener: (ok: boolean) => void): () => void;
 }
 
 const changed = (detail: string): ApiError => new ApiError("host-chats/chat", 409, detail, "history_changed");
@@ -90,19 +88,7 @@ export function hostSource(machineId: string, session: string): HostChatSource {
   /** the last newest page answered: an unchanged read hands back this very object (ChatView skips it) */
   let lastPage: { from: string | undefined; signature: string; answer: ConversationResponse } | null = null;
   const readListeners = new Set<(read: HostChatRead) => void>();
-  const healthListeners = new Set<(ok: boolean) => void>();
-  const health = (ok: boolean): void => { for (const listener of [...healthListeners]) listener(ok); };
-  /** a read of the chat through the bridge, its outcome told to the header */
-  const fetchRead = async (before?: string): Promise<HostChatRead> => {
-    try {
-      const read = await fetchHostChat(machineId, session, before);
-      health(true);
-      return read;
-    } catch (cause) {
-      health(false);
-      throw cause;
-    }
-  };
+  const fetchRead = (before?: string): Promise<HostChatRead> => fetchHostChat(machineId, session, before);
   let holders = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -195,9 +181,5 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       return () => { readListeners.delete(listener); };
     },
     last: () => lastRead,
-    onHealth(listener) {
-      healthListeners.add(listener);
-      return () => { healthListeners.delete(listener); };
-    },
   };
 }

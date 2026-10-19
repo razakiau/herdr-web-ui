@@ -631,14 +631,12 @@ describe("HostPcs: a pushed host state is not a list", () => {
 describe("the header's connection chip on a host chat", () => {
   const pc = (host: HostPc["host"], stale = false): HostPc => ({ host, chats: [], ...(stale ? { stale: true as const } : {}) });
   const up = { state: "connected", signed_in: true, protocol: "1.0.0" } as const;
-  it("host_chat_header_dot_tracks_its_reads: live after a good read on a connected host, else reconnecting", () => {
-    expect(hostChatLive(pc(up), true)).toBe(true);
-    expect(hostChatLive(pc(up), false)).toBe(false);
-    // not read yet
-    expect(hostChatLive(pc(up), null)).toBe(false);
-    expect(hostChatLive(pc({ state: "no_server" }), true)).toBe(false);
-    expect(hostChatLive(pc(up, true), true)).toBe(false);
-    expect(hostChatLive(undefined, true)).toBe(false);
+  it("host_chat_header_dot_tracks_its_host: live while its PC's host is connected; a read still loading or failed says so in the chat, not here", () => {
+    expect(hostChatLive(pc(up))).toBe(true);
+    expect(hostChatLive(pc({ state: "no_server" }))).toBe(false);
+    expect(hostChatLive(pc(up, true))).toBe(false);
+    expect(hostChatLive(pc(null))).toBe(false);
+    expect(hostChatLive(undefined)).toBe(false);
   });
 });
 
