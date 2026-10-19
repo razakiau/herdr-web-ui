@@ -12,3 +12,4 @@
 - zhomelab bundle 1008: VS Code turn errors with Try again (chat/resume), terminal commands from the call input, context from the turn's contextAttribution, chat reads titled by their session.
 - zhomelab bundle 1009: plugin skills in "/" from the host's completions (Coder workspaces had none), context meter by VS Code's math (turn tokens over the model window, clamped at 100%).
 - zhomelab bundle 1010: ask card options as numbered rows with a Recommended pill and "Title - description" split, the live "Working…" shimmer, a just-sent VS Code-style turn shows its Working head.
+- zhomelab bundle 1011: Skip on an optional Copilot question passes over it alone (VS Code carousel), skipped steps marked.
