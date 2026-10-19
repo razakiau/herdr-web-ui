@@ -71,6 +71,9 @@ const patch = `(() => {
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
         { kind: "tool", name: "Edit file", tool_id: "edit", summary: "Editing", past: "Edited", input: JSON.stringify({ path: "/tmp/fictional-repo/src/build.ts" }), output: "", error: false, edits: [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3 }] },
         { kind: "tool", name: "View image", tool_id: "view", summary: "Viewing", past: "Viewed the screenshot", input: "{}", output: "", error: false, images: [{ media_type: "image/png", ref: "c-shot:0" }] },
+        { kind: "text", text: "FICTIONAL the edit is in; now the tests." },
+        { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL bun test", input: "bun test", output: "FICTIONAL 3 pass", error: false, command: "bun test", exit_code: 0 },
+        { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL bun run lint", input: "bun run lint", output: "FICTIONAL clean", error: false, command: "bun run lint", exit_code: 0 },
         { kind: "text", text: "FICTIONAL the build passes." },
       ] },
       { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
@@ -358,13 +361,20 @@ try {
         assert.equal((await head.locator(".work-block-title").innerText()).trim(), "Edited build.ts, ran 1 command, read README.md, 1 other step", "the head sums the group up as VS Code does, a file read twice once");
         assert.equal((await head.locator(".work-title-detail").innerText()).trim(), "build.ts, ran 1 command, read README.md, 1 other step", "the first word is plain, the rest quieter");
         assert.equal(await head.locator(".work-block-lines").innerText(), "+28 −3", "the edits' lines on the right");
-        assert.match(await head.locator(".work-block-time").innerText(), /^Worked for \d+m$/, "the time stays on the head's quiet right");
+        assert.equal(await head.locator(".work-block-time").count(), 0, "an earlier group leaves the time to the last");
         assert.equal(await head.locator("svg.lucide-check.work-block-icon").count(), 1, "a finished group wears the check");
         assert.equal(await head.locator(".work-block-summary").count(), 0, "no classic counts");
+        // VS Code's grouping: the words between two runs of tools stand in the open, each run folds
+        const agentTurn = view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." });
+        assert.equal(await agentTurn.locator(".work-block.is-vscode").count(), 2, "one group per run of tools");
+        assert.equal(await agentTurn.locator(":scope > .work-words").innerText(), "FICTIONAL the edit is in; now the tests.", "the narration is outside every fold");
+        const second = agentTurn.locator(".work-block.is-vscode").nth(1);
+        assert.equal((await second.locator(".work-block-title").innerText()).trim(), "Ran 2 commands", "the second group has its own sentence");
+        assert.match(await second.locator(".work-block-time").innerText(), /^Worked for \d+m$/, "the last group says how long the turn worked, on its quiet right");
         // the tool's picture: under the block, outside the fold, through the host source
         const thumb = view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).locator(":scope > .work-images .chat-user-image img");
         // the workspace's tab strip stands above the chat now: the turn is brought into view, where its lazy picture loads
-        await view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).scrollIntoViewIfNeeded();
+        await thumb.scrollIntoViewIfNeeded();
         await thumb.waitFor();
         assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");

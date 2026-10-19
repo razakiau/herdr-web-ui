@@ -648,9 +648,9 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
  * icon when a call failed, and on its quiet right the edits' lines and how long it worked. The
  * pictures the tools returned and the calls VS Code never folds (MCP, mermaid) sit after it.
  */
-function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, showThinking }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean }) {
+function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, showThinking, stateKey = "work", offset = 0 }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean; stateKey?: string; offset?: number }) {
   const t = useT();
-  const [chosenOpen, setOpen] = useChatRowToggle("work", null);
+  const [chosenOpen, setOpen] = useChatRowToggle(stateKey, null);
   const open = chosenOpen ?? defaultOpen;
   const keepOpen = () => { if (chosenOpen === null) setOpen(true); };
   const apart = (part: ConversationPart): boolean => part.kind === "tool" && neverFolded(part);
@@ -675,15 +675,40 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
       </button>
       <AnimatedHeight open={open} animateContent={false}>
         <div className="work-block-rows" onFocus={keepOpen} onClick={keepOpen}>{visible.map((part, index) =>
-          part.kind === "thinking" ? <ThinkingRow key={index} stateKey={`thinking:${parts.indexOf(part)}`} text={part.text} />
+          part.kind === "thinking" ? <ThinkingRow key={index} stateKey={`thinking:${offset + parts.indexOf(part)}`} text={part.text} />
             : part.kind === "text" ? <div key={index} className="work-narration"><Markdown style="vscode">{part.text}</Markdown></div>
-              : part.kind === "tool" ? <VscodeWorkRow key={index} stateKey={`tool:${parts.indexOf(part)}`} part={part} /> : null)}
+              : part.kind === "tool" ? <VscodeWorkRow key={index} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} /> : null)}
         </div>
       </AnimatedHeight>
     </section>}
     <WorkImages paneId={paneId} parts={parts} />
-    {standalone.length > 0 && <div className="work-standalone">{standalone.map((part) => <VscodeWorkRow key={parts.indexOf(part)} stateKey={`tool:${parts.indexOf(part)}`} part={part} />)}</div>}
+    {standalone.length > 0 && <div className="work-standalone">{standalone.map((part) => <VscodeWorkRow key={parts.indexOf(part)} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} />)}</div>}
   </>;
+}
+
+/**
+ * A Copilot turn's work as VS Code lays it out: what the agent said between its tool calls stands in
+ * the open, and each run of calls between two of its words folds into one group with its own
+ * sentence ("Ran 2 commands"). The last group carries the turn's state (Working…, Needs you), its
+ * time and the open fold; the earlier ones are done and closed. Row memory keys stay per part.
+ */
+function VscodeWork({ paneId, work, duration, live, waiting, defaultOpen, showThinking, skills }: { paneId: string; work: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean; skills: SkillMatcher | null }) {
+  const segments = useMemo(() => {
+    const out: ({ kind: "words"; text: string; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
+    work.forEach((part, at) => {
+      if (part.kind === "text") { out.push({ kind: "words", text: part.text, at }); return; }
+      const last = out.at(-1);
+      if (last?.kind === "group") last.parts.push(part);
+      else out.push({ kind: "group", parts: [part], at });
+    });
+    return out;
+  }, [work]);
+  const lastGroup = segments.reduce((found, segment, index) => segment.kind === "group" ? index : found, -1);
+  return <>{segments.map((segment, index) => segment.kind === "words"
+    ? <div key={`words:${segment.at}`} className="work-words"><Markdown skills={skills} style="vscode">{segment.text}</Markdown></div>
+    : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
+      duration={index === lastGroup ? duration : null} live={live && index === lastGroup} waiting={waiting && index === lastGroup}
+      defaultOpen={index === lastGroup && defaultOpen} showThinking={showThinking} />)}</>;
 }
 
 /** Skill evidence stays visible even when the surrounding work block is folded. */
@@ -963,7 +988,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {style === "vscode"
-      ? work.length > 0 && <VscodeWorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} />
+      ? work.length > 0 && <VscodeWork paneId={paneId} work={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} skills={skills} />
       : (work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} pendingHead={answer.length === 0} />}
     {ownRows}
     {noticeRows(true)}
