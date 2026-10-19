@@ -110,6 +110,20 @@ describe("host chat mappers", () => {
     ] } }))).toBeNull();
   });
 
+  it("an option keeps the host's recommended flag, and a 'Title - Description' label is split as VS Code's carousel splits it", () => {
+    const question = { ...QUESTION, options: [
+      { id: "a", label: "Ship it - merge and deploy now", recommended: true },
+      { id: "b", label: "Wait", description: "FICTIONAL hold - for review" },
+      { id: "c", label: "Plain - dash", description: "kept whole when it has its own description" },
+    ] };
+    const prompt = promptFrom(asking({ id: "req-1", questions: [question] }))!;
+    expect(prompt.options.slice(0, 3)).toEqual([
+      { label: "Ship it", description: "merge and deploy now", recommended: true },
+      { label: "Wait", description: "FICTIONAL hold - for review" },
+      { label: "Plain - dash", description: "kept whole when it has its own description" },
+    ]);
+  });
+
   it("freeform_offered_unless_false", () => {
     // VS Code's rule (chatQuestionCarouselPart.ts): the typed answer shows unless the question says false
     const slot = (allowFreeformInput: boolean | undefined) => {

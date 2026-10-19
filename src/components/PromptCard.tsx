@@ -318,16 +318,18 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         <div className="prompt-card-options" role={prompt.multi_select ? "group" : undefined} aria-label={prompt.multi_select ? prompt.question : undefined} aria-busy={pending}>
           {prompt.options.map((option, index) => {
             if (index === prompt.custom_option_index) return null;
-            const { text, recommended } = labelOf(option.label);
+            const parsed = labelOf(option.label);
+            const text = parsed.text;
+            const recommended = parsed.recommended || option.recommended === true;
             const content = (
               <span className="prompt-card-option-text">
-                <span className="prompt-card-option-label">{text}{recommended && <> <span className="prompt-card-tag">{t("Recommended")}</span></>}</span>
+                <span className="prompt-card-option-label"><span>{text}</span>{recommended && <span className="prompt-card-tag">{t("Recommended")}</span>}</span>
                 {option.description !== null && <span className="prompt-card-option-description">{option.description}</span>}
               </span>
             );
             // the key the user can type, drawn as a keycap; the option's name keeps the menu's "1."
             const number = <span className="prompt-card-number"><span aria-hidden="true">{index + 1}</span><span className="visually-hidden">{index + 1}.</span></span>;
-            const described = option.description !== null ? " has-description" : "";
+            const described = `${option.description !== null ? " has-description" : ""}${recommended ? " is-recommended" : ""}`;
             if (prompt.multi_select) {
               const checked = selected.has(index);
               return (
