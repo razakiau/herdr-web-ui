@@ -26,6 +26,7 @@ export type {
 } from "./herdr-api.generated.ts";
 
 import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { AgentHostState } from "./host-chats.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -469,17 +470,51 @@ export type ConversationPart =
     /** Hermes could not load a tool-call list whose arguments exceeded its page limit. */
     arguments_omitted?: true;
     skill?: SkillActivity;
-    /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output, and the whole output's length */
+    /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output (a host chat's: GET /api/host-chats/tool-output), and the whole output's length */
     output_ref?: string; output_size?: number;
-    /** images the call returned (pi reads a picture into the result); same fetch as a user image */
+    /** images the call returned (pi reads a picture into the result); same fetch as a user image (a host chat's: GET /api/host-chats/image) */
     images?: { media_type: string; ref: string }[];
+    /** the tool's own id (a host chat's `toolName`, e.g. `bash`, `view`), for classing the call; `name` is its display name */
+    tool_id?: string;
+    /** what the call did, in the past tense (a host chat's `pastTenseMessage`), once it is done; `summary` stays what it set out to do */
+    past?: string;
+    /** a terminal call: the command it ran, and its exit code once it exited (non-zero sets `error`) */
+    command?: string; exit_code?: number;
+    /** the files the call changed, with the lines it added and removed in each */
+    edits?: { path: string; added: number; removed: number }[];
+    /** a host chat's: why the agent makes the call (AHP `intention`), shown before a command */
+    intention?: string;
+    /**
+     * a host chat's call that is not completed: still `running` (or streaming), `awaiting` a yes or
+     * no, or cancelled as `skipped` or `denied` (AHP `ToolCallCancellationReason`). Absent once done.
+     */
+    state?: "running" | "awaiting" | "skipped" | "denied";
   }
+  /**
+   * A subagent a tool call started (a host chat's subagent result), its own row. `id`: the call's id;
+   * `model`: the subagent's model, null when the bridge does not know it; `started` / `ended`: ISO
+   * times, null when unknown (ended: while it runs); `chat`: the subagent's own chat, to read it.
+   */
+  | {
+    kind: "subagent"; id: string; agent: string; description: string; model: string | null;
+    started: string | null; ended: string | null; status: "running" | "done" | "failed"; chat: string | null;
+    /** while it runs: what its own chat is doing now (its newest tool call's words), when the bridge reads it */
+    activity?: string;
+  }
+  /**
+   * A question the agent asked and the user answered (or skipped), as the history reads it back.
+   * `options`: the choices it offered, by label; `chosen`: the labels picked; `custom`: the text the
+   * user typed instead, null when none.
+   */
+  | { kind: "question"; text: string; options: string[]; chosen: string[]; custom: string | null; skipped: boolean; /** several could be picked */ multi?: true }
   /** A native Claude/Codex user image, addressed by an opaque ref and fetched on demand: GET /api/pane/conversation/image?pane_id=…&ref=… */
   | { kind: "image"; media_type: string; ref: string }
   /** the summary a compaction left; the conversation before it is what it sums up */
   | { kind: "compact"; text: string }
   /** a message the agent's runtime put in the user's seat (gjc's background-job result): it starts a turn, nobody typed it.
-   * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable") */
+   * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable").
+   * In a host chat's assistant turn: "system" for the agent harness's notification, "error" for an
+   * error the turn stopped at (the client styles a `source: "error"` notice as an error from Task 4 on) */
   | { kind: "notice"; text: string; source?: string }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
   | { kind: "task_result"; tasks: OmoTaskResult[] };
@@ -597,7 +632,7 @@ export interface ConversationResponse {
   activity?: "thinking" | "working" | "idle";
   /** Stable across appends; changes on transcript replacement or native context clear. */
   history_id?: string;
-  source: "grok-transcript" | "agy-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
+  source: "grok-transcript" | "agy-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "copilot-transcript" | "agent-host" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
@@ -1268,6 +1303,10 @@ export type ServerMessage =
   | { type: "watch-end"; pane_id: string }
   /** the answer to a `ping`, with its id; only this frame, for a ping in flight, ends the client's liveness probe */
   | { type: "pong"; id: number }
+  /** where this PC's bridge stands with its agent host (HERDR_WEB_AGENT_HOST=on only) */
+  | { type: "host-chat-state"; host: AgentHostState }
+  /** a host chat changed; `session` null: the list of chats changed */
+  | { type: "host-chat-changed"; session: string | null }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 

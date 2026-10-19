@@ -1,0 +1,40 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.88 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔
+
+ ! Failed to load 1 skill. Run /skills for more details.
+
+ ● Tip: /skills
+   └ Manage skills for enhanced capabilities
+
+ ● Selected custom agent: Tasksync
+
+ ❯ ZAC-180 reader capture (an agent is testing; do not answer from the phone). Call ask_user ONCE with a form of 13:46
+   two fields: a required choice field Probe colour (red, green, blue) and an OPTIONAL free-text field Notes.
+   Then end your turn.
+
+ ○ Asking user Waiting for response                                                                             1m 20s
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Copilot needs information.
+ ## ZAC-180 reader capture
+
+ An agent is running this test. Please pick a probe colour. Notes are optional.
+
+ [Probe colour (required)]  Notes (optional)
+
+ Probe colour (required):
+ Required: choose one colour.
+ ❯ Red
+   Green
+   Blue
+   Other (type your answer)
+
+ ↑/↓ select · enter accept · tab next · ctrl+d decline · esc cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

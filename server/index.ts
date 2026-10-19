@@ -7,6 +7,7 @@ import { handlePaneRequest, paneContext } from "./pane-routes.ts";
 import { randomBytes } from "node:crypto";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { accessSync, constants, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ServerWebSocket } from "bun";
 
@@ -75,6 +76,9 @@ import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
+import { AgentHostConnection } from "./agent-host/connection.ts";
+import { hostChatsRoute } from "./agent-host/routes.ts";
+import { withHostAgent } from "./agent-host/agents.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
@@ -324,6 +328,12 @@ export function createServer(
     terminalAttach?: boolean | (() => Promise<boolean>);
     /** whether this runtime can run the PTY sidecar; unset, server/pty/sidecar.ts says. Tests give a runtime without Node or node-pty, while herdr keeps its own answer. */
     sidecar?: boolean;
+    /**
+     * This PC's host chats (server/agent-host/): `enabled` defaults to HERDR_WEB_AGENT_HOST=on, `startHost`
+     * to HERDR_WEB_AGENT_HOST_START not `off`. The bridges this server starts get the same switch.
+     * `home` and `env` say where VS Code's agent-host registry is; tests point them at a temp dir.
+     */
+    agentHost?: { enabled: boolean; startHost: boolean; home?: string; env?: Record<string, string | undefined> };
   } = {},
 ): ServerInstance {
   const attachments = new Map<string, PaneAttachment>();
@@ -624,7 +634,8 @@ export function createServer(
       ...(window ? { flow: { stream_id: window.id, offset: window.write(bytes, wireBytes(data)) } } : {}),
     });
   }
-  const { push, omo, gjc, claudeAgents, plans, clientSnapshot, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin });
+  const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
+  const { push, omo, gjc, claudeAgents, plans, clientSnapshot, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled: agentHost.enabled });
   const bridgeToken = randomBytes(32).toString("hex");
 
   function broadcast(paneId: string, message: ServerMessage): void {
@@ -632,6 +643,17 @@ export function createServer(
     if (!attachment) return;
     for (const client of attachment.clients) send(client, message);
   }
+
+  // one connection to this PC's agent host, only with the switch on; its changes go to
+  // every client, and through machines.localMessage to a connection server's phone
+  const agentHostConnection = agentHost.enabled ? new AgentHostConnection({
+    home: agentHost.home ?? homedir(),
+    platform: process.platform,
+    env: agentHost.env ?? process.env,
+    startHost: agentHost.startHost,
+    onChange: (event) => broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null }),
+  }) : null;
+  agentHostConnection?.start();
 
   async function terminalInfoFor(paneId: string, timeoutMs?: number): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
     const snapshot = await sessionSnapshot(undefined, timeoutMs);
@@ -1131,7 +1153,7 @@ export function createServer(
       const url = new URL(request.url);
       let { pathname } = url;
       const bridgeAuthorized = isAuthenticated(request, bridgeToken);
-      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws";
+      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname.startsWith("/api/host-chats/") || pathname === "/ws";
       const ip = bunServer.requestIP(request);
       const loopback = ip !== null && isLoopbackAddress(ip.address);
       const forwarded = cameThroughProxy(request.headers);
@@ -1344,7 +1366,7 @@ export function createServer(
             // an agent's command is its kind; the pane's shell may carry another PATH, as for omo and gjc above
             .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
             .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
-          return jsonResponse({ agents });
+          return jsonResponse({ agents: withHostAgent(agents, agentHostConnection?.state() ?? null) });
         } catch (error) {
           return errorResponse(error);
         }
@@ -1517,6 +1539,9 @@ export function createServer(
           return errorResponse(error);
         }
       }
+
+      const hostChatsResponse = hostChatsRoute(request, pathname, agentHostConnection);
+      if (hostChatsResponse) return hostChatsResponse;
 
       if (pathname.startsWith("/api/")) {
         return jsonResponse({ error: { code: "not_found", message: `unknown endpoint ${pathname}` } }, 404);
@@ -2245,6 +2270,8 @@ export function createServer(
       clearInterval(waitTimer);
       plans.stop();
       machines?.stop();
+      // a failed stop must not become an unhandled rejection at shutdown; its name only (never its message)
+      agentHostConnection?.stop().catch((error: unknown) => console.warn(`agent-host: stop failed (${error instanceof Error ? error.name : typeof error})`));
       void options.portal?.shutdown();
       registration?.close();
       for (const client of clients) killWatches(client);

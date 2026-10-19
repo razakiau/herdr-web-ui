@@ -30,6 +30,9 @@ import { placeBlock, workspaceMoves, worktreeGroups as groupWorktrees } from "..
 import { worktreeLabel } from "../lib/worktreeName.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
+import { hostChatStatus, type HostPlacement } from "../lib/hostPlacement.ts";
+import { basename } from "../lib/hostChats.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspacePins, reorderWorkspacePins, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
 
@@ -175,13 +178,27 @@ export interface SidebarProps {
   online: boolean;
   selectedPaneId: string | null;
   actions: AppActions;
+  /**
+   * This PC's host chats (lib/hostPlacement.ts): a workspace's count in its row's state, and a
+   * folder no workspace works in is a row of its own. Absent: the PC has none, and the list is as ever.
+   */
+  hostChats?: HostChatRows;
+}
+
+/** What the workspace list needs of a PC's host chats: where they stand, the one open, and the picks. */
+export interface HostChatRows {
+  placement: HostPlacement;
+  selected: string | null;
+  onSelect(session: string): void;
+  /** the folder row's menu: a new chat there (the new-chat sheet), and the PC's every chat */
+  folderMenu(cwd: string): RowMenuItem[];
 }
 
 /**
  * Spaces follow herdr's workspace roster. A workspace opens its current pane; tabs and split
  * panes are navigated through the tab strip, while Agents is an independent API-backed list.
  */
-export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarProps) {
+export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }: SidebarProps) {
   const t = useT();
   const { settings } = useSettings();
   const twoLine = settings.sidebarRows === "two";
@@ -608,7 +625,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const panes = roster.filter((pane) => pane.workspace_id === workspace.workspace_id);
     if (panes.length === 0) return null;
     const pane = currentPane(workspace, panes);
-    const selected = panes.some((candidate) => candidate.pane_id === selectedPaneId);
+    // a workspace's host chats are its tabs too: the one open selects its row, and they count in its state
+    const hostTabs = hostChats?.placement.tabs.get(workspace.workspace_id) ?? [];
+    const selected = panes.some((candidate) => candidate.pane_id === selectedPaneId) || hostTabs.some((chat) => chat.session === hostChats?.selected);
     const repoKey = workspace.worktree?.repo_key;
     const linked = workspace.worktree?.is_linked_worktree === true;
     const branch = branches.get(workspace.workspace_id);
@@ -719,7 +738,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           </span>}
           <span className="sidebar-pane-meta">
             <span className="visually-hidden">{markName(pane)}</span>
-            {online && pane.restore_error ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={online ? rollupStatus(statusPanes.map((candidate) => activity.status(machineId, candidate))) : undefined} />}
+            {online && pane.restore_error ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={online ? rollupStatus([...statusPanes.map((candidate) => activity.status(machineId, candidate)), ...hostTabs.map(hostChatStatus)]) : undefined} />}
           </span>
         </div>
         <div className="workspace-actions">
@@ -750,12 +769,51 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     </Fragment>;
   };
 
+  // a folder no workspace works in: a row as a workspace's, whose tabs are its host chats
+  const [folderMenu, setFolderMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; cwd: string; title: string } | null>(null);
+  const renderFolderRow = ({ cwd, chats }: { cwd: string; chats: HostChatRow[] }) => {
+    if (!hostChats) return null;
+    const name = basename(cwd);
+    const open = chats.find((chat) => chat.session === hostChats.selected);
+    // the row opens the chat open there, else its newest
+    const lead = open ?? chats[0]!;
+    const lines = twoLine ? { title: lead.title.trim() || t("Copilot chat"), place: name } : null;
+    const menuOpen = folderMenu?.cwd === cwd;
+    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setFolderMenu(menuOpen ? null : { anchor, point, previousFocus, cwd, title: name });
+    return <li className={`workspace workspace-group pane-item host-folder${open ? " is-selected" : ""}`} key={`folder:${cwd}`} data-host-folder={cwd}>
+      <div className="workspace-header"
+        onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
+        onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
+        <WorkspaceFavicon root={cwd} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true"><Folder /></span>} />
+        <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={open ? "true" : undefined} title={[cwd, ...chats.map((chat) => chat.title)].join(" — ")}
+          onClick={() => hostChats.onSelect(lead.session)}
+          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); hostChats.onSelect(lead.session); } }}>
+          <span className="sidebar-mark" aria-hidden="true"><AgentMark agent="copilot" size={18} /></span>
+          {lines ? <span className="workspace-copy is-two-line">
+            <span className="workspace-line"><span className="workspace-name">{lines.title}</span></span>
+            <span className="workspace-place">{lines.place}</span>
+          </span> : <span className="workspace-copy"><span className="workspace-name">{name}</span></span>}
+          <span className="sidebar-pane-meta">
+            <span className="visually-hidden">Copilot</span>
+            <StatusBadge compact status={online ? rollupStatus(chats.map(hostChatStatus)) : undefined} />
+          </span>
+        </div>
+        <div className="workspace-actions">
+          <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title: name })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
+            <Ellipsis aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </li>;
+  };
+  const folders = hostChats?.placement.folders ?? [];
+
   return (
     <div className={`machine-workspaces${twoLine ? " is-two-line" : ""}`} ref={workspaceRoot}>
       <nav className="sidebar-list" aria-label={t("Herdr workspaces")}>
         <>
           <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
-          {snapshot && snapshot.workspaces.length === 0 && (
+          {snapshot && snapshot.workspaces.length === 0 && folders.length === 0 && (
             <div className="tree-state-empty">
               <p className="tree-state" role="status">{t("No workspaces yet")}</p>
               <button type="button" className="btn" onClick={actions.openNewSession}><Plus aria-hidden="true" />{t("New workspace")}</button>
@@ -766,12 +824,14 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
             <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{shownGroups.pinned.map(renderGroup)}</ul>
           </>}
           <ul className="workspace-list">{shownGroups.rest.map(renderGroup)}</ul>
+          {folders.length > 0 && <ul className="workspace-list host-folder-list">{folders.map(renderFolderRow)}</ul>}
           {inlineError && inlineError.workspaceId === undefined && (
             <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>
           )}
         </>
       </nav>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} items={menuItems(menu)} onClose={closeMenu} />}
+      {folderMenu && hostChats && <RowMenu anchor={folderMenu.anchor} point={folderMenu.point} restoreFocusTo={folderMenu.previousFocus} title={folderMenu.title} subtitle={folderMenu.cwd} items={hostChats.folderMenu(folderMenu.cwd)} onClose={() => setFolderMenu(null)} />}
       {confirm && <ConfirmDialog title={confirm.title} body={confirm.body} confirmLabel={confirm.action ?? t("Close")} onConfirm={confirm.run} escalation={confirm.escalation} onClose={() => setConfirm(null)} />}
       {worktreeDialog && <WorktreeDialog mode={worktreeDialog.mode} workspace={worktreeDialog.workspace} onClose={() => setWorktreeDialog(null)} onOpened={(opened) => {
         rememberOpened(opened);

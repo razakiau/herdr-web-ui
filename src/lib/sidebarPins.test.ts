@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isWorkspacePinKey, loadSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, workspacePinKey } from "./sidebarPins.ts";
+import { isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, migratePins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, workspacePinKey } from "./sidebarPins.ts";
 
 describe("sidebar agent pins", () => {
   it("moves workspace pins in both directions without moving other pin slots", () => {
@@ -41,6 +41,18 @@ describe("sidebar agent pins", () => {
 
   it("matches the complete machine key instead of a shared prefix", () => {
     expect(pruneSidebarPins(["pc:p1", "pc-extra:p2"], new Set(), [{ id: "pc", snapshot: null }])).toEqual(["pc:p1"]);
+  });
+
+  it("keys a host chat by PC and session, apart from every pane and workspace", () => {
+    expect(hostChatPinKey("m", "copilotcli:/x")).toBe("m:host:copilotcli:/x");
+    expect(isHostChatPinKey(hostChatPinKey("m", "copilotcli:/x"))).toBe(true);
+    expect(isHostChatPinKey(sidebarPinKey("m", "w1:p1"))).toBe(false);
+    expect(isHostChatPinKey(workspacePinKey("m", "w1"))).toBe(false);
+    expect(isWorkspacePinKey(hostChatPinKey("m", "s"))).toBe(false);
+  });
+
+  it("pruning agent pins keeps host chat pins", () => {
+    expect(pruneSidebarPins(["m:host:copilotcli:/x", "m:gone-pane"], new Set(), [{ id: "m", snapshot: {} }])).toEqual(["m:host:copilotcli:/x"]);
   });
 
   it("places pinned rows first and keeps source order for the rest", () => {
@@ -131,6 +143,24 @@ describe("sidebar agent pins", () => {
       { workspace: "before", children: [] },
       { workspace: "repo", children: ["wt1"] },
     ]);
+  });
+
+  it("pin_value_migrates", () => {
+    // a stored "vscode:<s>" pin is read as "host:<s>", in its place, and written back that way
+    expect(migratePins(["m:p1", "m:vscode:copilotcli:/x", "m:workspace:w1", "pc-b:vscode:s"])).toEqual(["m:p1", "m:host:copilotcli:/x", "m:workspace:w1", "pc-b:host:s"]);
+    // the same chat pinned under both words is one pin; a pane id that merely holds the word is left alone
+    expect(migratePins(["m:vscode:s", "m:host:s", "m:w1:vscode:x"])).toEqual(["m:host:s", "m:w1:vscode:x"]);
+    const stored = new Map<string, string>([["herdr-web-ui:sidebar-agent-pins", JSON.stringify(["m:vscode:copilotcli:/x", "m:p1"])]]);
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } } });
+    try {
+      expect(loadSidebarPins()).toEqual(["m:host:copilotcli:/x", "m:p1"]);
+      expect(JSON.parse(stored.get("herdr-web-ui:sidebar-agent-pins")!)).toEqual(["m:host:copilotcli:/x", "m:p1"]);
+      expect(isHostChatPinKey(loadSidebarPins()[0]!)).toBe(true);
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
 
   it("starts with no pins when storage denies the read", () => {

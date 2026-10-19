@@ -169,6 +169,45 @@
 
 .machine-offline { opacity: 0.5; }
 
+/* "Other PCs (n)": the PCs not in use, folded as the Agents list folds (AgentSidebar.css) */
+.other-pcs { padding: var(--space-2) var(--side-gutter) 0; }
+.other-pcs-toggle { gap: 0; }
+.other-pcs-list { margin: 0; padding: 0; list-style: none; }
+.other-pcs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--side-row);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.other-pcs-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.other-pcs-state { flex: none; color: var(--text-dim); font-size: var(--fs-sm); }
+.other-pcs-dots { display: inline-flex; gap: var(--space-1); margin-left: auto; padding-right: var(--space-2); }
+.other-pcs-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.other-pcs-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.other-pcs-dot[data-status="working"]::before { background: var(--status-working); }
+.other-pcs-dot[data-status="blocked"]::before { background: var(--status-blocked); }
+
 .machine-controls {
   display: grid;
   gap: var(--space-2);

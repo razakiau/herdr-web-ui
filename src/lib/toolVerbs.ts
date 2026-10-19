@@ -13,22 +13,25 @@ const VERB_LABEL: Record<ToolVerbKind, string> = {
 /**
  * The tool ids a verb stands for, by exact name (case aside): Claude's Read / Edit / MultiEdit /
  * NotebookEdit / Write / Bash, Codex's exec / exec_command / shell / local_shell / apply_patch,
- * and the lowercase read / edit / write / bash / patch of pi, omp, gjc and omo. Anything else
+ * the lowercase read / edit / write / bash / patch of pi, omp, gjc and omo, and Copilot's view /
+ * create (the CLI) and run_in_terminal / copilot_readFile / copilot_*ReplaceString /
+ * copilot_createFile (VS Code's own tools, in a chat moved from its Local harness). Anything else
  * (Grep, a web or task tool, a todo or goal call, an MCP tool) keeps its own name: a guess by
  * substring would call `mcp__files__read_all` a read.
  */
 const VERB_OF: Record<string, ToolVerbKind> = {
-  read: "read",
+  read: "read", view: "read", copilot_readfile: "read",
   edit: "edit", multiedit: "edit", notebookedit: "edit", apply_patch: "edit", patch: "edit",
-  write: "write",
-  bash: "run", exec: "run", exec_command: "run", shell: "run", shell_command: "run", local_shell: "run",
+  copilot_replacestring: "edit", copilot_multireplacestring: "edit",
+  write: "write", create: "write", copilot_createfile: "write",
+  bash: "run", exec: "run", exec_command: "run", shell: "run", shell_command: "run", local_shell: "run", run_in_terminal: "run",
 };
 
-/** The input fields a verb's object can be: a run's command, a file call's path. */
+/** The input fields a verb's object can be: a run's command, a file call's path (`filePath` in VS Code's tools). */
 const OBJECT_KEYS: Record<ToolVerbKind, readonly string[]> = {
-  read: ["file_path", "path"],
-  edit: ["file_path", "notebook_path", "path"],
-  write: ["file_path", "path"],
+  read: ["file_path", "path", "filePath"],
+  edit: ["file_path", "notebook_path", "path", "filePath"],
+  write: ["file_path", "path", "filePath"],
   run: ["cmd", "command"],
 };
 
@@ -57,8 +60,14 @@ function isObjectOf(kind: ToolVerbKind, input: string, object: string): boolean 
   let args: unknown;
   try { args = JSON.parse(input); } catch { return false; }
   if (typeof args !== "object" || args === null) return false;
+  const fields = args as Record<string, unknown>;
+  // VS Code's multi-file replace: the files its replacements name, once each, as the server sums them
+  if (kind === "edit" && Array.isArray(fields.replacements)) {
+    const files = [...new Set(fields.replacements.map((item: unknown) => (item as Record<string, unknown> | null)?.filePath).filter((path): path is string => typeof path === "string" && path.trim().length > 0))];
+    if (files.length > 0 && files.join(", ").slice(0, SUMMARY_LENGTH) === object) return true;
+  }
   return OBJECT_KEYS[kind].some((key) => {
-    const value = (args as Record<string, unknown>)[key];
+    const value = fields[key];
     return typeof value === "string" && value.slice(0, SUMMARY_LENGTH) === object;
   });
 }

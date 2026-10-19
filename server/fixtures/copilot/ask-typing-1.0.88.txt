@@ -1,0 +1,40 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+                                                                                                                       ┃
+ ! Model "fixture-model" is not in the built-in catalog. Using defaults for: prompt tokens                             ┃
+   (COPILOT_PROVIDER_MAX_PROMPT_TOKENS), output tokens (COPILOT_PROVIDER_MAX_OUTPUT_TOKENS). Run  copilot help         ┃
+   providers  for configuration details.                                                                               ┃
+                                                                                                                       ┃
+ ● MCP Servers reloaded: 0 servers connected                                                                           ┃
+                                                                                                                       ┃
+ ❯ FICTIONAL_LIVE_PROMPT                                                                                         23:33 ┃
+                                                                                                                       ┃
+ ❯ Thought for 1s                                                                                                      ┃
+                                                                                                                       ┃
+ ● FICTIONAL_LIVE_COMMENTARY                                                                                           ┃
+                                                                                                                       ┃
+ $ Shell Print a live line 2 lines…                                                                                    ┃
+   printf '%s\n' FICTIONAL_LIVE_OUTPUT                                                                                 ┃
+                                                                                                                       ┃
+ ● FICTIONAL_LIVE_ANSWER                                                                                               ┃
+                                                                                                                       ┃
+ ❯ FICTIONAL_LIVE_ASK                                                                                            23:34 ┃
+                                                                                                                       ┃
+ ● FICTIONAL_LIVE_ASKING                                                                                               ┃
+                                                                                                                       ┃
+ ○ Asking user Waiting for response                                                                             2m 46s ┃
+                                                                                                                       ┃
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Copilot needs information.
+ FICTIONAL_LIVE_QUESTION?
+
+ Pick:
+   FICTIONAL_ONE
+   FICTIONAL_TWO
+ ❯ Other (type your answer below)
+
+ ↑/↓ select · enter accept · ctrl+d decline · esc cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ FICTIONAL TYPED ANSWER
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

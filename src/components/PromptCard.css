@@ -514,3 +514,69 @@
     padding-block: var(--space-1);
   }
 }
+
+/* a Copilot card's title, question and message in Markdown (the `markdown` prop): the type stays
+   the card's, the Markdown's own margins go; the message box keeps its scroll but reads as prose */
+.prompt-card-markdown .markdown { font: inherit; color: inherit; }
+.prompt-card-markdown .markdown > :first-child { margin-top: 0; }
+.prompt-card-markdown .markdown > :last-child { margin-bottom: 0; }
+.prompt-card-header h2.prompt-card-markdown .markdown p { margin: 0; }
+.prompt-card-body.prompt-card-markdown {
+  padding-bottom: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  white-space: normal;
+}
+.prompt-card-body.prompt-card-markdown::after { display: none; }
+
+/* ── A Copilot card's extras: expand, attach and the mic beside the typed answer ── */
+
+.prompt-card-expand {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.prompt-card-header .prompt-card-plan-file + .prompt-card-expand {
+  margin-left: 0;
+}
+
+.prompt-card-attach,
+.prompt-card-mic {
+  flex: none;
+  align-self: center;
+}
+
+/* the composer's chips (Composer.css .composer-attachment), under the field: the card's own gutter */
+.prompt-card-files {
+  padding: var(--space-2) 0 0;
+}
+
+/* Opened: the same card at full height in the app's sheet. The question scrolls on its own and
+   the options and the answer field stay at the bottom, over the keyboard (--app-height). */
+.prompt-card-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 48rem);
+  height: min(calc(var(--app-height, 100dvh) - 2 * var(--space-4)), 60rem);
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+}
+
+.prompt-card.is-expanded {
+  flex: 1 1 auto;
+  max-height: none;
+  border: 0;
+  border-radius: inherit;
+}
+
+.prompt-card.is-expanded .prompt-card-body {
+  max-height: none;
+}
+
+@media (max-width: 640px) {
+  .prompt-card-sheet {
+    width: 100%;
+    height: calc(var(--app-height, 100dvh) - var(--space-6));
+  }
+}

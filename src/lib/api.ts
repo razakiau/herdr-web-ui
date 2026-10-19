@@ -208,7 +208,7 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
-async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+export async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
@@ -394,7 +394,7 @@ export async function signOut(): Promise<void> {
 }
 
 /** Chunked btoa: the naive one-liner blows the stack on multi-MB screenshots. */
-function base64FromBytes(bytes: Uint8Array): string {
+export function base64FromBytes(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));

@@ -559,6 +559,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/cliproxy/login" || path === "/api/cliproxy/callback") return error("demo", "Sign in from an installed server, not the public demo.", 409);
   if (path === "/api/push" || path.startsWith("/api/push/")) return error("push_unavailable", "the demo sends no alerts", 404);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
+  // the demo has no VS Code: its PCs answer as a bridge with the feature off, and draw no group
+  // (scripts/host-chats-demo-regression.ts answers a remote PC's chats itself)
+  if (/^\/api\/(?:machines\/[^/]+\/)?host-chats\//.test(path)) return error("host_chats_off", "host chats are off in the demo", 404);
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 
   if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {

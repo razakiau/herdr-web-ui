@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { headerCrumb, showsChat } from "./headerCrumb.ts";
+import { headerCrumb, hostHeaderCrumb, showsChat } from "./headerCrumb.ts";
 
 const base = { machine: "workstation", workspace: "checkout-api", title: "Idempotent payments", machineCount: 2 };
 
@@ -74,4 +74,17 @@ it("takes the chat's surface only when the chat is what the pane column draws", 
   expect(showsChat(null, "chat")).toBe(false);
   // a pane herdr could not restore draws the placeholder on the terminal's surface, not the chat
   expect(showsChat({ restore_error: "no such session" }, "chat")).toBe(false);
+});
+
+it("a host chat's crumb is PC › folder: no workspace, its folder's last name", () => {
+  const crumb = hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL build chat", cwd: "/tmp/fictional-repo/" });
+  expect([crumb.machine, crumb.folder, crumb.place, crumb.path]).toEqual(["Build PC", "fictional-repo", "Build PC › fictional-repo", "/tmp/fictional-repo/"]);
+  expect(crumb.tooltip).toBe("FICTIONAL build chat · /tmp/fictional-repo/");
+  // a chat with no folder: the PC alone
+  const bare = hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL chat", cwd: null });
+  expect([bare.folder, bare.place, bare.path, bare.tooltip]).toEqual([null, "Build PC", null, "FICTIONAL chat"]);
+  expect(crumb.showMachine).toBe(true);
+  // one PC needs no name, as a pane's crumb: the folder alone (More still says the PC)
+  const one = hostHeaderCrumb({ machine: "Build PC", machineCount: 1, title: "FICTIONAL build chat", cwd: "/tmp/fictional-repo/" });
+  expect([one.showMachine, one.folder, one.place]).toEqual([false, "fictional-repo", "Build PC › fictional-repo"]);
 });

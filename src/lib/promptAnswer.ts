@@ -114,3 +114,29 @@ export function focusFollowsAnswer({ fromCard, origin, coarse, cardMounted, inCa
   const pressed = origin === "keyboard" || origin === "mouse" || (origin === "unknown" && !coarse);
   return fromCard && pressed && cardMounted && (inCard || onPage);
 }
+
+/**
+ * A typed answer with files (a Copilot card's): each file is uploaded in turn into the chat's
+ * folder, and the answer goes as `@<path> ` mentions ahead of the text, since an AHP answer carries
+ * text only. An upload that fails posts nothing: the reason comes back and the card keeps what was
+ * typed and attached.
+ */
+export async function customAnswerWithFiles(
+  text: string,
+  files: readonly File[],
+  upload: (file: File) => Promise<string>,
+  submit: (text: string) => Promise<void>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const paths: string[] = [];
+  for (const file of files) {
+    try {
+      paths.push(await upload(file));
+    } catch (cause) {
+      // the server's own words (ApiError.detail), never the URL and status its message starts with
+      const detail = typeof cause === "object" && cause !== null && "detail" in cause && typeof cause.detail === "string" ? cause.detail : null;
+      return { ok: false, error: detail ?? (cause instanceof Error ? cause.message : String(cause)) };
+    }
+  }
+  await submit([...paths.map((path) => `@${path}`), text.trim()].filter((part) => part !== "").join(" "));
+  return { ok: true };
+}

@@ -266,3 +266,12 @@
 }
 .tab-strip-item.is-drop-before::before { left: 0; }
 .tab-strip-item.is-drop-after::after { right: 0; }
+
+/* a host chat's tab: Copilot's mark before its title, and the host glyph beside it where the workspace also runs Copilot in a pane */
+.host-chat-tab .tab-strip-tab > svg { flex: none; }
+.host-chat-tab-glyph {
+  width: 10px;
+  height: 10px;
+  margin-left: -2px;
+  color: var(--text-dim);
+}

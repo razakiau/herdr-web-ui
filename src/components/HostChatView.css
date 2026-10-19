@@ -1,0 +1,485 @@
+/* A host chat in the pane's place (HostChatView.tsx): the chat lens's stack, transcript and the
+   app's composer (ChatView.css, Composer.css), with two pills to press and the picker sheet. */
+.host-chat {
+  height: 100%;
+}
+
+/* the pickers, in the composer's row after the mic (Composer's `pills`): VS Code's input toolbar,
+   quiet triggers with no fill at rest, each a mark or glyph, its words, a dim aside and a caret */
+.host-chat-pills {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: max-content;
+}
+
+.host-chat-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.host-chat-pill:hover,
+.host-chat-pill[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.host-chat-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* a hairline between two triggers, as VS Code's toolbar parts its pickers */
+.host-chat-pill + .host-chat-pill::before {
+  content: "";
+  width: var(--hairline);
+  height: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1) var(--space-1);
+  background: var(--border-strong);
+}
+
+.host-chat-pill-label {
+  font-weight: var(--fw-medium);
+}
+
+.host-chat-pill-label.is-none,
+.host-chat-pill-aside {
+  color: var(--text-dim);
+  font-weight: var(--fw-regular);
+}
+
+.host-chat-pill-label.is-id {
+  font-family: var(--font-mono);
+}
+
+/* Assisted and Allow all are named, in the notice's color: approvals no longer stop for you */
+.host-chat-pill-aside.is-raised {
+  color: var(--notice);
+}
+
+.host-chat-pill-icon {
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
+}
+
+.host-chat-pill-caret {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--text-dim);
+}
+
+
+/* the picker: one column of choices, a bottom sheet on a phone (styles.css .modal) */
+.host-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.host-picker-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.host-picker-label {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.host-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.host-picker-provider {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-picker-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-height: var(--row-h);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.host-picker-option.is-picked {
+  border-color: var(--accent);
+}
+
+.host-picker-option-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--fw-medium);
+}
+
+.host-picker-option-id {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-picker-check {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--accent);
+}
+
+.host-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.host-picker-chip {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.host-picker-chip.is-picked {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.host-picker-note,
+.host-picker-state {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-picker-error {
+  margin: 0;
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+}
+
+/* the "+" dialog's Copilot (host) choice (NewHostChatFields.tsx): a first message a few lines
+   tall, then the chat's model, agent and mode triggers */
+.new-host-chat-pills {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.new-host-chat-pills {
+  flex-wrap: wrap;
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.new-host-chat-pills .host-chat-pill:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.new-host-chat-text {
+  height: auto;
+  min-height: calc(var(--control-h) * 2);
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
+
+
+
+
+/* the picker's search box, provider tabs and one-line model rows (ModelPicker.tsx) */
+.host-picker-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.host-picker-search > svg {
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.host-picker-search .input {
+  width: 100%;
+  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
+}
+
+.host-picker-tabs {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.host-picker-tab {
+  flex: none;
+  min-height: var(--chip-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.host-picker-tab.is-picked {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.host-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  border-radius: var(--radius-lg);
+}
+
+.host-model-row.is-picked {
+  background: var(--accent-tint);
+}
+
+.host-model-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--row-h);
+  padding: 0 var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.host-model-check {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--accent);
+}
+
+.host-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-model-pin {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--text-dim);
+}
+
+.host-model-detail {
+  padding: 0 var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+button.host-model-detail {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.host-model-row > .host-picker-chips {
+  grid-column: 1 / -1;
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) * 2 + var(--space-4));
+}
+
+.model-mark-sparkle {
+  color: var(--text-dim);
+}
+
+/* a phone's row: the mode keeps its glyph (its name is in the tooltip and read out) and the carets go,
+   so the model and the agent keep their words */
+@container pickers (max-width: 300px) {
+  .host-chat-mode .host-chat-pill-label,
+  .host-chat-pill-caret {
+    display: none;
+  }
+
+  .host-chat-pill {
+    padding: 0 var(--space-1);
+  }
+
+  .host-chat-pill + .host-chat-pill::before {
+    margin-inline: calc(var(--space-1) * -1) var(--space-1);
+  }
+}
+
+/* narrower still (a 390 px phone once attach and the mic stand before them): the model's dim effort
+   word goes too; the trigger's title and label still say it, and its picker shows it */
+@container pickers (max-width: 240px) {
+  .host-chat-model .host-chat-pill-aside {
+    display: none;
+  }
+}
+
+/* the chat's status row over its composer (HostChatStatus.tsx): what it waits on, VS Code's words,
+   and its context meter at the end, which opens the window's breakdown */
+.host-chat-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-chat-status-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-chat-meter {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.host-chat-meter:hover,
+.host-chat-meter[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.host-chat-meter-bar {
+  position: relative;
+  inline-size: 2.5rem;
+  block-size: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+
+.host-chat-meter-bar > span {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: inherit;
+  background: var(--text-dim);
+}
+
+.host-chat-meter.is-high .host-chat-meter-bar > span {
+  background: var(--notice, var(--status-blocked));
+}
+
+.host-context-sheet {
+  width: min(100%, 24rem);
+}
+
+.host-context-total {
+  margin: 0 0 var(--space-3);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-medium);
+}
+
+.host-context-parts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.host-context-parts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.host-context-parts dt {
+  color: var(--text-dim);
+}
+
+.host-context-parts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.host-context-parts > .is-total {
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.host-chat-meter-short {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .host-chat-status {
+    padding-inline: var(--space-3);
+  }
+
+  .host-chat-meter-label {
+    display: none;
+  }
+
+  .host-chat-meter-short {
+    display: inline;
+  }
+}

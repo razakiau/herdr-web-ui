@@ -679,7 +679,9 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 The agent marks in `src/components/agentSvgMarks.ts` other than droid and maki, which the
 built client in `dist/` carries, come from [LobeHub Icons](https://github.com/lobehub/lobe-icons)
-(`@lobehub/icons-static-svg`). The marks themselves belong to their owners.
+(`@lobehub/icons-static-svg`), and so do the model provider marks a host chat's model picker
+shows there (openai, microsoft, deepseek, zhipu, minimax; version 1.95.1). The marks themselves
+belong to their owners.
 
 ```
 MIT License
@@ -703,6 +705,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+## Codicons
+
+The VS Code mark (`vscode`) in `src/components/agentSvgMarks.ts`, which the built client in
+`dist/` carries, is the `vscode` icon of [Codicons](https://github.com/microsoft/vscode-codicons),
+minified with svgo, under the Creative Commons Attribution 4.0 International license
+(https://creativecommons.org/licenses/by/4.0/legalcode). The mark itself belongs to its owner.
+
+```
+Copyright (c) Microsoft Corporation
 ```
 
 ## Nerd Fonts Symbols Only

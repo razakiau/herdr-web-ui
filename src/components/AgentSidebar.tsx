@@ -8,14 +8,19 @@ import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
+import { folderName } from "../lib/paneName.ts";
 import { agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { activityOrder } from "../lib/sidebarOrder.ts";
-import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin } from "../lib/sidebarPins.ts";
+import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
+import { chatAge, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
 import { RowMenu } from "./RowMenu.tsx";
+import { hostChatItems, useHostChatActions, type HostChatRef } from "./HostChatActions.tsx";
 import { BackgroundBadge, displayPaneTitle, onRowContextMenu, PlanBadge, StatusBadge } from "./Sidebar.tsx";
 import "./AgentSidebar.css";
 
@@ -39,7 +44,7 @@ interface AgentRowBodyProps {
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, what
  * its plugins report, and how it is doing.
  */
-function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status }: AgentRowBodyProps) {
+export function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status }: AgentRowBodyProps) {
   return <>
     <span className="sidebar-mark" aria-hidden="true">{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
     <span className="agent-copy">
@@ -63,6 +68,9 @@ function AgentRowBody({ mark, markKind, title, name, context, tokens, background
   </>;
 }
 
+/** The host chat a row stands for, and the one the app shows (App.tsx selectedHostChat) */
+export interface HostChatTarget { machineId: string; session: string }
+
 export interface AgentSidebarProps {
   machines: Machine[];
   selectedMachineId: string;
@@ -70,13 +78,21 @@ export interface AgentSidebarProps {
   /** a PC's state in words, for the tooltip of a row whose PC is not connected */
   stateWord(machine: Machine): string;
   onSelect(machineId: string, paneId: string): void;
+  /** each PC's host chats, for those its bridge has (lib/hostChats.ts) */
+  hostChats?: ReadonlyMap<string, HostPc>;
+  selectedHostChat?: HostChatTarget | null;
+  onSelectHostChat?(target: HostChatTarget): void;
 }
 
 /** the width under which the sidebar is a drawer (src/styles.css) */
 const DRAWER_QUERY = "(max-width: 768px)";
-interface AgentRow { machine: Machine; entry: SidebarAgent }
+interface AgentRow { machine: Machine; entry: SidebarAgent; chat?: undefined }
+/** a host chat in the Agents list: a Copilot agent while it works, asks, is unread or pinned */
+interface ChatRow { machine: Machine; chat: HostChatRow; entry?: undefined }
+type ListRow = AgentRow | ChatRow;
+const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machine.id, row.chat.session) : sidebarPinKey(row.machine.id, row.entry.pane.pane_id);
 /** The row whose menu is open, by its pin key: at its ⋯, or at the pointer for a right-click */
-interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; title: string; place: string; tokens: string }
+interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; title: string; place: string; tokens: string; host?: HostChatRef }
 
 /**
  * All PCs' live agents form a second list; workspace and PC folds do not hide these rows.
@@ -85,7 +101,7 @@ interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: nu
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, onSelect }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, onSelect, hostChats, selectedHostChat = null, onSelectHostChat }: AgentSidebarProps) {
   const t = useT();
   const listId = useId();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
@@ -94,19 +110,26 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const pinned = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   // which `$name` tokens herdr's own sidebar draws, from this server's herdr config (server/herdr-sidebar.ts)
   const rowTokens = useSyncExternalStore(subscribeAgentRowTokens, currentAgentRowTokens, currentAgentRowTokens);
+  // a host chat's row menu has the chat's own actions too (HostChatActions.tsx)
+  const hostActions = useHostChatActions();
   const activity = useSidebarActivity();
   // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes)
   const byActivity = settings.agentOrder === "activity";
-  const rows = useMemo(() => machines.flatMap((machine) => {
+  const now = useMinuteClock();
+  const rows = useMemo(() => machines.flatMap((machine): ListRow[] => {
     const agents = sidebarAgents(machine.snapshot);
-    return (byActivity ? activityOrder(agents, (entry) => entry.pane, activity.seqs(machine.id)) : agents).map((entry): AgentRow => ({ machine, entry }));
-  }), [machines, byActivity, activity]);
+    const herdr = (byActivity ? activityOrder(agents, (entry) => entry.pane, activity.seqs(machine.id)) : agents).map((entry): AgentRow => ({ machine, entry }));
+    // each PC's host chats follow its herdr agents: the ones working, asking, unread or pinned
+    const chats = hostChats?.get(machine.id)?.chats ?? [];
+    const listed = agentsListHostChats(chats, (session) => pinned.includes(hostChatPinKey(machine.id, session))).map((chat): ChatRow => ({ machine, chat }));
+    return [...herdr, ...listed];
+  }), [machines, byActivity, activity, hostChats, pinned]);
   // the pinned rows stand first, in the order they were pinned
-  const split = useMemo(() => splitPinnedRows(rows, pinned, ({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)), [rows, pinned]);
+  const split = useMemo(() => splitPinnedRows(rows, pinned, rowPinKey), [rows, pinned]);
   const togglePin = (key: string): void => {
     // pins of panes gone from this server leave with a change of the user's, never by themselves: the
     // list is shared, and a pane this page has not seen yet (a PC still loading) is not gone
-    const live = new Set(rows.map(({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)));
+    const live = new Set(rows.flatMap((row) => row.entry ? [sidebarPinKey(row.machine.id, row.entry.pane.pane_id)] : []));
     setSidebarPins(toggleSidebarPin(pruneSidebarPins(pinned, live, machines), key));
   };
   // a pin moves the row to the other list, so React draws it anew: the control of the row that had
@@ -127,6 +150,31 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   }, [menu, split]);
   // herdr names a PC only beside another: the rows' line does the same
   const machineName = (machine: Machine): string | null => machines.length > 1 ? machine.name : null;
+
+  const listItem = (row: ListRow) => row.chat ? chatItem(row) : agentItem(row);
+
+  // a host chat is a Copilot agent: its mark, its title, where it works and when it changed, its state
+  const chatItem = ({ machine, chat }: ChatRow) => {
+    const selected = selectedHostChat?.machineId === machine.id && selectedHostChat.session === chat.session;
+    const title = chat.title.trim() || t("Copilot chat");
+    const context = [machineName(machine), chat.cwd ? folderName(chat.cwd) : null, chat.status === "error" ? t("Error") : null, chatAge(chat, now, t)].filter(Boolean).join(" · ");
+    const pinKey = hostChatPinKey(machine.id, chat.session);
+    const menuOpen = menu?.key === pinKey;
+    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
+      setMenu(menuOpen ? null : { key: pinKey, anchor, point, previousFocus, title, place: context, tokens: "", host: { machineId: machine.id, chat } });
+    return <li className={`agent-item host-chat-item${selected ? " is-selected" : ""}`} key={pinKey} data-machine={machine.id} data-host-session={chat.session} data-pin-key={pinKey}
+      onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
+      onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
+      <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, context, chat.cwd].filter(Boolean).join("\n")} onClick={() => onSelectHostChat?.({ machineId: machine.id, session: chat.session })}>
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(chat)} />
+      </button>
+      <div className="agent-actions">
+        <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
+          <Ellipsis aria-hidden="true" />
+        </button>
+      </div>
+    </li>;
+  };
 
   const agentItem = ({ machine, entry }: AgentRow) => {
     const { pane, workspace, tab, agent, agentLabel } = entry;
@@ -200,15 +248,18 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       {rows.length > 0 && <>
         {split.pinned.length > 0 && <>
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
-          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(agentItem)}</ul>
+          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(listItem)}</ul>
         </>}
-        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
+        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(listItem)}</ul>}
       </>}
     </div>
-    {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} detail={menu.tokens || undefined} onClose={closeMenu} items={[
-      menuPinned
-        ? { id: "unpin", label: t("Unpin agent"), icon: PinOff, run: () => runPin(menu) }
-        : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) },
-    ]} />}
+    {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} detail={menu.tokens || undefined} onClose={closeMenu} items={menu.host && hostActions
+      // the pin keeps this list's own toggle, which hands the focus back to the moved row
+      ? hostChatItems(hostActions, menu.host, t).map((item) => item.id === "pin" || item.id === "unpin" ? { ...item, run: () => runPin(menu) } : item)
+      : [
+        menuPinned
+          ? { id: "unpin", label: t("Unpin agent"), icon: PinOff, run: () => runPin(menu) }
+          : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) },
+      ]} />}
   </section>;
 }

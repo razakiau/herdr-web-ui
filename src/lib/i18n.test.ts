@@ -74,6 +74,13 @@ function labelMapKeys(): string[] {
     ...grab("lib/workBlocks.ts", "CATEGORY_LABEL", /\["([^"]+)", "([^"]+)"\]/g),
     ...grab("lib/usage.ts", "WINDOW_LABEL", value),
     ...grab("lib/toolVerbs.ts", "VERB_LABEL", value),
+    ...grab("lib/compose.ts", "HOST_SEND_MENU", /label: "([^"]+)"/g),
+    ...grab("components/ModelPicker.tsx", "MODE_LABEL", value),
+    ...grab("components/ModelPicker.tsx", "APPROVALS_LABEL", value),
+    ...grab("components/ModelPicker.tsx", "APPROVALS_HINT", value),
+    ...grab("components/HostChatStatus.tsx", "CONTEXT_PART", value),
+    ...grab("lib/modelProvider.ts", "SECTION_TITLES", /"([^"]+)"/g),
+    ...grab("lib/hostSlash.ts", "HOST_SLASH_DETAIL", value),
   ];
 }
 
@@ -106,7 +113,7 @@ describe.each(Object.entries(DICTIONARIES))("%s dictionary", (_name, dictionary)
     // names and key caps read the same in every language; Chinese UIs leave "Shell" and "Agent" in English;
     // theme brand names stay as their projects write them (the color words Amber and Charcoal are translated)
     const themeNames = ["Codex", "Catppuccin", "Catppuccin Latte", "Tokyo Night", "Tokyo Night Day", "Gruvbox", "Gruvbox Light", "One Dark", "One Light", "Solarized", "Solarized Light", "Kanagawa", "Kanagawa Lotus", "Rosé Pine", "Rosé Pine Dawn", "Dracula", "Nord", "Vesper"];
-    const sameOnPurpose = new Set(["PC {name}", "Control C", "Control D", "Control Z", "Shift Tab", "Shell", "Agent", ...themeNames]);
+    const sameOnPurpose = new Set(["PC {name}", "Control C", "Control D", "Control Z", "Shift Tab", "Shell", "Agent", "Copilot", ...themeNames]);
     const same = Object.entries(dictionary).filter(([en, text]) => en === text && /[a-z]{3}/i.test(en) && !sameOnPurpose.has(en));
     expect(same.map(([en]) => en)).toEqual([]);
   });

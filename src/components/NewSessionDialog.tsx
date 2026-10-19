@@ -17,6 +17,10 @@ import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { passingFolder, recentDirectories } from "../lib/recent-directories.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
+import { folderChoices } from "../lib/hostChats.ts";
+import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
+import { NewHostChatFields, type NewHostChatHandle } from "./NewHostChatFields.tsx";
 
 /** The dialog as New tab: the workspace the tab joins, whose folder it uses, and the number herdr will give it. */
 export interface NewTabTarget {
@@ -41,6 +45,10 @@ export interface NewSessionDialogProps {
   onDraft?: (fields: DialogFields) => void;
   /** the PC's open linked worktree checkouts: no project to offer among the recent folders */
   worktrees?: readonly string[];
+  /** the PC's host chats (Copilot host): their folders join the recent ones, and their models the new chat's */
+  hostChats?: readonly HostChatRow[];
+  /** a Copilot host chat was made: the app opens it */
+  onHostChat?: (session: string, cwd: string) => void;
 }
 
 export interface DialogFields {
@@ -60,7 +68,7 @@ function directoryBasename(value: string): string {
   return trimmed.split("/").pop() || value;
 }
 
-export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [] }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], hostChats = [], onHostChat }: NewSessionDialogProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -75,7 +83,12 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   const [browsing, setBrowsing] = useState(false);
   const [recentFolders, setRecentFolders] = useState(() => recentDirectories.read(machineId));
   // folders kept before worktrees and temporary folders were left out are left out here too
-  const shownFolders = recentFolders.filter((path) => !passingFolder(path, worktrees)).slice(0, RECENT_FOLDERS_SHOWN);
+  const hostChoice = agentKind === HOST_AGENT_KIND;
+  const hostFields = useRef<NewHostChatHandle>(null);
+  const [, setHostEdits] = useState(0);
+  // a Copilot host chat also offers the folders its PC's chats work in, after the recent ones
+  // (where a chat already works is a folder of its own, wherever it is: the passing-folder rule is the recents')
+  const shownFolders = [...new Set([...(hostChoice ? folderChoices([...hostChats]) : []), ...recentFolders.filter((path) => !passingFolder(path, worktrees))])].slice(0, RECENT_FOLDERS_SHOWN);
   const firstFieldRef = useRef<HTMLButtonElement>(null);
   // a path longer than its field is shown from its end, where the folder's name is, whenever it is
   // set for the user (the last folder, a pick from Browse or a recent chip) and when the field is
@@ -146,11 +159,25 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   if (!open) return null;
 
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
-  const pendingLabel = selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
+  const pendingLabel = hostChoice ? t("Starting…") : selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
   const fieldsDisabled = pending || createdPaneId !== null;
+
+  const startHostChat = async (directory: string): Promise<void> => {
+    const folder = directory.trim();
+    if (pending || folder === "" || !hostFields.current?.ready()) return;
+    setPending(true);
+    setError(null);
+    rememberAgent(agentKind);
+    const made = await hostFields.current.start(folder);
+    setPending(false);
+    if ("error" in made) { setError({ message: made.error, detail: null }); return; }
+    setRecentFolders(recentDirectories.remember(machineId, [folder], true));
+    onHostChat?.(made.session, folder);
+  };
 
   const startWorkspace = async (directory: string): Promise<void> => {
     if (pending) return;
+    if (hostChoice) { await startHostChat(tab?.cwd ?? directory); return; }
     if (createdPaneId !== null) { onCreated(createdPaneId, false); return; }
     setPending(true);
     setError(null);
@@ -231,7 +258,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <RecentFolderChips folders={shownFolders} disabled={fieldsDisabled} labelledBy="new-session-recents" basename={directoryBasename}
               onPick={(path) => { setCwd(path); setBrowsing(false); }} />
           </div>}
-          <label className="field">
+          {hostChoice ? <NewHostChatFields ref={hostFields} machineId={machineId} chats={hostChats} cwd={(tab?.cwd ?? cwd).trim()} disabled={fieldsDisabled} onChange={() => setHostEdits((count) => count + 1)} /> : <label className="field">
             <span className="field-label">{t("Name")}</span>
             <input
               className="input"
@@ -243,13 +270,13 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
               onChange={(event) => setName(event.target.value)}
             />
             <span className="field-hint">{t(tab ? "Tab name (optional)" : "Optional workspace label")}</span>
-          </label>
+          </label>}
           {pending && <p className="new-session-note" role="status">{pendingLabel}</p>}
           {error && <p className="field-hint new-session-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
+          <button type="submit" className="btn btn-primary" disabled={pending || (hostChoice && ((tab?.cwd ?? cwd).trim() === "" || !hostFields.current?.ready()))}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
         </footer>
       </form>
     </div>

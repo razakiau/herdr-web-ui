@@ -7,13 +7,16 @@
  * focus (TabStrip.css), so the menu is never only behind a right-click. Where the canvas shows a
  * split tab's panes one at a time (SOLO_PANE_QUERY), that menu lists them first.
  * That menu also carries the open pane's actions, so a lone pane shows no ellipsis of its own.
+ * A host chat's tab has the chat's own menu instead (HostChatTab).
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Bot, Ellipsis, Pencil, Plus, Terminal, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Ellipsis, Pencil, Plus, Server, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
 
 import type { HerdrPane, HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
+import { hostChatStatus } from "../lib/hostPlacement.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
@@ -30,6 +33,7 @@ import { useTabReorder } from "../lib/useTabReorder.ts";
 import { indicatorGlyph, paneStatus, rollupStatus } from "../lib/status.ts";
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -55,9 +59,117 @@ export interface TabStripProps {
   splitDrag?: boolean;
   /** drawn at the row's far end, outside the scrolling tabs: a split view half's close (App) */
   end?: ReactNode;
+
+  /** the workspace's host chats (lib/hostPlacement.ts), drawn as Copilot tabs after its panes' */
+  hostTabs?: HostChatRow[];
+  /** the host chat open in the pane's place: its tab is the selected one, no pane's is */
+  selectedHostSession?: string | null;
+  onSelectHostChat?(session: string): void;
 }
 
-export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, onNewTerminal, paneActions, panelId = PANE_TABPANEL_ID, splitDrag = false, end }: TabStripProps) {
+/**
+ * A host chat's tab: Copilot's mark, its title and its state, as an agent's tab. `hosted` adds a
+ * small server glyph, drawn only where the workspace also runs Copilot in a pane, so the two never
+ * look the same. Its menu (the ⋯ on a phone's open tab, a right-click, Shift+F10) is the chat's own
+ * (HostChatActions.tsx); Rename… and F2 name it in place, as a pane's tab is named, and Delete asks.
+ */
+function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void }) {
+  const t = useT();
+  const { settings } = useSettings();
+  const machineId = useMachineId();
+  const actions = useHostChatActions();
+  // the open tab's ⋯ as a pane tab's: a phone, or a desktop's mouse while the strip is hovered (TabStrip.css)
+  const touchMenu = useMediaQuery("(pointer: coarse), (max-width: 768px)");
+  const hoverMenu = useMediaQuery("(hover: hover) and (pointer: fine) and (min-width: 769px)");
+  const menuButton = touchMenu || hoverMenu;
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus: HTMLElement | null } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const tabButton = useRef<HTMLButtonElement>(null);
+  const status = hostChatStatus(chat);
+  const title = hostChatTitle(chat, t);
+  const target = { machineId, chat };
+  const beginRename = (): void => { setError(null); setMenu(null); setEditing(chat.title.trim()); };
+  const endRename = (): void => { setEditing(null); window.requestAnimationFrame(() => tabButton.current?.focus({ preventScroll: true })); };
+  const saveRename = (): void => {
+    const next = editing?.trim() ?? "";
+    if (next === "") { setError(t("A chat needs a name.")); return; }
+    endRename();
+    if (next !== chat.title.trim()) actions?.rename(machineId, chat.session, next);
+  };
+  const openMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus: HTMLElement | null = anchor): void =>
+    setMenu(menu ? null : { anchor, point, previousFocus });
+  return <div className={`tab-strip-item host-chat-tab${selected ? " is-active" : ""}${editing !== null ? " is-editing" : ""}`} data-host-session={chat.session}>
+    {editing !== null ? <>
+      <input className="input tab-strip-rename" aria-label={t("Chat name")} autoFocus size={Math.max(8, editing.length + 1)} maxLength={MAX_LABEL_CHARS}
+        placeholder={title} value={editing} aria-invalid={error !== null || undefined}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => { setEditing(event.target.value); setError(null); }}
+        onBlur={() => setEditing(null)}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === "Enter") saveRename();
+          if (event.key === "Escape") endRename();
+        }} />
+      {error && <span className="tab-strip-error" role="alert">{error}</span>}
+    </> : <button ref={tabButton} type="button" role="tab" className="tab-strip-tab" aria-selected={selected} tabIndex={selected ? 0 : -1} title={[title, chat.cwd].filter(Boolean).join("\n")}
+      aria-haspopup={actions ? "menu" : undefined} aria-keyshortcuts={actions ? "Shift+F10 F2 Delete" : undefined}
+      onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); if (!selected) onSelect(); }}
+      onDoubleClick={actions ? beginRename : undefined}
+      onMouseDown={(event) => { if (actions && (event.button === 2 || (event.button === 0 && event.ctrlKey))) event.preventDefault(); }}
+      onContextMenu={actions ? (event) => {
+        event.preventDefault();
+        openMenu(event.currentTarget, event.clientX !== 0 || event.clientY !== 0 ? { x: event.clientX, y: event.clientY } : undefined,
+          document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      } : undefined}
+      onKeyDown={actions ? (event) => {
+        // the strip's own keys are a pane tab's: these three are the chat's
+        const key = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey) ? "menu" : event.key === "F2" ? "rename" : event.key === "Delete" ? "delete" : null;
+        if (key === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (key === "menu") openMenu(event.currentTarget);
+        else if (key === "rename") beginRename();
+        else actions.askDelete(target);
+      } : undefined}>
+      {status !== "idle" && (settings.statusIndicators === "classic"
+        ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" />
+        : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true">{indicatorGlyph(status, settings.statusIndicators)}</span>)}
+      <AgentMark agent="copilot" size={14} />
+      {hosted && <Server className="host-chat-tab-glyph" aria-hidden="true" />}
+      <span className="tab-strip-label">{title}</span>
+    </button>}
+    {actions && menuButton && selected && editing === null && <button type="button" className="tab-strip-menu" aria-label={t("Actions for {tab}", { tab: title })} title={t("Actions for {tab}", { tab: title })} aria-haspopup="menu" aria-expanded={menu !== null}
+      onClick={(event) => openMenu(event.currentTarget, undefined, tabButton.current)}>
+      <Ellipsis aria-hidden="true" />
+    </button>}
+    {menu && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={title} subtitle={chat.cwd ?? undefined}
+      items={hostChatItems(actions, target, t, beginRename)} align="start" onClose={() => setMenu(null)} />}
+  </div>;
+}
+
+/** The arrows between a strip's tabs, Home and End: the same for a folder's strip as a workspace's. */
+function moveTabFocus(event: KeyboardEvent<HTMLDivElement>): void {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+  const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
+  const index = buttons.indexOf(document.activeElement as HTMLElement);
+  if (index < 0) return;
+  event.preventDefault();
+  const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowLeft" ? -1 : 1) + buttons.length) % buttons.length;
+  buttons[next]?.focus();
+}
+
+/** A folder row's tabs: its host chats, as a workspace's strip draws them, with no pane beside them. */
+export function HostChatTabStrip({ folder, chats, selectedSession, onSelect }: { folder: string; chats: HostChatRow[]; selectedSession: string; onSelect(session: string): void }) {
+  const t = useT();
+  return <div className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: folder })} onKeyDown={moveTabFocus}>
+    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} />)}
+  </div>;
+}
+
+export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, onNewTerminal, paneActions, panelId = PANE_TABPANEL_ID, splitDrag = false, end, hostTabs = [], selectedHostSession = null, onSelectHostChat }: TabStripProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -116,10 +228,12 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   });
   const nameOf = (tab: HerdrTab): string => sent?.tabId === tab.tab_id ? sent.label : tabLabel(tab, t, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1);
 
+  // a host chat open in the pane's place: the pane given is only the workspace's, none of its tabs is open
+  const hostOpen = selectedHostSession !== null;
   useEffect(() => {
     // the pane each tab was last seen on, per PC: a tab clicked again opens where it was left
-    rememberViewedPane("tab", machineId, selectedPane.tab_id, selectedPane.pane_id);
-  }, [machineId, selectedPane.tab_id, selectedPane.pane_id]);
+    if (!hostOpen) rememberViewedPane("tab", machineId, selectedPane.tab_id, selectedPane.pane_id);
+  }, [machineId, selectedPane.tab_id, selectedPane.pane_id, hostOpen]);
 
   // a picker, a name field or a question whose tab left (closed in the TUI) goes with it
   useEffect(() => {
@@ -195,7 +309,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   useLayoutEffect(() => {
     scroll.current = stripSelected(scroll.current);
   }, [selectedPane.tab_id]);
-  useLayoutEffect(bringOpenTab, [selectedPane.tab_id, tabs.length, shown, menuButton]);
+  useLayoutEffect(bringOpenTab, [selectedPane.tab_id, tabs.length, shown, menuButton, selectedHostSession, hostTabs.length]);
   // A face that arrives after that (lib/fontFaces.ts) redraws every name wider or narrower with
   // no tab added or opened, so the open tab is brought into view again for each: unless the user
   // has scrolled the strip themselves since a tab was last opened (lib/tabStripScroll.ts), and is
@@ -209,7 +323,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
     if (row) scroll.current = stripScrolled(scroll.current, row.scrollLeft, row.scrollWidth - row.clientWidth);
   };
 
-  if (!shown || (cramped && tabs.length === 1)) return null;
+  if (!shown || (cramped && tabs.length + hostTabs.length === 1)) return null;
 
   const panesOf = (tab: HerdrTab): PaneInfo[] => panes.filter((pane) => pane.tab_id === tab.tab_id);
   const paneFor = (tab: HerdrTab): PaneInfo | undefined => {
@@ -362,13 +476,15 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   // the pane region every tab governs, as App names it. App gives that region the tabpanel role
   // only while the pane's own tab is in this snapshot (paneTabPanelLabel); the same call answers
   // here, so a tab never claims to control a panel that is not standing there as one.
-  const panePanel = paneTabPanelLabel(snapshot, selectedPane, t) !== null ? panelId : undefined;
+  const panePanel = !hostOpen && paneTabPanelLabel(snapshot, selectedPane, t) !== null ? panelId : undefined;
+  // the workspace runs Copilot in a pane too: its host chats' tabs carry the host glyph
+  const hosted = panes.some((pane) => pane.agent === "copilot");
   const row = (
       <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: workspace.label })} aria-busy={reorder.moving} onKeyDown={onKeyDown} onScroll={onScroll}
         onFocus={(event) => { if (event.target.getAttribute("role") === "tab") focusedTab.current = event.target; }}
         onBlur={(event) => { if (event.relatedTarget !== null) focusedTab.current = null; }}>
         {tabs.map((tab, index) => {
-          const active = tab.tab_id === selectedPane.tab_id;
+          const active = !hostOpen && tab.tab_id === selectedPane.tab_id;
           const own = panesOf(tab);
           // Settle each pane's wait before rolling up, so a sibling's RUN or DONE stays visible.
           const status = rollupStatus(own.map((pane) => paneStatus(pane as HerdrPane)));
@@ -419,7 +535,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                     if (reorder.consumeClick(event.detail) || event.ctrlKey) return;
                     event.currentTarget.focus({ preventScroll: true });
                     const pane = paneFor(tab);
-                    if (pane && pane.pane_id !== selectedPane.pane_id) onSelectPane(pane.pane_id);
+                    if (pane && (hostOpen || pane.pane_id !== selectedPane.pane_id)) onSelectPane(pane.pane_id);
                   }}
                   onDoubleClick={() => beginRename(tab)}
                   onContextMenu={(event) => { event.preventDefault(); openPicker(event, tab); }}
@@ -438,6 +554,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
             </div>
           );
         })}
+        {hostTabs.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedHostSession} hosted={hosted} onSelect={() => onSelectHostChat?.(chat.session)} />)}
         <button type="button" className="tab-strip-add" aria-label={t("New terminal")} title={t("New terminal")}
           onClick={() => { setError(null); void onNewTerminal().catch((reason: unknown) => setError(t("New terminal failed: {reason}", { reason: said(reason) }))); }}>
           <Plus aria-hidden="true" />

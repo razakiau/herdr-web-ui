@@ -29,6 +29,7 @@
   "dependencies": {
     "@legendapp/list": "3.3.5",
     "@lydell/node-pty": "1.1.0",
+    "@microsoft/agent-host-protocol": "1.0.0",
     "@pierre/diffs": "1.5.2",
     "@tanstack/highlight": "^1.0.0",
     "@xterm/addon-fit": "^0.10.0",

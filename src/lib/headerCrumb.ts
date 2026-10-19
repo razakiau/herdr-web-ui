@@ -44,6 +44,26 @@ export function headerCrumb(input: { machine: string; machineCount: number; work
 }
 
 /**
+ * A host chat's crumb: PC › folder (a host chat has no workspace; its folder is where it works),
+ * the folder by its last name. With no folder, the PC alone.
+ */
+export function hostHeaderCrumb(input: { machine: string; machineCount: number; title: string; cwd: string | null | undefined }): HeaderCrumb {
+  const machine = input.machine.trim();
+  const title = input.title.trim();
+  const path = input.cwd?.trim() ? input.cwd : null;
+  const folder = path === null ? null : folderName(path);
+  return {
+    machine,
+    showMachine: input.machineCount > 1,
+    workspace: "",
+    folder,
+    place: folder === null ? machine : `${machine} › ${folder}`,
+    path,
+    tooltip: path === null ? title : `${title} · ${path}`,
+  };
+}
+
+/**
  * Whether the pane column draws the chat: the header's pane zone and the tab strip take the
  * chat's surface only then. A pane herdr could not restore draws a placeholder on the terminal's
  * surface whatever the lens, and so does no pane at all.

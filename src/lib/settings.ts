@@ -365,6 +365,8 @@ export function alertPrefs(settings: Settings): AlertPrefs {
 
 const STORAGE_KEY = "herdr-web-ui:settings";
 const THEMES_STORAGE_KEY = "herdr-web-ui:themes";
+/** settings that are gone: "Copilot chats in Agents" (a host chat is an agent now, listed by the agents' rule) */
+const REMOVED_KEYS: readonly string[] = ["vscodeChatsInAgents"];
 export const TERMINAL_FONT_MIN = 10;
 export const TERMINAL_FONT_MAX = 22;
 export const TERMINAL_WHEEL_SPEED_MIN = 1;
@@ -519,7 +521,16 @@ export function loadSettings(): Settings {
   let settings = DEFAULT_SETTINGS;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    settings = raw === null ? DEFAULT_SETTINGS : sanitizeSettings(JSON.parse(raw));
+    if (raw !== null) {
+      const parsed: unknown = JSON.parse(raw);
+      // a setting this version removed leaves the stored record too
+      if (typeof parsed === "object" && parsed !== null && REMOVED_KEYS.some((key) => key in parsed)) {
+        const kept = Object.fromEntries(Object.entries(parsed).filter(([key]) => !REMOVED_KEYS.includes(key)));
+        // a storage that refuses the write (full) keeps the record as it was: the settings still load
+        try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(kept)); } catch { /* left for the next load */ }
+      }
+      settings = sanitizeSettings(parsed);
+    }
   } catch {
     /* a damaged main record does not hide the protected theme choice */
   }

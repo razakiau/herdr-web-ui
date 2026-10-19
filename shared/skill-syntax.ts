@@ -24,6 +24,8 @@ export const SKILL_SYNTAX: Readonly<Record<string, SkillSyntax>> = {
   opencode: { skillTriggers: ["/"], inline: [], namespaced: false, chipForms: [] },
   grok: { skillTriggers: ["/"], inline: [], namespaced: false, chipForms: [] },
   agy: { skillTriggers: ["/"], inline: [], namespaced: false, chipForms: [] },
+  // the host chat's skills come from the bridge, not a menu typed in a pane
+  "copilot-host": { skillTriggers: ["/"], inline: [], namespaced: false, chipForms: [] },
 };
 
 export function skillSyntax(agent: string | null | undefined): SkillSyntax {
