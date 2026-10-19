@@ -323,7 +323,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
             const recommended = parsed.recommended || option.recommended === true;
             const content = (
               <span className="prompt-card-option-text">
-                <span className="prompt-card-option-label"><span>{text}</span>{recommended && <span className="prompt-card-tag">{t("Recommended")}</span>}</span>
+                <span className="prompt-card-option-label"><span>{text}</span>{recommended && <>{" "}<span className="prompt-card-tag">{t("Recommended")}</span></>}</span>
                 {option.description !== null && <span className="prompt-card-option-description">{option.description}</span>}
               </span>
             );
