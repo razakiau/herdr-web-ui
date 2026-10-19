@@ -185,7 +185,7 @@ const patch = `(() => {
       if (path === "/api/host-chats/models") calls.models.push(url.searchParams.get("session"));
       if (path === "/api/host-chats/models") return json({
         models: [
-          { id: "fictional-own", name: "FICTIONAL Own", provider: "copilotcli", efforts: null, context: null },
+          { id: "fictional-own", name: "FICTIONAL Own", provider: "copilotcli", efforts: null, context: null, group: "copilot", multiplier: 27, warning: "FICTIONAL Own has a planned deprecation date." },
           { id: "fictional/model-a", name: "FICTIONAL Model A (Anthropic)", provider: "copilotcli", efforts: null, context: 200000 },
           { id: "fictional/model-b", name: "FICTIONAL Model B", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: 1000000 },
           { id: "fictional/glm-x", name: "FICTIONAL GLM-X (FICTIONAL Go)", provider: "fictional-router", efforts: null, context: null },
@@ -515,7 +515,16 @@ try {
         const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        assert.deepEqual(await sheet.getByRole("tab").allTextContents(), ["All", "copilotcli", "fictional-router"], "a tab per provider");
+        assert.deepEqual(await sheet.getByRole("tab").allTextContents(), ["All", "Copilot", "fictional"], "a tab per group, Copilot first");
+        assert.deepEqual(await sheet.locator(".host-picker-group").evaluateAll((groups) => groups.map((group) => group.getAttribute("aria-label"))),
+          ["Copilot", "fictional · Anthropic", "fictional · FICTIONAL Go", "fictional"], "Copilot's own, then the router split by the vendor its names carry");
+        assert.equal((await sheet.locator('[data-model="fictional-own"] .host-model-rate').textContent())?.trim(), "27x", "a Copilot model says its premium-request rate");
+        assert.equal(await sheet.locator('[data-model="fictional-own"] [aria-label="FICTIONAL Own has a planned deprecation date."]').count(), 1, "and its deprecation notice");
+        assert.equal((await sheet.locator('[data-model="fictional/model-a"] .host-model-name').textContent())?.trim(), "FICTIONAL Model A", "a row under its vendor drops the vendor from its name");
+        if (shots) {
+          await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+          await page.screenshot({ path: join(shots, "model-groups-390.png") });
+        }
         await sheet.getByRole("searchbox", { name: "Search models" }).fill("glm");
         assert.deepEqual(await sheet.locator("[data-model]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-model"))), ["fictional/glm-x"], "the search keeps the GLM row only");
         assert.equal(await sheet.locator('[data-model="fictional/glm-x"] svg[aria-label="zhipu"]').count(), 1, "GLM wears Zhipu's mark");

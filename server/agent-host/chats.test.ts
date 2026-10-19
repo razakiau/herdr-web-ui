@@ -157,9 +157,9 @@ describe("host chat mappers", () => {
       ],
     } as unknown as RootState;
     expect(modelsFrom(root)).toEqual([
-      { id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null },
-      { id: "fictional/model-b", name: "Fictional Model B", provider: "copilotcli", efforts: { key: "budget", values: ["small", "large"] }, context: null },
-      { id: "fictional/model-c", name: "Fictional Model C", provider: "copilotcli", efforts: null, context: null },
+      { id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null, group: "fictional", multiplier: null, warning: null },
+      { id: "fictional/model-b", name: "Fictional Model B", provider: "copilotcli", efforts: { key: "budget", values: ["small", "large"] }, context: null, group: "fictional", multiplier: null, warning: null },
+      { id: "fictional/model-c", name: "Fictional Model C", provider: "copilotcli", efforts: null, context: null, group: "fictional", multiplier: null, warning: null },
     ]);
   });
 
@@ -173,7 +173,29 @@ describe("host chat mappers", () => {
     const models = modelsFrom(root);
     expect(models).toContainEqual(expect.objectContaining({ id: "fictional/a", provider: "FICTIONAL Provider", context: 1000000 }));
     // a model without a context window says so: null, never 0 or undefined
-    expect(models).toContainEqual({ id: "fictional/b", name: "FICTIONAL B", provider: "FICTIONAL Provider", efforts: null, context: null });
+    expect(models).toContainEqual({ id: "fictional/b", name: "FICTIONAL B", provider: "FICTIONAL Provider", efforts: null, context: null, group: "fictional", multiplier: null, warning: null });
+  });
+
+  it("models_are_grouped_copilot_router_other: Copilot's own by their _meta, a router's by its id prefix", () => {
+    // the shapes VS Code 1.142's host sent on 2026-10-19, names made up
+    const root = {
+      agents: [{ provider: "copilotcli", displayName: "Fictional Agent", description: "", models: [
+        { id: "auto", provider: "copilotcli", name: "Auto", _meta: { discountPercent: 10 } },
+        { id: "fictional-big", provider: "copilotcli", name: "FICTIONAL Big", _meta: { multiplierNumeric: 27, category: "powerful" } },
+        { id: "fictional-old", provider: "copilotcli", name: "FICTIONAL Old", _meta: { multiplierNumeric: 9, category: "versatile", rowWarning: "FICTIONAL Old has a planned deprecation date." } },
+        { id: "fictional-fusion", provider: "copilotcli", name: "FICTIONAL Fusion", _meta: { category: "powerful" } },
+        { id: "fictionalrouter/m-1", provider: "copilotcli", name: "FICTIONAL M1 (Vendor)", _meta: {} },
+        { id: "bare-model", provider: "copilotcli", name: "FICTIONAL Bare" },
+      ] }],
+    } as unknown as RootState;
+    expect(modelsFrom(root).map((model) => [model.id, model.group, model.multiplier, model.warning])).toEqual([
+      ["auto", "copilot", null, null],
+      ["fictional-big", "copilot", 27, null],
+      ["fictional-old", "copilot", 9, "FICTIONAL Old has a planned deprecation date."],
+      ["fictional-fusion", "copilot", null, null],
+      ["fictionalrouter/m-1", "fictionalrouter", null, null],
+      ["bare-model", "other", null, null],
+    ]);
   });
 
   it("agents come from enabled agent customizations, nested in containers", () => {

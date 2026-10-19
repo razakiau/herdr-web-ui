@@ -1,6 +1,7 @@
 /**
- * A host chat's pickers, as VS Code's model picker reads them (modelPickerTabs, the Pinned / Recent
- * / All models sections, one line per model with its mark and "High · 1M"), its agent picker
+ * A host chat's pickers, as VS Code's model picker reads them (modelPickerTabs, Pinned and Recent,
+ * one line per model with its mark and "High · 1M"), then the models by where they come from:
+ * Copilot's catalogue with its premium-request rate, each router by vendor, the rest), its agent picker
  * ("Agent" first, then the host's custom agents), and the chat's mode and permissions
  * (agentHostModePickerPresentation.ts: Interactive / Plan / Autopilot, Manual / Assisted / Allow all).
  * A sheet on a phone, a dialog on a desktop. The model and agent are the next message's (a pick is
@@ -8,11 +9,11 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Pin, Search, Sparkles, X } from "lucide-react";
+import { Check, Pin, Search, Sparkles, TriangleAlert, X } from "lucide-react";
 
 import type { HostAgent, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { filterModels, modelTabs, pickerSections, pinnedModels, providerMark, recentModels, rememberRecent, rowDetail, togglePinned, type ModelMark } from "../lib/modelProvider.ts";
+import { filterModels, groupName, modelTabs, multiplierLabel, pickerSections, pinnedModels, providerMark, recentModels, rememberRecent, rowDetail, SECTION_TITLES, togglePinned, type ModelMark, type PickerSection } from "../lib/modelProvider.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -112,8 +113,12 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
   if (models === null) return <p className="host-picker-state" role="status">{t("Loading…")}</p>;
   if (models.length === 0) return <p className="host-picker-state">{t("Copilot on this PC offers no models")}</p>;
   const shown = filterModels(models, query, tab);
-  // a search or a tab shows its matches alone; the sections are for the whole list
-  const sections = query.trim() === "" && tab === null ? pickerSections(shown, pinned, recent) : [{ title: "All models" as const, models: shown }];
+  // a search or a tab keeps the groups but drops Pinned and Recent, which would only repeat its matches
+  const searching = query.trim() !== "" || tab !== null;
+  const sections = pickerSections(shown, searching ? [] : pinned, searching ? [] : recent);
+  // Pinned, Recent and the two groups the app names are words; a router's name is its id prefix
+  const word = (key: string, title: string): string => (SECTION_TITLES as readonly string[]).includes(title) && ["pinned", "recent", "copilot", "other"].includes(key) ? t(title) : title;
+  const heading = (section: PickerSection): string => word(section.key.split("\n")[0] ?? "", section.title);
   const pick = (next: { id: string; effort?: string }): void => { rememberRecent(machineId, next.id); onModel(next); };
   return <>
     <label className="host-picker-search">
@@ -121,17 +126,18 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
       <input className="input" type="search" value={query} placeholder={t("Search models")} aria-label={t("Search models")} autoFocus onChange={(event) => setQuery(event.target.value)} />
     </label>
     {tabs.length > 0 && <div className="host-picker-tabs" role="tablist" aria-label={t("Providers")}>
-      {[null, ...tabs].map((each) => <button key={each ?? ""} type="button" role="tab" aria-selected={tab === each} className={`host-picker-tab${tab === each ? " is-picked" : ""}`} onClick={() => setTab(each)}>{each ?? t("All")}</button>)}
+      {[null, ...tabs].map((each) => <button key={each ?? ""} type="button" role="tab" aria-selected={tab === each} className={`host-picker-tab${tab === each ? " is-picked" : ""}`} data-group={each ?? ""} onClick={() => setTab(each)}>{each === null ? t("All") : word(each, groupName(each))}</button>)}
     </div>}
     {shown.length === 0 && <p className="host-picker-state">{t("No models match")}</p>}
-    {sections.map((section) => section.models.length > 0 && <section key={section.title} className="host-picker-group" aria-label={t(section.title)}>
-      <p className="host-picker-provider">{t(section.title)}</p>
+    {sections.map((section) => <section key={section.key} className="host-picker-group" aria-label={section.vendor ? `${heading(section)} · ${section.vendor}` : heading(section)}>
+      <p className="host-picker-provider">{heading(section)}{section.vendor && <span className="host-picker-vendor"> · {section.vendor}</span>}</p>
       {section.models.map((each) => {
         const picked = each.id === model?.id;
         const effort = picked ? model?.effort ?? null : null;
         const detail = rowDetail(each, effort);
-        // a model can stand in two sections (Recent and All models): its effort choices open in the one tapped
-        const row = `${section.title}\n${each.id}`;
+        // a model can stand in two sections (Recent and its group): its effort choices open in the one tapped
+        const row = `${section.key}\n${each.id}`;
+        const rate = multiplierLabel(each);
         return <div key={each.id} className={`host-model-row${picked ? " is-picked" : ""}`} data-model={each.id}>
           <button type="button" className="host-model-pick" aria-pressed={picked}
             onPointerDown={() => { const held = { fired: false, timer: setTimeout(() => { held.fired = true; togglePinned(machineId, each.id); setPinned(pinnedModels(machineId)); }, LONG_PRESS_MS) }; press.current = held; }}
@@ -145,8 +151,10 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
             }}>
             {picked ? <Check className="host-model-check" aria-hidden="true" /> : <span className="host-model-check" aria-hidden="true" />}
             <ModelMarkIcon mark={providerMark(each)} />
-            <span className="host-model-name">{each.name}</span>
+            <span className="host-model-name">{section.vendor ? each.name.replace(/\s*\([^()]*\)\s*$/, "") || each.name : each.name}</span>
+            {each.warning && <TriangleAlert className="host-model-warning" role="img" aria-label={each.warning}><title>{each.warning}</title></TriangleAlert>}
             {pinned.includes(each.id) && <Pin className="host-model-pin" aria-label={t("Pinned")} />}
+            {rate !== null && <span className="host-model-rate" title={t("Premium requests per message")}>{rate}</span>}
           </button>
           {detail !== "" && (each.efforts
             ? <button type="button" className="host-model-detail" aria-expanded={efforts === row} aria-label={t("Reasoning effort for {model}", { model: each.name })} onClick={() => setEfforts((open) => open === row ? null : row)}>{detail}</button>

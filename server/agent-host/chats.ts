@@ -516,11 +516,27 @@ function effortsOf(schema: HostModelSchema | undefined): HostModel["efforts"] {
 }
 type HostModelSchema = { properties?: Record<string, { enum?: unknown[] }> };
 
+/** Copilot's own models carry these in `_meta` (probed 2026-10-19, VS Code 1.142); a custom endpoint's carry none. */
+const COPILOT_META = ["multiplierNumeric", "discountPercent", "category"];
+
+/** Where the picker files a model (HostModel.group). */
+export function modelGroup(id: string, meta: Record<string, unknown> | undefined): string {
+  if (meta?.["modelGroupId"] === "copilot" || COPILOT_META.some((key) => key in (meta ?? {}))) return "copilot";
+  const at = id.indexOf("/");
+  return at > 0 ? id.slice(0, at) : "other";
+}
+
 export function modelsFrom(root: RootState): HostModel[] {
   const agent = root.agents.find((each) => each.provider === PROVIDER);
-  return (agent?.models ?? []).map((model) => ({
-    id: model.id, name: model.name, provider: model.provider, efforts: effortsOf(model.configSchema), context: model.maxContextWindow ?? null,
-  }));
+  return (agent?.models ?? []).map((model) => {
+    const meta = (model as { _meta?: Record<string, unknown> })._meta;
+    const multiplier = meta?.["multiplierNumeric"];
+    const warning = meta?.["rowWarning"];
+    return {
+      id: model.id, name: model.name, provider: model.provider, efforts: effortsOf(model.configSchema), context: model.maxContextWindow ?? null,
+      group: modelGroup(model.id, meta), multiplier: typeof multiplier === "number" ? multiplier : null, warning: typeof warning === "string" && warning.trim() !== "" ? warning : null,
+    };
+  });
 }
 
 /** A model choice on the wire: the effort goes under the model's own effort key. */
