@@ -6,7 +6,7 @@ export const LOCAL_MACHINE = "local";
 export const BRIDGE_PROTOCOL = 1;
 // zhomelab deploy branch (ZAC-180): our own numbers, so upstream's bridge can never stand in
 // for ours; bump by one for every change to BUNDLE_PATHSPECS inputs.
-export const REMOTE_BUNDLE_VERSION = "1014";
+export const REMOTE_BUNDLE_VERSION = "1015";
 export interface PaneTarget { machine_id: string; pane_id: string }
 export type MachineState = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
 export interface SshTarget {
