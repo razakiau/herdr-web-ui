@@ -387,13 +387,26 @@ export function folderChoices(rows: HostChatRow[]): string[] {
 export async function createHostChat(machineId: string, body: HostNew): Promise<string> {
   const result = await post<HostNewResult>(machineId, "host-chats/chat/new", body);
   if (result.sent === false) {
-    keepHostDraft(machineId, result.session, body.text);
+    keepHostDraft(machineId, result.session, body.text ?? "");
     const change: HostChoice = {};
     if (body.model) change.model = body.model;
     if (body.agent !== undefined) change.agent = body.agent;
     if (Object.keys(change).length > 0) choose(machineId, result.session, change);
   }
   return result.session;
+}
+
+/**
+ * VS Code's New Chat: the chat made in `cwd` with no message, opened for its own composer to send
+ * the first one. Once (the id keeps a retry from making a second); a refusal throws.
+ */
+export async function openEmptyHostChat(machineId: string, body: { id: string; cwd: string }): Promise<string> {
+  return (await post<HostNewResult>(machineId, "host-chats/chat/new", body)).session;
+}
+
+/** The chat was left: the bridge disposes it if it opened it empty and it still has no message. */
+export async function discardHostChat(machineId: string, session: string): Promise<boolean> {
+  return (await post<{ discarded: boolean }>(machineId, "host-chats/chat/discard", { session })).discarded;
 }
 
 /**

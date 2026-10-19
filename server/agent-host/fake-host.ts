@@ -98,6 +98,8 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
   const chats: Record<string, ChatState> = { ...seed.chats };
   const failSubscribes: Record<string, number> = { ...seed.failSubscribes };
   const files = new Map(Object.entries(seed.files ?? {}));
+  // sessions made and not yet listed, by their default chat: they have had no message
+  const unlisted = new Map<string, SessionSummary>();
   const dispatched: FakeAgentHost["dispatched"] = [];
   const requests: FakeAgentHost["requests"] = [];
   const peers = new Set<ServerWebSocket<Peer>>();
@@ -182,18 +184,22 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         const chat = `ahp-chat://default/${Buffer.from(channel).toString("base64")}`;
         const now = new Date(0).toISOString();
         const summary: SessionSummary = { resource: channel, provider: String(params["provider"] ?? "copilotcli"), title: "", status: 1, createdAt: now, modifiedAt: now, defaultChat: chat };
-        states[channel] = { provider: summary.provider, title: "", status: 1, lifecycle: "ready", activeClients: [], chats: [{ resource: chat, title: "", status: 1, modifiedAt: now }], defaultChat: chat } as SessionState;
+        const workingDirectories = params["workingDirectories"] as string[] | undefined;
+        states[channel] = { provider: summary.provider, title: "", status: 1, lifecycle: "ready", activeClients: [], chats: [{ resource: chat, title: "", status: 1, modifiedAt: now }], defaultChat: chat, ...(workingDirectories ? { workingDirectories } : {}) } as SessionState;
         chats[chat] = { resource: chat, title: "", status: 1, modifiedAt: now, turns: [] } as unknown as ChatState;
         ok(null);
-        notice(ROOT, { type: "root/sessionAdded", summary });
+        // as VS Code 1.142's host (probed 2026-10-19): a session is listed once its first message goes
+        unlisted.set(chat, { ...summary, ...(workingDirectories ? { workingDirectories } : {}) });
         return;
       }
       case "disposeSession": {
         const channel = String(params["channel"]);
         const summary = sessions.find((s) => s.resource === channel);
-        if (!summary) { fail(-32008, `no such session ${channel}`); return; }
+        const quiet = [...unlisted.values()].find((s) => s.resource === channel);
+        if (!summary && !quiet) { fail(-32008, `no such session ${channel}`); return; }
         ok(null);
-        if (summary.defaultChat) delete chats[summary.defaultChat];
+        if (quiet) { unlisted.delete(quiet.defaultChat!); delete chats[quiet.defaultChat!]; delete states[channel]; return; }
+        if (summary!.defaultChat) delete chats[summary!.defaultChat];
         delete states[channel];
         notice(ROOT, { type: "root/sessionRemoved", session: channel });
         return;
@@ -260,6 +266,8 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
           const channel = String(params["channel"]);
           const action = params["action"] as StateAction;
           dispatched.push({ channel, action });
+          const waiting = unlisted.get(channel);
+          if (waiting && action.type === "chat/turnStarted") { unlisted.delete(channel); notice(ROOT, { type: "root/sessionAdded", summary: waiting }); }
           // VS Code's host (1.142) refuses to archive a session's default chat: "Only a known
           // independently manageable non-default chat can be archived"; the session is archived instead
           if (action.type === "chat/isArchivedChanged" && sessions.some((each) => each.defaultChat === channel)) return;

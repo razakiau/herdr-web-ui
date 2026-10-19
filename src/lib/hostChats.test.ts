@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
-import { attemptFor, choose, chosenFor, createHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
+import { attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -139,6 +139,15 @@ describe("the phone's model and agent choice", () => {
     calls = record(503, { error: { code: "agent_host_down", message: "FICTIONAL host down" } });
     await expect(createHostChat("desk", { id: "00000000-0000-4000-8000-000000000002", cwd: "/tmp/fictional-repo", text: "FICTIONAL other" })).rejects.toThrow("FICTIONAL host down");
     expect(calls).toHaveLength(1);
+  });
+
+  it("openEmptyHostChat makes the chat without a message (VS Code's New Chat); discardHostChat lets an empty one go", async () => {
+    let calls = record(200, { session: "s-empty" });
+    expect(await openEmptyHostChat("desk", { id: "00000000-0000-4000-8000-000000000003", cwd: "/tmp/fictional-repo" })).toBe("s-empty");
+    expect(calls).toEqual([{ url: "/api/machines/desk/host-chats/chat/new", body: { id: "00000000-0000-4000-8000-000000000003", cwd: "/tmp/fictional-repo" } }]);
+    calls = record(200, { discarded: true });
+    expect(await discardHostChat("desk", "s-empty")).toBe(true);
+    expect(calls).toEqual([{ url: "/api/machines/desk/host-chats/chat/discard", body: { session: "s-empty" } }]);
   });
 
   it("every send carries what the pills show: a pick, then the same pick again on the next message", async () => {

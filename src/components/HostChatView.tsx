@@ -22,7 +22,7 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, answerHostForm, choose, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
+  agentName, answerHost, answerHostForm, choose, discardHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
@@ -110,6 +110,12 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
   const [putBack, setPutBack] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // VS Code's New Chat opened empty: left with no message, it goes (the bridge refuses any other chat)
+  const unused = useRef(true);
+  useEffect(() => () => {
+    const last = source.last();
+    if (unused.current && last !== null && last.turns.length === 0 && !last.busy && (last.pending ?? []).length === 0) void discardHostChat(machineId, session).catch(() => undefined);
+  }, [machineId, session, source]);
   const titleRef = useRef(onTitle);
   titleRef.current = onTitle;
   const readTitle = chat?.title ?? null;
@@ -193,6 +199,7 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
         if (mounted.current) void fetchHostConfig(machineId, session).then((value) => { if (mounted.current) setConfig(value); }, () => undefined);
         if (words === "" && attached.length === 0) return true;
       }
+      unused.current = false;
       // sent: sendHost lets the stored draft go even if this screen is gone by now
       const result = await sendHost(machineId, { session, text: words, ...(mode === "send" ? {} : { mode }), ...(attached.length > 0 ? { attachments: attached } : {}) }, { model: chat?.model ?? null, agent: chat?.agent ?? null }, true);
       if (mounted.current) {

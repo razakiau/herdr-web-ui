@@ -116,7 +116,8 @@ export interface HostConfirm { session: string; turn_id: string; tool_call_id: s
  * `id`: the phone's UUID for this attempt; the chat made is `copilotcli:/<id>`, so a retry makes
  * none. Send one to make a retry safe; without it the bridge mints one, and a retry makes another.
  */
-export interface HostNew { id?: string; cwd: string; text: string; model?: { id: string; effort?: string }; agent?: string | null }
+/** POST /api/host-chats/chat/new. No `text`: the chat is made empty (VS Code's New Chat) and its own composer sends the first message. */
+export interface HostNew { id?: string; cwd: string; text?: string; model?: { id: string; effort?: string }; agent?: string | null }
 /**
  * POST /api/host-chats/chat/new: the chat made. `sent: false` when it was created but its first message
  * did not go out: open that chat (keep the text in its composer), never create another.
