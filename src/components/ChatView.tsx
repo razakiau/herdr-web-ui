@@ -52,6 +52,8 @@ import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath } from "../../shared/machines.ts";
 import { stickyRequestIndex } from "../lib/chatStickyRequest.ts";
+import { checkpointRows, type CheckpointRow } from "../lib/hostCheckpoints.ts";
+import type { HostCheckpoint } from "../../shared/host-chats.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
@@ -122,6 +124,9 @@ const NO_ROW = Object.freeze({});
  * was at the end can so land after the reader paged or scrolled away, and pull them back. Any newer
  * scroll request supersedes a waiting one; a request for no row supersedes it without moving.
  */
+/** How far under the chat's top edge the pinned request reaches (two lines and its padding). */
+const STICKY_BAND = 64;
+
 function dropPendingListScroll(list: LegendListRef | null): void {
   void list?.scrollToItem({ item: NO_ROW, animated: false });
 }
@@ -187,6 +192,8 @@ export interface ChatViewProps {
   onPromptAnswered?: (toMessageBox: boolean) => void;
   /** the pane's own name, as App's header shows it: the log is named by it, never by the pane id */
   title?: string | null;
+  /** a host chat's checkpoints (HostChatRead), the one restored, and what a tap on one does */
+  checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void } | null;
 }
 
 interface ChatState {
@@ -865,6 +872,10 @@ interface TurnProps {
   userSkills?: SkillMatcher | null;
   /** how the turn reads (lib/toolGroupSummary.ts `turnStyle`): "vscode" for Copilot, else today's "classic" */
   style?: TurnStyle;
+  /** a host chat's checkpoint for this row: a user message's Restore Checkpoint (Start Over on the first), or faded after a restore */
+  checkpoint?: CheckpointRow | null;
+  /** the checkpoint's action was tapped */
+  onCheckpoint?: (turn: string) => void;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -993,7 +1004,7 @@ function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey:
 // a turn that did not change keeps its object across polls: skip re-rendering it. A host chat's
 // row has paneId "": its pictures and outputs come through the chat's source, and UserImages shows
 // no `@image` mention without a pane, so such a row reads no file
-export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null, style = "classic" }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null, style = "classic", checkpoint = null, onCheckpoint }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -1033,12 +1044,19 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       <div className="chat-turn-meta">{time}<CopyButton text={text} label={t("Copy message")} onResult={copied} /></div>
       {copyError}
     </section>;
-    return <article className="chat-turn chat-turn-user">
+    const action = checkpoint?.turn && onCheckpoint && !checkpoint.faded ? checkpoint : null;
+    return <article className={`chat-turn chat-turn-user${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
       <UserImages paneId={paneId} parts={turn.parts} text={text} />
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
         {text.length > 0 && <UserMessage text={text} skills={userSkills} />}
-        <div className="chat-turn-meta">{time}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
+        <div className="chat-turn-meta">{time}
+          {/* VS Code's checkpoint toolbar on a request: Start Over on the first, Restore Checkpoint on the rest */}
+          {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
+            aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
+            <RotateCcw aria-hidden="true" /><span className="chat-checkpoint-word">{t(action.first ? "Start Over" : "Restore")}</span>
+          </button>}
+          {text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
       </div>
       {copyError}
       {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
@@ -1066,7 +1084,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     isNotice(part) && !(style === "vscode" && inWork(part)) && (firstAnswer >= 0 && index < firstAnswer) === before
       ? [style === "vscode" && isSystemNotice(part) ? <SystemNotice key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} />
         : <NoticeRow key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} time={null} />] : []);
-  return <article className="chat-turn chat-turn-agent">
+  return <article className={`chat-turn chat-turn-agent${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
@@ -1141,7 +1159,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -1681,11 +1699,17 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   };
   const pinRequest = (node: HTMLDivElement): void => {
     const top = node.getBoundingClientRect().top;
+    // the row read is the one under the pinned band, not a row's trailing gap at the very edge;
+    // a user message entering that band is right there, so nothing is pinned over it
     let first: { key: string; top: number } | null = null;
+    let entering = false;
     for (const row of node.querySelectorAll<HTMLElement>("[data-chat-row]")) {
       const rect = row.getBoundingClientRect();
-      if (rect.bottom > top + 1 && (first === null || rect.top < first.top)) first = { key: row.dataset.chatRow ?? "", top: rect.top };
+      if (rect.bottom > top + STICKY_BAND && (first === null || rect.top < first.top)) first = { key: row.dataset.chatRow ?? "", top: rect.top };
+      const bubble = row.querySelector(":scope > .chat-turn-user .chat-bubble")?.getBoundingClientRect();
+      if (bubble && bubble.bottom > top && bubble.top < top + STICKY_BAND) entering = true;
     }
+    if (entering) { setSticky(null); return; }
     const at = first === null ? -1 : timelineRows.findIndex((row) => row.key === first.key);
     const index = stickyRequestIndex(timelineRows.map((row) => row.turn.role), at, first === null ? 0 : first.top - top);
     setSticky(index === null ? null : timelineRows[index]!.key);
@@ -1777,6 +1801,11 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     if (!slot) throw new Error("A loaded chat turn has no row identity");
     return { key: slot.key, turn, beforeUser: turn.role === "assistant" && shownTurns[index + 1]?.role === "user" };
   }), [shownTurns, rowSlots]);
+  const checkpointList = checkpoints?.list ?? null;
+  const restoredTurn = checkpoints?.restored ?? null;
+  const pickCheckpoint = checkpoints?.onPick;
+  const rowCheckpoints = useMemo(() => checkpointList === null ? null
+    : checkpointRows(shownTurns, checkpointList, restoredTurn, olderCursor !== null && olderCursor !== undefined), [shownTurns, checkpointList, restoredTurn, olderCursor]);
   const stickyRow = sticky === null ? undefined : timelineRows.find((row) => row.key === sticky);
   const stickyText = stickyRow === undefined ? "" : stickyRow.turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n").trim();
   // Back in a pane the reader left away from the end: the first answer read puts the turn they
@@ -1828,9 +1857,10 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t(hosted ? "This message can't be shown here." : "This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} style={style} />
+      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} style={style}
+        checkpoint={rowCheckpoints?.get(index) ?? null} {...(pickCheckpoint ? { onCheckpoint: pickCheckpoint } : {})} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style, rowCheckpoints, pickCheckpoint]);
   // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
   const shownTitle = title?.trim() ?? "";
   const logLabel = label ?? (shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation"));

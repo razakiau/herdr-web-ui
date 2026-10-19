@@ -69,7 +69,7 @@
   border: var(--hairline) solid var(--bubble-border, var(--border));
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
-  box-shadow: 0 6px 16px -10px rgb(0 0 0 / 0.55);
+  box-shadow: var(--shadow-card);
   color: var(--text-strong);
   font-size: var(--fs-sm);
   line-height: var(--lh-prose);

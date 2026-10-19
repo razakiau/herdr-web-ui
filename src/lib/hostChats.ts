@@ -316,6 +316,16 @@ export async function resumeHost(machineId: string, session: string): Promise<vo
   await post(machineId, "host-chats/chat/resume", { session });
 }
 
+/** VS Code's Restore Checkpoint (Start Over on the first turn): undoes that turn's edits and every later one's. */
+export async function restoreHostCheckpoint(machineId: string, session: string, turn: string): Promise<{ files: number }> {
+  return post<{ files: number }>(machineId, "host-chats/chat/checkpoint/restore", { session, turn });
+}
+
+/** Redo: puts back the edits a restore undid. */
+export async function redoHostCheckpoint(machineId: string, session: string): Promise<{ files: number }> {
+  return post<{ files: number }>(machineId, "host-chats/chat/checkpoint/redo", { session });
+}
+
 /** Takes a steering or queued message off before it goes. */
 export async function removeHostPending(machineId: string, session: string, id: string): Promise<void> {
   await post(machineId, "host-chats/chat/pending/remove", { session, id });

@@ -104,9 +104,12 @@ const patch = `(() => {
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending,
       commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }], message_ids: ids,
+      // VS Code's checkpoints, one per host turn: h1 edited build.ts (+28 -3), h1b and h2 nothing
+      checkpoints: ids.map((id) => ({ turn: id, files: id === "h1" ? [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3 }] : [] })),
+      restored: state.restored ?? null,
       background: state.background ?? { subagents: 0, commands: 0 }, confirmations: 0,
       context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 },
-      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.resumed]) };
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.resumed, state.restored ?? null]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
     ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
@@ -172,6 +175,8 @@ const patch = `(() => {
         return json({ path: "/tmp/fictional-repo/.herdr-web-ui/" + body.name });
       }
       if (path === "/api/host-chats/chat/resume") { state.resumed = true; return json({ ok: true }); }
+      if (path === "/api/host-chats/chat/checkpoint/restore") { state.restored = { turn: body.turn, files: body.turn === "h1" || body.turn === "h0" ? 1 : 0 }; return json({ files: state.restored.files }); }
+      if (path === "/api/host-chats/chat/checkpoint/redo") { const files = state.restored?.files ?? 0; state.restored = null; return json({ files }); }
       if (path === "/api/host-chats/chat/stop") { state.stopped += 1; state.busy = false; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/pending/remove") { state.pending = state.pending.filter((each) => each.id !== body.id); return json({ ok: true }); }
       // the row and tab menus' actions: the host has them, and says so on its next list
@@ -508,6 +513,60 @@ try {
         await page.locator(".host-chat .chat-view").evaluate((node) => node.dispatchEvent(new Event("scroll")));
         await pinned.waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("the sticky request stays while its message is in view"));
         console.log("PASS the turn's message sticks at the top, two lines, and a tap goes back to it");
+
+        // VS Code's checkpoints: Start Over on the chat's first message, Restore on the others; the
+        // sheet names the files and what goes; a restore fades the turns from there, puts the message
+        // in the box and shows Redo; Redo puts it all back
+        const firstAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL an earlier ask" });
+        assert.equal(await firstAsk.getByRole("button", { name: "Start Over" }).count(), 1, "the first message is Start Over");
+        const buildAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" });
+        assert.equal(await buildAsk.getByRole("button", { name: "Start Over" }).count(), 0, "a later message is no Start Over");
+        await buildAsk.scrollIntoViewIfNeeded();
+        await buildAsk.getByRole("button", { name: "Restore Checkpoint" }).click();
+        const ckSheet = page.getByRole("alertdialog", { name: "Restore checkpoint?" });
+        await ckSheet.waitFor();
+        // the chat still asks (busy): the host would restore nothing, so the sheet says Stop first
+        assert.equal(await ckSheet.getByRole("button", { name: "Restore", exact: true }).isDisabled(), true, "no restore while the agent works");
+        assert.equal(await ckSheet.getByRole("button", { name: "Stop", exact: true }).count(), 1, "Stop is offered");
+        await ckSheet.getByRole("button", { name: "Cancel" }).click();
+        await ckSheet.waitFor({ state: "detached" });
+        await page.evaluate(() => { const state = (window as unknown as { hostState: { answered: boolean } }).hostState; state.answered = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
+        await view.locator(".host-chat-status-line", { hasText: "Waiting for your response" }).waitFor({ state: "detached" });
+        await buildAsk.getByRole("button", { name: "Restore Checkpoint" }).click();
+        await ckSheet.waitFor();
+        await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".checkpoint-sheet-restore")?.disabled);
+        assert.deepEqual(await ckSheet.locator(".checkpoint-file").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).innerText.replace(/\s+/g, " ").trim())),
+          ["build.ts /tmp/fictional-repo/src +28 −3"], "the files it puts back, with their lines");
+        assert.match(await ckSheet.innerText(), /Sending removes it and the \d+ after it/, "it says what a send removes");
+        if (shots) { await page.evaluate(() => Promise.all(document.getAnimations().map((each) => each.finished.catch(() => undefined)))); await page.screenshot({ path: join(shots, "r5-checkpoint-sheet-390.png") }); }
+        await ckSheet.getByRole("button", { name: "Restore", exact: true }).click();
+        await ckSheet.waitFor({ state: "detached" });
+        const ckPost = (await page.evaluate(() => (window as unknown as { hostCalls: { posts: { path: string; body: Record<string, unknown> }[] } }).hostCalls.posts)).filter((post) => post.path.endsWith("/checkpoint/restore"));
+        assert.deepEqual(ckPost.map((post) => post.body), [{ session: SESSION, turn: "h1" }], "one restore, of that turn");
+        const bar = view.locator(".checkpoint-bar");
+        await bar.waitFor();
+        await buildAsk.scrollIntoViewIfNeeded();
+        await page.locator(".host-chat .chat-view").evaluate((node) => node.dispatchEvent(new Event("scroll")));
+        const overlap = await page.evaluate(() => {
+          const pinned = document.querySelector(".host-chat .chat-sticky-request-text")?.getBoundingClientRect();
+          if (!pinned) return null;
+          return [...document.querySelectorAll(".host-chat .chat-turn-user .chat-bubble")].map((node) => node.getBoundingClientRect()).some((box) => box.top < pinned.bottom && box.bottom > pinned.top);
+        });
+        assert.ok(overlap !== true, "the pinned request never covers a user message in view");
+        assert.equal((await bar.locator(".checkpoint-bar-text").innerText()).trim(), "Checkpoint restored · 1 file");
+        assert.equal(await view.locator(".composer-text").inputValue(), "FICTIONAL look at the build", "the message is back in the box");
+        const faded = await view.locator(".chat-turn").evaluateAll((rows) => rows.filter((row) => row.parentElement?.closest(".chat-turn") === null).map((row) => [(row as HTMLElement).innerText.slice(0, 40), row.classList.contains("is-checkpoint-faded")]));
+        const fromBuild = faded.findIndex(([text]) => String(text).includes("FICTIONAL look at the build"));
+        assert.ok(fromBuild > 0 && faded.slice(0, fromBuild).every(([, on]) => on === false) && faded.slice(fromBuild).every(([, on]) => on === true), `faded from that message on: ${JSON.stringify(faded)}`);
+        if (shots) { await page.evaluate(() => Promise.all(document.getAnimations().map((each) => each.finished.catch(() => undefined)))); await page.screenshot({ path: join(shots, "r5-checkpoint-restored-390.png") }); }
+        await bar.getByRole("button", { name: "Redo" }).click();
+        await bar.waitFor({ state: "detached" });
+        assert.equal(await view.locator(".chat-turn.is-checkpoint-faded").count(), 0, "Redo: nothing faded");
+        await view.locator(".composer-text").fill("");
+        // the rest of the demo starts from the question still open
+        await page.evaluate(() => { const state = (window as unknown as { hostState: { answered: boolean } }).hostState; state.answered = false; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
+        await view.locator(".host-chat-status-line", { hasText: "Waiting for your response" }).waitFor();
+        console.log("PASS a checkpoint restores through its sheet, fades the turns after it, puts its message back, and Redo undoes it");
         await summary.scrollIntoViewIfNeeded();
         await fits("the answered question");
         if (shots) await page.screenshot({ path: join(shots, "task-5-question-390.png") });
