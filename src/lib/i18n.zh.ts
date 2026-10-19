@@ -1560,5 +1560,6 @@ export const ZH: Record<string, string> = {
   "Describe what you want to plan or research": "描述你想计划或研究的内容",
   "Trying again…": "正在重试…",
   "Couldn't try again. The chat may have moved on.": "无法重试。聊天可能已继续。",
+  "Couldn't try again: {reason}": "无法重试：{reason}",
   "Thinking": "思考",
 };

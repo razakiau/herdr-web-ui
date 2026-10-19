@@ -976,7 +976,7 @@ function SystemNotice({ notice, memoryKey }: { notice: NoticePart; memoryKey: st
 function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey: string; time: ReactNode }) {
   const t = useT();
   const source = useContext(ChatSourceContext);
-  const [retry, setRetry] = useState<"idle" | "sending" | "failed">("idle");
+  const [retry, setRetry] = useState<"idle" | "sending" | { failed: string | null }>("idle");
   // VS Code's error row (chatErrorContentPart): the error icon and its message in the open, Try
   // Again under it when the host can resume the turn. Only a host chat's errors: the turn ended on it
   if (notice.source === "error" && source?.resume !== undefined) {
@@ -987,10 +987,10 @@ function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey:
         <p className="chat-turn-error-text">{notice.text}</p>
         {notice.resumable === true && <div className="chat-turn-error-actions">
           <button type="button" className="btn btn-secondary chat-turn-error-retry" disabled={retry === "sending"}
-            onClick={() => { setRetry("sending"); resume().then(() => setRetry("idle"), () => setRetry("failed")); }}>
+            onClick={() => { setRetry("sending"); resume().then(() => setRetry("idle"), (error: unknown) => setRetry({ failed: error instanceof ApiError && error.code !== "not_resumable" ? error.detail : null })); }}>
             <RotateCcw aria-hidden="true" />{t(retry === "sending" ? "Trying again…" : "Try again")}
           </button>
-          {retry === "failed" && <span className="chat-turn-error-note">{t("Couldn't try again. The chat may have moved on.")}</span>}
+          {typeof retry === "object" && <span className="chat-turn-error-note">{retry.failed === null ? t("Couldn't try again. The chat may have moved on.") : t("Couldn't try again: {reason}", { reason: retry.failed })}</span>}
         </div>}
       </div>
     </div>;

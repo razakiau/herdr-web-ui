@@ -1558,5 +1558,6 @@ export const JA: Record<string, string> = {
   "Describe what you want to plan or research": "計画または調査したい内容を説明してください",
   "Trying again…": "再試行しています…",
   "Couldn't try again. The chat may have moved on.": "再試行できませんでした。チャットが先に進んだ可能性があります。",
+  "Couldn't try again: {reason}": "再試行できませんでした: {reason}",
   "Thinking": "思考中",
 };
