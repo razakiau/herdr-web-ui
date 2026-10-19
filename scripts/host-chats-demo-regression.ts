@@ -80,6 +80,7 @@ const patch = `(() => {
       { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
       { role: "assistant", ts: at(6), end_ts: at(5), parts: [
         { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
+        { kind: "notice", text: "Subagent \`FICTIONAL explore\` has completed.", source: "system" },
         { kind: "question", text: "FICTIONAL which config?", options: ["FICTIONAL debug", "FICTIONAL release"], chosen: ["FICTIONAL release"], custom: null, skipped: false },
         { kind: "text", text: "FICTIONAL release it is." },
       ] },
@@ -476,6 +477,13 @@ try {
         const chosen = summary.locator(".question-summary-option.is-selected");
         assert.equal((await chosen.innerText()).trim(), "FICTIONAL release", "the chosen option is checked");
         assert.equal(await chosen.locator("svg.lucide-check").count(), 1);
+        // the host's "has completed" sits between the subagent and the question, its Markdown drawn
+        const done = await subTurn.evaluate((node) => {
+          const row = node.querySelector(".chat-system-notification")!;
+          const order = [...node.querySelectorAll(".subagent-row, .chat-system-notification, .question-summary")].map((el) => el.className.split(" ")[0]);
+          return { text: (row as HTMLElement).innerText.trim(), code: row.querySelector("code")?.textContent ?? null, order };
+        });
+        assert.deepEqual(done, { text: "Subagent FICTIONAL explore has completed.", code: "FICTIONAL explore", order: ["subagent-row", "chat-system-notification", "question-summary"] }, "a system notification in place, as Markdown");
         await summary.scrollIntoViewIfNeeded();
         await fits("the answered question");
         if (shots) await page.screenshot({ path: join(shots, "task-5-question-390.png") });
@@ -506,6 +514,19 @@ try {
         await fits("the card");
         // the card opens to a full-height sheet: the question scrolls, the answer field stays in view,
         // and collapsing keeps the typed text
+        // the header's two controls sit together at its end, and the title is plain text, not the alarm red
+        const cardHead = await card.locator(".prompt-card-header").evaluate((node) => {
+          const expand = node.querySelector(".prompt-card-expand")!.getBoundingClientRect();
+          const fold = node.querySelector(".prompt-card-fold")!.getBoundingClientRect();
+          const title = getComputedStyle(node.querySelector("h2")!).color;
+          const probe = document.createElement("span");
+          probe.style.color = "var(--status-blocked)";
+          node.append(probe);
+          const red = getComputedStyle(probe).color;
+          probe.remove();
+          return { gap: Math.round(fold.left - expand.right), end: Math.round(node.getBoundingClientRect().right - fold.right), red: title === red };
+        });
+        assert.ok(cardHead.gap >= 0 && cardHead.gap <= 8 && cardHead.end <= 1 && !cardHead.red, `expand beside fold at the end, title not red: ${JSON.stringify(cardHead)}`);
         await card.getByRole("textbox").fill("FICTIONAL kept");
         await card.getByRole("button", { name: "Open full screen" }).click();
         const expanded = page.getByRole("dialog", { name: "Agent is asking" });

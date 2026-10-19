@@ -1971,6 +1971,64 @@ button.question-summary-answer { cursor: pointer; }
   color: var(--text);
 }
 
+/* a host's system notification ("`x` has completed"), VS Code's chatSystemNotificationPart: a quiet
+   check and the host's Markdown in the description colour, where it came; more folds under it */
+.chat-system-notification {
+  margin: var(--space-1) 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.chat-system-notification:not(.is-disclosure),
+.chat-system-notification-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.chat-system-notification-head {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.chat-system-notification .markdown { min-width: 0; color: inherit; font-size: inherit; }
+.chat-system-notification .markdown p { margin: 0; }
+
+.chat-system-notification-icon,
+.chat-system-notification-caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+}
+
+.chat-system-notification-icon { color: var(--status-done); }
+.chat-system-notification-caret { opacity: 0.6; transition: transform 120ms ease; }
+.chat-system-notification:not(.is-collapsed) .chat-system-notification-caret { transform: rotate(90deg); }
+
+@media (hover: hover) {
+  .chat-system-notification-head:hover { color: var(--text); }
+  .chat-system-notification-head:hover .chat-system-notification-caret { opacity: 1; }
+}
+
+.chat-system-notification-head:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); border-radius: var(--radius-sm); }
+
+.chat-system-notification-body {
+  margin: var(--space-1) 0 0 calc(14px + var(--space-1));
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-system-notification-caret { transition: none; }
+}
+
 /* a host chat's turn that ended on an error (ChatView.tsx NoticeRow), VS Code's error part: the
    icon and the host's words in the open, never folded, and Try Again under them when resumable */
 .chat-turn-error {

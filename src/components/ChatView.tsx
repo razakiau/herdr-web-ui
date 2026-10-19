@@ -718,10 +718,10 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
  */
 function VscodeWork({ paneId, work, all, duration, live, waiting, defaultOpen, skills }: { paneId: string; work: ConversationPart[]; all: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; skills: SkillMatcher | null }) {
   const segments = useMemo(() => {
-    const out: ({ kind: "words"; text: string; at: number } | { kind: "own"; part: Extract<ConversationPart, { kind: "subagent" | "question" }>; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
+    const out: ({ kind: "words"; text: string; at: number } | { kind: "own"; part: Extract<ConversationPart, { kind: "subagent" | "question" | "notice" }>; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
     work.forEach((part, at) => {
       if (part.kind === "text") { out.push({ kind: "words", text: part.text, at }); return; }
-      if (part.kind === "subagent" || part.kind === "question") { out.push({ kind: "own", part, at }); return; }
+      if (part.kind === "subagent" || part.kind === "question" || part.kind === "notice") { out.push({ kind: "own", part, at }); return; }
       const last = out.at(-1);
       if (last?.kind === "group") last.parts.push(part);
       else out.push({ kind: "group", parts: [part], at });
@@ -734,6 +734,7 @@ function VscodeWork({ paneId, work, all, duration, live, waiting, defaultOpen, s
     : segment.kind === "own"
       // keyed by the turn's part index, as these rows always were: an opened row stays open
       ? segment.part.kind === "subagent" ? <TurnSubagent key={`subagent:${all.indexOf(segment.part)}`} part={segment.part} live={live} />
+        : segment.part.kind === "notice" ? <SystemNotice key={`notice:${all.indexOf(segment.part)}`} notice={segment.part} memoryKey={`notice:${all.indexOf(segment.part)}`} />
         : <QuestionSummary key={`question:${all.indexOf(segment.part)}`} part={segment.part} memoryKey={`question:${all.indexOf(segment.part)}`} />
     : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
       duration={index === lastGroup ? duration : null} live={live && index === lastGroup} waiting={waiting && index === lastGroup}
@@ -935,6 +936,29 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 
 type NoticePart = Extract<ConversationPart, { kind: "notice" }>;
 const isNotice = (part: ConversationPart): part is NoticePart => part.kind === "notice";
+const isSystemNotice = (part: ConversationPart): part is NoticePart => part.kind === "notice" && part.source === "system";
+
+/**
+ * A host's system notification as VS Code draws it (chatSystemNotificationPart): a check and its
+ * Markdown, quiet, where it came in the turn; more than a line folds the rest under the first.
+ */
+function SystemNotice({ notice, memoryKey }: { notice: NoticePart; memoryKey: string }) {
+  const [open, setOpen] = useChatRowToggle(memoryKey, false);
+  const text = notice.text.trim();
+  const cut = text.indexOf("\n");
+  const head = cut < 0 ? text : text.slice(0, cut);
+  const rest = cut < 0 ? "" : text.slice(cut).trim();
+  if (rest.length === 0) return <div className="chat-system-notification">
+    <Check className="chat-system-notification-icon" aria-hidden="true" /><Markdown style="vscode">{head}</Markdown>
+  </div>;
+  return <div className={`chat-system-notification is-disclosure${open === true ? "" : " is-collapsed"}`}>
+    <button type="button" className="chat-system-notification-head" aria-expanded={open === true} onClick={() => setOpen(open !== true)}>
+      <Check className="chat-system-notification-icon" aria-hidden="true" /><Markdown style="vscode">{head}</Markdown>
+      <ChevronRight className="chat-system-notification-caret" aria-hidden="true" />
+    </button>
+    {open === true && <div className="chat-system-notification-body"><Markdown style="vscode">{rest}</Markdown></div>}
+  </div>;
+}
 
 /** A notice as the quiet divider, its label in the rule and its text on request; a host chat's error in the error colour. */
 function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey: string; time: ReactNode }) {
@@ -994,7 +1018,9 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   // the runtime spoke, not the user: a quiet divider like a compaction, the text on request. Only a
   // turn that is nothing but notices: a host chat's notice inside an answer is a row among its parts
   const notices = turn.parts.filter(isNotice);
-  if (notices.length > 0 && notices.length === turn.parts.length) return <NoticeRow notice={notices[0]!} memoryKey="notice" time={time} />;
+  if (notices.length > 0 && notices.length === turn.parts.length) return style === "vscode" && notices.every(isSystemNotice)
+    ? <article className="chat-turn chat-turn-agent">{notices.map((notice, index) => <SystemNotice key={index} notice={notice} memoryKey={`notice:${index}`} />)}</article>
+    : <NoticeRow notice={notices[0]!} memoryKey="notice" time={time} />;
   if (turn.role === "user") {
     const text = turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n");
     // a teammate's delivery is recorded as a user prompt, but nobody typed it here
@@ -1024,7 +1050,10 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   const { work, answer } = splitTurn(said);
   // a Copilot turn's subagents and answered questions are rows of their own where they came, between
   // its tool groups (VS Code's); the classic style keeps them after the work, in order
-  const vscodeWork = style === "vscode" ? said.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question") : work;
+  // so is a host's system notification ("`x` has completed") that came before the answer
+  const answerAt = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
+  const inWork = (part: ConversationPart): boolean => isSystemNotice(part) && (answerAt < 0 || turn.parts.indexOf(part) < answerAt);
+  const vscodeWork = style === "vscode" ? turn.parts.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question" || inWork(part)) : work;
   const ownRows = style !== "vscode" ? turn.parts.flatMap((part, index) =>
     part.kind === "subagent" ? [<TurnSubagent key={`subagent:${index}`} part={part} live={live} />]
       : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} />]
@@ -1033,7 +1062,9 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   const goal = turnGoal(turn.parts);
   const firstAnswer = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
   const noticeRows = (before: boolean) => turn.parts.flatMap((part, index) =>
-    isNotice(part) && (firstAnswer >= 0 && index < firstAnswer) === before ? [<NoticeRow key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} time={null} />] : []);
+    isNotice(part) && !(style === "vscode" && inWork(part)) && (firstAnswer >= 0 && index < firstAnswer) === before
+      ? [style === "vscode" && isSystemNotice(part) ? <SystemNotice key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} />
+        : <NoticeRow key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} time={null} />] : []);
   return <article className="chat-turn chat-turn-agent">
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}

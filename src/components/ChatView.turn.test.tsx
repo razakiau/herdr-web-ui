@@ -133,6 +133,20 @@ describe("a turn's style", () => {
     expect(text).toMatch(/Ran 1 command .*FICTIONAL which config\? .*Ran 1 command .*FICTIONAL look around .*Ran 1 command .*FICTIONAL done/);
   });
 
+  it("vscode draws a host's system notification where it came, as VS Code's check row with its Markdown", () => {
+    const html = styled(settled([
+      { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running", input: "make one", output: "", command: "make one", exit_code: 0 },
+      { kind: "notice", text: "Subagent `FICTIONAL task` has completed.", source: "system" },
+      { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running", input: "make two", output: "", command: "make two", exit_code: 0 },
+      { kind: "text", text: "FICTIONAL done" },
+    ] as ConversationTurn["parts"]), "vscode");
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toMatch(/Ran 1 command .*Subagent FICTIONAL task has completed\. .*Ran 1 command .*FICTIONAL done/);
+    expect(html).toContain("<code>FICTIONAL task</code>");
+    expect(html).toContain("chat-system-notification");
+    expect(html).not.toContain("chat-notice-label");
+  });
+
   it("vscode keeps an MCP call out of the fold, its own row after the block", () => {
     const html = styled(settled([
       { kind: "tool", name: "bash", tool_id: "bash", summary: "ls", input: "ls", output: "", command: "ls" },
