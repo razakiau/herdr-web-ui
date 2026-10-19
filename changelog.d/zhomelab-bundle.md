@@ -17,3 +17,4 @@
 - zhomelab bundle 1013: a host's system notification ("`x` has completed") sits where it came, VS Code's check row with its Markdown; the ask card's expand and fold sit together, its title no longer red.
 - zhomelab bundle 1014: the turn's message stays pinned at the chat's top (VS Code sticky request); Restore Checkpoint / Start Over on each message puts back the agent's file edits, with Redo.
 - zhomelab bundle 1015: Start Over, Restore and Try again reach the PC (the proxy had no route for them); Mark as done archives the session as VS Code does and stays done; opening Archived scrolls to it.
+- zhomelab bundle 1016: New chat opens an empty chat in the chat's own composer (skills, permissions, dictation, attach), dropped again if you leave it empty; dictation in a question card shows over its field; Chrome on Android no longer repeats dictated words.
