@@ -1023,6 +1023,7 @@ export const ZH: Record<string, string> = {
   "Couldn't load the conversation": "无法加载对话",
   "Couldn't load the terminal output": "无法加载终端输出",
   "Jump to latest": "跳转到最新",
+  "Go to your message: {text}": "跳转到你的消息：{text}",
   "Open image": "打开图片",
   "Attached image": "附加的图片",
   "Conversation compacted": "对话已压缩",

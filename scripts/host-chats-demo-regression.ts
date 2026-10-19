@@ -484,6 +484,30 @@ try {
           return { text: (row as HTMLElement).innerText.trim(), code: row.querySelector("code")?.textContent ?? null, order };
         });
         assert.deepEqual(done, { text: "Subagent FICTIONAL explore has completed.", code: "FICTIONAL explore", order: ["subagent-row", "chat-system-notification", "question-summary"] }, "a system notification in place, as Markdown");
+        // VS Code's sticky request: the turn's own message pinned over the view once it has scrolled
+        // out, two lines; a tap takes the reader back to it
+        await page.evaluate(() => {
+          const scroller = document.querySelector<HTMLElement>(".host-chat .chat-view")!;
+          const asked = [...document.querySelectorAll(".host-chat .chat-turn-user")].find((node) => node.textContent?.includes("FICTIONAL find the config"))!;
+          scroller.scrollTop += asked.getBoundingClientRect().top - scroller.getBoundingClientRect().top + asked.getBoundingClientRect().height + 8;
+          scroller.dispatchEvent(new Event("scroll"));
+        });
+        const pinned = view.locator(".chat-sticky-request");
+        await pinned.waitFor({ timeout: 3000 }).catch(() => assert.fail("no sticky request once the message scrolled out"));
+        assert.equal((await pinned.innerText()).trim(), "FICTIONAL find the config", "the sticky row is the turn's own message");
+        const clamp = await pinned.locator(".chat-sticky-request-text").evaluate((node) => getComputedStyle(node).webkitLineClamp);
+        assert.equal(clamp, "2", "cut to two lines");
+        if (shots) await page.screenshot({ path: join(shots, "r5-sticky-390.png") });
+        await pinned.click();
+        await page.waitForFunction(() => {
+          const asked = [...document.querySelectorAll(".host-chat .chat-turn-user")].find((node) => node.textContent?.includes("FICTIONAL find the config"));
+          const scroller = document.querySelector(".host-chat .chat-view");
+          if (!asked || !scroller) return false;
+          return Math.abs(asked.getBoundingClientRect().top - scroller.getBoundingClientRect().top) < 24;
+        }, undefined, { timeout: 3000 }).catch(() => assert.fail("tapping the sticky request did not take the reader to the message"));
+        await page.locator(".host-chat .chat-view").evaluate((node) => node.dispatchEvent(new Event("scroll")));
+        await pinned.waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("the sticky request stays while its message is in view"));
+        console.log("PASS the turn's message sticks at the top, two lines, and a tap goes back to it");
         await summary.scrollIntoViewIfNeeded();
         await fits("the answered question");
         if (shots) await page.screenshot({ path: join(shots, "task-5-question-390.png") });

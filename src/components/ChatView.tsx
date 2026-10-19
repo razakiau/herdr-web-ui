@@ -51,6 +51,7 @@ import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath } from "../../shared/machines.ts";
+import { stickyRequestIndex } from "../lib/chatStickyRequest.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
@@ -1178,6 +1179,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   const [newMessages, setNewMessages] = useState(false);
   /** scrolled up from the end: the way back is offered even when nothing new came */
   const [away, setAway] = useState(false);
+  // the user message VS Code keeps at the chat's top while its turn is read (vscode style only)
+  const [sticky, setSticky] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ images: GalleryImage[]; index: number } | null>(null);
   const openViewer = useCallback((images: GalleryImage[], index: number) => setViewer({ images, index }), []);
   const closeViewer = useCallback(() => setViewer(null), []);
@@ -1657,6 +1660,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     setAway(!stickToBottom.current);
     if (stickToBottom.current) setNewMessages(false);
     if (loaded && restoring.current === null && state.source === "conversation") rememberPlace(node);
+    if (style === "vscode" && state.source === "conversation") pinRequest(node);
     if (node.scrollTop < LOAD_OLDER_PX && olderState === "idle") void loadOlder();
   };
   // the turn at the top of the view and its offset there, or the end while the reader follows it
@@ -1674,6 +1678,23 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
       offset: first === null ? 0 : first.top - top,
       atEnd: stickToBottom.current || turn === undefined,
     });
+  };
+  const pinRequest = (node: HTMLDivElement): void => {
+    const top = node.getBoundingClientRect().top;
+    let first: { key: string; top: number } | null = null;
+    for (const row of node.querySelectorAll<HTMLElement>("[data-chat-row]")) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom > top + 1 && (first === null || rect.top < first.top)) first = { key: row.dataset.chatRow ?? "", top: rect.top };
+    }
+    const at = first === null ? -1 : timelineRows.findIndex((row) => row.key === first.key);
+    const index = stickyRequestIndex(timelineRows.map((row) => row.turn.role), at, first === null ? 0 : first.top - top);
+    setSticky(index === null ? null : timelineRows[index]!.key);
+  };
+  const toStickyRequest = (): void => {
+    const index = stickyRow === undefined ? -1 : timelineRows.indexOf(stickyRow);
+    if (index < 0) return;
+    pagingAway.current = true; stickToBottom.current = false; setAway(true);
+    void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
   };
   const scrollToBottom = (): void => {
     const node = scroller.current;
@@ -1756,6 +1777,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     if (!slot) throw new Error("A loaded chat turn has no row identity");
     return { key: slot.key, turn, beforeUser: turn.role === "assistant" && shownTurns[index + 1]?.role === "user" };
   }), [shownTurns, rowSlots]);
+  const stickyRow = sticky === null ? undefined : timelineRows.find((row) => row.key === sticky);
+  const stickyText = stickyRow === undefined ? "" : stickyRow.turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n").trim();
   // Back in a pane the reader left away from the end: the first answer read puts the turn they
   // were on back where it sat, before paint. The list's index scroll starts from estimated heights,
   // so the row is brought to its offset once measured, for a few frames at most; any scroll of the
@@ -1896,6 +1919,10 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
         {footer}
       </div>
     </div>}
+    {/* VS Code's sticky request: the turn's own message, two lines, a tap takes the reader back to it */}
+    {stickyText.length > 0 && <button type="button" className="chat-sticky-request" aria-label={t("Go to your message: {text}", { text: stickyText.slice(0, 120) })} onClick={toStickyRequest}>
+      <span className="chat-sticky-request-text">{stickyText}</span>
+    </button>}
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} />}
     {jump}
     </div>
