@@ -331,6 +331,21 @@ describe("what a host chat waits on, and its context", () => {
     // a broken one is none, never a guess
     expect(readFrom("s", "t", chat({ turns: [turn({ contextAttribution: { totalTokens: 3, limit: 0 } })] })).context).toBeNull();
   });
+
+  it("with the model's window known, a turn's context is its input and output over that window, as VS Code's meter counts it", () => {
+    // a live 'Migrating' turn: attribution said 508993 of 400000 (127%) while VS Code showed ~36%
+    const attribution = { totalTokens: 508993, limit: 400000, promptTokenLimit: 400000, categories: { systemPrompt: 25027, systemTools: 20000, mcpTools: 23730, messages: 440236 } };
+    const turn = { id: "turn-1", startedAt: AT, state: "complete", responseParts: [], message: { ...user("FICTIONAL hi"), model: { id: "fictional-opus" } }, usage: { inputTokens: 190674, outputTokens: 1616, _meta: { contextAttribution: attribution } } };
+    const windows = { ...ctx(undefined), modelWindow: (id: string) => (id === "fictional-opus" ? 528000 : null) };
+    const read = readFrom("s", "t", chat({ turns: [turn] }), windows).context!;
+    expect({ currentTokens: read.currentTokens, tokenLimit: read.tokenLimit }).toEqual({ currentTokens: 192290, tokenLimit: 528000 });
+    // the breakdown keeps the host's shares of what was used
+    expect(read.conversationTokens! + read.systemTokens! + read.toolDefinitionsTokens!).toBeLessThanOrEqual(192290);
+    expect(Math.round((read.conversationTokens! / 192290) * 100)).toBe(Math.round((440236 / 508993) * 100));
+    // a model with no window of its own (auto, unknown): the host's attribution, as before
+    const unknown = { ...turn, message: { ...turn.message, model: { id: "auto" } } };
+    expect(readFrom("s", "t", chat({ turns: [unknown] }), windows).context).toMatchObject({ currentTokens: 508993, tokenLimit: 400000 });
+  });
 });
 
 // ─── The whole turn, built through the package's reducers ────────────────────

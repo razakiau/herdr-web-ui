@@ -505,8 +505,9 @@ function tokens(value: number): string {
  */
 export function contextMeter(usage: HostContextUsage | null): { percent: number; label: string } | null {
   if (usage === null || !Number.isFinite(usage.currentTokens) || !Number.isFinite(usage.tokenLimit) || usage.tokenLimit <= 0) return null;
-  const share = Math.round((usage.currentTokens / usage.tokenLimit) * 100);
-  return { percent: Math.min(100, share), label: `${share}% · ${tokens(usage.currentTokens)} / ${tokens(usage.tokenLimit)}` };
+  // VS Code's meter clamps the figure to 100 (chatContextUsageWidget); the counts say how far over
+  const share = Math.min(100, Math.round((usage.currentTokens / usage.tokenLimit) * 100));
+  return { percent: share, label: `${share}% · ${tokens(usage.currentTokens)} / ${tokens(usage.tokenLimit)}` };
 }
 
 /**

@@ -130,6 +130,8 @@ export interface ReadContext {
   session?(): SessionState | undefined;
   /** the skills the host completes for "/" on the session (a plugin's skills are only there) */
   skills?(): HostCommand[];
+  /** a model's whole context window as the host lists it (maxContextWindow), null when it has none */
+  modelWindow?(id: string): number | null;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -677,9 +679,33 @@ function attributedContext(turn: Turn | ActiveTurn | undefined): HostContextUsag
   return usage;
 }
 
-export function contextUsageOf(session: SessionState | undefined, newest?: Turn | ActiveTurn): HostContextUsage | null {
+/**
+ * What VS Code's context meter shows for a turn the host attributed (chatContextUsageWidget
+ * updateFromResponse): readAgentContextUsage gives nothing for such a turn, so the meter counts the
+ * turn's own input and output tokens over the model's window (maxContextWindow). The attribution's
+ * totalTokens is the CLI's running estimate and its limit the CLI's own prompt budget: on a long
+ * chat it read 127% (509K / 400K) where VS Code showed 36% (192K / 528K). The breakdown keeps the
+ * attribution's shares, scaled to the tokens used. Null when the model or the counts are unknown.
+ */
+function meteredContext(turn: Turn | ActiveTurn | undefined, attributed: HostContextUsage, window: ((id: string) => number | null) | undefined): HostContextUsage | null {
+  const model = turn?.message.model?.id;
+  const limit = model && window ? window(model) : null;
+  const input = count(turn?.usage?.inputTokens);
+  const output = count(turn?.usage?.outputTokens) ?? 0;
+  if (limit === null || limit <= 0 || input === undefined) return null;
+  const used = input + output;
+  const usage: HostContextUsage = { currentTokens: used, tokenLimit: limit };
+  const scale = (part: number | undefined): number | undefined => part === undefined ? undefined : Math.floor((part / attributed.currentTokens) * used);
+  for (const key of ["conversationTokens", "systemTokens", "toolDefinitionsTokens"] as const) {
+    const each = attributed.currentTokens > 0 ? scale(attributed[key]) : undefined;
+    if (each !== undefined) usage[key] = each;
+  }
+  return usage;
+}
+
+export function contextUsageOf(session: SessionState | undefined, newest?: Turn | ActiveTurn, window?: (id: string) => number | null): HostContextUsage | null {
   const attributed = attributedContext(newest);
-  if (attributed !== null) return attributed;
+  if (attributed !== null) return meteredContext(newest, attributed, window) ?? attributed;
   const info = (session as { _meta?: Record<string, unknown> } | undefined)?._meta?.["copilot.usageInfo"];
   if (typeof info !== "object" || info === null) return null;
   const value = info as Record<string, unknown>;
@@ -714,7 +740,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     background: backgroundOf(chat),
     confirmations: pendingToolCalls(chat).length,
     // the running turn may have no usage yet: the newest turn that reported one
-    context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null)),
+    context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null), context?.modelWindow),
     pending: [
       ...(chat.steeringMessage ? [{ id: chat.steeringMessage.id, kind: "steering" as const, text: chat.steeringMessage.message.text }] : []),
       ...(chat.queuedMessages ?? []).map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),

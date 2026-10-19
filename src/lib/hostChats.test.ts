@@ -674,8 +674,8 @@ describe("the context meter", () => {
     expect(contextMeter({ currentTokens: 84000, tokenLimit: 200000 })).toEqual({ percent: 42, label: "42% · 84K / 200K" });
     expect(contextMeter({ currentTokens: 1500, tokenLimit: 1000000 })).toEqual({ percent: 0, label: "0% · 1.5K / 1M" });
     expect(contextMeter({ currentTokens: 850, tokenLimit: 128000 })).toEqual({ percent: 1, label: "1% · 850 / 128K" });
-    // over the window (a long tool output before compaction): said as it is, the bar full
-    expect(contextMeter({ currentTokens: 210000, tokenLimit: 200000 })).toEqual({ percent: 100, label: "105% · 210K / 200K" });
+    // over the window (a long tool output before compaction): 100% as VS Code's meter clamps it, the counts as they are
+    expect(contextMeter({ currentTokens: 210000, tokenLimit: 200000 })).toEqual({ percent: 100, label: "100% · 210K / 200K" });
   });
   it("context_meter_null_on_bad_usage", () => {
     expect(contextMeter(null)).toBeNull();
