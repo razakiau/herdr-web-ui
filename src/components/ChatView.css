@@ -2097,3 +2097,27 @@ button.question-summary-answer { cursor: pointer; }
   color: var(--text-dim);
   font-size: var(--fs-sm);
 }
+
+/* VS Code's checkpoint action on a request: Restore Checkpoint, Start Over on the first; a glyph
+   and a short word, quiet as the meta row it sits in */
+.chat-checkpoint-btn {
+  letter-spacing: normal;
+  font-weight: var(--fw-medium, 500);
+  font-size: var(--fs-xs);
+}
+
+.chat-checkpoint-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* restored: the message and what came after it are set aside until the next send (VS Code dims
+   them the same way); still readable, never hidden */
+.chat-turn.is-checkpoint-faded {
+  opacity: 0.45;
+  transition: opacity 160ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-turn.is-checkpoint-faded { transition: none; }
+}

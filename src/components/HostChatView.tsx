@@ -22,12 +22,13 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, answerHostForm, choose, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
+  agentName, answerHost, answerHostForm, choose, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
 import { Composer, type SentAttachment } from "./Composer.tsx";
 import { HostChatStatus } from "./HostChatStatus.tsx";
+import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
@@ -104,6 +105,9 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
+  // the checkpoint a tap asked to restore (its sheet is up), and the message a restore put back in the box
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [putBack, setPutBack] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const titleRef = useRef(onTitle);
@@ -193,6 +197,8 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
       const result = await sendHost(machineId, { session, text: words, ...(mode === "send" ? {} : { mode }), ...(attached.length > 0 ? { attachments: attached } : {}) }, { model: chat?.model ?? null, agent: chat?.agent ?? null }, true);
       if (mounted.current) {
         setJoined(result.joined === true);
+        // a restore's message went (or another did): the box is the user's again
+        setPutBack(null);
         // the chat reads it now (and follows it to the end); the pills let a pick go only once the
         // read names it as the chat's last
         setSent((key) => key + 1);
@@ -210,6 +216,20 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
   useEffect(() => { if (!busy) setJoined(false); }, [busy]);
   const sendMenu = useMemo(() => ({ default: "steer" as const, onPick: (mode: HostSendPick, text: string, attached?: SentAttachment[]) => sendAs(mode, text, attached) }), [sendAs]);
 
+  // VS Code's checkpoints: a tap opens the sheet; a restore puts the files back, fades the turns
+  // from that message on and puts its text in the box; the next send cuts the chat there
+  const checkpointList = chat?.checkpoints ?? null;
+  const restoredTurn = chat?.restored?.turn ?? null;
+  const checkpoints = useMemo(() => checkpointList === null ? null
+    : { list: checkpointList, restored: restoredTurn, onPick: (turn: string) => setRestoring(turn) }, [checkpointList, restoredTurn]);
+  const restoringAt = restoring === null || checkpointList === null ? -1 : checkpointList.findIndex((each) => each.turn === restoring);
+  const restoreText = (turn: string): string | null => {
+    const at = checkpointList?.findIndex((each) => each.turn === turn) ?? -1;
+    if (chat === null || at < 0) return null;
+    const users = chat.turns.filter((each) => each.role === "user");
+    const user = users[users.length - (checkpointList!.length - at)];
+    return user?.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n") ?? null;
+  };
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
   const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
   const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
@@ -248,7 +268,7 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
     <div className="terminal-surface">
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
       <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}
-        connected ended={false} agent="copilot" agentStatus={status} />
+        connected ended={false} agent="copilot" agentStatus={status} checkpoints={checkpoints} />
     </div>
     <div className="prompt-dock" aria-live="polite">
       {chat?.prompt && <HostPromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={reread} onAnswered={() => {
@@ -256,15 +276,28 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
         reread();
       }} />}
     </div>
+    {chat?.restored && <CheckpointBar files={chat.restored.files} onRedo={async () => {
+      await redoHostCheckpoint(machineId, session);
+      if (mounted.current) { setPutBack(null); reread(); }
+    }} />}
     <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
-      draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} keywords={catalog?.agents.map((each) => each.name) ?? []}
+      draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} sendMenu={sendMenu}
       pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}
       pendingNote={joined ? t("Added to your steer") : null}
       onSend={(text, _clear, _anyway, attached) => sendAs("send", text, attached)}
       attachAsChips onUploadImage={(file) => uploadHostFile(machineId, session, file)}
       onAbort={() => { void stopHost(machineId, session).finally(reread); }} />
+    {restoring !== null && restoringAt >= 0 && <CheckpointSheet first={restoringAt === 0 && chat?.cursor === null} files={filesSince(checkpointList!, restoring)}
+      later={checkpointList!.length - restoringAt} busy={busy} onStop={() => { void stopHost(machineId, session).finally(reread); }} onClose={() => setRestoring(null)} onRestore={async () => {
+        const text = restoreText(restoring);
+        await restoreHostCheckpoint(machineId, session, restoring);
+        if (!mounted.current) return;
+        setRestoring(null);
+        if (text !== null) setPutBack(text);
+        reread();
+      }} />}
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
       onModel={pickModel} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
   </div>;
