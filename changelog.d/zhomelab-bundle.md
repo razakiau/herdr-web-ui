@@ -8,3 +8,4 @@
 - zhomelab bundle 1004: carries VS Code chats on the phone (the bridge reads and drives VS Code's agent host).
 - zhomelab bundle 1005: carries Copilot host chats rebuilt on upstream main (remote v31's bridge plus the agent-host reader).
 - zhomelab bundle 1006: carries the VS Code 1.142 subagent fix and chat delete for old sessions.
+- zhomelab bundle 1007: model picker grouped by Copilot / router / vendor (the bridge sends each model's group, multiplier and deprecation notice).
