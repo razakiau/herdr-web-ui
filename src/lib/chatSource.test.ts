@@ -25,7 +25,7 @@ const said = (role: ConversationTurn["role"], text: string): ConversationTurn =>
 const hostRead = (ids: string[], cursor: string | null, extra: Partial<HostChatRead> = {}): HostChatRead => ({
   session: "s", title: "FICTIONAL chat", status: "idle", cursor, prompt: null,
   turns: ids.flatMap((id) => [said("user", `FICTIONAL ask ${id}`), said("assistant", `FICTIONAL answer ${id}`)]),
-  model: { id: "fictional/model-a", effort: "high" }, agent: null, busy: false, pending: [], commands: [], background: { subagents: 0, commands: 0 }, confirmations: 0, context: null, message_ids: ids, signature: ids.join(","), ...extra,
+  model: { id: "fictional/model-a", effort: "high" }, agent: null, busy: false, pending: [], commands: [], background: { subagents: 0, commands: 0 }, confirmations: 0, context: null, message_ids: ids, checkpoints: [], restored: null, signature: ids.join(","), ...extra,
 });
 /** fetch answers each host-chats/chat GET with the next read, and records the URLs asked. */
 const answering = (...reads: HostChatRead[]): string[] => {

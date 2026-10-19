@@ -34,6 +34,7 @@ import {
   type ChatInputAnswerValue,
   type ChatInputQuestion,
   type ChatState,
+  type ToolResultFileEditContent,
   type CommandMap,
   type Message,
   type MessageAttachment,
@@ -49,7 +50,7 @@ import { PasteImageError, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { agentsFrom, currentQuestion, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -157,6 +158,25 @@ function sentOf(host: AgentHost): Sent {
   return sent;
 }
 
+/**
+ * A checkpoint restored and not yet sent past (VS Code's restoreSnapshot before the next request):
+ * by session, the turn restored to and the edits undone, newest first, so Redo can put them back.
+ * Kept by this process alone: a bridge restart forgets it, and the chat is whole until a send.
+ */
+interface Restored { turn: string; previous: string | null; undone: ToolResultFileEditContent[] }
+const restoredSets = new WeakMap<AgentHost, Map<string, Restored>>();
+function restoredOf(host: AgentHost): Map<string, Restored> {
+  let restored = restoredSets.get(host);
+  if (!restored) { restored = new Map(); restoredSets.set(host, restored); }
+  return restored;
+}
+/** what a read says of it: the turn, and how many files its undo changed */
+const restoredRead = (host: AgentHost, session: string): { turn: string; files: number } | null => {
+  const restored = restoredOf(host).get(session);
+  return restored ? { turn: restored.turn, files: new Set(restored.undone.map(fileOf)).size } : null;
+};
+const fileOf = (edit: ToolResultFileEditContent): string => edit.after?.uri ?? edit.before?.uri ?? "";
+
 /** A host's leases: its sessions', its worker chats', and which session each worker chat was found in. */
 interface HostLeases { sessions: Leases; chats: Leases; workers: Map<string, string> }
 const leaseSets = new WeakMap<AgentHost, HostLeases>();
@@ -210,6 +230,8 @@ const POSTS: Record<string, Handler> = {
   "chat/upload": uploadFile,
   "chat/stop": stopTurn,
   "chat/resume": resumeTurn,
+  "chat/checkpoint/restore": restoreCheckpoint,
+  "chat/checkpoint/redo": redoCheckpoint,
   "chat/pending/remove": removePending,
   "chat/answer": answerQuestion,
   "chat/confirm": confirmTool,
@@ -439,7 +461,7 @@ async function readChat(call: Call): Promise<Response> {
   }
   await followSubagents(call, session, chat);
   const skills = await sessionSkills(call.host, session);
-  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills)));
+  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills), restoredRead(call.host, session)));
 }
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
@@ -581,6 +603,13 @@ function send(host: AgentHost, session: string, channel: string, chat: ChatState
   // started its turn (under a turn id of the host's own)
   if (sentOf(host).get(id)) return { queued: false };
   const queued = chat.activeTurn !== undefined;
+  // after a restore the chat is cut back to before the restored turn first (VS Code's chat/truncated
+  // ahead of chat/turnStarted); Start Over clears it all
+  const restored = queued ? undefined : restoredOf(host).get(session);
+  if (restored) {
+    host.dispatch(channel, (restored.previous === null ? { type: ActionType.ChatTruncated } : { type: ActionType.ChatTruncated, turnId: restored.previous }) as StateAction);
+    restoredOf(host).delete(session);
+  }
   // a chat holds one steering message: a second steer joins it, under its id (VS Code's rule)
   const steering = queued && mode === "steer" ? chat.steeringMessage : undefined;
   // the joined steer keeps both messages' attachments, the first's first: nothing given is dropped
@@ -709,6 +738,57 @@ async function resumeTurn(call: Call): Promise<Response> {
   if (!last || stop?.kind !== ResponsePartKind.Error || stop.resumable !== true) return conflictResponse("not_resumable", "the chat's last turn did not stop at an error it can resume from");
   call.host.dispatch(channel, { type: ActionType.ChatTurnResume, turnId: last.id } as StateAction);
   return jsonResponse({ ok: true });
+}
+
+// ─── Checkpoints (VS Code's Restore Checkpoint, Start Over and Redo) ─────────
+
+/** The file a side of an edit names, its content read through the host (session-db: refs). */
+async function contentAt(host: AgentHost, uri: string): Promise<{ data: string; encoding: string }> {
+  const read = await host.request("resourceRead", { channel: "ahp-root://", uri } as never) as { data: string; encoding: string };
+  return { data: read.data, encoding: read.encoding };
+}
+
+/**
+ * Puts one edit's file as it was before it (undo) or after it (redo), as VS Code's
+ * AgentHostSnapshotController does: a created file is deleted on undo, a deleted one written back,
+ * a renamed one moved; an edit writes the side's content.
+ */
+async function applySide(host: AgentHost, edit: ToolResultFileEditContent, side: "before" | "after"): Promise<void> {
+  const other = side === "before" ? edit.after : edit.before;
+  const target = edit[side];
+  // the other side's file is not this side's (a create, a delete, a rename): it goes
+  if (other !== undefined && other.uri !== target?.uri) await host.request("resourceDelete", { channel: "ahp-root://", uri: other.uri } as never);
+  if (target === undefined) return;
+  const content = await contentAt(host, target.content.uri);
+  await host.request("resourceWrite", { channel: "ahp-root://", uri: target.uri, data: content.data, encoding: content.encoding } as never);
+}
+
+async function restoreCheckpoint(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const turn = call.body["turn"];
+  if (!text(turn) || turn === "") return badRequest("missing_turn", "turn is required");
+  const { chat } = await watched(call, session);
+  if (chat.activeTurn) return conflictResponse("turn_running", "stop the running turn before restoring a checkpoint");
+  const at = chat.turns.findIndex((each) => each.id === turn);
+  if (at < 0) return jsonResponse({ error: { code: "unknown_turn", message: "the chat has no such turn loaded" } }, 404);
+  // a checkpoint restored before is redone first: the files start from the chat's last turn
+  const earlier = restoredOf(call.host).get(session);
+  if (earlier) for (const edit of [...earlier.undone].reverse()) await applySide(call.host, edit, "after");
+  restoredOf(call.host).delete(session);
+  const undone = chat.turns.slice(at).flatMap((each) => turnEdits(each)).reverse();
+  for (const edit of undone) await applySide(call.host, edit, "before");
+  restoredOf(call.host).set(session, { turn, previous: chat.turns[at - 1]?.id ?? null, undone });
+  return jsonResponse({ files: new Set(undone.map(fileOf)).size });
+}
+
+async function redoCheckpoint(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  await watched(call, session);
+  const restored = restoredOf(call.host).get(session);
+  if (!restored) return conflictResponse("nothing_to_redo", "no checkpoint is restored on this chat");
+  for (const edit of [...restored.undone].reverse()) await applySide(call.host, edit, "after");
+  restoredOf(call.host).delete(session);
+  return jsonResponse({ files: new Set(restored.undone.map(fileOf)).size });
 }
 
 async function removePending(call: Call): Promise<Response> {
