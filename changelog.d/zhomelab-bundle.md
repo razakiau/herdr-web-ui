@@ -13,3 +13,4 @@
 - zhomelab bundle 1009: plugin skills in "/" from the host's completions (Coder workspaces had none), context meter by VS Code's math (turn tokens over the model window, clamped at 100%).
 - zhomelab bundle 1010: ask card options as numbered rows with a Recommended pill and "Title - description" split, the live "Working…" shimmer, a just-sent VS Code-style turn shows its Working head.
 - zhomelab bundle 1011: Skip on an optional Copilot question passes over it alone (VS Code carousel), skipped steps marked.
+- zhomelab bundle 1012: a Copilot form pages on the phone and Submits whole (back, change, optional left empty), replacing 1011's Skip; questions and subagents stay where they came in a turn.
