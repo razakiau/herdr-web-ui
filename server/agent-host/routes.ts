@@ -365,9 +365,11 @@ async function followSubagents(call: Call, session: string, chat: ChatState): Pr
 
 /** What a read of `session`'s chat knows beside it: its subagents' own chats, and the models' names. */
 function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): ReadContext {
-  const names = new Map(modelsFrom(host.mirror().root).map((model) => [model.id, model.name]));
+  const models = modelsFrom(host.mirror().root);
+  const names = new Map(models.map((model) => [model.id, model.name]));
+  const windows = new Map(models.map((model) => [model.id, model.context]));
   return {
-    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id,
+    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelWindow: (id) => windows.get(id) ?? null,
     ...(session ? { session: () => host.mirror().getSession(session) } : {}),
     ...(skills ? { skills: () => skills } : {}),
   };
