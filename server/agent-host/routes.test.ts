@@ -670,6 +670,45 @@ describe("host chat read and write routes", () => {
     expect((await call(r, "/api/host-chats/chat/new", { id: crypto.randomUUID(), cwd: "fictional-relative", text: "x" })).status).toBe(400);
   });
 
+  it("a new chat without text is made empty (VS Code's New Chat), its composer works, and nothing is sent", async () => {
+    const r = await rig();
+    const made = await call(r, "/api/host-chats/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo" });
+    expect(made.status).toBe(200);
+    const session = made.json.session as string;
+    expect(r.fake.requests.filter((entry) => entry.method === "createSession").length).toBe(1);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    // the empty chat reads, takes its config and models, as any chat
+    const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(session)}`);
+    expect(read.status).toBe(200);
+    expect(read.json.turns).toEqual([]);
+    expect((await call(r, `/api/host-chats/models?session=${encodeURIComponent(session)}`)).status).toBe(200);
+    // its first message starts its first turn
+    expect((await call(r, "/api/host-chats/chat/send", { session, id: crypto.randomUUID(), text: "FICTIONAL first words" })).status).toBe(200);
+    await until("the first turn", () => actions(r.fake, "chat/turnStarted").length === 1);
+  });
+
+  it("an empty chat the bridge made goes when no phone keeps it open; one that got a message stays", async () => {
+    const r = await rig();
+    const left = (await call(r, "/api/host-chats/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo" })).json.session as string;
+    const used = (await call(r, "/api/host-chats/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo" })).json.session as string;
+    await call(r, "/api/host-chats/chat/send", { session: used, id: crypto.randomUUID(), text: "FICTIONAL kept" });
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length === 1);
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession")).toEqual([]);
+    r.clock.advance(LEASE_MS + 1);
+    await until("the empty one disposed", () => r.fake.requests.some((entry) => entry.method === "disposeSession"));
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession").map((entry) => (entry.params as Record<string, unknown>)["channel"])).toEqual([left]);
+  });
+
+  it("an empty chat's own leave goes at once (chat/discard); a chat with turns, or one not made empty here, is refused", async () => {
+    const r = await rig();
+    const empty = (await call(r, "/api/host-chats/chat/new", { id: crypto.randomUUID(), cwd: "/tmp/fictional-repo" })).json.session as string;
+    expect(await call(r, "/api/host-chats/chat/discard", { session: empty })).toEqual({ status: 200, json: { discarded: true } });
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession").map((entry) => (entry.params as Record<string, unknown>)["channel"])).toEqual([empty]);
+    // a listed chat (not made empty by this bridge) is never discarded
+    expect(await call(r, "/api/host-chats/chat/discard", { session: sessionUri(1) })).toEqual({ status: 200, json: { discarded: false } });
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession").length).toBe(1);
+  });
+
   it("a new chat's id names its session; the same id again makes nothing and sends nothing", async () => {
     const r = await rig();
     const id = crypto.randomUUID();

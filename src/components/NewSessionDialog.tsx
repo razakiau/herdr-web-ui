@@ -85,7 +85,6 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   // folders kept before worktrees and temporary folders were left out are left out here too
   const hostChoice = agentKind === HOST_AGENT_KIND;
   const hostFields = useRef<NewHostChatHandle>(null);
-  const [, setHostEdits] = useState(0);
   // a Copilot host chat also offers the folders its PC's chats work in, after the recent ones
   // (where a chat already works is a folder of its own, wherever it is: the passing-folder rule is the recents')
   const shownFolders = [...new Set([...(hostChoice ? folderChoices([...hostChats]) : []), ...recentFolders.filter((path) => !passingFolder(path, worktrees))])].slice(0, RECENT_FOLDERS_SHOWN);
@@ -258,7 +257,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <RecentFolderChips folders={shownFolders} disabled={fieldsDisabled} labelledBy="new-session-recents" basename={directoryBasename}
               onPick={(path) => { setCwd(path); setBrowsing(false); }} />
           </div>}
-          {hostChoice ? <NewHostChatFields ref={hostFields} machineId={machineId} chats={hostChats} cwd={(tab?.cwd ?? cwd).trim()} disabled={fieldsDisabled} onChange={() => setHostEdits((count) => count + 1)} /> : <label className="field">
+          {hostChoice ? <NewHostChatFields ref={hostFields} machineId={machineId} /> : <label className="field">
             <span className="field-label">{t("Name")}</span>
             <input
               className="input"

@@ -15,7 +15,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { basename, extname, isAbsolute, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ActionType,
   ChatInputAnswerState,
@@ -177,6 +177,28 @@ const restoredRead = (host: AgentHost, session: string): { turn: string; files: 
 };
 const fileOf = (edit: ToolResultFileEditContent): string => edit.after?.uri ?? edit.before?.uri ?? "";
 
+/**
+ * The chats this bridge made empty (VS Code's New Chat: the chat opens before its first message).
+ * The host lists none of them until a message goes; one left without a message is disposed when
+ * the phone leaves it (chat/discard) or when no phone keeps its watch, so nothing piles up.
+ */
+const emptySets = new WeakMap<AgentHost, Set<string>>();
+function emptiesOf(host: AgentHost): Set<string> {
+  let empties = emptySets.get(host);
+  if (!empties) { empties = new Set(); emptySets.set(host, empties); }
+  return empties;
+}
+/** Disposes `session` if this bridge made it empty and it still has no message: whether it went. */
+async function dropIfEmpty(host: AgentHost, session: string): Promise<boolean> {
+  const empties = emptiesOf(host);
+  if (!empties.has(session)) return false;
+  const chat = host.chat(session);
+  if (chat && (chat.activeTurn !== undefined || chat.turns.length > 0 || chat.steeringMessage !== undefined || (chat.queuedMessages ?? []).length > 0)) { empties.delete(session); return false; }
+  empties.delete(session);
+  await host.request("disposeSession", { channel: session });
+  return true;
+}
+
 /** A host's leases: its sessions', its worker chats', and which session each worker chat was found in. */
 interface HostLeases { sessions: Leases; chats: Leases; workers: Map<string, string> }
 const leaseSets = new WeakMap<AgentHost, HostLeases>();
@@ -189,7 +211,11 @@ function leasesOf(host: AgentHost, clock: LeaseClock | undefined): HostLeases {
       watching: (uri) => host.watchingChat?.(uri) ?? false,
     };
     // a session no phone keeps watching forgets its worker chats: its next read finds them again
-    const forget = (session: string): void => { for (const [uri, owner] of workers) if (owner === session) workers.delete(uri); };
+    const forget = (session: string): void => {
+      for (const [uri, owner] of workers) if (owner === session) workers.delete(uri);
+      // an empty chat no phone keeps open was left: it goes (the host never listed it)
+      void dropIfEmpty(host, session).catch(() => undefined);
+    };
     leases = { sessions: new Leases(host, clock ?? realClock, forget), chats: new Leases(chats, clock ?? realClock), workers };
     leaseSets.set(host, leases);
   }
@@ -241,6 +267,7 @@ const POSTS: Record<string, Handler> = {
   "chat/read": markRead,
   "chat/archive": markArchived,
   "chat/delete": deleteChat,
+  "chat/discard": discardChat,
   "session/config": writeConfig,
 };
 
@@ -519,7 +546,14 @@ function messageFrom(root: RootState, words: string, model: { id: string; effort
 }
 
 /** The chat's working folder on this PC, or null. */
-const folderOf = (host: AgentHost, session: string): string | null => rowsFrom(host.summaries()).find((row) => row.session === session)?.cwd ?? null;
+const folderOf = (host: AgentHost, session: string): string | null => {
+  const listed = rowsFrom(host.summaries()).find((row) => row.session === session);
+  if (listed) return listed.cwd;
+  // a chat made empty is not listed before its first message: its own state names the folder
+  const uri = host.mirror().getSession(session)?.workingDirectories?.[0];
+  if (!uri?.startsWith("file:")) return null;
+  try { return fileURLToPath(uri); } catch { return null; }
+};
 
 /** The image types an attachment is embedded as, by extension, when the phone names none (an "@" pick). */
 const IMAGE_BY_EXTENSION: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
@@ -814,20 +848,36 @@ async function writeDraft(call: Call): Promise<Response> {
   return jsonResponse({ ok: true });
 }
 
+/** The phone left a chat it opened empty: it goes if it still has no message; any other chat is left be. */
+async function discardChat(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  connected(call.host);
+  const discarded = await dropIfEmpty(call.host, session);
+  if (discarded) call.leases.sessions.release(session);
+  return jsonResponse({ discarded });
+}
+
 async function newChat(call: Call): Promise<Response> {
   const cwd = call.body["cwd"];
   if (!text(cwd) || !isAbsolute(cwd)) return badRequest("invalid_cwd", "cwd must be an absolute path");
   const id = idOf(call.body["id"]);
-  const words = messageText(call.body["text"]);
+  // no text: VS Code's New Chat, the chat opened empty for its own composer to send the first message
+  const empty = call.body["text"] === undefined;
+  const words = empty ? "" : messageText(call.body["text"]);
   const model = modelOf(call.body["model"]);
   const agent = agentOf(call.body["agent"]);
   connected(call.host);
   // the phone's id names the session: a retry of a chat already made makes nothing
   const session = `${PROVIDER}:/${id}`;
-  if (known(call.host, session)) return jsonResponse(await madeBefore(call, session));
+  if (known(call.host, session)) return jsonResponse(empty ? { session } : await madeBefore(call, session));
   await call.host.request("createSession", {
     channel: session, provider: PROVIDER, workingDirectories: [pathToFileURL(cwd).href], config: { isolation: "folder" },
   });
+  if (empty) {
+    emptiesOf(call.host).add(session);
+    await call.leases.sessions.take(session);
+    return jsonResponse({ session });
+  }
   // the session exists from here on: whatever fails next, the phone is told which one, so it opens
   // that chat (the message still in its composer) instead of retrying into a second, empty one
   try {

@@ -54,7 +54,7 @@ const patch = `(() => {
     const made = state.created.find((chat) => chat.session === session);
     if (made) {
       const turns = made.sent ? [{ role: "user", ts: at(0), parts: [{ kind: "text", text: made.text }] }, { role: "assistant", ts: at(0), parts: [] }] : [];
-      return { session, title: edits.titles[session] ?? "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: made.sent ? ["new-1"] : [], signature: JSON.stringify([made, edits.titles[session] ?? null]) };
+      return { session, title: edits.titles[session] ?? "FICTIONAL new chat", status: "idle", turns, cursor: null, prompt: null, model: null, agent: null, busy: false, pending: [], checkpoints: [], restored: null, message_ids: made.sent ? ["new-1"] : [], signature: JSON.stringify([made, edits.titles[session] ?? null]) };
     }
     // the host's window: a read with its cursor loads the turn before it, ahead of the rest
     if (before === "c-older") state.older = true;
@@ -167,7 +167,7 @@ const patch = `(() => {
         // 20 days old: only "All agents on Build PC…" lists it
         { session: "fictional-session-old", title: "FICTIONAL old release notes", status: "idle", modified_at: at(60 * 24 * 20), cwd: "/tmp/fictional-repo", unread: false, archived: false },
         { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
-        ...state.created.map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
+        ...state.created.filter((chat) => !chat.discarded).map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
       ]) });
       // an attached file, stored in the chat's folder on its PC (a failure on request)
       if (path === "/api/host-chats/chat/upload") {
@@ -195,8 +195,16 @@ const patch = `(() => {
       if (path === "/api/host-chats/chat") { if (url.searchParams.has("before")) calls.before = [...(calls.before ?? []), url.searchParams.get("before")]; return json(read(url.searchParams.get("session"), url.searchParams.get("before"))); }
       if (path === "/api/host-chats/chat/new") {
         const session = "fictional-new-" + (state.created.length + 1);
-        state.created.push({ session, cwd: body.cwd, text: body.text, sent: state.newSent });
-        return json(state.newSent ? { session } : { session, sent: false });
+        // no text: VS Code's New Chat, made empty for its own composer
+        const sent = body.text !== undefined && state.newSent;
+        state.created.push({ session, cwd: body.cwd, text: body.text ?? "", sent });
+        return json(body.text === undefined || sent ? { session } : { session, sent: false });
+      }
+      if (path === "/api/host-chats/chat/discard") {
+        const made = state.created.find((chat) => chat.session === body.session && !chat.discarded);
+        const discarded = made !== undefined && !made.sent;
+        if (discarded) made.discarded = true;
+        return json({ discarded });
       }
       if (path === "/api/host-chats/models") calls.models.push(url.searchParams.get("session"));
       if (path === "/api/host-chats/models") return json({
@@ -233,6 +241,9 @@ const patch = `(() => {
         if (body.mode === "stop_and_send") { state.stopped += 1; state.busy = false; }
         const queued = state.busy;
         state.sent.push(body.text);
+        // an empty chat's first message is its first turn
+        const made = state.created.find((chat) => chat.session === body.session);
+        if (made && !made.sent) { made.sent = true; made.text = body.text; }
         if (body.model) state.model = { id: body.model.id, effort: body.model.effort ?? null };
         if ("agent" in body) state.agent = body.agent;
         if (lost) return json({ error: { code: "bad_gateway", message: "FICTIONAL proxy" } }, 502);
@@ -1038,7 +1049,9 @@ try {
         await page.waitForFunction(() => (window as unknown as { hostCalls: { models: string[] } }).hostCalls.models.includes("fictional-session-old"));
         console.log("PASS All agents on Build PC… finds an old chat by search and opens it as a tab of its workspace");
 
-        // 7. the PC's "+" with Copilot (host) picked: a folder chip, a model, a mode, the first message, Start
+        // 7. the PC's "+" with Copilot (host) picked: VS Code's New Chat. The dialog asks the folder
+        // only; Start makes the chat empty and opens it, and its first message is written in the
+        // chat's own composer (the same one every chat has: pills, "/", attach, dictation, send menu)
         const newChats = () => posts("/api/machines/remote/host-chats/chat/new");
         const openNewSheet = async () => {
           await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
@@ -1053,53 +1066,38 @@ try {
           }
           return form;
         };
-        // the models and agents are a session's: the newest chat in the folder picked, else the PC's newest
-        const modelReads = async (): Promise<string[]> => page.evaluate(() => [...(window as unknown as { hostCalls: { models: string[] } }).hostCalls.models]);
-        const nextModelRead = async (after: number, what: string): Promise<string | undefined> => {
-          await page.waitForFunction((count) => (window as unknown as { hostCalls: { models: string[] } }).hostCalls.models.length > count, after, { timeout: 10_000 })
-            .catch(() => assert.fail(`${what}: the dialog read no models after the folder changed`));
-          return (await modelReads())[after];
-        };
-        const readsBefore = (await modelReads()).length;
         let form = await openNewSheet();
         const agentPick = form.locator(".agent-picker-trigger, [aria-labelledby=\"new-session-agent\"]").first();
-        // the PC's agents come in a moment after the dialog opens
         await agentPick.filter({ hasText: "Copilot (host)" }).waitFor({ timeout: 10_000 }).catch(async () => assert.fail(`the dialog opens on Copilot (host), not ${await agentPick.innerText()}`));
-        assert.equal(await form.getByRole("textbox", { name: "Name" }).count(), 0, "a host chat has a first message, not a name");
+        assert.equal(await form.getByRole("textbox", { name: "Name" }).count(), 0, "a host chat has no name field");
+        assert.equal(await form.getByRole("textbox", { name: "First message" }).count(), 0, "no second composer in the dialog: the chat's own takes the first message");
         const folder = form.getByRole("textbox", { name: "Directory" });
-        await folder.fill("/tmp/fictional-repo");
-        assert.equal(await nextModelRead(readsBefore, "the opened dialog"), SESSION, "the pickers read the newest chat in /tmp/fictional-repo");
-        // another folder: its own newest chat, not the PC's newest; the PC's chats' folders are chips
-        await form.getByRole("button", { name: "Use folder /tmp/fictional-docs", exact: true }).click();
-        assert.equal(await folder.inputValue(), "/tmp/fictional-docs", "the chip fills the folder");
-        assert.equal(await nextModelRead(readsBefore + 1, "/tmp/fictional-docs"), "fictional-session-0", "the pickers read the newest chat in /tmp/fictional-docs");
+        // the PC's chats' folders are chips
         await form.getByRole("button", { name: "Use folder /tmp/fictional-repo", exact: true }).click();
-        assert.equal(await nextModelRead(readsBefore + 2, "/tmp/fictional-repo"), SESSION, "back in /tmp/fictional-repo, its newest chat's models");
-        await form.locator(".host-chat-model").click();
-        const picker = page.getByRole("dialog", { name: "Model", exact: true });
-        await picker.locator('[data-model="fictional/model-a"] .host-model-pick').click();
-        await picker.waitFor({ state: "detached" });
-        assert.match(await form.locator(".host-chat-model").textContent() ?? "", /FICTIONAL Model A/);
-        await form.locator(".host-chat-mode").click();
-        const modePicker = page.getByRole("dialog", { name: "Agent mode", exact: true });
-        await modePicker.locator('[data-mode="plan"]').click();
-        await modePicker.waitFor({ state: "detached" });
-        assert.match(await form.locator(".host-chat-mode").textContent() ?? "", /Plan/);
-        await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL first");
-        await page.waitForFunction(() => {
-          const surface = document.querySelector(".new-session-modal");
-          return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
-        });
+        assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the chip fills the folder");
         await fits("the new-chat dialog");
         if (shots) await page.screenshot({ path: join(shots, "task-11-new-chat-390.png") });
-        const configsBefore = (await posts("/api/machines/remote/host-chats/session/config")).length;
         await form.getByRole("button", { name: "Start", exact: true }).click();
         const made = page.locator('.host-chat[data-host-session="fictional-new-1"]');
         await made.waitFor();
-        await made.locator(".chat-turn-user", { hasText: "FICTIONAL first" }).waitFor();
         assert.equal(await form.count(), 0, "the dialog closes on the chat made");
-        assert.deepEqual((await newChats()).map(bare), [{ cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-a" } }], "one chat/new with the folder, the text and the model");
-        assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).slice(configsBefore).map((post) => post.body), [{ session: "fictional-new-1", mode: "plan" }], "the mode is set on the chat made");
+        assert.deepEqual((await newChats()).map(bare), [{ cwd: "/tmp/fictional-repo" }], "one chat/new with the folder alone: the chat is made empty");
+        // the empty chat greets with Copilot's mark and has the composer every chat has
+        await made.locator(".chat-empty").waitFor();
+        assert.equal(await made.locator('.chat-empty svg[aria-label="copilot"]').count(), 1, "the empty chat wears Copilot's mark");
+        assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no VS Code mark anywhere");
+        for (const pill of [".host-chat-model", ".host-chat-agent"]) assert.equal(await made.locator(`.composer ${pill}`).count(), 1, `the composer's ${pill} pill`);
+        assert.equal(await made.locator(".composer .composer-attach").count(), 1, "attach, as any chat");
+        assert.equal(await made.locator(".composer .voice-mic").count(), 1, "dictation, as any chat");
+        // the first message goes from that composer, once, as a chat/send of that chat
+        const sendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
+        await made.getByRole("textbox", { name: "Message" }).fill("FICTIONAL first");
+        await made.getByRole("button", { name: "Send message", exact: true }).click();
+        await made.locator(".chat-turn-user", { hasText: "FICTIONAL first" }).waitFor();
+        const firstSends = (await posts("/api/machines/remote/host-chats/chat/send")).slice(sendsBefore);
+        assert.equal(firstSends.length, 1, "one send");
+        assert.equal(firstSends[0]!.body["session"], "fictional-new-1", "to the chat made");
+        assert.equal(firstSends[0]!.body["text"], "FICTIONAL first");
         // the header names where the chat works (its tab names the chat): Copilot's mark, the folder, the PC, Chat pressed, Terminal off
         const header = page.locator(".app-header");
         await header.locator(".context-title-text", { hasText: "fictional-repo" }).waitFor();
@@ -1115,31 +1113,47 @@ try {
         await header.locator(".conn.conn-live").waitFor({ state: "attached" });
         assert.equal(await page.locator(".host-chat-title").count(), 0, "the title is the header's alone: no second title bar over the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-11-header-390.png") });
-        console.log("PASS the PC's + on Copilot (host): one chat/new, the mode set, and the header names the chat");
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/discard")).length, 0, "a chat with a message is never discarded");
+        console.log("PASS the PC's + on Copilot (host): the chat made empty, its first message from its own composer");
 
-        // 7b. made, but its first message did not go: the chat opens with the words in its box, nothing re-sent
-        await page.evaluate(() => { (window as unknown as { hostState: { newSent: boolean } }).hostState.newSent = false; });
-        const sendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
+        // 7b. a new chat left without a message goes: leaving it asks the bridge to discard it, once
         form = await openNewSheet();
         await form.getByRole("textbox", { name: "Directory" }).fill("/tmp/fictional-repo");
-        await form.getByRole("textbox", { name: "First message" }).fill("FICTIONAL kept");
         await form.getByRole("button", { name: "Start", exact: true }).click();
         const kept = page.locator('.host-chat[data-host-session="fictional-new-2"]');
         await kept.waitFor();
-        assert.equal(await kept.getByRole("textbox", { name: "Message" }).inputValue(), "FICTIONAL kept", "the unsent first message waits in the composer");
-        // an empty chat greets with Copilot's mark, never VS Code's
         await kept.locator(".chat-empty").waitFor();
-        assert.equal(await kept.locator('.chat-empty svg[aria-label="copilot"]').count(), 1, "the empty chat wears Copilot's mark");
-        assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no VS Code mark anywhere");
-        assert.equal((await newChats()).length, 2, "exactly one chat/new for this tap: no second chat");
-        assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).length, sendsBefore, "nothing is sent on the user's behalf");
-        await fits("the chat made unsent");
+        assert.equal((await newChats()).length, 2, "exactly one chat/new for this tap");
+        // left for a pane's tab: the empty chat is discarded
+        await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null && document.querySelector(".new-session-modal") === null);
+        // the new chat has no workspace yet (no tab strip): the sidebar opens the first chat again
+        if (shots) await page.screenshot({ path: join(shots, "r6-empty-chat-390.png") });
+        await page.waitForFunction(() => document.querySelector(".new-session-modal") === null);
+        await agentsMenu();
+        await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        await all.waitFor();
+        await all.locator(`.host-chat-item[data-host-session="${SESSION}"] .agent-select`).click();
+        await kept.waitFor({ state: "detached" });
+        const discards = async () => (await posts("/api/machines/remote/host-chats/chat/discard")).map((post) => post.body);
+        for (let tries = 0; tries < 30 && (await discards()).length === 0; tries++) await page.waitForTimeout(100);
+        assert.deepEqual(await discards(), [{ session: "fictional-new-2" }], "the empty chat left is discarded, once");
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).length, sendsBefore + 1, "nothing is sent on the user's behalf");
         assert.deepEqual(errors, [], "no render errors");
-        console.log("PASS a chat made with its first message unsent opens with the words in its composer, once");
+        console.log("PASS a new chat left without a message is discarded, and nothing is sent for it");
+
+        // another chat, given its first message, for the chat actions below
+        form = await openNewSheet();
+        await form.getByRole("textbox", { name: "Directory" }).fill("/tmp/fictional-repo");
+        await form.getByRole("button", { name: "Start", exact: true }).click();
+        const kept3 = page.locator('.host-chat[data-host-session="fictional-new-3"]');
+        await kept3.waitFor();
+        await kept3.getByRole("textbox", { name: "Message" }).fill("FICTIONAL second chat");
+        await kept3.getByRole("button", { name: "Send message", exact: true }).click();
+        await kept3.locator(".chat-turn-user", { hasText: "FICTIONAL second chat" }).waitFor();
 
         // 7c. a chat's own actions (Task 7): rename from its tab's menu and the header's ⋯, mark it
         // unread (and a refusal undone), mark it done, delete it; a pane's tab keeps its own menu
-        const keptTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-new-2"]');
+        const keptTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-new-3"]');
         const actionPosts = async (route: string) => (await posts(`/api/machines/remote/host-chats/chat/${route}`)).map((post) => post.body);
         const sheetItems = async () => (await page.locator(".row-sheet .row-sheet-item").allInnerTexts()).map((text) => text.trim());
         // a pane's tab: the menu it always had, none of a chat's items
@@ -1173,7 +1187,7 @@ try {
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL renamed chat" }).waitFor();
         // the chat is a tab of its workspace now: the header names the workspace, never the chat's new name
         assert.equal((await page.locator(".app-header .context-title-text").innerText()).trim(), "checkout-api", "the header names the chat's workspace, not its new name");
-        assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-2", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
+        assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-3", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
         // the header's ⋯: Rename chat… in the sheet, the same route
         await page.getByRole("button", { name: "More", exact: true }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename chat…" }).click();
@@ -1189,7 +1203,7 @@ try {
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as unread" }).click();
         await keptTab.locator('.tab-strip-dot[data-status="done"]').waitFor();
-        assert.deepEqual((await actionPosts("read")).filter((body) => body["session"] === "fictional-new-2"), [{ session: "fictional-new-2", read: false }], "marked unread, and kept so while open");
+        assert.deepEqual((await actionPosts("read")).filter((body) => body["session"] === "fictional-new-3"), [{ session: "fictional-new-3", read: false }], "marked unread, and kept so while open");
         await page.evaluate(() => { (window as unknown as { hostEdits: { failRead: boolean } }).hostEdits.failRead = true; });
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as read" }).click();
@@ -1202,13 +1216,13 @@ try {
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as done" }).click();
         await keptTab.waitFor({ state: "detached" });
-        await kept.waitFor({ state: "detached" });
-        assert.deepEqual(await actionPosts("archive"), [{ session: "fictional-new-2", archived: true }]);
+        await kept3.waitFor({ state: "detached" });
+        assert.deepEqual(await actionPosts("archive"), [{ session: "fictional-new-3", archived: true }]);
         await agentsMenu();
         await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
         await all.waitFor();
         await all.getByRole("button", { name: "Archived" }).click();
-        const archivedRow = all.getByRole("region", { name: "Archived" }).locator('[data-host-session="fictional-new-2"]');
+        const archivedRow = all.getByRole("region", { name: "Archived" }).locator('[data-host-session="fictional-new-3"]');
         await archivedRow.waitFor();
         await archivedRow.getByRole("button", { name: "More for FICTIONAL named in the header" }).click();
         assert.ok((await sheetItems()).includes("Restore"), "an archived chat's menu offers Restore");
