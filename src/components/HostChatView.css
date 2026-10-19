@@ -139,6 +139,11 @@
   font-size: var(--fs-xs);
 }
 
+/* a router's vendor follows its name, quieter: "OmniRoute · Anthropic" */
+.host-picker-vendor {
+  opacity: 0.8;
+}
+
 .host-picker-option {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -339,6 +344,23 @@
   width: var(--space-3);
   height: var(--space-3);
   color: var(--text-dim);
+}
+
+/* a planned deprecation: the host's sentence is the icon's name and tooltip */
+.host-model-warning {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--notice);
+}
+
+/* Copilot's premium-request rate, as its own picker shows it: after the name, monospaced figures */
+.host-model-rate {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .host-model-detail {

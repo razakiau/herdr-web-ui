@@ -322,7 +322,7 @@ describe("host chat read and write routes", () => {
     expect(read.json).toMatchObject({ session: sessionUri(1), title: "FICTIONAL_chat_1", status: "idle", turns: [], cursor: null, prompt: null, busy: false });
     const models = await call(r, `/api/host-chats/models?session=${encodeURIComponent(sessionUri(1))}`);
     expect(models.json).toEqual({
-      models: [{ id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null }],
+      models: [{ id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null, group: "fictional", multiplier: null, warning: null }],
       agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
     });
     expect((await call(r, "/api/host-chats/models")).json.agents).toEqual([]);

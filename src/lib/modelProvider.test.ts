@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostModel } from "../../shared/host-chats.ts";
-import { contextLabel, filterModels, shortModelName, modelTabs, pickerSections, providerMark, rowDetail, rememberRecent, recentModels, togglePinned, pinnedModels } from "./modelProvider.ts";
+import { contextLabel, filterModels, groupName, modelGroupOf, multiplierLabel, shortModelName, modelTabs, pickerSections, vendorOf, providerMark, rowDetail, rememberRecent, recentModels, togglePinned, pinnedModels } from "./modelProvider.ts";
 
 const model = (id: string, name: string, provider = "copilotcli", extra: Partial<HostModel> = {}): HostModel => ({ id, name, provider, efforts: null, context: null, ...extra });
 
@@ -36,16 +36,19 @@ describe("the model picker's rows", () => {
     expect(contextLabel(200_000)).toBe("200K");
     expect(contextLabel(1_048_576)).toBe("1M");
   });
-  it("search_filters_335_models: typing glm shows only GLM rows; tabs group by provider, none with one provider", () => {
-    const models = Array.from({ length: 335 }, (_, index) => index % 67 === 0 ? model(`fictional/glm-${index}`, `GLM-${index} (FICTIONAL)`, "fictional-router") : model(`fictional/m-${index}`, `FICTIONAL M${index}`, index % 2 ? "copilotcli" : "fictional-router"));
+  it("search_filters_335_models: typing glm shows only GLM rows; tabs are the groups, Copilot first, none with one group", () => {
+    const models = Array.from({ length: 335 }, (_, index) => index % 67 === 0 ? model(`fictional/glm-${index}`, `GLM-${index} (FICTIONAL)`) : model(index % 2 ? `copilot-m-${index}` : `fictional/m-${index}`, `FICTIONAL M${index}`, "copilotcli", index % 2 ? { group: "copilot" } : {}));
     const shown = filterModels(models, "glm");
     expect(shown.length).toBe(5);
     expect(shown.every((each) => /GLM/.test(each.name))).toBe(true);
-    expect(modelTabs(models)).toEqual(["fictional-router", "copilotcli"]);
-    expect(modelTabs(models.filter((each) => each.provider === "fictional-router"))).toEqual([]);
-    expect(filterModels(models, "", "copilotcli").every((each) => each.provider === "copilotcli")).toBe(true);
+    expect(modelTabs(models)).toEqual(["copilot", "fictional"]);
+    expect(modelTabs(models.filter((each) => each.id.startsWith("fictional/")))).toEqual([]);
+    expect(filterModels(models, "", "copilot").every((each) => each.group === "copilot")).toBe(true);
+    // a bridge older than 1007 sends no group: the id's prefix files it, a bare id under Other
+    expect(modelGroupOf({ id: "fictional/x" })).toBe("fictional");
+    expect(modelGroupOf({ id: "bare" })).toBe("other");
   });
-  it("pinned_and_recent_sections: Pinned, then the last 5 picked on this PC, then All models", () => {
+  it("pinned_and_recent_sections: Pinned, then the last 5 picked on this PC, then the models' group", () => {
     const store = new Map<string, string>();
     const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); }, removeItem: (key: string) => { store.delete(key); } };
     const models = ["a", "b", "c", "d", "e", "f", "g"].map((id) => model(id, `FICTIONAL ${id}`));
@@ -56,10 +59,33 @@ describe("the model picker's rows", () => {
     expect(pinnedModels("desk", storage)).toEqual(["g"]);
     const sections = pickerSections(models, pinnedModels("desk", storage), recentModels("desk", storage));
     expect(sections.map((section) => [section.title, section.models.map((each) => each.id)])).toEqual([
-      ["Pinned", ["g"]], ["Recent", ["b", "f", "e", "d", "c"]], ["All models", ["a", "b", "c", "d", "e", "f", "g"]],
+      ["Pinned", ["g"]], ["Recent", ["b", "f", "e", "d", "c"]], ["Other", ["a", "b", "c", "d", "e", "f", "g"]],
     ]);
     togglePinned("desk", "g", storage);
-    expect(pickerSections(models, [], []).map((section) => section.title)).toEqual(["All models"]);
+    expect(pickerSections(models, [], []).map((section) => section.title)).toEqual(["Other"]);
+  });
+  it("groups_copilot_then_routers_by_vendor_then_other: the lab's 33 models in five sections", () => {
+    const models = [
+      model("auto", "Auto", "copilotcli", { group: "copilot" }),
+      model("fictional-big", "FICTIONAL Big", "copilotcli", { group: "copilot", multiplier: 27 }),
+      model("omniroute/n", "FICTIONAL N", "copilotcli", { group: "omniroute" }),
+      model("omniroute/a1", "FICTIONAL A1 (Anthropic)", "copilotcli", { group: "omniroute" }),
+      model("omniroute/o1", "FICTIONAL O1 (OpenAI)", "copilotcli", { group: "omniroute" }),
+      model("omniroute/a2", "FICTIONAL A2 (Anthropic)", "copilotcli", { group: "omniroute" }),
+      model("bare", "FICTIONAL Bare", "copilotcli", { group: "other" }),
+    ];
+    expect(pickerSections(models, [], []).map((section) => [section.title, section.vendor, section.models.map((each) => each.id)])).toEqual([
+      ["Copilot", null, ["auto", "fictional-big"]],
+      ["OmniRoute", "Anthropic", ["omniroute/a1", "omniroute/a2"]],
+      ["OmniRoute", "OpenAI", ["omniroute/o1"]],
+      ["OmniRoute", null, ["omniroute/n"]],
+      ["Other", null, ["bare"]],
+    ]);
+    expect(groupName("fictionalrouter")).toBe("fictionalrouter");
+    expect(vendorOf({ name: "FICTIONAL A1 (Anthropic)" })).toBe("Anthropic");
+    expect(multiplierLabel({ multiplier: 27 })).toBe("27x");
+    expect(multiplierLabel({ multiplier: 1 / 3 })).toBe("0.33x");
+    expect(multiplierLabel({ multiplier: null })).toBeNull();
   });
 });
 
