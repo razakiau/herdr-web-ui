@@ -244,6 +244,9 @@ const POSTS: Record<string, Handler> = {
   "session/config": writeConfig,
 };
 
+/** Every route a bridge answers under /api/host-chats/, which the server's PC proxy must pass. */
+export const HOST_CHAT_ROUTES: readonly string[] = ["state", ...Object.keys(GETS), ...Object.keys(POSTS)];
+
 async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined): Promise<Response> {
   if (!host) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
   if (route === "state") {
@@ -1005,8 +1008,11 @@ async function markRead(call: Call): Promise<Response> {
 async function markArchived(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const isArchived = flag(call.body["archived"], "archived");
-  const { channel } = await watched(call, session);
-  call.host.dispatch(channel, { type: ActionType.ChatIsArchivedChanged, isArchived } as StateAction);
+  await watched(call, session);
+  // on the session, as VS Code's setSessionArchived: the host refuses chat/isArchivedChanged on a
+  // session's default chat ("Only a known independently manageable non-default chat can be
+  // archived"), so that marked nothing and the chat came back after a reload
+  call.host.dispatch(session, { type: ActionType.SessionIsArchivedChanged, isArchived } as StateAction);
   return jsonResponse({ ok: true });
 }
 

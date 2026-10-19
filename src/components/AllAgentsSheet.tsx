@@ -128,7 +128,13 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
             <ul className="agent-list">{group.chats.map(item)}</ul>
           </section>)}
           {archived.length > 0 && <section className="all-agents-group" aria-label={t("Archived")}>
-            <button type="button" className="sidebar-section-label all-agents-archived" aria-expanded={showArchived} onClick={() => setArchivedOpen(!showArchived)}>
+            <button type="button" className="sidebar-section-label all-agents-archived" aria-expanded={showArchived} onClick={(event) => {
+              const opening = !showArchived;
+              setArchivedOpen(opening);
+              // Archived sits last, under every folder: what it opens on lands below the fold, so it is brought up
+              const section = event.currentTarget.parentElement;
+              if (opening && section) requestAnimationFrame(() => section.scrollIntoView({ block: "start", behavior: "smooth" }));
+            }}>
               {showArchived ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
               <span>{t("Archived")}</span>
               <span className="agent-section-count">{archived.length}</span>

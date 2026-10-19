@@ -1001,6 +1001,26 @@ try {
         assert.equal(await all.getByRole("button", { name: "Archived" }).getAttribute("aria-expanded"), "false", "Archived starts folded");
         assert.equal(await all.locator('[data-host-session="fictional-session-done"]').count(), 0, "an archived chat waits under the fold");
         assert.ok((await all.locator('[data-host-session="fictional-session-old"]').innerText()).includes("20 days ago"), "relative time");
+        // a tap on Archived opens it on the chats it holds, and a second folds it again; the body is
+        // cut short first, as a PC with many chats makes it, so Archived sits at the fold's edge
+        await page.evaluate(() => {
+          const body = document.querySelector<HTMLElement>(".all-agents .modal-body")!;
+          const archived = document.querySelector<HTMLElement>(".all-agents-archived")!;
+          body.style.maxHeight = `${archived.getBoundingClientRect().bottom - body.getBoundingClientRect().top + 4}px`;
+          body.scrollTop = 0;
+        });
+        await all.locator(".all-agents-archived").click();
+        await all.locator('[data-host-session="fictional-session-done"]').waitFor({ timeout: 3000 }).catch(() => assert.fail("Archived opened on nothing"));
+        assert.ok(await all.locator('[data-host-session="fictional-session-done"]').isVisible(), "the archived chat shows once Archived is open");
+        // with a long list Archived opens below the fold: the sheet brings it up
+        await page.waitForFunction(() => {
+          const body = document.querySelector(".all-agents .modal-body")!.getBoundingClientRect();
+          const row = document.querySelector('.all-agents [data-host-session="fictional-session-done"]')!.getBoundingClientRect();
+          return row.top >= body.top - 1 && row.bottom <= body.bottom + 1;
+        }, null, { timeout: 3000 }).catch(() => assert.fail("the opened Archived rows stay out of sight"));
+        await all.locator(".all-agents-archived").click();
+        assert.equal(await all.locator('[data-host-session="fictional-session-done"]').count(), 0, "folded again");
+        await page.evaluate(() => { document.querySelector<HTMLElement>(".all-agents .modal-body")!.style.maxHeight = ""; });
         await page.waitForFunction(() => {
           const surface = document.querySelector(".all-agents");
           return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");

@@ -904,7 +904,7 @@ describe("host chat read and write routes", () => {
     expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_read" });
   });
 
-  it("archive dispatches chat/isArchivedChanged on the chat's channel, and the row's archived follows both ways", async () => {
+  it("archive dispatches session/isArchivedChanged on the session (the host refuses it on a default chat), and the row's archived follows both ways", async () => {
     const r = await rig();
     const row = async () => (await call(r, "/api/host-chats/chats")).json.chats.find((each: { session: string }) => each.session === sessionUri(1));
     expect(await call(r, "/api/host-chats/chat/archive", { session: sessionUri(1), archived: true })).toEqual({ status: 200, json: { ok: true } });
@@ -913,9 +913,9 @@ describe("host chat read and write routes", () => {
     expect(await call(r, "/api/host-chats/chat/archive", { session: sessionUri(1), archived: false })).toEqual({ status: 200, json: { ok: true } });
     await until("restored", () => (r.conn.summaries().find((s) => s.resource === sessionUri(1))!.status & 64) === 0);
     expect((await row()).archived).toBe(false);
-    expect(actions(r.fake, "chat/isArchivedChanged")).toEqual([
-      { channel: chatUri(1), action: { type: "chat/isArchivedChanged", isArchived: true } },
-      { channel: chatUri(1), action: { type: "chat/isArchivedChanged", isArchived: false } },
+    expect(actions(r.fake, "session/isArchivedChanged")).toEqual([
+      { channel: sessionUri(1), action: { type: "session/isArchivedChanged", isArchived: true } },
+      { channel: sessionUri(1), action: { type: "session/isArchivedChanged", isArchived: false } },
     ]);
     const bad = await call(r, "/api/host-chats/chat/archive", { session: sessionUri(1) });
     expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_archived" });

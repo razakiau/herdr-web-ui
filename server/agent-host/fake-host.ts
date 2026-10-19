@@ -117,13 +117,16 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
   };
   /**
    * What a host does to its catalog after a client's title, read or archived action: the session's
-   * summary follows (the default chat's flags are the session's), announced as root/sessionSummaryChanged.
+   * summary follows (the default chat's read flag is the session's; archived is the session's own action), announced as root/sessionSummaryChanged.
    */
   const follow = (channel: string, action: StateAction) => {
     const owner = sessions.find((s) => s.resource === channel || s.defaultChat === channel);
     if (!owner) return;
-    const bit = action.type === "chat/isReadChanged" ? 32 : action.type === "chat/isArchivedChanged" ? 64 : 0;
-    if (action.type === "session/titleChanged" && owner.resource === channel) {
+    const bit = action.type === "chat/isReadChanged" ? 32 : 0;
+    if (action.type === "session/isArchivedChanged" && owner.resource === channel) {
+      const on = (action as { isArchived: boolean }).isArchived;
+      notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { status: on ? owner.status | 64 : owner.status & ~64 } });
+    } else if (action.type === "session/titleChanged" && owner.resource === channel) {
       notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { title: (action as { title: string }).title } });
     } else if (bit !== 0 && owner.defaultChat === channel) {
       const on = action.type === "chat/isReadChanged" ? (action as { isRead: boolean }).isRead : (action as { isArchived: boolean }).isArchived;
@@ -257,6 +260,9 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
           const channel = String(params["channel"]);
           const action = params["action"] as StateAction;
           dispatched.push({ channel, action });
+          // VS Code's host (1.142) refuses to archive a session's default chat: "Only a known
+          // independently manageable non-default chat can be archived"; the session is archived instead
+          if (action.type === "chat/isArchivedChanged" && sessions.some((each) => each.defaultChat === channel)) return;
           apply(channel, action);
           announce(channel, action, { clientId: ws.data.clientId ?? "", clientSeq: Number(params["clientSeq"]) });
           follow(channel, action);

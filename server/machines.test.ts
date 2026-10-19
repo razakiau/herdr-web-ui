@@ -9,6 +9,7 @@ import { paneNotificationTag } from "../shared/notify-policy.ts";
 import { BRIDGE_PROTOCOL, machinePath, paneStorageId, REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import { canSendSecret, sameOrigin, shellQuote, validateTarget } from "./machine-security.ts";
 import { handleMachineRequest, MACHINE_PROXY_PATH } from "./machine-api.ts";
+import { HOST_CHAT_ROUTES } from "./agent-host/routes.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { createServer } from "./index.ts";
 import { MachineManager } from "./machines.ts";
@@ -107,6 +108,10 @@ describe("machine boundaries", () => {
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/split", "pane/zoom", "pane/swap", "pane/resize", "pane/clear", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
   });
+  it("MACHINE_PROXY_PATH passes every route a bridge answers (a missing one is \"Unknown PC endpoint\" on the phone)", () => {
+    expect(HOST_CHAT_ROUTES.filter((route) => !MACHINE_PROXY_PATH.test(`host-chats/${route}`))).toEqual([]);
+  });
+
   it("MACHINE_PROXY_PATH proxies host-chats routes and nothing past them", () => {
     for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models", "host-chats/image", "host-chats/tool-output",
       "host-chats/chat/rename", "host-chats/chat/read", "host-chats/chat/archive", "host-chats/chat/delete", "host-chats/chat/stop", "host-chats/chat/pending/remove", "host-chats/chat/upload",
