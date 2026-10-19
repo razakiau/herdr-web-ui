@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VoiceEvent } from "../../shared/voice.ts";
 import type { InsertedSpan } from "./voice.ts";
 import {
+  speechTranscript,
   applyDictation,
   barScales,
   classifyRelease,
@@ -520,5 +521,21 @@ describe("createVoiceEngine", () => {
     await drain();
     expect(FakeRecorder.made).toHaveLength(2);
     voice.cancel();
+  });
+});
+
+describe("speechTranscript (the browser engine's results, Chrome on Android included)", () => {
+  const r = (transcript: string, isFinal: boolean) => ({ isFinal, 0: { transcript } });
+  it("joins a desktop browser's results, each a new stretch of speech", () => {
+    expect(speechTranscript([r("hello world", true), r(" how are", false)])).toEqual({ final: "hello world", interim: " how are" });
+    expect(speechTranscript([r("hello world", true), r(" how are you", true)])).toEqual({ final: "hello world how are you", interim: "" });
+  });
+  it("keeps one copy when Android repeats each result as the phrase so far", () => {
+    expect(speechTranscript([r("hello", true), r("hello world", true), r("hello world how are you", true)]).final).toBe("hello world how are you");
+    expect(speechTranscript([r("hello world", true), r("hello world", true)]).final).toBe("hello world");
+    expect(speechTranscript([r("hello world", true), r("hello world how", false)])).toEqual({ final: "hello world", interim: " how" });
+  });
+  it("never drops words that only look alike", () => {
+    expect(speechTranscript([r("no", true), r(" no way", true)]).final).toBe("no no way");
   });
 });

@@ -322,6 +322,33 @@ interface SpeechRecognitionLike {
 }
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
+/**
+ * The text so far from a SpeechRecognition result list. Desktop Chrome gives
+ * each result a new stretch of speech, later ones starting with a space.
+ * Chrome on Android (continuous + interimResults) instead repeats the phrase
+ * so far, with no leading space, as another final result: joining them all
+ * printed every word two or three times. A piece without a leading space that
+ * starts with the text so far replaces it instead of being appended.
+ */
+export function speechTranscript(results: ArrayLike<{ readonly isFinal: boolean; readonly 0?: { readonly transcript: string } } | undefined>): { final: string; interim: string } {
+  const extend = (base: string, piece: string): string => {
+    const head = base.trim();
+    if (head && !/^\s/.test(piece) && piece.startsWith(head)) return base + piece.slice(head.length);
+    return base + piece;
+  };
+  let final = "";
+  let interim = "";
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    const text = result?.[0]?.transcript ?? "";
+    if (result?.isFinal) final = extend(final, text);
+    else interim += text;
+  }
+  const head = final.trim();
+  if (head && !/^\s/.test(interim) && interim.startsWith(head)) interim = interim.slice(head.length);
+  return { final, interim };
+}
+
 function speechRecognitionCtor(): SpeechRecognitionCtor | null {
   if (typeof window === "undefined") return null;
   const speech = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
@@ -638,14 +665,7 @@ export function createVoiceEngine(io: EngineIO) {
     recognition.interimResults = true;
     recognition.onaudiostart = () => { if (take === current && phase === "starting") markRecording(current, performance.now()); };
     recognition.onresult = (event) => {
-      let final = "";
-      let interim = "";
-      for (let index = 0; index < event.results.length; index++) {
-        const result = event.results[index];
-        const text = result?.[0]?.transcript ?? "";
-        if (result?.isFinal) final += text;
-        else interim += text;
-      }
+      const { final, interim } = speechTranscript(event.results);
       current.finalText = final;
       if (!current.discard && current.id === lastTakeId) io.options().onPartial?.(tidy(final + interim));
     };
