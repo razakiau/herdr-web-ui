@@ -118,7 +118,8 @@ class Coalescer {
 
 interface Watch { count: number; chat: string | null; ready: Promise<void> }
 /** A chat watched on its own (a subagent's worker chat), for the session whose chat started it. */
-interface ChatWatch { count: number; session: string; ready: Promise<void> }
+/** `inner`: the worker's own chat when its URI names a session (VS Code 1.142 names subagents `<session>/subagent/<id>`). */
+interface ChatWatch { count: number; session: string; ready: Promise<void>; inner?: string }
 interface Live { client: AhpClient; closed: Promise<void> }
 
 export class AgentHostConnection {
@@ -189,7 +190,8 @@ export class AgentHostConnection {
 
   /** A chat watched on its own (watchChat), as the mirror holds it; undefined when it is not watched. */
   chatAt(uri: string): ChatState | undefined {
-    return this.chatWatches.has(uri) ? this.store.getChat(uri) : undefined;
+    const watch = this.chatWatches.get(uri);
+    return watch ? this.store.getChat(watch.inner ?? uri) : undefined;
   }
 
   /**
@@ -206,7 +208,7 @@ export class AgentHostConnection {
     } else {
       watch = { count: 1, session, ready: Promise.resolve() };
       this.chatWatches.set(uri, watch);
-      watch.ready = this.subscribe(live.client, uri, "chat").then(() => undefined);
+      watch.ready = this.subscribeWorker(live.client, uri, watch);
     }
     const own = watch;
     try {
@@ -227,10 +229,24 @@ export class AgentHostConnection {
   watchingChat(uri: string): boolean { return this.chatWatches.has(uri); }
 
   private dropChat(uri: string): void {
+    const inner = this.chatWatches.get(uri)?.inner;
     this.chatWatches.delete(uri);
-    this.store.forget(uri);
-    this.fromSeq.delete(uri);
-    void this.live?.client.unsubscribe(uri).catch(() => {});
+    for (const channel of inner ? [uri, inner] : [uri]) {
+      this.store.forget(channel);
+      this.fromSeq.delete(channel);
+      void this.live?.client.unsubscribe(channel).catch(() => {});
+    }
+  }
+
+  /**
+   * A worker chat's subscribe. A chat URI is the chat; a session URI (a subagent of VS Code 1.142+)
+   * is subscribed as a session, and its default chat is the one read.
+   */
+  private async subscribeWorker(client: AhpClient, uri: string, watch: ChatWatch): Promise<void> {
+    if (uri.startsWith("ahp-chat:")) { await this.subscribe(client, uri, "chat"); return; }
+    const state = (await this.subscribe(client, uri, "session")).state as SessionState;
+    watch.inner = state.defaultChat ?? undefined;
+    if (watch.inner) await this.subscribe(client, watch.inner, "chat");
   }
 
   /** Subscribes `session` and its default chat, shared and reference-counted; the returned function releases this hold. */
@@ -394,7 +410,7 @@ export class AgentHostConnection {
     for (const [uri, watch] of [...this.chatWatches]) {
       const live = this.live;
       if (!live) return;
-      watch.ready = this.subscribe(live.client, uri, "chat").then(() => undefined);
+      watch.ready = this.subscribeWorker(live.client, uri, watch);
       try {
         await watch.ready;
       } catch {
@@ -463,7 +479,8 @@ export class AgentHostConnection {
   private watcherOf(channel: string): string | null {
     if (this.watches.has(channel)) return channel;
     for (const [session, watch] of this.watches) if (watch.chat === channel) return session;
-    return this.chatWatches.get(channel)?.session ?? null;
+    for (const [uri, watch] of this.chatWatches) if (uri === channel || watch.inner === channel) return watch.session;
+    return null;
   }
 
   /** Reads every event until the connection closes. */
