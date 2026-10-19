@@ -299,7 +299,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         down.current = button === null ? null : { target: button, pointerType: event.pointerType };
       }}>
       <header className="prompt-card-header">
-        {/* read, not drawn: the title is the card's one red */}
+        {/* read, not drawn: the card says it waits on you */}
         <span className="visually-hidden">{t("input needed")}</span>
         {markdown ? <h2 className="prompt-card-markdown"><Markdown style="vscode">{q.title}</Markdown></h2> : <h2>{q.title}</h2>}
         {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
