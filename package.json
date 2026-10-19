@@ -38,7 +38,7 @@
     "@xterm/xterm": "5.5.0",
     "katex": "^0.18.9",
     "lucide-react": "^1.47.0",
-    "mermaid": "^12.1.0",
+    "pele": "1.6.0",
     "qrcode-generator": "^2.0.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

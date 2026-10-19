@@ -684,13 +684,15 @@ A React client talks to a Bun HTTP/WebSocket server.
 
 herdr owns the processes and the scrollback.
 
-**Diagrams.** A `mermaid` block in a chat is drawn with Mermaid 12.1.0, loaded on first use, in
-strict mode, with a lightbox. [Pele](https://github.com/obsidianmd/pele) 1.6.0 (MIT, Mermaid
-12.1.0 syntax, synchronous, no runtime dependencies) was measured as a replacement on 2026-10-19:
-one bundle of 661 KiB minified, 245 KiB gzip, against Mermaid's 5.0 MiB / 1.4 MiB when bundled
-whole; and a median first render over 10 runs at 390 px of 11–14 ms for the six types seen in
-chats (flowchart, sequence, class, state, ER, Gantt), against Mermaid's 25–192 ms. Mermaid is
-every agent's diagram renderer, so a switch is left for a separate decision.
+**Diagrams.** A `mermaid` block in a chat is drawn with [Pele](https://github.com/obsidianmd/pele)
+1.6.0 (MIT, Mermaid 12.1.0 syntax, synchronous, no runtime dependencies), loaded on first use,
+with a lightbox. Its colours and fonts are the app's tokens as CSS variables, so a theme switch
+recolours a drawn diagram without a redraw. It escapes diagram text, ignores click callbacks,
+filters links, and is called with images off, so a diagram makes no request. It replaced Mermaid
+12.1.0 on 2026-10-19 after a measurement: one chunk of 661 KiB minified, 245 KiB gzip, against
+Mermaid's 5.0 MiB / 1.4 MiB when bundled whole; and a median first render over 10 runs at 390 px
+of 11–14 ms for the six types seen in chats (flowchart, sequence, class, state, ER, Gantt),
+against Mermaid's 25–192 ms.
 
 ## FAQ
 

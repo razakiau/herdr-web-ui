@@ -74,7 +74,7 @@ const patch = `(() => {
         { kind: "text", text: "FICTIONAL the edit is in; now the tests." },
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL bun test", input: "bun test", output: "FICTIONAL 3 pass", error: false, command: "bun test", exit_code: 0 },
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL bun run lint", input: "bun run lint", output: "FICTIONAL clean", error: false, command: "bun run lint", exit_code: 0 },
-        { kind: "text", text: "FICTIONAL the build passes." },
+        { kind: "text", text: "FICTIONAL the build passes.\\n\\n\`\`\`mermaid\\nflowchart LR\\n  A[FICTIONAL edit] --> B{FICTIONAL tests}\\n  B -->|pass| C[FICTIONAL ship]\\n  B -->|fail| A\\n\`\`\`" },
       ] },
       { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
       { role: "assistant", ts: at(6), end_ts: at(5), parts: [
@@ -371,6 +371,16 @@ try {
         const second = agentTurn.locator(".work-block.is-vscode").nth(1);
         assert.equal((await second.locator(".work-block-title").innerText()).trim(), "Ran 2 commands", "the second group has its own sentence");
         assert.match(await second.locator(".work-block-time").innerText(), /^Worked for \d+m$/, "the last group says how long the turn worked, on its quiet right");
+        // a diagram in the answer: drawn by Pele in the app's colours, recoloured by a theme switch
+        const diagram = agentTurn.locator(".markdown-mermaid svg.pele");
+        await diagram.waitFor();
+        const stroke = () => diagram.evaluate((svg) => getComputedStyle(svg).getPropertyValue("--pele-fg").trim());
+        const darkInk = await stroke();
+        if (shots) { await diagram.scrollIntoViewIfNeeded(); await agentTurn.locator(".markdown-mermaid").screenshot({ path: join(shots, "diagram-dark.png") }); }
+        await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+        assert.notEqual(await stroke(), darkInk, "the light theme recolours the drawn diagram");
+        if (shots) await agentTurn.locator(".markdown-mermaid").screenshot({ path: join(shots, "diagram-light.png") });
+        await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
         // the tool's picture: under the block, outside the fold, through the host source
         const thumb = view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).locator(":scope > .work-images .chat-user-image img");
         // the workspace's tab strip stands above the chat now: the turn is brought into view, where its lazy picture loads
