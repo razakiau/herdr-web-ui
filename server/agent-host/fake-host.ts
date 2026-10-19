@@ -65,6 +65,8 @@ export interface FakeAgentHostSeed {
   entryDir?: string;
   /** Per channel: how many of its next subscribes fail (as a host that times out or lost it would). */
   failSubscribes?: Record<string, number>;
+  /** Per channel: the items a `completions` request answers (none: an empty list). */
+  completions?: Record<string, unknown[]>;
 }
 
 export interface FakeAgentHost {
@@ -196,6 +198,10 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         const action = { type: "chat/turnsLoaded", turns: page.turns, ...(page.cursor ? { turnsNextCursor: page.cursor } : {}) } as StateAction;
         apply(channel, action);
         announce(channel, action);
+        return;
+      }
+      case "completions": {
+        ok({ items: seed.completions?.[String(params["channel"])] ?? [] });
         return;
       }
       default:
