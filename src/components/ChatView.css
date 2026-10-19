@@ -425,6 +425,23 @@
   height: auto;
 }
 
+/* Pele's colours and fonts (lib/mermaid.ts): the app's tokens, so a theme switch recolours a
+   drawn diagram with no redraw; inline here and in the lightbox, which shares the svg */
+.markdown-mermaid,
+.mermaid-lightbox-canvas {
+  --pele-bg: transparent;
+  --pele-fg: var(--text);
+  --pele-muted: var(--text-dim);
+  --pele-line: var(--text-dim);
+  --pele-surface: var(--bg-elevated);
+  --pele-surface-alt: color-mix(in srgb, var(--bg-elevated) 70%, var(--border));
+  --pele-border: var(--border);
+  --pele-accent: var(--accent);
+  --pele-font: var(--font-ui);
+  --pele-font-mono: var(--font-mono);
+  --pele-radius: var(--radius-sm);
+}
+
 .markdown-mermaid-zoom {
   position: absolute;
   top: var(--space-1);
