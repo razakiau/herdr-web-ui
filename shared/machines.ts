@@ -4,7 +4,9 @@ import type { HealthAuth, ServerMessage, SessionSnapshot } from "./protocol.ts";
 
 export const LOCAL_MACHINE = "local";
 export const BRIDGE_PROTOCOL = 1;
-export const REMOTE_BUNDLE_VERSION = "31";
+// zhomelab deploy branch (ZAC-180): our own numbers, so upstream's bridge can never stand in
+// for ours; bump by one for every change to BUNDLE_PATHSPECS inputs.
+export const REMOTE_BUNDLE_VERSION = "1005";
 export interface PaneTarget { machine_id: string; pane_id: string }
 export type MachineState = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
 export interface SshTarget {
