@@ -9,3 +9,4 @@
 - zhomelab bundle 1005: carries Copilot host chats rebuilt on upstream main (remote v31's bridge plus the agent-host reader).
 - zhomelab bundle 1006: carries the VS Code 1.142 subagent fix and chat delete for old sessions.
 - zhomelab bundle 1007: model picker grouped by Copilot / router / vendor (the bridge sends each model's group, multiplier and deprecation notice).
+- zhomelab bundle 1008: VS Code turn errors with Try again (chat/resume), terminal commands from the call input, context from the turn's contextAttribution, chat reads titled by their session.
