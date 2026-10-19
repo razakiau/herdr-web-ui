@@ -716,11 +716,12 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
  * sentence ("Ran 2 commands"). The last group carries the turn's state (Working…, Needs you), its
  * time and the open fold; the earlier ones are done and closed. Row memory keys stay per part.
  */
-function VscodeWork({ paneId, work, duration, live, waiting, defaultOpen, skills }: { paneId: string; work: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; skills: SkillMatcher | null }) {
+function VscodeWork({ paneId, work, all, duration, live, waiting, defaultOpen, skills }: { paneId: string; work: ConversationPart[]; all: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; skills: SkillMatcher | null }) {
   const segments = useMemo(() => {
-    const out: ({ kind: "words"; text: string; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
+    const out: ({ kind: "words"; text: string; at: number } | { kind: "own"; part: Extract<ConversationPart, { kind: "subagent" | "question" }>; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
     work.forEach((part, at) => {
       if (part.kind === "text") { out.push({ kind: "words", text: part.text, at }); return; }
+      if (part.kind === "subagent" || part.kind === "question") { out.push({ kind: "own", part, at }); return; }
       const last = out.at(-1);
       if (last?.kind === "group") last.parts.push(part);
       else out.push({ kind: "group", parts: [part], at });
@@ -730,6 +731,10 @@ function VscodeWork({ paneId, work, duration, live, waiting, defaultOpen, skills
   const lastGroup = segments.reduce((found, segment, index) => segment.kind === "group" ? index : found, -1);
   return <>{segments.map((segment, index) => segment.kind === "words"
     ? <div key={`words:${segment.at}`} className="work-words"><Markdown skills={skills} style="vscode">{segment.text}</Markdown></div>
+    : segment.kind === "own"
+      // keyed by the turn's part index, as these rows always were: an opened row stays open
+      ? segment.part.kind === "subagent" ? <TurnSubagent key={`subagent:${all.indexOf(segment.part)}`} part={segment.part} live={live} />
+        : <QuestionSummary key={`question:${all.indexOf(segment.part)}`} part={segment.part} memoryKey={`question:${all.indexOf(segment.part)}`} />
     : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
       duration={index === lastGroup ? duration : null} live={live && index === lastGroup} waiting={waiting && index === lastGroup}
       defaultOpen={index === lastGroup && defaultOpen} />)}</>;
@@ -1017,8 +1022,10 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   // sits after the work when it came before the answer, else after the answer
   const said = turn.parts.filter((part) => !isNotice(part));
   const { work, answer } = splitTurn(said);
-  // a Copilot turn's subagents and answered questions: rows of their own after the work, in order
-  const ownRows = style === "vscode" ? turn.parts.flatMap((part, index) =>
+  // a Copilot turn's subagents and answered questions are rows of their own where they came, between
+  // its tool groups (VS Code's); the classic style keeps them after the work, in order
+  const vscodeWork = style === "vscode" ? said.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question") : work;
+  const ownRows = style !== "vscode" ? turn.parts.flatMap((part, index) =>
     part.kind === "subagent" ? [<TurnSubagent key={`subagent:${index}`} part={part} live={live} />]
       : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} />]
         : []) : [];
@@ -1032,7 +1039,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {style === "vscode"
-      ? work.length > 0 ? <VscodeWork paneId={paneId} work={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} skills={skills} />
+      ? vscodeWork.length > 0 ? <VscodeWork paneId={paneId} work={vscodeWork} all={turn.parts} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} skills={skills} />
         : live && answer.length === 0 && <PendingWorkHead title={waiting ? t("Needs you") : t("Working…")} />
       : (work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} pendingHead={answer.length === 0} />}
     {ownRows}

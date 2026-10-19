@@ -119,6 +119,20 @@ describe("a turn's style", () => {
     ]), "classic")).not.toContain("c1%3A0");
   });
 
+  it("vscode keeps a question and a subagent where they came in the turn, between the tool groups", () => {
+    const html = styled(settled([
+      { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running", input: "make one", output: "", command: "make one", exit_code: 0 },
+      { kind: "question", text: "FICTIONAL which config?", options: ["a", "b"], chosen: ["a"], custom: null, skipped: false },
+      { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running", input: "make two", output: "", command: "make two", exit_code: 0 },
+      { kind: "subagent", id: "s-1", agent: "explore", description: "FICTIONAL look around", model: null, started: null, ended: null, status: "done" },
+      { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running", input: "make three", output: "", command: "make three", exit_code: 0 },
+      { kind: "text", text: "FICTIONAL done" },
+    ] as ConversationTurn["parts"]), "vscode");
+    // each run of calls between them is its own group: three groups of one, the rows between them
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toMatch(/Ran 1 command .*FICTIONAL which config\? .*Ran 1 command .*FICTIONAL look around .*Ran 1 command .*FICTIONAL done/);
+  });
+
   it("vscode keeps an MCP call out of the fold, its own row after the block", () => {
     const html = styled(settled([
       { kind: "tool", name: "bash", tool_id: "bash", summary: "ls", input: "ls", output: "", command: "ls" },
