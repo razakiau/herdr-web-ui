@@ -937,6 +937,13 @@ describe("host chat read and write routes", () => {
     expect({ status: again.status, code: again.json.error.code }).toEqual({ status: 404, code: "host_chat_missing" });
   });
 
+  it("delete still disposes a listed chat whose session the host will not open (an old chat), and it leaves the list", async () => {
+    const r = await rig({ failSubscribes: { [sessionUri(1)]: 99 } });
+    expect(await call(r, "/api/host-chats/chat/delete", { session: sessionUri(1) })).toEqual({ status: 200, json: { ok: true } });
+    expect(r.fake.requests.filter((entry) => entry.method === "disposeSession").map((entry) => entry.params)).toEqual([{ channel: sessionUri(1) }]);
+    await until("the list to drop it", () => !r.conn.summaries().some((s) => s.resource === sessionUri(1)));
+  });
+
   it("delete_running_chat_cancels_first", async () => {
     const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
     expect(await call(r, "/api/host-chats/chat/delete", { session: sessionUri(1) })).toEqual({ status: 200, json: { ok: true } });
