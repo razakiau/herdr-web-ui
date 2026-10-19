@@ -289,6 +289,30 @@ try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on" })));
+        // the browser's speech engine, as a phone's: interim words as they come, then the final ones
+        await context.addInitScript(() => {
+          class FakeSpeech {
+            lang = ""; continuous = false; interimResults = false;
+            onaudiostart: (() => void) | null = null; onresult: ((event: unknown) => void) | null = null;
+            onerror: ((event: unknown) => void) | null = null; onend: (() => void) | null = null;
+            private said = (window as unknown as { fakeSpeech?: string }).fakeSpeech ?? "FICTIONAL west wing";
+            start(): void {
+              setTimeout(() => this.onaudiostart?.(), 10);
+              const words = this.said.split(" ");
+              words.forEach((_, index) => setTimeout(() => {
+                const partial = words.slice(0, index + 1).join(" ");
+                this.onresult?.({ results: Object.assign([Object.assign([{ transcript: partial }], { isFinal: false })], { length: 1 }) });
+              }, 30 + index * 30));
+            }
+            stop(): void {
+              this.onresult?.({ results: Object.assign([Object.assign([{ transcript: this.said }], { isFinal: true })], { length: 1 }) });
+              setTimeout(() => this.onend?.(), 10);
+            }
+            abort(): void { setTimeout(() => this.onend?.(), 0); }
+          }
+          // Chromium has the unprefixed name too, which the app reads first
+          Object.assign(window, { SpeechRecognition: FakeSpeech, webkitSpeechRecognition: FakeSpeech });
+        });
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -643,6 +667,28 @@ try {
         await expanded.waitFor({ state: "detached" });
         assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL kept", "collapsing returns the card inline with its text");
         assert.equal(await page.locator(".modal-scrim .prompt-card").count(), 0, "no card left in a sheet");
+        // dictation in the card is the composer's: the same mic, the same pill over the field, and
+        // what is said lands once in the field, after what was typed
+        await card.getByRole("textbox").fill("FICTIONAL typed");
+        const cardMic = card.locator(".prompt-card-mic .voice-mic");
+        await cardMic.click();
+        const cardPill = card.locator(".voice-pill.is-open");
+        await cardPill.waitFor();
+        await card.locator('.prompt-card-mic[data-state="recording"]').waitFor({ timeout: 5000 }).catch(async () => assert.fail(`the card's mic never records: ${await card.locator(".prompt-card-mic").getAttribute("data-state")}`));
+        await page.waitForTimeout(200);
+        const pillAt = await card.evaluate((node) => {
+          const pill = node.querySelector(".voice-pill")!.getBoundingClientRect();
+          const field = node.querySelector(".prompt-card-custom .input")!.getBoundingClientRect();
+          const box = node.getBoundingClientRect();
+          return { above: pill.bottom <= field.top + 1, inside: pill.left >= box.left - 1 && pill.right <= box.right + 1 };
+        });
+        assert.ok(pillAt.above && pillAt.inside, `the card's pill sits over its field, inside the card: ${JSON.stringify(pillAt)}`);
+        if (shots) await page.screenshot({ path: join(shots, "r6-card-dictation-390.png") });
+        await cardMic.click();
+        await cardPill.waitFor({ state: "detached" }).catch(() => undefined);
+        await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".prompt-card-custom .input")?.value.includes("wing"), null, { timeout: 5000 });
+        assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL typed FICTIONAL west wing", "the words land once, after the typed ones");
+        await card.getByRole("textbox").fill("");
         // a typed answer with an image: the upload fails first (nothing posted, text and chip kept),
         // then the answer goes as "@<path> " + the text
         await card.getByRole("textbox").fill("FICTIONAL west");

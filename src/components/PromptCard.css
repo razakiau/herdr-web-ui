@@ -492,6 +492,9 @@
 }
 
 .prompt-card-custom {
+  /* the dictation pill (VoiceInput.css) floats over the field as it does over the composer, not
+     wherever the nearest positioned ancestor happened to be */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
