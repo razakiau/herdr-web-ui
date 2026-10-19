@@ -1092,9 +1092,13 @@ export interface InteractivePrompt {
   body: string | null;
   options: InteractivePromptOption[];
   multi_select: boolean;
-  /** a Copilot question the host marked not `required`: the card offers Skip for it alone (VS Code's
-   * carousel lets such a step go unanswered), the form going on to the next one */
-  skippable?: true;
+  /**
+   * A Copilot form of several questions, read whole as VS Code's carousel reads it: the card pages
+   * through them, keeps each answer on the phone (back and change it), and one Submit sends them
+   * all. An optional one (`required` false) may be left empty: it goes as skipped. The top-level
+   * fields are the first question's, for a card that reads one question only.
+   */
+  form?: InteractivePromptFormQuestion[];
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
   /** a question in Codex's queue while Codex keeps working: only the card answers it. Collapsed,
@@ -1114,12 +1118,19 @@ export interface InteractivePrompt {
   plan_file?: string;
 }
 
+export interface InteractivePromptFormQuestion {
+  title: string;
+  question: string;
+  options: InteractivePromptOption[];
+  multi_select: boolean;
+  custom_option_index: number | null;
+  required: boolean;
+}
+
 export interface InteractivePromptStep {
   label: string;
   answered: boolean;
   current: boolean;
-  /** passed over with Skip (a Copilot question that was not required) */
-  skipped?: true;
 }
 
 export interface InteractivePromptAnswer {

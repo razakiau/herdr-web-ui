@@ -595,68 +595,37 @@ describe("host chat read and write routes", () => {
     }
   });
 
-  it("a two-question form answers step one with inputAnswerChanged and completes on step two with both answers", async () => {
-    const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
-    const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
-    expect((await call(r, path)).json.prompt.id).toBe("req-1:q-color");
-    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", option_ids: ["blue"] })).json).toEqual({ ok: true });
-    await until("step one", () => actions(r.fake, "chat/inputAnswerChanged").length > 0);
-    const blue = { state: "submitted", value: { kind: "selected", value: "blue" } };
-    expect(only(r.fake, "chat/inputAnswerChanged")).toEqual({ type: "chat/inputAnswerChanged", requestId: "req-1", questionId: "q-color", answer: blue });
-    expect(actions(r.fake, "chat/inputCompleted")).toEqual([]);
-    await until("the card to move on", () => r.conn.chat(sessionUri(1))?.activeTurn?.responseParts.some((part) => part.kind === "inputRequest" && part.request.answers?.["q-color"] !== undefined) === true);
-    const second = (await call(r, path)).json as HostChatRead;
-    expect(second.prompt?.id).toBe("req-1:q-size");
-    expect(second.prompt?.steps).toEqual([{ label: "Color", answered: true, current: false }, { label: "Size", answered: false, current: true }]);
-    // an answer to the step already done is refused, not sent
-    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", option_ids: ["red"] })).status).toBe(409);
-    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-size", text: "FICTIONAL large" })).json).toEqual({ ok: true });
-    await until("the form to complete", () => actions(r.fake, "chat/inputCompleted").length > 0);
-    expect(only(r.fake, "chat/inputCompleted")).toEqual({
-      type: "chat/inputCompleted", requestId: "req-1", response: "accept",
-      answers: { "q-color": blue, "q-size": { state: "submitted", value: { kind: "text", value: "FICTIONAL large" } } },
-    });
-    expect(actions(r.fake, "chat/inputAnswerChanged").length).toBe(1);
-  });
-
-  it("a form whose questions are not required (false or unset) still shows every step: answering one leaves the request open on the next", async () => {
-    for (const required of [false, undefined]) {
-      const optional = (question: Record<string, unknown>) => { const { required: _, ...rest } = question; return required === undefined ? rest : { ...rest, required }; };
-      const r = await rig({ chats: { [chatUri(1)]: asking([optional(COLOR), optional(SIZE)]), [chatUri(2)]: chatState(2) } });
-      const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
-      expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", option_ids: ["red"] })).json).toEqual({ ok: true });
-      await until("step one", () => actions(r.fake, "chat/inputAnswerChanged").length > 0);
-      expect({ required, completed: actions(r.fake, "chat/inputCompleted") }).toEqual({ required, completed: [] });
-      await until("the card to move on", () => r.conn.chat(sessionUri(1))?.activeTurn?.responseParts.some((part) => part.kind === "inputRequest" && part.request.answers?.["q-color"] !== undefined) === true);
-      expect({ required, prompt: ((await call(r, path)).json as HostChatRead).prompt?.id }).toEqual({ required, prompt: "req-1:q-size" });
-      // the last unanswered one completes the form, with both answers
-      expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-size", text: "FICTIONAL small" })).json).toEqual({ ok: true });
+  it("a form's answers go together, in one inputCompleted: the phone pages through it, the host hears nothing until Submit", async () => {
+    for (const required of [true, false, undefined]) {
+      const flagged = (question: Record<string, unknown>) => { const { required: _, ...rest } = question; return required === undefined ? rest : { ...rest, required }; };
+      const r = await rig({ chats: { [chatUri(1)]: asking([flagged(COLOR), flagged(SIZE)]), [chatUri(2)]: chatState(2) } });
+      const read = ((await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead).prompt!;
+      expect({ required, id: read.id, form: read.form?.length }).toEqual({ required, id: "req-1:form", form: 2 });
+      expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: { "q-color": { option_ids: ["blue"] }, "q-size": { text: "FICTIONAL large" } } })).json).toEqual({ ok: true });
       await until("the form", () => actions(r.fake, "chat/inputCompleted").length > 0);
-      expect(Object.keys(only(r.fake, "chat/inputCompleted")["answers"]).sort()).toEqual(["q-color", "q-size"]);
+      expect({ required, done: only(r.fake, "chat/inputCompleted") }).toEqual({ required, done: {
+        type: "chat/inputCompleted", requestId: "req-1", response: "accept",
+        answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "blue" } }, "q-size": { state: "submitted", value: { kind: "text", value: "FICTIONAL large" } } },
+      } });
+      expect(actions(r.fake, "chat/inputAnswerChanged")).toEqual([]);
+      // the form is answered: a second Submit finds no request
+      expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: {} })).status).toBe(409);
     }
   });
 
-  it("an optional question is skipped on its own: the card moves on, and the last one completes the form with it skipped", async () => {
-    const optional = (question: Record<string, unknown>) => ({ ...question, required: false });
-    const r = await rig({ chats: { [chatUri(1)]: asking([optional(COLOR), optional(SIZE)]), [chatUri(2)]: chatState(2) } });
-    const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
-    expect(((await call(r, path)).json as HostChatRead).prompt).toMatchObject({ id: "req-1:q-color", skippable: true });
-    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", skip_question: true })).json).toEqual({ ok: true });
-    await until("the skip", () => actions(r.fake, "chat/inputAnswerChanged").length > 0);
-    expect(only(r.fake, "chat/inputAnswerChanged")).toEqual({ type: "chat/inputAnswerChanged", requestId: "req-1", questionId: "q-color", answer: { state: "skipped" } });
-    await until("the card to move on", () => r.conn.chat(sessionUri(1))?.activeTurn?.responseParts.some((part) => part.kind === "inputRequest" && part.request.answers?.["q-color"] !== undefined) === true);
-    const next = ((await call(r, path)).json as HostChatRead).prompt;
-    expect(next?.id).toBe("req-1:q-size");
-    expect(next?.steps?.[0]).toMatchObject({ answered: false, skipped: true });
-    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-size", skip_question: true })).json).toEqual({ ok: true });
+  it("a form is read whole and answered in one go: every answer completes it at once, an optional one left empty as skipped", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, { ...SIZE, required: false }]), [chatUri(2)]: chatState(2) } });
+    const read = ((await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead).prompt!;
+    expect(read.form?.map((question) => [question.title, question.required, question.custom_option_index])).toEqual([["Color", true, 2], ["Size", false, 0]]);
+    expect(read.host).toMatchObject({ request_id: "req-1", form: [{ question_id: "q-color", option_ids: ["red", "blue", ""] }, { question_id: "q-size", option_ids: [""] }] });
+    // a required question with no answer is refused, and nothing reaches the host
+    const missing = await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: { "q-size": { text: "FICTIONAL large" } } });
+    expect({ status: missing.status, code: missing.json.error.code }).toEqual({ status: 400, code: "missing_answer" });
+    expect(actions(r.fake, "chat/inputCompleted")).toEqual([]);
+    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: { "q-color": { option_ids: ["blue"] }, "q-size": null } })).json).toEqual({ ok: true });
     await until("the form", () => actions(r.fake, "chat/inputCompleted").length > 0);
-    expect(only(r.fake, "chat/inputCompleted")).toEqual({ type: "chat/inputCompleted", requestId: "req-1", response: "accept", answers: { "q-color": { state: "skipped" }, "q-size": { state: "skipped" } } });
-  });
-
-  it("a required question is not skipped on its own", async () => {
-    const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
-    expect(((await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead).prompt?.skippable).toBeUndefined();
-    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", skip_question: true })).status).toBe(400);
+    expect(only(r.fake, "chat/inputCompleted")).toEqual({ type: "chat/inputCompleted", requestId: "req-1", response: "accept",
+      answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "blue" } }, "q-size": { state: "skipped" } } });
     expect(actions(r.fake, "chat/inputAnswerChanged")).toEqual([]);
   });
 

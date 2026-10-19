@@ -22,7 +22,7 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, choose, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
+  agentName, answerHost, answerHostForm, choose, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
@@ -53,8 +53,17 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
   const submit = async (choice: PromptChoice): Promise<void> => {
     const ref = prompt.host;
     if ("request_id" in ref) {
-      if (choice.skip) {
-        await answerHost(machineId, { session, request_id: ref.request_id, question_id: ref.question_id, skip_question: true });
+      if (choice.form && ref.form) {
+        const answers = Object.fromEntries(ref.form.map((each, index) => {
+          const entry = choice.form?.[index] ?? null;
+          const custom = prompt.form?.[index]?.custom_option_index ?? null;
+          if (entry === null) return [each.question_id, null];
+          const picked = entry.option_indices.map((at) => each.option_ids[at] ?? "").filter((id) => id !== "");
+          // typed words name the "Other…" slot, whose host id is empty: the text goes as freeformValues
+          const typed = entry.custom_text !== undefined && custom !== null ? [each.option_ids[custom] ?? ""] : [];
+          return [each.question_id, { ...(picked.length + typed.length > 0 ? { option_ids: [...picked, ...typed] } : {}), ...(entry.custom_text !== undefined ? { text: entry.custom_text } : {}) }];
+        }));
+        await answerHostForm(machineId, { session, request_id: ref.request_id, answers });
         return;
       }
       const picked = choice.option_indices ?? (choice.option_index !== undefined ? [choice.option_index] : []);

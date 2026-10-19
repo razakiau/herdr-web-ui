@@ -138,21 +138,15 @@ describe("host chat mappers", () => {
     expect(many.options.map((option) => option.label)).toEqual(["Red", "Blue", "Other…"]);
   });
 
-  it("a two-question form carries steps", () => {
-    const first = promptFrom(asking({ id: "req-2", questions: [QUESTION, SECOND] }))!;
-    expect(first.id).toBe("req-2:q-color");
-    expect(first.steps).toEqual([{ label: "Color", answered: false, current: true }, { label: "Size", answered: false, current: false }]);
-    const second = promptFrom(asking({
-      id: "req-2", questions: [QUESTION, SECOND],
-      answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "red" } } },
-    }))!;
-    expect(second.id).toBe("req-2:q-size");
-    expect(second.host).toEqual({ request_id: "req-2", question_id: "q-size", option_ids: [""] });
-    expect(second.custom_option_index).toBe(0);
-    expect(second.steps).toEqual([{ label: "Color", answered: true, current: false }, { label: "Size", answered: false, current: true }]);
-    // the redraw is in the signature
-    expect(readFrom("s", "t", asking({ id: "req-2", questions: [QUESTION, SECOND] })).signature)
-      .not.toBe(readFrom("s", "t", asking({ id: "req-2", questions: [QUESTION, SECOND], answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "red" } } } })).signature);
+  it("a two-question form is read whole: each question with its own options, required flag and host ids", () => {
+    const first = promptFrom(asking({ id: "req-2", questions: [QUESTION, { ...SECOND, required: false }] }))!;
+    expect(first.id).toBe("req-2:form");
+    expect(first.steps).toBeUndefined();
+    expect(first.form).toEqual([
+      { title: "Color", question: "FICTIONAL which color?", options: [{ label: "Red", description: null }, { label: "Blue", description: "the calm one" }, { label: "Other…", description: null }], multi_select: false, custom_option_index: 2, required: true },
+      { title: "Size", question: SECOND.message, options: [{ label: "Answer", description: null }], multi_select: false, custom_option_index: 0, required: false },
+    ]);
+    expect(first.host).toEqual({ request_id: "req-2", question_id: "q-color", option_ids: ["red", "blue", ""], form: [{ question_id: "q-color", option_ids: ["red", "blue", ""] }, { question_id: "q-size", option_ids: [""] }] });
   });
 
   it("efforts come from the model's configSchema thinkingLevel", () => {

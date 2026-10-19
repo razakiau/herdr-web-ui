@@ -817,18 +817,39 @@ function valueFor(question: ChatInputQuestion, optionIds: string[], typed: strin
   }
 }
 
+/**
+ * A whole form's answers, as VS Code's carousel submits them: each question's from the phone; an
+ * optional one left empty goes as skipped (the host reads it as no answer), a required one refuses
+ * the lot before anything reaches the host.
+ */
+function formAnswers(questions: readonly ChatInputQuestion[], given: Record<string, unknown>): Record<string, ChatInputAnswer> {
+  return Object.fromEntries(questions.map((question): [string, ChatInputAnswer] => {
+    const entry = given[question.id];
+    if (entry !== undefined && entry !== null && (typeof entry !== "object" || Array.isArray(entry))) refuse(badRequest("invalid_answer", "each answer must be an object or null"));
+    const ids = (entry as { option_ids?: unknown } | null | undefined)?.option_ids;
+    const typed = (entry as { text?: unknown } | null | undefined)?.text;
+    if (ids !== undefined && !(Array.isArray(ids) && ids.every(text))) refuse(badRequest("invalid_answer", "option_ids must be strings"));
+    if (typed !== undefined && !text(typed)) refuse(badRequest("invalid_answer", "text must be a string"));
+    const picked = (ids as string[] | undefined)?.filter((id) => id !== "") ?? [];
+    const empty = picked.length === 0 && (typeof typed !== "string" || typed.trim() === "");
+    if (empty && question.required !== true) return [question.id, { state: ChatInputAnswerState.Skipped }];
+    return [question.id, submittedAs(valueFor(question, picked, typed as string | undefined))];
+  }));
+}
+
 async function answerQuestion(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const requestId = call.body["request_id"];
   const questionId = call.body["question_id"];
   if (!text(requestId) || requestId === "") return badRequest("missing_request_id", "request_id is required");
   const skip = call.body["skip"] === true;
-  const skipQuestion = call.body["skip_question"] === true;
   const rawIds = call.body["option_ids"];
   const typed = call.body["text"];
   if (rawIds !== undefined && !(Array.isArray(rawIds) && rawIds.every(text))) return badRequest("invalid_answer", "option_ids must be strings");
   if (typed !== undefined && !text(typed)) return badRequest("invalid_answer", "text must be a string");
-  if (!skip && (!text(questionId) || questionId === "")) return badRequest("missing_question_id", "question_id is required");
+  const whole = call.body["answers"];
+  if (whole !== undefined && (whole === null || typeof whole !== "object" || Array.isArray(whole))) return badRequest("invalid_answer", "answers must be an object");
+  if (!skip && whole === undefined && (!text(questionId) || questionId === "")) return badRequest("missing_question_id", "question_id is required");
   const { channel, chat } = await watched(call, session);
   const request = openRequests(chat).find((each) => each.id === requestId) ?? gone();
   if (skip) {
@@ -836,13 +857,13 @@ async function answerQuestion(call: Call): Promise<Response> {
     return jsonResponse({ ok: true });
   }
   const questions = request.questions ?? [];
+  if (whole !== undefined) {
+    call.host.dispatch(channel, { type: ActionType.ChatInputCompleted, requestId, response: ChatInputResponseKind.Accept, answers: formAnswers(questions, whole as Record<string, unknown>) } as StateAction);
+    return jsonResponse({ ok: true });
+  }
   const question = questions.find((each) => each.id === questionId) ?? gone();
   if (currentQuestion(request)?.id !== question.id) gone();
-  // Skip passes over one question the host did not mark `required`, as VS Code's carousel lets it
-  // go unanswered; a required one is refused (VS Code's Next stays disabled for it)
-  if (skipQuestion && question.required === true) return badRequest("invalid_answer", "a required question can't be skipped");
-  const answer: ChatInputAnswer = skipQuestion ? { state: ChatInputAnswerState.Skipped }
-    : submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined));
+  const answer = submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined));
   const answers = request.answers ?? {};
   // every step is shown, `required` or not: the form completes on its last unsettled question
   const more = questions.some((each) => each.id !== question.id && !answerSettled(answers[each.id]));

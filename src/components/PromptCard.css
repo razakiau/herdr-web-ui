@@ -179,11 +179,6 @@
   color: var(--accent);
 }
 
-.prompt-card-step.is-skipped .prompt-card-step-label {
-  text-decoration: line-through;
-  text-decoration-color: var(--text-dim);
-}
-
 .prompt-card-step.is-current {
   border-color: var(--accent);
   background: var(--accent-tint);
@@ -472,14 +467,26 @@
   align-self: flex-start;
 }
 
-/* the quiet way past an optional question: under the answers, never weighing as much as one */
-.prompt-card-skip {
-  align-self: flex-end;
-  color: var(--text-dim);
+/* a form's footer, as VS Code's carousel lays it out: back and next with the count between them on
+   the left, Submit on the right once the last question is up */
+.prompt-card-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid var(--border);
 }
 
-.prompt-card-skip:hover:not(:disabled) {
-  color: var(--text-strong);
+.prompt-card-pager-count {
+  min-width: 4.5em;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.prompt-card-pager-submit {
+  margin-left: auto;
 }
 
 .prompt-card-custom {

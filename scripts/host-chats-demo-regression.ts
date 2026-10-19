@@ -92,9 +92,14 @@ const patch = `(() => {
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
       body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
-      multi_select: false, custom_option_index: 3, skippable: true,
+      multi_select: false, custom_option_index: 3,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
+    // a form of two (VS Code's carousel): paged and answered on the phone, one Submit
+    if (prompt && state.form) Object.assign(prompt, { id: "req-1:form", form: [
+      { title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction", options: prompt.options, multi_select: false, custom_option_index: 3, required: true },
+      { title: "FICTIONAL pace", question: "FICTIONAL how fast?", options: [{ label: "FICTIONAL slow", description: null }, { label: "FICTIONAL quick", description: null }, { label: "Other…", description: null }], multi_select: false, custom_option_index: 2, required: false },
+    ] }, { host: { ...prompt.host, form: [{ question_id: "q-1", option_ids: prompt.host.option_ids }, { question_id: "q-2", option_ids: ["slow", "quick", ""] }] } });
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending,
       commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }], message_ids: ids,
@@ -548,18 +553,35 @@ try {
         const uploaded = await posts("/api/machines/remote/host-chats/chat/upload");
         assert.deepEqual(uploaded.map((post) => [post.body["name"], post.body["media_type"]]), [["fictional-west.png", "image/png"], ["fictional-west.png", "image/png"]], "the card's file is uploaded on each try");
         assert.deepEqual(typed.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", text: "@/tmp/fictional-repo/.herdr-web-ui/fictional-west.png FICTIONAL west", option_ids: [""] }], "a typed answer with a file posts \"@<path> <text>\" and the slot's id");
-        // an optional question's Skip passes over it alone (held as changed, so the card stays)
-        await card.getByRole("button", { name: "Skip", exact: true }).click();
-        await card.locator(".prompt-card-error", { hasText: "changed" }).waitFor();
-        const skipped = (await posts("/api/machines/remote/host-chats/chat/answer")).at(-1);
-        assert.deepEqual(skipped?.body, { session: SESSION, request_id: "req-1", question_id: "q-1", skip_question: true }, "Skip passes over this question only");
-        console.log("PASS an optional question's Skip passes over that question alone");
         await page.evaluate(() => { (window as unknown as { hostState: { holdAnswer: boolean } }).hostState.holdAnswer = false; });
         await card.getByRole("button", { name: /FICTIONAL south/ }).click();
         await card.waitFor({ state: "detached" });
         const answers = await posts("/api/machines/remote/host-chats/chat/answer");
-        assert.deepEqual(answers.slice(2).map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
+        assert.deepEqual(answers.slice(1).map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
         console.log("PASS the question card answers option 2 with its option id and goes away");
+
+        // 3b. a form of two: a pick goes on to the next page and is kept; Back shows it picked, a
+        // change sticks, an optional page left empty goes as null, and Submit sends both at once
+        await page.evaluate(() => { const host = (window as unknown as { hostState: { answered: boolean; form: boolean } }).hostState; host.answered = false; host.form = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
+        const formCard = page.locator(".prompt-dock .prompt-card");
+        await formCard.locator(".prompt-card-pager-count", { hasText: "1 of 2" }).waitFor();
+        const answeredBefore = (await posts("/api/machines/remote/host-chats/chat/answer")).length;
+        assert.equal(await formCard.getByRole("button", { name: "Next question" }).isDisabled(), true, "a required page waits for its answer");
+        await formCard.getByRole("button", { name: /FICTIONAL south/ }).click();
+        await formCard.locator(".prompt-card-pager-count", { hasText: "2 of 2" }).waitFor();
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/answer")).length, answeredBefore, "a pick posts nothing until Submit");
+        await formCard.getByRole("button", { name: "Previous question" }).click();
+        await formCard.locator(".prompt-card-pager-count", { hasText: "1 of 2" }).waitFor();
+        assert.equal(await formCard.getByRole("button", { name: /FICTIONAL south/ }).getAttribute("aria-pressed"), "true", "Back shows what was picked");
+        await formCard.getByRole("button", { name: /FICTIONAL east/ }).click();
+        await formCard.locator(".prompt-card-pager-count", { hasText: "2 of 2" }).waitFor();
+        if (shots) await formCard.screenshot({ path: join(shots, "r4-form-390.png") });
+        await formCard.getByRole("button", { name: "Submit", exact: true }).click();
+        await formCard.waitFor({ state: "detached" });
+        const sent = (await posts("/api/machines/remote/host-chats/chat/answer")).slice(answeredBefore);
+        assert.deepEqual(sent.map((post) => post.body), [{ session: SESSION, request_id: "req-1", answers: { "q-1": { option_ids: ["opt-east"] }, "q-2": null } }], "one Submit, the changed pick and the empty optional page");
+        await page.evaluate(() => { (window as unknown as { hostState: { form: boolean } }).hostState.form = false; });
+        console.log("PASS a form pages on the phone, keeps and changes its picks, and Submit sends them all at once");
 
         // 4. model · effort and agent picks, then Send
         const modelPill = view.locator(".host-chat-model");

@@ -1,6 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronUp, FileText, Maximize2, Minimize2, Plus, Send, SkipForward, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, Maximize2, Minimize2, Plus, Send, X } from "lucide-react";
 
 import "./PromptCard.css";
 
@@ -70,9 +70,13 @@ function copilotSlot(label: string | undefined, t: Translate): string {
 
 /** One answer as the card gives it: an option, several, or typed words. */
 export type PromptChoice = Omit<PromptAnswer, "pane_id" | "prompt_id"> & {
-  /** Skip on a skippable question: a host chat passes over this question alone */
-  skip?: true;
+  /** a Copilot form answered whole, one entry per question: null for an optional one left empty */
+  form?: ({ option_indices: number[]; custom_text?: string } | null)[];
 };
+
+/** One page of a form as the card keeps it until Submit: the picks, the typed words, their files. */
+interface FormDraft { selected: number[]; custom: string; files: { id: number; file: File; preview: string }[] }
+const draftAnswered = (draft: FormDraft): boolean => draft.selected.length > 0 || draft.custom.trim() !== "" || draft.files.length > 0;
 
 /**
  * The card itself, with whatever sends its answer: a pane's answers go to its prompt route
@@ -231,13 +235,57 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     });
   };
 
+  // a Copilot form (VS Code's carousel): one question a page, each page's answer kept here, so
+  // the user can go back, read what was picked and change it; Submit sends them all at once
+  const form = prompt.form ?? null;
+  const [page, setPage] = useState(0);
+  const drafts = useRef<FormDraft[]>(form ? form.map(() => ({ selected: [], custom: "", files: [] })) : []);
+  const q = form ? form[page] ?? form[0]! : prompt;
+  const lastPage = form !== null && page === form.length - 1;
+  const current = (): FormDraft => ({ selected: [...selected].sort((a, b) => a - b), custom, files });
+  const goTo = (next: number, keep: FormDraft = current()): void => {
+    if (form === null || next < 0 || next >= form.length) return;
+    drafts.current[page] = keep;
+    const shown = drafts.current[next]!;
+    setSelected(new Set(shown.selected));
+    setCustom(shown.custom);
+    setFiles(shown.files);
+    setError(null);
+    setPage(next);
+  };
+  const pageAnswered = (index: number): boolean => draftAnswered(index === page ? current() : drafts.current[index]!);
+  const submitForm = async (press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<void> => {
+    if (form === null) return;
+    drafts.current[page] = current();
+    const all = drafts.current;
+    const missing = form.findIndex((each, index) => each.required && !draftAnswered(all[index]!));
+    if (missing >= 0) {
+      if (missing !== page) goTo(missing);
+      setError({ message: t("This question needs an answer."), detail: null });
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const entries: NonNullable<PromptChoice["form"]> = [];
+    for (const draft of all) {
+      if (!draftAnswered(draft)) { entries.push(null); continue; }
+      let text = draft.custom.trim();
+      if (draft.files.length > 0 && onUploadFile) {
+        const result = await customAnswerWithFiles(text, draft.files.map((each) => each.file), onUploadFile, async (withPaths) => { text = withPaths; });
+        if (!shown.current) return;
+        if (!result.ok) { setError({ message: result.error, detail: null }); setPending(false); return; }
+      }
+      entries.push({ option_indices: draft.selected, ...(text !== "" ? { custom_text: text } : {}) });
+    }
+    await answer({ form: entries }, press);
+  };
   const customLabelId = useId();
   // Claude renders the menu's own pick as "Redis (Recommended)": a tag reads better than the suffix
   const labelOf = (label: string): { text: string; recommended: boolean } => {
     const text = label.replace(/\s*\(recommended\)$/i, "");
     return { text, recommended: text !== label };
   };
-  const hasChoices = prompt.options.some((_, index) => index !== prompt.custom_option_index);
+  const hasChoices = q.options.some((_, index) => index !== q.custom_option_index);
   const openFile = useContext(OpenFileContext);
   const planFile = prompt.plan_file;
 
@@ -253,7 +301,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       <header className="prompt-card-header">
         {/* read, not drawn: the title is the card's one red */}
         <span className="visually-hidden">{t("input needed")}</span>
-        {markdown ? <h2 className="prompt-card-markdown"><Markdown style="vscode">{prompt.title}</Markdown></h2> : <h2>{prompt.title}</h2>}
+        {markdown ? <h2 className="prompt-card-markdown"><Markdown style="vscode">{q.title}</Markdown></h2> : <h2>{q.title}</h2>}
         {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
         {planFile && openFile && (
           <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
@@ -275,19 +323,18 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       {prompt.steps && (
         <ol className="prompt-card-steps" aria-label={t("Questions")}>
           {prompt.steps.map((step, index) => (
-            <li key={index} className={`prompt-card-step${step.answered ? " is-answered" : ""}${step.skipped ? " is-skipped" : ""}${step.current ? " is-current" : ""}`} aria-current={step.current ? "step" : undefined}>
-              <span className="prompt-card-step-mark" aria-hidden="true">{step.answered ? <Check /> : step.skipped ? <SkipForward /> : index + 1}</span>
+            <li key={index} className={`prompt-card-step${step.answered ? " is-answered" : ""}${step.current ? " is-current" : ""}`} aria-current={step.current ? "step" : undefined}>
+              <span className="prompt-card-step-mark" aria-hidden="true">{step.answered ? <Check /> : index + 1}</span>
               <span className="prompt-card-step-label">{step.label}</span>
               {step.answered && <span className="visually-hidden">{t("(answered)")}</span>}
-              {step.skipped && <span className="visually-hidden">{t("(skipped)")}</span>}
             </li>
           ))}
         </ol>
       )}
       {/* a Claude approval's heading is its question too: said once */}
-      {prompt.question !== prompt.title && (markdown
-        ? <div className="prompt-card-question prompt-card-markdown"><Markdown style="vscode">{prompt.question}</Markdown></div>
-        : <p className="prompt-card-question">{prompt.question}</p>)}
+      {q.question !== q.title && (markdown
+        ? <div className="prompt-card-question prompt-card-markdown"><Markdown style="vscode">{q.question}</Markdown></div>
+        : <p className="prompt-card-question">{q.question}</p>)}
       {prompt.queued && (
         <p className="prompt-card-hint">
           {prompt.queued === "open"
@@ -319,9 +366,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       {hasChoices && (
         /* busy on the options alone, never on the card: a live region inside an aria-busy subtree is not
            read (Chromium), and the status line below has to be */
-        <div className="prompt-card-options" role={prompt.multi_select ? "group" : undefined} aria-label={prompt.multi_select ? prompt.question : undefined} aria-busy={pending}>
-          {prompt.options.map((option, index) => {
-            if (index === prompt.custom_option_index) return null;
+        <div className="prompt-card-options" role={q.multi_select ? "group" : undefined} aria-label={q.multi_select ? q.question : undefined} aria-busy={pending}>
+          {q.options.map((option, index) => {
+            if (index === q.custom_option_index) return null;
             const parsed = labelOf(option.label);
             const text = parsed.text;
             const recommended = parsed.recommended || option.recommended === true;
@@ -334,7 +381,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
             // the key the user can type, drawn as a keycap; the option's name keeps the menu's "1."
             const number = <span className="prompt-card-number"><span aria-hidden="true">{index + 1}</span><span className="visually-hidden">{index + 1}.</span></span>;
             const described = `${option.description !== null ? " has-description" : ""}${recommended ? " is-recommended" : ""}`;
-            if (prompt.multi_select) {
+            if (q.multi_select) {
               const checked = selected.has(index);
               return (
                 <label className={`prompt-card-option${described}${checked ? " is-checked" : ""}`} key={index}>
@@ -344,25 +391,32 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
               );
             }
             return (
-              <button key={index} type="button" className={`prompt-card-option${described}${typedAnswer?.option_index === index ? " is-typed" : ""}`} disabled={pending} onClick={(event) => void answer({ option_index: index }, event)}>
+              <button key={index} type="button" className={`prompt-card-option${described}${typedAnswer?.option_index === index ? " is-typed" : ""}${form && selected.has(index) ? " is-checked" : ""}`} disabled={pending} aria-pressed={form ? selected.has(index) : undefined}
+                onClick={(event) => {
+                  if (form === null) { void answer({ option_index: index }, event); return; }
+                  // a form's pick is kept, not sent: on to the next question, as VS Code's carousel goes; the last one waits for Submit
+                  const keep = { selected: [index], custom: "", files: [] };
+                  setSelected(new Set([index])); setCustom(""); setFiles([]); setError(null);
+                  if (!lastPage) goTo(page + 1, keep);
+                }}>
                 {number} {content}
               </button>
             );
           })}
         </div>
       )}
-      {prompt.multi_select && (
+      {q.multi_select && form === null && (
         <button type="button" className={`btn${selected.size > 0 ? " btn-primary" : ""} prompt-card-submit`} disabled={pending || selected.size === 0} onClick={(event) => void answer({ option_indices: [...selected].sort((a, b) => a - b) }, event)}>
           {selected.size > 0 ? t("Submit ({n})", { n: selected.size }) : t("Submit")}
         </button>
       )}
-      {prompt.custom_option_index !== null && (
+      {q.custom_option_index !== null && (
         <div className="prompt-card-custom">
           {hasChoices && <span className="prompt-card-custom-label" id={customLabelId}>{t("Or type your own answer")}</span>}
           <div className="prompt-card-custom-row">
-            <input className="input" value={custom} disabled={pending} placeholder={markdown ? copilotSlot(prompt.options[prompt.custom_option_index]?.label, t) : prompt.options[prompt.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
+            <input className="input" value={custom} disabled={pending} placeholder={markdown ? copilotSlot(q.options[q.custom_option_index]?.label, t) : q.options[q.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
               // an IME's Enter commits the candidate; WebKit can send it after compositionend, as key code 229
-              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && canSend) void answerCustom();
+              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && canSend) { if (form === null) void answerCustom(); else if (lastPage) void submitForm(); else goTo(page + 1); }
             }} {...(attaching ? { ref: customRef, onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => {
               const pasted = Array.from(event.clipboardData.files);
               if (pasted.length === 0) return;
@@ -380,9 +434,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
               </button>
               {dictation.shown && <MicButton dictation={dictation} className="prompt-card-mic" />}
             </>}
-            <button type="button" className={`btn${canSend ? " btn-primary" : ""}`} disabled={pending || !canSend} onClick={(event) => void answerCustom(event)}>
+            {form === null && <button type="button" className={`btn${canSend ? " btn-primary" : ""}`} disabled={pending || !canSend} onClick={(event) => void answerCustom(event)}>
               <Send aria-hidden="true" /> {t("Send")}
-            </button>
+            </button>}
           </div>
           {attaching && dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
           {files.length > 0 && (
@@ -400,15 +454,11 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
           )}
         </div>
       )}
-      {/* a question the host did not mark required (VS Code's carousel lets it go): passed over on its own, the form going on */}
-      {prompt.skippable && typedAnswer?.option_index === undefined && (
-        <button type="button" className="btn btn-ghost prompt-card-skip" disabled={pending} onClick={(event) => void answer({ skip: true }, event)}>{t("Skip")}</button>
-      )}
       {typedAnswer?.option_index !== undefined && (
         <div className="prompt-card-confirm" role="alert" ref={confirmRef}>
           {/* an option's label can run to pages (a review to approve): the question shows two lines
               of it and scrolls in itself, and the two buttons stay whole, on one line */}
-          <span className="prompt-card-confirm-text">{t("Send {answer}?", { answer: `${typedAnswer.option_index + 1}. ${prompt.options[typedAnswer.option_index]?.label ?? ""}` })}</span>
+          <span className="prompt-card-confirm-text">{t("Send {answer}?", { answer: `${typedAnswer.option_index + 1}. ${q.options[typedAnswer.option_index]?.label ?? ""}` })}</span>
           <span className="prompt-card-confirm-actions">
             <button type="button" className="btn btn-primary" disabled={pending} onClick={(event) => void answer(typedAnswer, event).then((current) => { if (current) onTypedAnswerDone?.(); })}>{t("Confirm")}</button>
             <button type="button" className="btn" disabled={pending} onClick={() => onTypedAnswerDone?.()}>{t("Cancel")}</button>
@@ -417,6 +467,16 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       )}
       {/* in the card from its first render, clipped while empty (never display: none): a live region that
           appears together with its words is not read; one that is there and gets them is */}
+      {/* a form's pager (VS Code's carousel footer): back and forth, every answer kept; Next waits on a
+          required question's answer, an optional one may stay empty; Submit sends the lot */}
+      {form !== null && (
+        <nav className="prompt-card-pager" aria-label={t("Questions")}>
+          <button type="button" className="icon-button" aria-label={t("Previous question")} title={t("Previous question")} disabled={pending || page === 0} onClick={() => goTo(page - 1)}><ChevronLeft aria-hidden="true" /></button>
+          <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
+          <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
+          {lastPage && <button type="button" className="btn btn-primary prompt-card-pager-submit" disabled={pending} onClick={(event) => void submitForm(event)}>{t("Submit")}</button>}
+        </nav>
+      )}
       <p className={pending ? "prompt-card-status" : "visually-hidden"} role="status">{pending ? t("Sending your answer…") : null}</p>
       {error !== null && <p className="prompt-card-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}
     </section>
