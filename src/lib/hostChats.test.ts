@@ -644,7 +644,7 @@ describe("what a host chat waits on (VS Code's persistent progress)", () => {
   const words = (key: string, values?: Record<string, string | number>) => Object.entries(values ?? {}).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), key);
   const read = (extra: Partial<HostChatRead>): HostChatRead => ({
     session: "s", title: "t", status: "working", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: true, pending: [], commands: [],
-    background: { subagents: 0, commands: 0 }, confirmations: 0, context: null, message_ids: [], signature: "x", ...extra,
+    background: { subagents: 0, commands: 0 }, confirmations: 0, context: null, message_ids: [], checkpoints: [], restored: null, signature: "x", ...extra,
   });
   const question = { kind: "question" } as unknown as HostChatRead["prompt"];
   it("an open question comes first", () => {

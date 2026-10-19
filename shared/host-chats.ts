@@ -80,6 +80,14 @@ export interface HostChatRead {
    * one) and its pending messages'. A phone whose send lost its answer sees here that it went.
    */
   message_ids: string[];
+  /**
+   * VS Code's checkpoints, one per loaded turn in its order (a user turn's index among the read's
+   * user turns is its index here): the host's turn id and the files its edits touched. Restoring
+   * one undoes it and every later turn; the first one is Start Over.
+   */
+  checkpoints: HostCheckpoint[];
+  /** a checkpoint restored and not yet sent past or redone: the next send truncates the chat to before it */
+  restored: { turn: string; files: number } | null;
   /** changes when anything shown changes */
   signature: string;
 }
@@ -123,3 +131,9 @@ export interface HostSessionConfig { mode: string | null; approvals: string | nu
 
 /** A command the host publishes for a chat: its skills, prompts and custom agents, called as `/name`. */
 export interface HostCommand { name: string; description: string; kind: "skill" | "prompt" | "agent" }
+
+/** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */
+export interface HostCheckpoint {
+  turn: string;
+  files: { path: string; added: number; removed: number }[];
+}

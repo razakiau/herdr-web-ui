@@ -1408,3 +1408,94 @@ describe("host chat image and tool-output routes", () => {
     expect({ status: unknown.status, code: unknown.json.error.code }).toEqual({ status: 404, code: "not_found" });
   });
 });
+
+describe("host chat checkpoints: Restore Checkpoint, Start Over and Redo (VS Code's)", () => {
+  const A = "file:///tmp/fictional-repo/a.ts", B = "file:///tmp/fictional-repo/b.ts";
+  const ref = (name: string) => `session-db:/tmp/fictional-repo/${name}?FICTIONAL`;
+  /** a finished turn whose one tool call made these file edits */
+  const editing = (id: string, text: string, edits: unknown[]): Turn => ({
+    ...turn(id, text),
+    responseParts: [{ kind: "toolCall", toolCall: {
+      toolCallId: `${id}-call`, toolName: "edit", displayName: "Edit", status: "completed", invocationMessage: "Editing", confirmed: "not-needed",
+      success: true, pastTenseMessage: "Edited", content: edits.map((edit) => ({ type: "fileEdit", ...(edit as object) })),
+    } }, { kind: "markdown", id: `${id}-m`, content: `FICTIONAL done ${text}` }],
+  } as unknown as Turn);
+  // t1 edits a (v0 -> v1); t2 edits a (v1 -> v2) and creates b; t3 has no edits
+  const turns = [
+    editing("t1", "FICTIONAL one", [{ before: { uri: A, content: { uri: ref("a@0") } }, after: { uri: A, content: { uri: ref("a@1") } }, diff: { added: 1, removed: 1 } }]),
+    editing("t2", "FICTIONAL two", [
+      { before: { uri: A, content: { uri: ref("a@1") } }, after: { uri: A, content: { uri: ref("a@2") } }, diff: { added: 2, removed: 0 } },
+      { after: { uri: B, content: { uri: ref("b@1") } }, diff: { added: 3, removed: 0 } },
+    ]),
+    turn("t3", "FICTIONAL three"),
+  ];
+  const files = { [ref("a@0")]: "a0", [ref("a@1")]: "a1", [ref("a@2")]: "a2", [ref("b@1")]: "b1", [A]: "a2", [B]: "b1" };
+  const restoring = (overrides: Record<string, unknown> = {}) => rig({ files, chats: { [chatUri(1)]: chatState(1, { turns, ...overrides }), [chatUri(2)]: chatState(2) } });
+  const read = async (r: Rig) => (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+
+  it("a read names each turn's checkpoint and the files its edits touched", async () => {
+    const r = await restoring();
+    const got = await read(r);
+    expect(got.checkpoints).toEqual([
+      { turn: "t1", files: [{ path: "/tmp/fictional-repo/a.ts", added: 1, removed: 1 }] },
+      { turn: "t2", files: [{ path: "/tmp/fictional-repo/a.ts", added: 2, removed: 0 }, { path: "/tmp/fictional-repo/b.ts", added: 3, removed: 0 }] },
+      { turn: "t3", files: [] },
+    ]);
+    expect(got.restored).toBeNull();
+  });
+
+  it("restore undoes that turn and every later one, newest first: a created file goes, an edited one is as before", async () => {
+    const r = await restoring();
+    const done = await call(r, "/api/host-chats/chat/checkpoint/restore", { session: sessionUri(1), turn: "t2" });
+    expect(done).toEqual({ status: 200, json: { files: 2 } });
+    expect(r.fake.files.get(A)).toBe("a1");
+    expect(r.fake.files.has(B)).toBe(false);
+    expect((await read(r)).restored).toEqual({ turn: "t2", files: 2 });
+    // nothing is truncated until the next send
+    expect(actions(r.fake, "chat/truncated")).toEqual([]);
+  });
+
+  it("Start Over (the first turn) undoes every edit; Redo puts them all back, oldest first", async () => {
+    const r = await restoring();
+    expect((await call(r, "/api/host-chats/chat/checkpoint/restore", { session: sessionUri(1), turn: "t1" })).json).toEqual({ files: 2 });
+    expect(r.fake.files.get(A)).toBe("a0");
+    expect(r.fake.files.has(B)).toBe(false);
+    expect(await call(r, "/api/host-chats/chat/checkpoint/redo", { session: sessionUri(1) })).toEqual({ status: 200, json: { files: 2 } });
+    expect(r.fake.files.get(A)).toBe("a2");
+    expect(r.fake.files.get(B)).toBe("b1");
+    expect((await read(r)).restored).toBeNull();
+  });
+
+  it("the send after a restore truncates to the turn before it, then starts the new turn", async () => {
+    const r = await restoring();
+    await call(r, "/api/host-chats/chat/checkpoint/restore", { session: sessionUri(1), turn: "t2" });
+    const id = crypto.randomUUID();
+    expect((await call(r, "/api/host-chats/chat/send", { id, session: sessionUri(1), text: "FICTIONAL instead" })).json).toEqual({ queued: false });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === id);
+    const kinds = r.fake.dispatched.map((entry): string => entry.action.type).filter((type) => type === "chat/truncated" || type === "chat/turnStarted");
+    expect(kinds).toEqual(["chat/truncated", "chat/turnStarted"]);
+    expect(only(r.fake, "chat/truncated")).toEqual({ type: "chat/truncated", turnId: "t1" });
+    expect(r.conn.chat(sessionUri(1))?.turns.map((each) => each.id)).toEqual(["t1"]);
+    expect((await read(r)).restored).toBeNull();
+  });
+
+  it("the send after Start Over clears every turn (no turnId)", async () => {
+    const r = await restoring();
+    await call(r, "/api/host-chats/chat/checkpoint/restore", { session: sessionUri(1), turn: "t1" });
+    await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), text: "FICTIONAL afresh" });
+    await until("the truncate", () => actions(r.fake, "chat/truncated").length > 0);
+    expect(only(r.fake, "chat/truncated")).toEqual({ type: "chat/truncated" });
+  });
+
+  it("refuses while a turn runs, and an unknown turn", async () => {
+    const busy = await restoring({ status: 8, activeTurn: active() });
+    const refused = await call(busy, "/api/host-chats/chat/checkpoint/restore", { session: sessionUri(1), turn: "t2" });
+    expect({ status: refused.status, code: refused.json.error.code }).toEqual({ status: 409, code: "turn_running" });
+    expect(busy.fake.files.get(A)).toBe("a2");
+    const r = await restoring();
+    const unknown = await call(r, "/api/host-chats/chat/checkpoint/restore", { session: sessionUri(1), turn: "t9" });
+    expect({ status: unknown.status, code: unknown.json.error.code }).toEqual({ status: 404, code: "unknown_turn" });
+    const none = await call(r, "/api/host-chats/chat/checkpoint/redo", { session: sessionUri(1) });
+    expect({ status: none.status, code: none.json.error.code }).toEqual({ status: 409, code: "nothing_to_redo" });
+  });
+});

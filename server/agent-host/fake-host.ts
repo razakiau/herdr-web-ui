@@ -67,6 +67,8 @@ export interface FakeAgentHostSeed {
   failSubscribes?: Record<string, number>;
   /** Per channel: the items a `completions` request answers (none: an empty list). */
   completions?: Record<string, unknown[]>;
+  /** Files and content refs by URI, as `resourceRead` / `resourceWrite` / `resourceDelete` see them. */
+  files?: Record<string, string>;
 }
 
 export interface FakeAgentHost {
@@ -74,6 +76,8 @@ export interface FakeAgentHost {
   token: string;
   dispatched: Array<{ channel: string; action: StateAction }>;
   requests: Array<{ method: string; params: unknown }>;
+  /** what `resource*` sees now, by URI */
+  files: Map<string, string>;
   push(channel: string, action: StateAction | FakeRootNotice): void;
   /** How many clients are connected now. */
   peers(): number;
@@ -93,6 +97,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
   const states: Record<string, SessionState> = { ...seed.states };
   const chats: Record<string, ChatState> = { ...seed.chats };
   const failSubscribes: Record<string, number> = { ...seed.failSubscribes };
+  const files = new Map(Object.entries(seed.files ?? {}));
   const dispatched: FakeAgentHost["dispatched"] = [];
   const requests: FakeAgentHost["requests"] = [];
   const peers = new Set<ServerWebSocket<Peer>>();
@@ -204,6 +209,27 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         ok({ items: seed.completions?.[String(params["channel"])] ?? [] });
         return;
       }
+      // a host's files and its edits' content refs, in memory: what `resource*` reads and changes
+      case "resourceRead": {
+        const uri = String(params["uri"]);
+        const data = files.get(uri);
+        if (data === undefined) { fail(-32008, `not found: ${uri}`); return; }
+        ok({ data: Buffer.from(data).toString("base64"), encoding: "base64", contentType: "text/plain" });
+        return;
+      }
+      case "resourceWrite": {
+        const uri = String(params["uri"]);
+        const raw = String(params["data"]);
+        files.set(uri, params["encoding"] === "base64" ? Buffer.from(raw, "base64").toString() : raw);
+        ok({});
+        return;
+      }
+      case "resourceDelete": {
+        const uri = String(params["uri"]);
+        if (!files.delete(uri)) { fail(-32008, `not found: ${uri}`); return; }
+        ok({});
+        return;
+      }
       default:
         fail(-32601, `method not found: ${method}`);
     }
@@ -249,6 +275,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
     token,
     dispatched,
     requests,
+    files,
     push(channel, item) {
       if (NOTICES.has(item.type)) { notice(channel, item as FakeRootNotice); return; }
       // an action this fake's own reducer cannot apply is still sent, as a host would

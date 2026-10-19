@@ -43,7 +43,7 @@ import {
   type Turn,
 } from "@microsoft/agent-host-protocol";
 import type { ConversationPart, ConversationTurn, InteractivePromptOption } from "../../shared/protocol.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostCommand, HostContextUsage, HostModel } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
 
@@ -111,6 +111,26 @@ function imagesOf(tool: ToolCallState): ToolResultEmbeddedResourceContent[] {
 function editOf(edit: ToolResultFileEditContent): { path: string; added: number; removed: number } {
   const uri = edit.after?.uri ?? edit.before?.uri ?? "";
   return { path: pathOf(uri) ?? uri, added: edit.diff?.added ?? 0, removed: edit.diff?.removed ?? 0 };
+}
+
+/** A turn's file edits in the order its calls made them (VS Code's checkpoint is these). */
+export function turnEdits(turn: Turn | ActiveTurn): ToolResultFileEditContent[] {
+  return turn.responseParts.flatMap((part) => part.kind === ResponsePartKind.ToolCall
+    ? contentOf(part.toolCall).flatMap((item) => (item.type === ToolResultContentType.FileEdit ? [item] : []))
+    : []);
+}
+
+/** Each loaded turn's checkpoint: its id and the files its edits touched, each file once, lines summed. */
+export function checkpointsOf(chat: ChatState): HostCheckpoint[] {
+  const all: Array<Turn | ActiveTurn> = chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns;
+  return all.map((turn) => {
+    const files = new Map<string, { path: string; added: number; removed: number }>();
+    for (const edit of turnEdits(turn).map(editOf)) {
+      const seen = files.get(edit.path);
+      if (seen) { seen.added += edit.added; seen.removed += edit.removed; } else files.set(edit.path, { ...edit });
+    }
+    return { turn: turn.id, files: [...files.values()] };
+  });
 }
 
 const settled = (tool: ToolCallState): boolean => tool.status === ToolCallStatus.Completed || tool.status === ToolCallStatus.Cancelled || tool.status === ToolCallStatus.PendingResultConfirmation;
@@ -735,7 +755,7 @@ export function contextUsageOf(session: SessionState | undefined, newest?: Turn 
   return usage;
 }
 
-export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext): HostChatRead {
+export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext, restored: HostChatRead["restored"] = null): HostChatRead {
   const prompt = promptFrom(chat);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const status = statusOf(chat.status);
@@ -764,13 +784,15 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
       ...chat.turns.map((turn) => turn.id), ...(chat.activeTurn ? [chat.activeTurn.id] : []),
       ...(chat.steeringMessage ? [chat.steeringMessage.id] : []), ...(chat.queuedMessages ?? []).map((pending) => pending.id),
     ],
+    checkpoints: checkpointsOf(chat),
+    restored,
   };
   const shape = [
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
-    read.background, read.confirmations, read.context,
+    read.background, read.confirmations, read.context, read.restored,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];
