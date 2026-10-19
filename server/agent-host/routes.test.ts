@@ -1187,6 +1187,24 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect(read.json.commands).toEqual([{ name: "Report", description: "FICTIONAL writes a report", kind: "agent" }]);
   });
 
+  it("a read adds the skills the host completes for \"/\" on the session (a plugin's skills are only there)", async () => {
+    const skill = (name: string, description?: string) => ({ insertText: `/${name} `, rangeStart: 0, rangeEnd: 1, attachment: { type: "simple", label: name, _meta: { command: name, isSkill: true, ...(description ? { description } : {}) } } });
+    const r = await rig({ completions: { [sessionUri(1)]: [
+      { insertText: "/compact ", rangeStart: 0, rangeEnd: 1, attachment: { type: "simple", label: "compact", _meta: { command: "compact", description: "FICTIONAL compact" } } },
+      skill("fictional-plugin:brainstorm", "FICTIONAL brainstorm"), skill("Report"), skill("fictional-bare"),
+    ] } });
+    const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    expect(read.json.commands).toEqual([
+      { name: "Report", description: "FICTIONAL writes a report", kind: "agent" },
+      { name: "fictional-plugin:brainstorm", description: "FICTIONAL brainstorm", kind: "skill" },
+      { name: "fictional-bare", description: "", kind: "skill" },
+    ]);
+    const asked = r.fake.requests.filter((each) => each.method === "completions").map((each) => each.params as Record<string, unknown>);
+    expect(asked[0]).toMatchObject({ kind: "userMessage", channel: sessionUri(1), text: "/", offset: 1 });
+    await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    expect(r.fake.requests.filter((each) => each.method === "completions").length).toBe(1);
+  });
+
   it("files lists the chat's folder for @, and refuses a session it does not know", async () => {
     const folder = temp();
     mkdirSync(join(folder, "src"), { recursive: true });

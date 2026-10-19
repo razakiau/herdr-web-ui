@@ -128,6 +128,8 @@ export interface ReadContext {
   modelName(id: string): string;
   /** the chat's session state, for its "/" commands (absent: none) */
   session?(): SessionState | undefined;
+  /** the skills the host completes for "/" on the session (a plugin's skills are only there) */
+  skills?(): HostCommand[];
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -606,6 +608,26 @@ export function commandsFrom(session: SessionState | undefined): HostCommand[] {
   return [...found.values()];
 }
 
+/**
+ * The skills in a host's answer to `completions` for "/": the items VS Code marks `isSkill`
+ * (copilotcli's runtime list, which holds the plugins' skills the customizations leave out).
+ */
+export function skillsFrom(items: readonly unknown[]): HostCommand[] {
+  const found = new Map<string, HostCommand>();
+  for (const raw of items) {
+    const meta = (raw as { attachment?: { _meta?: { command?: unknown; isSkill?: unknown; description?: unknown } } }).attachment?._meta;
+    if (meta?.isSkill !== true || typeof meta.command !== "string" || meta.command === "" || found.has(meta.command)) continue;
+    found.set(meta.command, { name: meta.command, description: typeof meta.description === "string" ? meta.description : "", kind: "skill" });
+  }
+  return [...found.values()];
+}
+
+/** The customizations' commands, then the skills only the completions name. */
+function withSkills(commands: HostCommand[], skills: readonly HostCommand[]): HostCommand[] {
+  const named = new Set(commands.map((each) => each.name));
+  return [...commands, ...skills.filter((each) => !named.has(each.name))];
+}
+
 // ─── A chat, read ────────────────────────────────────────────────────────────
 
 /** The newest turn's model (its effort read from the config's one value), else the draft's. */
@@ -688,7 +710,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     model: modelOf(chat),
     agent: newest?.message.agent?.uri ?? null,
     busy: chat.activeTurn !== undefined,
-    commands: commandsFrom(context?.session?.()),
+    commands: withSkills(commandsFrom(context?.session?.()), context?.skills?.() ?? []),
     background: backgroundOf(chat),
     confirmations: pendingToolCalls(chat).length,
     // the running turn may have no usage yet: the newest turn that reported one

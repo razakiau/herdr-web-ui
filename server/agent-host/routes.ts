@@ -22,6 +22,7 @@ import {
   ChatInputAnswerValueKind,
   ChatInputQuestionKind,
   ChatInputResponseKind,
+  CompletionItemKind,
   MessageAttachmentKind,
   MessageKind,
   PendingMessageKind,
@@ -42,13 +43,13 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState } from "../../shared/host-chats.ts";
+import type { AgentHostState, HostCommand } from "../../shared/host-chats.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -363,9 +364,40 @@ async function followSubagents(call: Call, session: string, chat: ChatState): Pr
 }
 
 /** What a read of `session`'s chat knows beside it: its subagents' own chats, and the models' names. */
-function contextOf(host: AgentHost, session?: string): ReadContext {
+function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): ReadContext {
   const names = new Map(modelsFrom(host.mirror().root).map((model) => [model.id, model.name]));
-  return { chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, ...(session ? { session: () => host.mirror().getSession(session) } : {}) };
+  return {
+    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id,
+    ...(session ? { session: () => host.mirror().getSession(session) } : {}),
+    ...(skills ? { skills: () => skills } : {}),
+  };
+}
+
+/** How long a session's skills are kept before a read asks the host again (it answers from its own cache). */
+export const SKILLS_TTL_MS = 5 * 60_000;
+/** How long a read waits for a session's first skill list before it goes without (the next read has it). */
+const SKILLS_WAIT_MS = 2_000;
+interface SkillsEntry { skills: HostCommand[]; at: number; asking: Promise<void> | null }
+const skillSets = new WeakMap<AgentHost, Map<string, SkillsEntry>>();
+
+/**
+ * The skills the host completes for "/" on `session`. VS Code's own "/" menu asks `completions`
+ * with the session's URI: copilotcli's runtime list carries the plugins' skills, which the
+ * session's customizations do not (on a Coder workspace none of them). A failed ask keeps the last list.
+ */
+async function sessionSkills(host: AgentHost, session: string): Promise<HostCommand[]> {
+  let sessions = skillSets.get(host);
+  if (!sessions) { sessions = new Map(); skillSets.set(host, sessions); }
+  const entry = sessions.get(session) ?? { skills: [], at: -Infinity, asking: null };
+  sessions.set(session, entry);
+  if (Date.now() - entry.at < SKILLS_TTL_MS) return entry.skills;
+  entry.asking ??= host.request("completions", { kind: CompletionItemKind.UserMessage, channel: session, text: "/", offset: 1 })
+    .then((result) => { entry.skills = skillsFrom(result.items ?? []); entry.at = Date.now(); })
+    .catch(() => { /* the last list stands; the next read asks again */ })
+    .finally(() => { entry.asking = null; });
+  // the first list is waited for (briefly); a stale one is shown while the new one comes
+  if (entry.at === -Infinity) await Promise.race([entry.asking, Bun.sleep(SKILLS_WAIT_MS)]);
+  return entry.skills;
 }
 
 /**
@@ -404,7 +436,8 @@ async function readChat(call: Call): Promise<Response> {
     chat = call.host.chat(session) ?? chat;
   }
   await followSubagents(call, session, chat);
-  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session)));
+  const skills = await sessionSkills(call.host, session);
+  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills)));
 }
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
