@@ -11,7 +11,7 @@ import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
-import type { HostAgent, HostAnswer, HostChatRead, HostChatRow, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HostAgent, HostAnswer, HostFormAnswer, HostChatRead, HostChatRow, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 
@@ -122,6 +122,11 @@ export async function watchHostChat(machineId: string, session: string): Promise
 }
 
 export function answerHost(machineId: string, body: HostAnswer): Promise<{ ok: true }> {
+  return post(machineId, "host-chats/chat/answer", body);
+}
+
+/** A form's answers, all at once: the host completes the request with them (chat/inputCompleted). */
+export function answerHostForm(machineId: string, body: HostFormAnswer): Promise<{ ok: true }> {
   return post(machineId, "host-chats/chat/answer", body);
 }
 

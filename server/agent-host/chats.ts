@@ -485,8 +485,16 @@ function questionOptions(question: ChatInputQuestion): { options: InteractivePro
 function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion): NonNullable<HostChatRead["prompt"]> {
   const questions = request.questions ?? [];
   const { options, ids, custom } = questionOptions(question);
+  // several questions: the whole form, paged and answered on the phone (VS Code's carousel)
+  const form = questions.length > 1 ? questions.map((each) => {
+    const own = questionOptions(each);
+    return {
+      read: { title: each.title ?? "", question: each.message, options: own.options, multi_select: each.kind === ChatInputQuestionKind.MultiSelect, custom_option_index: own.custom, required: each.required === true },
+      ref: { question_id: each.id, option_ids: own.ids },
+    };
+  }) : null;
   return {
-    id: `${request.id}:${question.id}`,
+    id: form ? `${request.id}:form` : `${request.id}:${question.id}`,
     agent: PROMPT_AGENT,
     kind: "question",
     title: question.title ?? "",
@@ -495,16 +503,8 @@ function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion):
     options,
     multi_select: question.kind === ChatInputQuestionKind.MultiSelect,
     custom_option_index: custom,
-    ...(question.required === true ? {} : { skippable: true as const }),
-    ...(questions.length > 1 ? {
-      steps: questions.map((each) => ({
-        label: each.title ?? each.message,
-        answered: submitted(request.answers?.[each.id]),
-        current: each.id === question.id,
-        ...(request.answers?.[each.id]?.state === ChatInputAnswerState.Skipped ? { skipped: true as const } : {}),
-      })),
-    } : {}),
-    host: { request_id: request.id, question_id: question.id, option_ids: ids },
+    ...(form ? { form: form.map((each) => each.read) } : {}),
+    host: { request_id: request.id, question_id: question.id, option_ids: ids, ...(form ? { form: form.map((each) => each.ref) } : {}) },
   };
 }
 
