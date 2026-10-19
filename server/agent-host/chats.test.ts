@@ -53,7 +53,6 @@ describe("host chat mappers", () => {
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running `ls`", past: "Ran `ls`", input: "ls /tmp/fictional-repo", output: "a.txt\nb.txt", error: false },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: "", output: "", error: true },
         { kind: "text", text: "FICTIONAL two files" },
-        { kind: "notice", text: "FICTIONAL failure", source: "error" },
       ] },
       { role: "user", ts: AT, parts: [{ kind: "text", text: "FICTIONAL again" }] },
       { role: "assistant", ts: AT, parts: [] },
@@ -280,7 +279,7 @@ describe("host chat mappers", () => {
       ...user("FICTIONAL hi"), model: { id: "fictional/model-a", config: { thinkingLevel: "high" } }, agent: { uri: "file:///tmp/fictional/agents/Report.agent.md" },
     } };
     const read = readFrom("copilotcli:/1", "FICTIONAL_title", chat({ turns: [turn], turnsNextCursor: "c1" }));
-    expect(read).toMatchObject({ session: "copilotcli:/1", title: "FICTIONAL_chat", status: "idle", cursor: "c1", prompt: null,
+    expect(read).toMatchObject({ session: "copilotcli:/1", title: "FICTIONAL_title", status: "idle", cursor: "c1", prompt: null,
       model: { id: "fictional/model-a", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md", busy: false });
     expect(read.signature).toMatch(/^[0-9a-f]{16}$/);
     expect(readFrom("s", "t", chat({ draft: { ...user(""), model: { id: "fictional/model-a" } } })).model).toEqual({ id: "fictional/model-a", effort: null });
@@ -320,6 +319,18 @@ describe("what a host chat waits on, and its context", () => {
     // a bad optional count is left out, the rest stays
     expect(readFrom("s", "t", chat({}), ctx(sessionWith({ "copilot.usageInfo": { ...usage, systemTokens: -3 } }))).context).toEqual({ currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, toolDefinitionsTokens: 15000 });
   });
+
+  it("the newest turn's contextAttribution wins over the session's usage info, as VS Code's readAgentContextUsage", () => {
+    const attribution = { totalTokens: 211895, limit: 967232, promptTokenLimit: 967232, categories: { systemPrompt: 20613, customInstructions: 0, systemTools: 17914, mcpTools: 18528, messages: 154840, freeSpace: 706976 } };
+    const turn = (meta: Record<string, unknown>) => ({ id: "turn-1", startedAt: AT, state: "complete", responseParts: [], message: user("FICTIONAL hi"), usage: { inputTokens: 1, outputTokens: 1, _meta: meta } });
+    const session = ctx(sessionWith({ "copilot.usageInfo": { currentTokens: 5, tokenLimit: 10, messagesLength: 1 } }));
+    expect(readFrom("s", "t", chat({ turns: [turn({ contextAttribution: attribution })] }), session).context)
+      .toEqual({ currentTokens: 211895, tokenLimit: 967232, conversationTokens: 154840, systemTokens: 20613, toolDefinitionsTokens: 36442 });
+    // none on the turn: the session's
+    expect(readFrom("s", "t", chat({ turns: [turn({})] }), session).context).toEqual({ currentTokens: 5, tokenLimit: 10 });
+    // a broken one is none, never a guess
+    expect(readFrom("s", "t", chat({ turns: [turn({ contextAttribution: { totalTokens: 3, limit: 0 } })] })).context).toBeNull();
+  });
 });
 
 // ─── The whole turn, built through the package's reducers ────────────────────
@@ -348,9 +359,14 @@ describe("host chat turns, whole", () => {
   });
 
   it("terminal_result_gives_command_and_exit_code", () => {
-    const terminal = { type: "terminal", resource: "ahp-terminal://fictional/1", title: "npm test", result: { exitCode: 1, preview: "FICTIONAL 1 failed" } };
-    const part = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c1"), done([terminal])), finished()])));
+    // the title is the host's label for the terminal ("Run Shell Command"), never the command line:
+    // VS Code's getTerminalInput reads the input's `command`, else the whole input
+    const terminal = { type: "terminal", resource: "ahp-terminal://fictional/1", title: "Run Shell Command", result: { exitCode: 1, preview: "FICTIONAL 1 failed" } };
+    const json = { ...call("c1"), toolInput: JSON.stringify({ command: "npm test", description: "FICTIONAL tests" }) };
+    const part = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", json, done([terminal])), finished()])));
     expect(part.command).toBe("npm test");
+    const raw = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", { ...call("c1"), toolInput: "ls -la" }, done([terminal])), finished()])));
+    expect(raw.command).toBe("ls -la");
     expect(part.exit_code).toBe(1);
     expect(part.error).toBe(true);
     // a terminal call with no text block reads its terminal's output preview
@@ -535,6 +551,24 @@ describe("host chat turns, whole", () => {
     const parts = assistant(state);
     expect(parts).toEqual([{ kind: "text", text: "FICTIONAL working on it" }, { kind: "notice", text: "FICTIONAL rate limited", source: "error" }]);
     expect(parts.some((part) => part.kind === "text" && part.phase === "final_answer")).toBe(false);
+  });
+
+  it("an error a turn got past is not shown: VS Code shows only the one the turn ended on", () => {
+    // as the host records it: the error part stays in the turn, which went on and completed
+    const state = chat({ turns: [{ id: "turn-1", startedAt: AT, duration: 10, state: "complete", usage: undefined, message: user("FICTIONAL do it"), responseParts: [
+      { kind: "error", error: { errorType: "query", message: "FICTIONAL retried 5 times" } },
+      { kind: "markdown", id: "m1", content: "FICTIONAL done anyway" },
+    ] }] });
+    expect(assistant(state)).toEqual([{ kind: "text", text: "FICTIONAL done anyway" }]);
+  });
+
+  it("the last turn's resumable error offers a retry; an older one does not", () => {
+    const failed = (turnId: string) => ({ type: "chat/error", turnId, duration: 5000, part: { kind: "error", resumable: true, error: { errorType: "query", message: "FICTIONAL 502" } } }) as StateAction;
+    const once = reducedChat([started(), failed("turn-1")]);
+    expect(assistant(once)).toEqual([{ kind: "notice", text: "FICTIONAL 502", source: "error", resumable: true }]);
+    const twice = reducedChat([started(), failed("turn-1"), started("turn-2"), failed("turn-2")]);
+    expect(turnsFrom(twice)[1]!.parts).toEqual([{ kind: "notice", text: "FICTIONAL 502", source: "error" }]);
+    expect(turnsFrom(twice)[3]!.parts).toEqual([{ kind: "notice", text: "FICTIONAL 502", source: "error", resumable: true }]);
   });
 
   it("content_ref_becomes_link_text", () => {

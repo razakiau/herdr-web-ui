@@ -1530,4 +1530,7 @@ export const KO: Record<string, string> = {
   "Create an implementation plan before coding": "코딩 전에 구현 계획 만들기",
   "objective": "목표",
   "Describe what you want to plan or research": "계획하거나 조사할 내용을 설명하세요",
+  "Trying again…": "다시 시도하는 중…",
+  "Couldn't try again. The chat may have moved on.": "다시 시도할 수 없습니다. 채팅이 이미 진행되었을 수 있습니다.",
+  "Thinking": "생각하는 중",
 };

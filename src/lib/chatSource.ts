@@ -11,7 +11,7 @@ import type { HostChatRead } from "../../shared/host-chats.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError, getJson, type ConversationPageQuery } from "./api.ts";
-import { fetchHostChat, onHostChatMessage, onHostChatResume, watchHostChat } from "./hostChats.ts";
+import { fetchHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
 
 export interface ChatSource {
@@ -27,6 +27,8 @@ export interface ChatSource {
   onChange?(listener: () => void): () => void;
   /** host: the turns of a subagent's own chat (by its chat URI), for its row opened */
   subagentTurns?(chat: string): Promise<ConversationTurn[]>;
+  /** host: Try Again on the latest turn's resumable error (chat/turnResume) */
+  resume?(): Promise<void>;
 }
 
 /** A herdr pane's chat: the reads ChatView made before there were two sources. */
@@ -88,6 +90,7 @@ export function hostSource(machineId: string, session: string): HostChatSource {
   /** the last newest page answered: an unchanged read hands back this very object (ChatView skips it) */
   let lastPage: { from: string | undefined; signature: string; answer: ConversationResponse } | null = null;
   const readListeners = new Set<(read: HostChatRead) => void>();
+  const changeListeners = new Set<() => void>();
   const fetchRead = (before?: string): Promise<HostChatRead> => fetchHostChat(machineId, session, before);
   let holders = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -151,6 +154,11 @@ export function hostSource(machineId: string, session: string): HostChatSource {
     image: (ref) => machinePath(machineId, `host-chats/image?${query(ref)}`),
     // the read route takes a subagent's chat URI as its `session` once this chat's read found it
     subagentTurns: async (chat) => (await fetchHostChat(machineId, chat)).turns,
+    // the chat reads again at once, as after a send: the turn runs on, and the error it stood at goes
+    resume: async () => {
+      await resumeHost(machineId, session);
+      for (const listener of [...changeListeners]) listener();
+    },
     toolOutput: async (ref, signal) => (await getJson<{ output: string }>(machinePath(machineId, `host-chats/tool-output?${query(ref)}`), { signal })).output,
     // one lease however many hold it (StrictMode mounts an effect twice): asked at once, renewed
     // every 30 s; a chat no longer shown lets it run out
@@ -166,7 +174,9 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       }
     },
     onChange(listener) {
+      changeListeners.add(listener);
       const stops = [
+        () => { changeListeners.delete(listener); },
         onHostChatMessage((from, pushed) => {
           if (from !== machineId) return;
           if (pushed.type === "host-chat-changed" ? pushed.session === session : pushed.host.state === "connected") listener();

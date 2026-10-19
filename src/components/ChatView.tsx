@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target, Wrench,
+  ArrowDown, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, RotateCcw, Target, Wrench,
   type LucideProps,
 } from "lucide-react";
 
@@ -481,6 +481,26 @@ function ThinkingRow({ text, stateKey }: { text: string; stateKey: string }) {
 }
 
 /**
+ * Reasoning as VS Code's thinking part shows it: "Thinking" and the first of its words on one line,
+ * the whole of it, as markdown, on request.
+ */
+function VscodeThinkingRow({ text, stateKey }: { text: string; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  const preview = text.replace(/[*_`#>]/g, "").split("\n").find((line) => line.trim().length > 0)?.trim() ?? "";
+  return <div className="work-row is-vscode work-row-reasoning">
+    <div className="work-row-line">
+      <button type="button" className="work-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Brain className="work-row-icon" aria-hidden="true" />
+        <span className="work-row-text"><span className="work-reasoning-word">{t("Thinking")}</span>{!open && preview.length > 0 && <span className="work-reasoning-preview"> {preview}</span>}</span>
+      </button>
+    </div>
+    {open && <div className="work-row-detail work-reasoning-text"><Markdown style="vscode">{text}</Markdown></div>}
+  </div>;
+}
+
+/**
  * Everything the agent did on the way — tool calls, reasoning and the narration
  * between them — under one header ("Worked for 7s · 1 edit"). Rows stay one line
  * each until opened; the narration between them is answer prose while the turn runs, dim after.
@@ -636,7 +656,9 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
     </div>
     {open && <div className="work-row-detail">
       {command !== null
-        ? output.length > 0 ? <ToolOutput part={part} output={output} whole={whole} /> : <p className="work-row-empty">{t("No output was produced by the command.")}</p>
+        // VS Code's terminal part: the command line as a code block, its output under it
+        ? <><pre className="work-row-command"><code>{command}</code></pre>
+          {output.length > 0 ? <ToolOutput part={part} output={output} whole={whole} /> : <p className="work-row-empty">{t("No output was produced by the command.")}</p>}</>
         : <><p className="work-row-tool">{part.name}</p><ToolInputView part={part} />{output.length > 0 && <ToolOutput part={part} output={output} whole={whole} />}</>}
     </div>}
   </div>;
@@ -648,14 +670,16 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
  * icon when a call failed, and on its quiet right the edits' lines and how long it worked. The
  * pictures the tools returned and the calls VS Code never folds (MCP, mermaid) sit after it.
  */
-function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, showThinking, stateKey = "work", offset = 0 }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean; stateKey?: string; offset?: number }) {
+function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, stateKey = "work", offset = 0 }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; stateKey?: string; offset?: number }) {
   const t = useT();
   const [chosenOpen, setOpen] = useChatRowToggle(stateKey, null);
   const open = chosenOpen ?? defaultOpen;
   const keepOpen = () => { if (chosenOpen === null) setOpen(true); };
   const apart = (part: ConversationPart): boolean => part.kind === "tool" && neverFolded(part);
   const folded: ConversationPart[] = parts.filter((part) => !apart(part));
-  const visible = folded.filter((part) => part.kind !== "skill" && (showThinking || part.kind !== "thinking"));
+  // VS Code always shows a Copilot turn's reasoning (chat.agent.thinkingStyle has no "off"): the
+  // pane setting that hides an agent's thinking is not this chat's
+  const visible = folded.filter((part) => part.kind !== "skill" && (part.kind !== "thinking" || part.text.trim().length > 0));
   const standalone = parts.filter((part): part is ToolPartType => part.kind === "tool" && apart(part));
   const { title, added, removed } = toolGroupSummary(folded, t);
   const failed = folded.some((part) => part.kind === "tool" && part.error === true);
@@ -675,7 +699,7 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
       </button>
       <AnimatedHeight open={open} animateContent={false}>
         <div className="work-block-rows" onFocus={keepOpen} onClick={keepOpen}>{visible.map((part, index) =>
-          part.kind === "thinking" ? <ThinkingRow key={index} stateKey={`thinking:${offset + parts.indexOf(part)}`} text={part.text} />
+          part.kind === "thinking" ? <VscodeThinkingRow key={index} stateKey={`thinking:${offset + parts.indexOf(part)}`} text={part.text} />
             : part.kind === "text" ? <div key={index} className="work-narration"><Markdown style="vscode">{part.text}</Markdown></div>
               : part.kind === "tool" ? <VscodeWorkRow key={index} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} /> : null)}
         </div>
@@ -692,7 +716,7 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
  * sentence ("Ran 2 commands"). The last group carries the turn's state (Working…, Needs you), its
  * time and the open fold; the earlier ones are done and closed. Row memory keys stay per part.
  */
-function VscodeWork({ paneId, work, duration, live, waiting, defaultOpen, showThinking, skills }: { paneId: string; work: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean; skills: SkillMatcher | null }) {
+function VscodeWork({ paneId, work, duration, live, waiting, defaultOpen, skills }: { paneId: string; work: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; skills: SkillMatcher | null }) {
   const segments = useMemo(() => {
     const out: ({ kind: "words"; text: string; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
     work.forEach((part, at) => {
@@ -708,7 +732,7 @@ function VscodeWork({ paneId, work, duration, live, waiting, defaultOpen, showTh
     ? <div key={`words:${segment.at}`} className="work-words"><Markdown skills={skills} style="vscode">{segment.text}</Markdown></div>
     : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
       duration={index === lastGroup ? duration : null} live={live && index === lastGroup} waiting={waiting && index === lastGroup}
-      defaultOpen={index === lastGroup && defaultOpen} showThinking={showThinking} />)}</>;
+      defaultOpen={index === lastGroup && defaultOpen} />)}</>;
 }
 
 /** Skill evidence stays visible even when the surrounding work block is folded. */
@@ -910,6 +934,26 @@ const isNotice = (part: ConversationPart): part is NoticePart => part.kind === "
 /** A notice as the quiet divider, its label in the rule and its text on request; a host chat's error in the error colour. */
 function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey: string; time: ReactNode }) {
   const t = useT();
+  const source = useContext(ChatSourceContext);
+  const [retry, setRetry] = useState<"idle" | "sending" | "failed">("idle");
+  // VS Code's error row (chatErrorContentPart): the error icon and its message in the open, Try
+  // Again under it when the host can resume the turn. Only a host chat's errors: the turn ended on it
+  if (notice.source === "error" && source?.resume !== undefined) {
+    const resume = source.resume;
+    return <div className="chat-turn-error" role="alert">
+      <CircleX className="chat-turn-error-icon" aria-hidden="true" />
+      <div className="chat-turn-error-body">
+        <p className="chat-turn-error-text">{notice.text}</p>
+        {notice.resumable === true && <div className="chat-turn-error-actions">
+          <button type="button" className="btn btn-secondary chat-turn-error-retry" disabled={retry === "sending"}
+            onClick={() => { setRetry("sending"); resume().then(() => setRetry("idle"), () => setRetry("failed")); }}>
+            <RotateCcw aria-hidden="true" />{t(retry === "sending" ? "Trying again…" : "Try again")}
+          </button>
+          {retry === "failed" && <span className="chat-turn-error-note">{t("Couldn't try again. The chat may have moved on.")}</span>}
+        </div>}
+      </div>
+    </div>;
+  }
   return <ChatDetails memoryKey={memoryKey} className={`chat-compact chat-notice${notice.source === "error" ? " chat-notice-error" : ""}`}>
     <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>
     <pre className="chat-compact-text chat-notice-text">{notice.text}</pre>
@@ -988,7 +1032,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {style === "vscode"
-      ? work.length > 0 && <VscodeWork paneId={paneId} work={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} skills={skills} />
+      ? work.length > 0 && <VscodeWork paneId={paneId} work={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} skills={skills} />
       : (work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} pendingHead={answer.length === 0} />}
     {ownRows}
     {noticeRows(true)}

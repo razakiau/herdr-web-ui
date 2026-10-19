@@ -1532,4 +1532,7 @@ export const JA: Record<string, string> = {
   "Create an implementation plan before coding": "コーディングの前に実装計画を作成",
   "objective": "目標",
   "Describe what you want to plan or research": "計画または調査したい内容を説明してください",
+  "Trying again…": "再試行しています…",
+  "Couldn't try again. The chat may have moved on.": "再試行できませんでした。チャットが先に進んだ可能性があります。",
+  "Thinking": "思考中",
 };

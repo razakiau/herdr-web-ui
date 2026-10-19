@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { headerCrumb, hostHeaderCrumb, showsChat } from "./headerCrumb.ts";
+import { headerCrumb, hostHeaderCrumb, hostHeaderName, showsChat } from "./headerCrumb.ts";
 
 const base = { machine: "workstation", workspace: "checkout-api", title: "Idempotent payments", machineCount: 2 };
 
@@ -74,6 +74,15 @@ it("takes the chat's surface only when the chat is what the pane column draws", 
   expect(showsChat(null, "chat")).toBe(false);
   // a pane herdr could not restore draws the placeholder on the terminal's surface, not the chat
   expect(showsChat({ restore_error: "no such session" }, "chat")).toBe(false);
+});
+
+it("a host chat's header names where it works, not the chat (its tab says that): the workspace, else its folder, else the title", () => {
+  expect(hostHeaderName({ workspace: "zhomelab", cwd: "/Users/x/code/zhomelab.wt/zac-191", title: "FICTIONAL chat" })).toBe("zhomelab");
+  expect(hostHeaderName({ workspace: "  ", cwd: "/tmp/fictional-repo/", title: "FICTIONAL chat" })).toBe("fictional-repo");
+  expect(hostHeaderName({ workspace: null, cwd: null, title: "FICTIONAL chat" })).toBe("FICTIONAL chat");
+  // the line under it leaves out a folder the name already says
+  expect(hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL chat", cwd: "/tmp/fictional-repo", name: "fictional-repo" }).folder).toBeNull();
+  expect(hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL chat", cwd: "/tmp/zac-191", name: "zhomelab" }).folder).toBe("zac-191");
 });
 
 it("a host chat's crumb is PC › folder: no workspace, its folder's last name", () => {

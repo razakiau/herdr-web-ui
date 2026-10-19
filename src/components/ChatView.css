@@ -1944,3 +1944,72 @@ button.question-summary-answer { cursor: pointer; }
   padding: var(--space-1) 0;
   color: var(--text);
 }
+
+/* a host chat's turn that ended on an error (ChatView.tsx NoticeRow), VS Code's error part: the
+   icon and the host's words in the open, never folded, and Try Again under them when resumable */
+.chat-turn-error {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--status-blocked) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-blocked) 8%, transparent);
+  font-size: var(--fs-sm);
+}
+
+.chat-turn-error-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--status-blocked);
+}
+
+.chat-turn-error-body { min-width: 0; flex: 1; }
+
+.chat-turn-error-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-turn-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.chat-turn-error-retry { display: inline-flex; align-items: center; gap: var(--space-1); }
+.chat-turn-error-retry svg { width: 14px; height: 14px; }
+.chat-turn-error-note { color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* the command line of an opened terminal row (VS Code's command block), above its output */
+.work-row-command {
+  max-height: calc(var(--row-h) * 4);
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.work-row-command > code { font: inherit; background: none; padding: 0; }
+
+/* a Copilot turn's reasoning (VS Code's thinking part): "Thinking" and its first words, dim, cut to one line */
+.work-row-reasoning .work-row-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-reasoning-word { color: var(--text); }
+.work-reasoning-preview { color: var(--text-dim); }
+.work-reasoning-text {
+  padding-left: calc(16px + var(--space-2));
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}

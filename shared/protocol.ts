@@ -515,7 +515,8 @@ export type ConversationPart =
    * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable").
    * In a host chat's assistant turn: "system" for the agent harness's notification, "error" for an
    * error the turn stopped at (the client styles a `source: "error"` notice as an error from Task 4 on) */
-  | { kind: "notice"; text: string; source?: string }
+  /** `resumable`: a host chat's latest turn stopped at this error and the host can resume it (Try Again) */
+  | { kind: "notice"; text: string; source?: string; resumable?: true }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
   | { kind: "task_result"; tasks: OmoTaskResult[] };
 

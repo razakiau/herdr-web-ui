@@ -25,8 +25,10 @@ import {
   MessageAttachmentKind,
   MessageKind,
   PendingMessageKind,
+  ResponsePartKind,
   ToolCallCancellationReason,
   ToolCallConfirmationReason,
+  TurnState,
   type ChatInputAnswer,
   type ChatInputAnswerValue,
   type ChatInputQuestion,
@@ -206,6 +208,7 @@ const POSTS: Record<string, Handler> = {
   "chat/send": sendMessage,
   "chat/upload": uploadFile,
   "chat/stop": stopTurn,
+  "chat/resume": resumeTurn,
   "chat/pending/remove": removePending,
   "chat/answer": answerQuestion,
   "chat/confirm": confirmTool,
@@ -659,6 +662,17 @@ async function stopTurn(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const { channel, chat } = await watched(call, session);
   if (chat.activeTurn) call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+/** VS Code's Try Again: chat/turnResume on the latest turn, only while it stands stopped at a resumable error. */
+async function resumeTurn(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const { channel, chat } = await watched(call, session);
+  const last = chat.activeTurn ? undefined : chat.turns.at(-1);
+  const stop = last?.state === TurnState.Error ? last.responseParts.at(-1) : undefined;
+  if (!last || stop?.kind !== ResponsePartKind.Error || stop.resumable !== true) return conflictResponse("not_resumable", "the chat's last turn did not stop at an error it can resume from");
+  call.host.dispatch(channel, { type: ActionType.ChatTurnResume, turnId: last.id } as StateAction);
   return jsonResponse({ ok: true });
 }
 
