@@ -1032,7 +1032,8 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {style === "vscode"
-      ? work.length > 0 && <VscodeWork paneId={paneId} work={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} skills={skills} />
+      ? work.length > 0 ? <VscodeWork paneId={paneId} work={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} skills={skills} />
+        : live && answer.length === 0 && <PendingWorkHead title={waiting ? t("Needs you") : t("Working…")} />
       : (work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} pendingHead={answer.length === 0} />}
     {ownRows}
     {noticeRows(true)}
@@ -1814,10 +1815,10 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
           in. One Working at a time. */}
       {connected && !ended && activity !== "idle" && agentStatus !== "blocked" && prompt === null && (activity === "thinking" || !workBlockLive) && (workBlockLive
         // under the running turn's own head, a second head would read as a second block
-        ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" />{t("Thinking…")}</p>
+        ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" /><span className="chat-activity-text">{t("Thinking…")}</span></p>
         // under a running turn's words: removing a line below them moves nothing when it ends
         : answerOnlyLive
-          ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" />{activity === "thinking" ? t("Thinking…") : t("Working…")}</p>
+          ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" /><span className="chat-activity-text">{activity === "thinking" ? t("Thinking…") : t("Working…")}</span></p>
           // before the turn has a row at all, where its work block will be drawn
           : <PendingWorkHead className="chat-activity" title={activity === "thinking" ? t("Thinking…") : t("Working…")} />)}
       {loaded && empty && error === null && prompt === null && activity === "idle" && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}

@@ -728,6 +728,12 @@ try {
         });
         const line = view.locator(".host-chat-status-line", { hasText: "2 subagents and 1 background command running" });
         await line.waitFor();
+        // the busy chat's "Working…" shimmers as VS Code's does: the text clipped to a moving gradient
+        const working = view.locator(".work-block.is-live:not(.is-waiting) .work-block-title, .chat-activity-text").last();
+        await working.waitFor();
+        const shimmer = await working.evaluate((node) => { const style = getComputedStyle(node); return { clip: style.backgroundClip || (style as unknown as Record<string, string>)["webkitBackgroundClip"], name: style.animationName, image: style.backgroundImage.startsWith("linear-gradient") }; });
+        assert.deepEqual(shimmer, { clip: "text", name: "work-shimmer", image: true }, "the live title shimmers");
+        if (shots) await page.screenshot({ path: join(shots, "r4-working-390.png") });
         assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");
         await view.locator(".host-chat-meter").click();
         const contextSheet = page.getByRole("dialog", { name: "Context window" });

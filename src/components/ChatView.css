@@ -778,6 +778,30 @@
   animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
+/* the words shimmer as VS Code's "Working" does (chatThinkingContent.css): a lighter band crosses
+   the working color every 2 s, clipped to the letters. The dot keeps its own color and pulse.
+   Ten steps, not linear: an endless smooth animation redraws every frame and stutters a video next
+   to the app (motion.test.ts); five redraws a second still read as a sweep */
+.work-block.is-live:not(.is-waiting) .work-block-title,
+.chat-activity-text {
+  background: linear-gradient(90deg,
+    var(--status-working) 0%,
+    var(--status-working) 30%,
+    color-mix(in srgb, var(--status-working) 35%, var(--text-strong)) 50%,
+    var(--status-working) 70%,
+    var(--status-working) 100%);
+  background-size: 400% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: work-shimmer 2s steps(10, jump-none) infinite;
+}
+
+@keyframes work-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+
 /* A blocked agent is not working: the open block keeps its live layout and reads "Needs you",
    the sidebar's words, in the dim color. Only the dot is red, and it holds still. */
 .work-block.is-live.is-waiting .work-block-title {
@@ -1153,6 +1177,8 @@
   .markdown-code-header,
   .work-block { transition: none; }
   .work-block.is-live .work-block-title::before { animation: none; }
+  .work-block.is-live:not(.is-waiting) .work-block-title,
+  .chat-activity-text { animation: none; background: none; -webkit-text-fill-color: currentColor; }
 }
 
 .todo-list ul {
