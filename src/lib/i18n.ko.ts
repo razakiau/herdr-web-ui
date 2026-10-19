@@ -1019,6 +1019,7 @@ export const KO: Record<string, string> = {
   "Couldn't load the conversation": "대화를 불러오지 못했습니다",
   "Couldn't load the terminal output": "터미널 출력을 불러오지 못했습니다",
   "Jump to latest": "최신 메시지로 이동",
+  "Go to your message: {text}": "내 메시지로 이동: {text}",
   "Open image": "이미지 열기",
   "Attached image": "첨부한 이미지",
   "Conversation compacted": "대화가 압축됨",

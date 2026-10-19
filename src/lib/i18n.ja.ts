@@ -1021,6 +1021,7 @@ export const JA: Record<string, string> = {
   "Couldn't load the conversation": "会話を読み込めませんでした",
   "Couldn't load the terminal output": "ターミナル出力を読み込めませんでした",
   "Jump to latest": "最新に移動",
+  "Go to your message: {text}": "あなたのメッセージへ移動: {text}",
   "Open image": "画像を開く",
   "Attached image": "添付画像",
   "Conversation compacted": "会話を圧縮しました",
