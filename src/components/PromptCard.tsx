@@ -1,6 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronUp, FileText, Maximize2, Minimize2, Plus, Send, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, FileText, Maximize2, Minimize2, Plus, Send, SkipForward, X } from "lucide-react";
 
 import "./PromptCard.css";
 
@@ -69,7 +69,10 @@ function copilotSlot(label: string | undefined, t: Translate): string {
 }
 
 /** One answer as the card gives it: an option, several, or typed words. */
-export type PromptChoice = Omit<PromptAnswer, "pane_id" | "prompt_id">;
+export type PromptChoice = Omit<PromptAnswer, "pane_id" | "prompt_id"> & {
+  /** Skip on a skippable question: a host chat passes over this question alone */
+  skip?: true;
+};
 
 /**
  * The card itself, with whatever sends its answer: a pane's answers go to its prompt route
@@ -272,10 +275,11 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       {prompt.steps && (
         <ol className="prompt-card-steps" aria-label={t("Questions")}>
           {prompt.steps.map((step, index) => (
-            <li key={index} className={`prompt-card-step${step.answered ? " is-answered" : ""}${step.current ? " is-current" : ""}`} aria-current={step.current ? "step" : undefined}>
-              <span className="prompt-card-step-mark" aria-hidden="true">{step.answered ? <Check /> : index + 1}</span>
+            <li key={index} className={`prompt-card-step${step.answered ? " is-answered" : ""}${step.skipped ? " is-skipped" : ""}${step.current ? " is-current" : ""}`} aria-current={step.current ? "step" : undefined}>
+              <span className="prompt-card-step-mark" aria-hidden="true">{step.answered ? <Check /> : step.skipped ? <SkipForward /> : index + 1}</span>
               <span className="prompt-card-step-label">{step.label}</span>
               {step.answered && <span className="visually-hidden">{t("(answered)")}</span>}
+              {step.skipped && <span className="visually-hidden">{t("(skipped)")}</span>}
             </li>
           ))}
         </ol>
@@ -395,6 +399,10 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
             </div>
           )}
         </div>
+      )}
+      {/* a question the host did not mark required (VS Code's carousel lets it go): passed over on its own, the form going on */}
+      {prompt.skippable && typedAnswer?.option_index === undefined && (
+        <button type="button" className="btn btn-ghost prompt-card-skip" disabled={pending} onClick={(event) => void answer({ skip: true }, event)}>{t("Skip")}</button>
       )}
       {typedAnswer?.option_index !== undefined && (
         <div className="prompt-card-confirm" role="alert" ref={confirmRef}>

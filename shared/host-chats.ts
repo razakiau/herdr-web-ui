@@ -96,7 +96,7 @@ export interface HostAttachment { path: string; media_type?: string; name?: stri
 export interface HostSend { session: string; id?: string; text: string; model?: { id: string; effort?: string }; agent?: string | null; mode?: HostSendMode; attachments?: HostAttachment[] }
 /** POST /api/host-chats/chat/send: `queued` when it waits for the running turn; `joined` when a steer joined the one already set. */
 export interface HostSendResult { queued: boolean; joined?: true }
-export interface HostAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true }
+export interface HostAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true; /** passes over this question only (one the host did not mark required) */ skip_question?: true }
 /** `option_id`: the host's confirmation option the user picked, when it offered some. */
 export interface HostConfirm { session: string; turn_id: string; tool_call_id: string; approved: boolean; option_id?: string }
 /**

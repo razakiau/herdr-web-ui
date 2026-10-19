@@ -49,7 +49,7 @@ import { PasteImageError, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { agentsFrom, currentQuestion, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -823,6 +823,7 @@ async function answerQuestion(call: Call): Promise<Response> {
   const questionId = call.body["question_id"];
   if (!text(requestId) || requestId === "") return badRequest("missing_request_id", "request_id is required");
   const skip = call.body["skip"] === true;
+  const skipQuestion = call.body["skip_question"] === true;
   const rawIds = call.body["option_ids"];
   const typed = call.body["text"];
   if (rawIds !== undefined && !(Array.isArray(rawIds) && rawIds.every(text))) return badRequest("invalid_answer", "option_ids must be strings");
@@ -837,14 +838,18 @@ async function answerQuestion(call: Call): Promise<Response> {
   const questions = request.questions ?? [];
   const question = questions.find((each) => each.id === questionId) ?? gone();
   if (currentQuestion(request)?.id !== question.id) gone();
-  const answer = submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined));
+  // Skip passes over one question the host did not mark `required`, as VS Code's carousel lets it
+  // go unanswered; a required one is refused (VS Code's Next stays disabled for it)
+  if (skipQuestion && question.required === true) return badRequest("invalid_answer", "a required question can't be skipped");
+  const answer: ChatInputAnswer = skipQuestion ? { state: ChatInputAnswerState.Skipped }
+    : submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined));
   const answers = request.answers ?? {};
-  // every step is shown, `required` or not: the form completes on its last unanswered question
-  const more = questions.some((each) => each.id !== question.id && answers[each.id]?.state !== ChatInputAnswerState.Submitted);
+  // every step is shown, `required` or not: the form completes on its last unsettled question
+  const more = questions.some((each) => each.id !== question.id && !answerSettled(answers[each.id]));
   if (more) {
     call.host.dispatch(channel, { type: ActionType.ChatInputAnswerChanged, requestId, questionId: question.id, answer } as StateAction);
   } else {
-    const done = Object.fromEntries(Object.entries(answers).filter(([, each]) => each.state === ChatInputAnswerState.Submitted));
+    const done = Object.fromEntries(Object.entries(answers).filter(([, each]) => answerSettled(each)));
     call.host.dispatch(channel, { type: ActionType.ChatInputCompleted, requestId, response: ChatInputResponseKind.Accept, answers: { ...done, [question.id]: answer } } as StateAction);
   }
   return jsonResponse({ ok: true });

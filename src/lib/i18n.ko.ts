@@ -646,6 +646,8 @@ export const KO: Record<string, string> = {
   "Questions": "질문 목록",
   "Not answered": "답하지 않음",
   "Note: {note}": "메모: {note}",
+  "(skipped)": "(건너뜀)",
+  "Skip": "건너뛰기",
   "(answered)": "(답함)",
   "Agent is asking": "에이전트의 질문",
   "View plan": "계획 보기",
