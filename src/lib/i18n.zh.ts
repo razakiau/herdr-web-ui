@@ -1534,4 +1534,7 @@ export const ZH: Record<string, string> = {
   "Create an implementation plan before coding": "在编码前创建实现计划",
   "objective": "目标",
   "Describe what you want to plan or research": "描述你想计划或研究的内容",
+  "Trying again…": "正在重试…",
+  "Couldn't try again. The chat may have moved on.": "无法重试。聊天可能已继续。",
+  "Thinking": "思考",
 };

@@ -871,11 +871,14 @@ describe("host chat read and write routes", () => {
     expect(second.dispatched.map((entry) => String(entry.action.type))).toEqual(["session/activeClientSet"]);
   });
 
-  it("rename dispatches session/titleChanged on the session's channel, as VS Code's renameSession does, and the list shows the new title", async () => {
+  it("rename dispatches session/titleChanged on the session's channel, as VS Code's renameSession does, and the list and the chat's read show the new title", async () => {
     const r = await rig();
     expect(await call(r, "/api/host-chats/chat/rename", { session: sessionUri(1), title: "  FICTIONAL renamed  " })).toEqual({ status: 200, json: { ok: true } });
     await until("the title action", () => actions(r.fake, "session/titleChanged").length > 0);
     expect(actions(r.fake, "session/titleChanged")).toEqual([{ channel: sessionUri(1), action: { type: "session/titleChanged", title: "FICTIONAL renamed" } }]);
+    // the host leaves the chat's own title as it was: the read names the chat by its session's, as the list does
+    const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    expect(read.json.title).toBe("FICTIONAL renamed");
     await until("the list to follow", () => r.conn.summaries().find((s) => s.resource === sessionUri(1))?.title === "FICTIONAL renamed");
     const row = (await call(r, "/api/host-chats/chats")).json.chats.find((each: { session: string }) => each.session === sessionUri(1));
     expect(row.title).toBe("FICTIONAL renamed");
@@ -1151,6 +1154,18 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect(only(r.fake, "chat/turnCancelled")).toMatchObject({ type: "chat/turnCancelled", turnId: "turn-live" });
     expect(await call(r, "/api/host-chats/chat/stop", { session: sessionUri(2) })).toEqual({ status: 200, json: { ok: true } });
     expect(actions(r.fake, "chat/turnCancelled").length).toBe(1);
+  });
+
+  it("resume tries the latest turn again when it stopped at a resumable error, and refuses anything else", async () => {
+    const errored = (resumable: boolean) => ({ id: "turn-bad", startedAt: "2026-01-01T00:00:00.000Z", duration: 10, state: "error", usage: undefined, message: user("FICTIONAL go"),
+      responseParts: [{ kind: "error", ...(resumable ? { resumable: true } : {}), error: { errorType: "query", message: "FICTIONAL 502" } }] });
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: [errored(true)] }), [chatUri(2)]: chatState(2, { turns: [errored(false)] }) } });
+    expect(await call(r, "/api/host-chats/chat/resume", { session: sessionUri(1) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the resume", () => actions(r.fake, "chat/turnResume").length > 0);
+    expect(only(r.fake, "chat/turnResume")).toEqual({ type: "chat/turnResume", turnId: "turn-bad" });
+    const refused = await call(r, "/api/host-chats/chat/resume", { session: sessionUri(2) });
+    expect({ status: refused.status, code: refused.json.error.code }).toEqual({ status: 409, code: "not_resumable" });
+    expect(actions(r.fake, "chat/turnResume").length).toBe(1);
   });
 
   it("pending/remove takes a steering or queued message off by its id, and refuses one the chat does not hold", async () => {

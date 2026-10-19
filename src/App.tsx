@@ -41,7 +41,7 @@ import { openPresentation, type FilePresentation } from "./lib/filePresentation.
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
-import { headerCrumb, hostHeaderCrumb, showsChat } from "./lib/headerCrumb.ts";
+import { headerCrumb, hostHeaderCrumb, hostHeaderName, showsChat } from "./lib/headerCrumb.ts";
 import { HOST_AGENT_KIND } from "../shared/supported-agents.ts";
 import type { HostChatRow } from "../shared/host-chats.ts";
 import { LOCAL_MACHINE, paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
@@ -1402,10 +1402,12 @@ export function App() {
   const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId)) : connected;
   const connWord = t(live ? "live" : !hostShown && outputStopped ? "disconnected" : hostShown || connectedBefore ? "reconnecting" : "connecting");
   const hostTitle = hostShown ? (openHostRow?.title ?? hostReadTitle)?.trim() || t("Copilot chat") : null;
+  // the header names where a host chat works (its tab names the chat), as a pane's names its workspace
+  const hostName = hostTitle === null ? null : hostHeaderName({ workspace: hostWorkspace?.label ?? null, cwd: openHostRow?.cwd ?? hostMadeIn, title: hostTitle });
   const crumb = selectedPane && selectedTitle !== null
     ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
     : hostShown && hostTitle !== null
-      ? hostHeaderCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, title: hostTitle, cwd: openHostRow?.cwd ?? hostMadeIn })
+      ? hostHeaderCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, title: hostTitle, cwd: openHostRow?.cwd ?? hostMadeIn, name: hostName ?? undefined })
       : null;
 
   useEffect(() => {
@@ -1651,7 +1653,7 @@ export function App() {
           <div className="context" title={crumb.tooltip}>
             <div className="context-title">
               {hostShown ? <AgentMark agent="copilot" size={18} /> : selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
-              <span className="context-title-text">{hostShown ? hostTitle : selectedTitle}</span>
+              <span className="context-title-text">{hostShown ? hostName : selectedTitle}</span>
             </div>
             <div className="context-sub">
               {/* one PC needs no name: the sidebar leaves it out too, and More still says it; a host chat has no workspace */}

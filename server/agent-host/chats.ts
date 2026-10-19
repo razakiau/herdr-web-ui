@@ -18,6 +18,7 @@ import {
   ToolCallCancellationReason,
   ToolCallStatus,
   ToolResultContentType,
+  TurnState,
   type ActiveTurn,
   type ChatInputAnswer,
   type ChatInputQuestion,
@@ -210,6 +211,21 @@ function stateOf(tool: ToolCallState): Extract<ConversationPart, { kind: "tool" 
   }
 }
 
+/**
+ * The command line a terminal call ran, as VS Code's getTerminalInput reads it: the input's
+ * `command`, else the whole input. The terminal content's title is the host's label for it.
+ */
+function commandLine(input: string): string | null {
+  if (input.trim() === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(input);
+    const command = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>)["command"] : undefined;
+    return typeof command === "string" && command.trim() !== "" ? command : input;
+  } catch {
+    return input;
+  }
+}
+
 function toolPart(tool: ToolCallState, turn: TurnRead): ConversationPart {
   const content = contentOf(tool);
   const subagent = content.find((item): item is ToolResultSubagentContent => item.type === ToolResultContentType.Subagent);
@@ -229,7 +245,7 @@ function toolPart(tool: ToolCallState, turn: TurnRead): ConversationPart {
     input,
     output: "",
     error: ("success" in tool && tool.success === false) || (exitCode !== undefined && exitCode !== 0),
-    ...(terminal ? { command: terminal.title } : {}),
+    ...(terminal && commandLine(input) !== null ? { command: commandLine(input)! } : {}),
     ...(exitCode !== undefined ? { exit_code: exitCode } : {}),
     ...(images.length > 0 ? { images } : {}),
     ...(edits.length > 0 ? { edits } : {}),
@@ -318,8 +334,6 @@ function partsOf(part: ResponsePart, turn: TurnRead): ConversationPart[] {
     case ResponsePartKind.InputRequest: return questionParts(part, turn.running);
     case ResponsePartKind.ContentRef: return [{ kind: "text", text: linkTo(part.uri) }];
     case ResponsePartKind.SystemNotification: return [{ kind: "notice", text: plain(part.content), source: "system" }];
-    // the turn stopped at it: never the turn's answer
-    case ResponsePartKind.Error: return [{ kind: "notice", text: part.error.message, source: "error" }];
     default: return [];
   }
 }
@@ -338,7 +352,13 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
     const end = endOf(turn);
     const running = turn === chat.activeTurn;
     const read: TurnRead = { times: { started: ts, ended: end ?? null }, running, model: turn.message.model?.id ?? null, context };
-    const parts = turn.responseParts.flatMap((part) => partsOf(part, read));
+    // VS Code's getTurnError: only the error a turn ended on is shown, and only the latest turn's
+    // resumable one offers Try Again (chat/turnResume); an error the host retried past is history
+    const stoppedAt = "state" in turn && turn.state === TurnState.Error ? turn.responseParts.at(-1) : undefined;
+    const latest = !chat.activeTurn && turn === chat.turns.at(-1);
+    const parts = turn.responseParts.flatMap((part): ConversationPart[] => part.kind !== ResponsePartKind.Error ? partsOf(part, read)
+      : part !== stoppedAt ? []
+        : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
     return [
       { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.contentType, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts },
@@ -611,7 +631,33 @@ const count = (value: unknown): number | undefined => typeof value === "number" 
  * rules (copilotdMetadataReader readCopilotContextUsage): whole token counts, a limit above 0 and a
  * message count, else nothing; an optional count that is not a whole number is left out.
  */
-export function contextUsageOf(session: SessionState | undefined): HostContextUsage | null {
+/**
+ * The context the newest turn's model call filled, as the host attributes it (`usage._meta.
+ * contextAttribution`: totalTokens of limit, by category). VS Code reads this before the session's
+ * usage info (agentUsageMeta.ts readAgentContextUsage); Copilot CLI hosts now report only this.
+ */
+function attributedContext(turn: Turn | ActiveTurn | undefined): HostContextUsage | null {
+  const meta = (turn?.usage as { _meta?: Record<string, unknown> } | undefined)?._meta;
+  const value = meta?.["contextAttribution"];
+  if (typeof value !== "object" || value === null) return null;
+  const attribution = value as Record<string, unknown>;
+  const currentTokens = count(attribution["totalTokens"]);
+  const tokenLimit = count(attribution["limit"]) ?? count(attribution["promptTokenLimit"]);
+  if (currentTokens === undefined || tokenLimit === undefined || tokenLimit === 0) return null;
+  const usage: HostContextUsage = { currentTokens, tokenLimit };
+  const categories = typeof attribution["categories"] === "object" && attribution["categories"] !== null ? attribution["categories"] as Record<string, unknown> : {};
+  const messages = count(categories["messages"]);
+  const system = count(categories["systemPrompt"]);
+  const tools = [count(categories["systemTools"]), count(categories["mcpTools"])];
+  if (messages !== undefined) usage.conversationTokens = messages;
+  if (system !== undefined) usage.systemTokens = system;
+  if (tools.some((each) => each !== undefined)) usage.toolDefinitionsTokens = tools.reduce<number>((sum, each) => sum + (each ?? 0), 0);
+  return usage;
+}
+
+export function contextUsageOf(session: SessionState | undefined, newest?: Turn | ActiveTurn): HostContextUsage | null {
+  const attributed = attributedContext(newest);
+  if (attributed !== null) return attributed;
   const info = (session as { _meta?: Record<string, unknown> } | undefined)?._meta?.["copilot.usageInfo"];
   if (typeof info !== "object" || info === null) return null;
   const value = info as Record<string, unknown>;
@@ -633,7 +679,8 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
   const turns = turnsFrom(chat, context);
   const read: Omit<HostChatRead, "signature"> = {
     session,
-    title: chat.title || title,
+    // the session's title, the one the list shows and a rename sets (the host leaves the chat's own as it was)
+    title: title || chat.title,
     status,
     turns,
     cursor: chat.turnsNextCursor ?? null,
@@ -644,7 +691,8 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     commands: commandsFrom(context?.session?.()),
     background: backgroundOf(chat),
     confirmations: pendingToolCalls(chat).length,
-    context: contextUsageOf(context?.session?.()),
+    // the running turn may have no usage yet: the newest turn that reported one
+    context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null)),
     pending: [
       ...(chat.steeringMessage ? [{ id: chat.steeringMessage.id, kind: "steering" as const, text: chat.steeringMessage.message.text }] : []),
       ...(chat.queuedMessages ?? []).map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),

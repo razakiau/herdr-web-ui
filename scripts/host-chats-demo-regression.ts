@@ -24,7 +24,7 @@ const patch = `(() => {
   const calls = window.hostCalls = { posts: [], models: [] };
   // a chat's actions (Task 7): titles given, chats marked unread, read, done and deleted
   const edits = window.hostEdits = { titles: {}, unread: {}, archived: {}, deleted: [], failRead: false };
-  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [], pending: [], stopped: 0, mode: "interactive", approvals: "default" };
+  const state = window.hostState = { answered: false, busy: false, model: { id: "fictional/model-a", effort: null }, agent: null, sent: [], created: [], newSent: true, failNextSend: false, older: false, pushed: [], pending: [], stopped: 0, resumed: false, mode: "interactive", approvals: "default" };
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const SIX = new URLSearchParams(location.search).get("pcs") === "6";
@@ -66,6 +66,7 @@ const patch = `(() => {
       ...older,
       { role: "user", ts: at(9), parts: [{ kind: "text", text: "FICTIONAL look at the build" }] },
       { role: "assistant", ts: at(9), end_ts: at(8), parts: [
+        { kind: "thinking", text: "FICTIONAL **the build** first, then the tests" },
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL make test", input: "make test", output: "FICTIONAL ok", error: false, command: "make test", exit_code: 0 },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
@@ -83,7 +84,7 @@ const patch = `(() => {
         { kind: "text", text: "FICTIONAL release it is." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
-      { role: "assistant", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL which way should I go?" }] },
+      { role: "assistant", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
     ];
     for (const text of state.pushed) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: "FICTIONAL from the PC" }] }, { role: "assistant", ts: at(1), parts: [{ kind: "text", text }] });
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
@@ -99,7 +100,7 @@ const patch = `(() => {
       commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }], message_ids: ids,
       background: state.background ?? { subagents: 0, commands: 0 }, confirmations: 0,
       context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 },
-      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null]) };
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.resumed]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
     ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
@@ -164,6 +165,7 @@ const patch = `(() => {
         if (state.failUpload) return json({ error: { code: "image_too_large", message: "FICTIONAL no room on the PC" } }, 413);
         return json({ path: "/tmp/fictional-repo/.herdr-web-ui/" + body.name });
       }
+      if (path === "/api/host-chats/chat/resume") { state.resumed = true; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/stop") { state.stopped += 1; state.busy = false; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/pending/remove") { state.pending = state.pending.filter((each) => each.id !== body.id); return json({ ok: true }); }
       // the row and tab menus' actions: the host has them, and says so on its next list
@@ -396,6 +398,12 @@ try {
         assert.equal(await command.locator("svg.lucide-square-terminal").count(), 1, "the terminal icon");
         await command.locator(".work-row-head").click();
         await command.locator(".chat-tool-output", { hasText: "FICTIONAL ok" }).waitFor();
+        assert.equal(await command.locator("pre.work-row-command").innerText(), "make test", "opened, the command stands as a code block above its output (VS Code's terminal part)");
+        // reasoning, as VS Code shows it whatever the pane setting: Thinking and its first words; opened, the whole as markdown
+        const reasoning = block.locator(".work-row-reasoning");
+        assert.equal((await reasoning.locator(".work-row-text").innerText()).trim(), "Thinking FICTIONAL the build first, then the tests", "the row says Thinking and the first words");
+        await reasoning.locator(".work-row-head").click();
+        assert.equal(await reasoning.locator(".work-reasoning-text strong").innerText(), "the build", "opened, the reasoning is markdown");
         const pill = block.locator(".work-row", { hasText: "Edited" }).locator(".work-file-pill");
         assert.equal(await pill.innerText(), "build.ts", "a file the row names is a pill with its name");
         assert.equal(await pill.locator("svg").count(), 1, "and its icon");
@@ -404,6 +412,18 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "task-5-chat-390.png") });
         if (shots) await page.screenshot({ path: join(shots, "task-4-host-390.png") });
         console.log("PASS the chat renders through ChatView: a user turn, an assistant text and a folded tool row, and is watched");
+
+        // a turn that stopped at an error: VS Code's error row in the open, and Try Again resumes it
+        const failedTurn = view.locator(".chat-turn-agent", { hasText: "FICTIONAL which way should I go?" });
+        const errorRow = failedTurn.locator(".chat-turn-error");
+        await errorRow.waitFor();
+        assert.equal(await errorRow.locator(".chat-turn-error-text").innerText(), "FICTIONAL 502 from the model", "the host's words, in the open");
+        assert.equal(await errorRow.getAttribute("role"), "alert");
+        if (shots) { await errorRow.scrollIntoViewIfNeeded(); await page.screenshot({ path: join(shots, "r3-error-390.png") }); }
+        await errorRow.getByRole("button", { name: "Try again" }).click();
+        await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/host-chats/chat/resume")));
+        await errorRow.waitFor({ state: "detached" });
+        console.log("PASS an error the turn stopped at shows in the open, and Try again resumes the turn");
 
         // 2b. earlier messages: the host's cursor loads the turn before, above the ones shown, once
         // a chat shorter than the view asks for it on its own, as a pane's does (the button stays for a long one)
@@ -911,11 +931,11 @@ try {
         assert.equal(await form.count(), 0, "the dialog closes on the chat made");
         assert.deepEqual((await newChats()).map(bare), [{ cwd: "/tmp/fictional-repo", text: "FICTIONAL first", model: { id: "fictional/model-a" } }], "one chat/new with the folder, the text and the model");
         assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).slice(configsBefore).map((post) => post.body), [{ session: "fictional-new-1", mode: "plan" }], "the mode is set on the chat made");
-        // the header names the chat: Copilot's mark, its title, PC › folder, Chat pressed, Terminal off
+        // the header names where the chat works (its tab names the chat): Copilot's mark, the folder, the PC, Chat pressed, Terminal off
         const header = page.locator(".app-header");
-        await header.locator(".context-title-text", { hasText: "FICTIONAL new chat" }).waitFor();
+        await header.locator(".context-title-text", { hasText: "fictional-repo" }).waitFor();
         assert.equal(await header.locator('.context-title svg[aria-label="copilot"]').count(), 1, "the header wears Copilot's mark");
-        assert.deepEqual((await header.locator(".context-sub > span").allInnerTexts()).map((text) => text.trim()).filter((text) => text !== "›"), ["Build PC", "fictional-repo"], "the crumb is PC › folder");
+        assert.deepEqual((await header.locator(".context-sub > span").allInnerTexts()).map((text) => text.trim()).filter((text) => text !== "›"), ["Build PC"], "the crumb is the PC: the folder is the header's name already");
         const terminalButton = header.getByRole("button", { name: "Terminal" });
         assert.equal(await terminalButton.getAttribute("aria-disabled"), "true", "Terminal is disabled");
         await terminalButton.click({ force: true });
@@ -982,7 +1002,8 @@ try {
         await nameField.fill("FICTIONAL renamed chat");
         await nameField.press("Enter");
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL renamed chat" }).waitFor();
-        await page.locator(".app-header .context-title-text", { hasText: "FICTIONAL renamed chat" }).waitFor();
+        // the chat is a tab of its workspace now: the header names the workspace, never the chat's new name
+        assert.equal((await page.locator(".app-header .context-title-text").innerText()).trim(), "checkout-api", "the header names the chat's workspace, not its new name");
         assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-2", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
         // the header's ⋯: Rename chat… in the sheet, the same route
         await page.getByRole("button", { name: "More", exact: true }).click();
@@ -992,7 +1013,6 @@ try {
         await renameSheet.getByRole("button", { name: "Save", exact: true }).click();
         await renameSheet.waitFor({ state: "detached" });
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL named in the header" }).waitFor();
-        await page.locator(".app-header .context-title-text", { hasText: "FICTIONAL named in the header" }).waitFor();
         assert.equal((await actionPosts("rename")).length, 2, "the header's rename went too");
         console.log("PASS rename from the tab's menu and the header's ⋯: the new title on the tab and over the chat");
 

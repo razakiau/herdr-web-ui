@@ -306,6 +306,11 @@ export async function stopHost(machineId: string, session: string): Promise<void
   await post(machineId, "host-chats/chat/stop", { session });
 }
 
+/** Try Again: resumes the chat's latest turn from the error it stopped at. */
+export async function resumeHost(machineId: string, session: string): Promise<void> {
+  await post(machineId, "host-chats/chat/resume", { session });
+}
+
 /** Takes a steering or queued message off before it goes. */
 export async function removeHostPending(machineId: string, session: string, id: string): Promise<void> {
   await post(machineId, "host-chats/chat/pending/remove", { session, id });
