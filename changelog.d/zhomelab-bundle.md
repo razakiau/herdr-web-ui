@@ -7,3 +7,4 @@
 - zhomelab bundle 1003: carries the wrapped-form reader fix.
 - zhomelab bundle 1004: carries VS Code chats on the phone (the bridge reads and drives VS Code's agent host).
 - zhomelab bundle 1005: carries Copilot host chats rebuilt on upstream main (remote v31's bridge plus the agent-host reader).
+- zhomelab bundle 1006: carries the VS Code 1.142 subagent fix and chat delete for old sessions.
