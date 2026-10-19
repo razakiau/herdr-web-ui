@@ -530,6 +530,32 @@ describe("host chat read and write routes", () => {
     expect(r.conn.watchingChat(workers[0]!)).toBe(true);
   });
 
+  it("a subagent named by a session URI (VS Code 1.142+) reads through that session's chat, and its parent reads", async () => {
+    const worker = "copilotcli:/fictional-1/subagent/toolu_FICTIONAL";
+    const inner = "ahp-chat://default/fictional-worker-session-chat";
+    const parent = reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: user("FICTIONAL fan out") } as StateAction,
+      ...toolCallActions("turn-1", { toolCallId: "c0", toolName: "task", displayName: "Task", invocationMessage: "FICTIONAL delegating" },
+        { success: true, pastTenseMessage: "FICTIONAL delegated", content: [{ type: "subagent", resource: worker, title: "Explore", agentName: "explore", description: "FICTIONAL task" }] } as ToolCallResult),
+      { type: "chat/turnComplete", turnId: "turn-1", duration: 1_000 } as StateAction,
+    ], chatState(1));
+    const workerChat = reducedChat([
+      { type: "chat/turnStarted", turnId: "w-0", startedAt: AT, message: user("FICTIONAL worker task") } as StateAction,
+      { type: "chat/turnComplete", turnId: "w-0", duration: 2_000 } as StateAction,
+    ], chatState(3, { resource: inner }));
+    const workerSession = { provider: "subagent", title: "Explore", status: 1, lifecycle: "ready", activeClients: [],
+      chats: [{ resource: inner, title: "", status: 1, modifiedAt: AT }], defaultChat: inner } as unknown as SessionState;
+    const r = await rig({ states: { [sessionUri(1)]: sessionState(1), [sessionUri(2)]: sessionState(2), [worker]: workerSession }, chats: { [chatUri(1)]: parent, [chatUri(2)]: chatState(2), [inner]: workerChat } });
+    const read = await call(r, chatPath(sessionUri(1)));
+    expect(read.status).toBe(200);
+    const row = (read.json as HostChatRead).turns.flatMap((turn) => turn.parts).find((part) => part.kind === "subagent") as { ended: string | null; chat: string };
+    expect(row.chat).toBe(worker);
+    expect(row.ended).toBe(new Date(Date.parse(AT) + 2_000).toISOString());
+    const own = await call(r, chatPath(worker));
+    expect(own.status).toBe(200);
+    expect((own.json as HostChatRead).turns[0]!.parts).toEqual([{ kind: "text", text: "FICTIONAL worker task" }]);
+  });
+
   it("an expired lease releases its worker watches, and the session forgets its worker chats", async () => {
     const { workers, parent, chats } = manySubagents(2);
     const r = await rig({ chats: { [chatUri(1)]: parent, [chatUri(2)]: chatState(2), ...chats } });
