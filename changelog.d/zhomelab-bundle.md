@@ -10,3 +10,4 @@
 - zhomelab bundle 1006: carries the VS Code 1.142 subagent fix and chat delete for old sessions.
 - zhomelab bundle 1007: model picker grouped by Copilot / router / vendor (the bridge sends each model's group, multiplier and deprecation notice).
 - zhomelab bundle 1008: VS Code turn errors with Try again (chat/resume), terminal commands from the call input, context from the turn's contextAttribution, chat reads titled by their session.
+- zhomelab bundle 1009: plugin skills in "/" from the host's completions (Coder workspaces had none), context meter by VS Code's math (turn tokens over the model window, clamped at 100%).
