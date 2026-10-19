@@ -15,3 +15,4 @@
 - zhomelab bundle 1011: Skip on an optional Copilot question passes over it alone (VS Code carousel), skipped steps marked.
 - zhomelab bundle 1012: a Copilot form pages on the phone and Submits whole (back, change, optional left empty), replacing 1011's Skip; questions and subagents stay where they came in a turn.
 - zhomelab bundle 1013: a host's system notification ("`x` has completed") sits where it came, VS Code's check row with its Markdown; the ask card's expand and fold sit together, its title no longer red.
+- zhomelab bundle 1014: the turn's message stays pinned at the chat's top (VS Code sticky request); Restore Checkpoint / Start Over on each message puts back the agent's file edits, with Redo.
