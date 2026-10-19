@@ -245,3 +245,56 @@ describe("a Copilot call's intention and outcome", () => {
     expect(text(html)).toContain("Ran 1 command");
   });
 });
+
+describe("a Copilot turn's tools grouped between its words, as VS Code does", () => {
+  const settled = (parts: ConversationTurn["parts"]): ConversationTurn => ({ role: "assistant", ts: "2026-01-01T00:00:00.000Z", end_ts: "2026-01-01T00:00:07.000Z", parts });
+  const render = (turn: ConversationTurn, style: "vscode" | "classic", live = false): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "", turn, live, waiting: false, showThinking: false, style }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const text = (html: string) => html.replace(/<[^>]+>/g, "");
+  const bash = (command: string) => ({ kind: "tool" as const, name: "bash", tool_id: "bash", summary: "", input: "{}", output: "", command });
+  const parts: ConversationTurn["parts"] = [
+    bash("ls"), bash("pwd"),
+    { kind: "text", text: "FICTIONAL next I read the list" },
+    bash("cat a"),
+    { kind: "text", text: "FICTIONAL all done" },
+  ];
+
+  it("vscode: one folded group per run of tools, the words between them in the open", () => {
+    const html = render(settled(parts), "vscode");
+    expect(html.match(/class="work-block is-vscode/g)?.length).toBe(2);
+    const plain = text(html);
+    expect(plain).toContain("Ran 2 commands");
+    expect(plain).toContain("Ran 1 command");
+    // the narration is outside every fold, between the two groups, and the time is on the last group
+    const first = html.indexOf("work-block is-vscode");
+    const words = html.indexOf("FICTIONAL next I read the list");
+    const second = html.indexOf("work-block is-vscode", first + 1);
+    expect(first).toBeLessThan(words);
+    expect(words).toBeLessThan(second);
+    expect(html.slice(first, second)).not.toContain("Worked for");
+    expect(html.slice(second)).toContain("Worked for 7s");
+    expect(html.indexOf("FICTIONAL all done")).toBeGreaterThan(second);
+  });
+
+  it("vscode, live: only the last group says Working…, the earlier one its sentence", () => {
+    const html = render(settled(parts.slice(0, 4)), "vscode", true);
+    const plain = text(html);
+    expect(plain).toContain("Ran 2 commands");
+    expect(plain.match(/Working…/g)?.length).toBe(1);
+    expect(plain.indexOf("Ran 2 commands")).toBeLessThan(plain.indexOf("Working…"));
+  });
+
+  it("classic keeps one block with the words inside it", () => {
+    const html = render(settled(parts), "classic");
+    expect(html.match(/class="work-block( |")/g)?.length).toBe(1);
+  });
+});
+
