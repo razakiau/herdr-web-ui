@@ -91,7 +91,7 @@ const patch = `(() => {
     const ids = [...(state.older ? ["h0"] : []), "h1", "h1b", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
-      body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: null }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
+      body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
       multi_select: false, custom_option_index: 3,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
@@ -480,7 +480,18 @@ try {
         const card = page.locator(".prompt-card");
         await card.locator(".prompt-card-question strong", { hasText: "one" }).waitFor();
         await card.locator(".prompt-card-body code", { hasText: "map" }).waitFor();
-        assert.match(await card.locator(".prompt-card-option-description").innerText(), /\*\*plain\*\*/, "an option's description stays plain");
+        assert.match(await card.locator(".prompt-card-option-description").nth(1).innerText(), /\*\*plain\*\*/, "an option's description stays plain");
+        // the host's recommended option: a pill beside its bold title, its description under it
+        const north = card.locator(".prompt-card-option", { hasText: "FICTIONAL north" });
+        assert.equal((await north.locator(".prompt-card-tag").innerText()).trim(), "Recommended", "the host's recommended option carries the pill");
+        assert.equal(await card.locator(".prompt-card-tag").count(), 1, "only the recommended option has it");
+        const rows = await north.evaluate((node) => {
+          const title = node.querySelector(".prompt-card-option-label")!.getBoundingClientRect();
+          const description = node.querySelector(".prompt-card-option-description")!.getBoundingClientRect();
+          return { below: description.top >= title.bottom - 1, weight: Number(getComputedStyle(node.querySelector(".prompt-card-option-label")!).fontWeight) };
+        });
+        assert.ok(rows.below && rows.weight >= 600, `title bold over its description: ${JSON.stringify(rows)}`);
+        if (shots) { await card.scrollIntoViewIfNeeded(); await card.screenshot({ path: join(shots, "r4-askcard-390.png") }); }
         assert.equal(await card.getByRole("textbox").getAttribute("placeholder"), "Other…", "the typed-answer field is the Other… slot");
         // the status row says what the chat waits on, VS Code's words, and ends with its context meter
         assert.equal((await view.locator(".host-chat-status-line").textContent())?.trim(), "Waiting for your response", "an open question: Waiting for your response");

@@ -1127,6 +1127,8 @@ export interface InteractivePromptAnswer {
 export interface InteractivePromptOption {
   label: string;
   description: string | null;
+  /** the agent's own pick (a Copilot host option's `recommended`), drawn as a tag */
+  recommended?: true;
 }
 
 /** POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text. */

@@ -451,12 +451,23 @@ export function pendingToolCalls(chat: ChatState): ToolCallState[] {
     part.kind === ResponsePartKind.ToolCall && part.toolCall.status === ToolCallStatus.PendingConfirmation ? [part.toolCall] : []);
 }
 
+/**
+ * An option as the card draws it: VS Code's carousel reads a label "Title - Description" as a title
+ * over its description (chatQuestionCarouselPart.ts), which is how ask_user's choices carry one; an
+ * option with its own description keeps its label whole. The host's `recommended` is kept.
+ */
+function optionOf(option: { label: string; description?: string; recommended?: boolean }): InteractivePromptOption {
+  const cut = option.description === undefined ? option.label.indexOf(" - ") : -1;
+  const split = cut > 0 ? { label: option.label.slice(0, cut), description: option.label.slice(cut + 3) } : { label: option.label, description: option.description ?? null };
+  return option.recommended === true ? { ...split, recommended: true } : split;
+}
+
 /** The prompt's options and, parallel to them, the host's option ids. */
 function questionOptions(question: ChatInputQuestion): { options: InteractivePromptOption[]; ids: string[]; custom: number | null } {
   switch (question.kind) {
     case ChatInputQuestionKind.SingleSelect:
     case ChatInputQuestionKind.MultiSelect: {
-      const options = question.options.map((option) => ({ label: option.label, description: option.description ?? null }));
+      const options = question.options.map(optionOf);
       const ids = question.options.map((option) => option.id);
       // VS Code's rule (chatQuestionCarouselPart.ts at 6d62b1d): a typed answer unless the question says no
       if (question.allowFreeformInput === false) return { options, ids, custom: null };
