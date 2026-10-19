@@ -862,8 +862,14 @@ async function markArchived(call: Call): Promise<Response> {
  */
 async function deleteChat(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
-  const { channel, chat } = await watched(call, session);
-  if (chat.activeTurn) call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+  connected(call.host);
+  if (!known(call.host, session)) missing();
+  // a running turn is cancelled first; a listed chat the host will not open (an old one) is disposed all the same
+  const open = await watched(call, session).catch((error: unknown) => {
+    if (error instanceof Refusal && error.response.status === 404) return null;
+    throw error;
+  });
+  if (open?.chat.activeTurn) call.host.dispatch(open.channel, { type: ActionType.ChatTurnCancelled, turnId: open.chat.activeTurn.id, duration: 0 } as StateAction);
   await call.host.request("disposeSession", { channel: session });
   // its watch would keep the gone session in the mirror, and known() with it
   call.leases.sessions.release(session);
