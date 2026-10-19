@@ -179,6 +179,11 @@
   color: var(--accent);
 }
 
+.prompt-card-step.is-skipped .prompt-card-step-label {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-dim);
+}
+
 .prompt-card-step.is-current {
   border-color: var(--accent);
   background: var(--accent-tint);
@@ -465,6 +470,16 @@
 
 .prompt-card-submit {
   align-self: flex-start;
+}
+
+/* the quiet way past an optional question: under the answers, never weighing as much as one */
+.prompt-card-skip {
+  align-self: flex-end;
+  color: var(--text-dim);
+}
+
+.prompt-card-skip:hover:not(:disabled) {
+  color: var(--text-strong);
 }
 
 .prompt-card-custom {

@@ -92,7 +92,7 @@ const patch = `(() => {
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
       body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
-      multi_select: false, custom_option_index: 3,
+      multi_select: false, custom_option_index: 3, skippable: true,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
@@ -548,11 +548,17 @@ try {
         const uploaded = await posts("/api/machines/remote/host-chats/chat/upload");
         assert.deepEqual(uploaded.map((post) => [post.body["name"], post.body["media_type"]]), [["fictional-west.png", "image/png"], ["fictional-west.png", "image/png"]], "the card's file is uploaded on each try");
         assert.deepEqual(typed.map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", text: "@/tmp/fictional-repo/.herdr-web-ui/fictional-west.png FICTIONAL west", option_ids: [""] }], "a typed answer with a file posts \"@<path> <text>\" and the slot's id");
+        // an optional question's Skip passes over it alone (held as changed, so the card stays)
+        await card.getByRole("button", { name: "Skip", exact: true }).click();
+        await card.locator(".prompt-card-error", { hasText: "changed" }).waitFor();
+        const skipped = (await posts("/api/machines/remote/host-chats/chat/answer")).at(-1);
+        assert.deepEqual(skipped?.body, { session: SESSION, request_id: "req-1", question_id: "q-1", skip_question: true }, "Skip passes over this question only");
+        console.log("PASS an optional question's Skip passes over that question alone");
         await page.evaluate(() => { (window as unknown as { hostState: { holdAnswer: boolean } }).hostState.holdAnswer = false; });
         await card.getByRole("button", { name: /FICTIONAL south/ }).click();
         await card.waitFor({ state: "detached" });
         const answers = await posts("/api/machines/remote/host-chats/chat/answer");
-        assert.deepEqual(answers.slice(1).map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
+        assert.deepEqual(answers.slice(2).map((post) => post.body), [{ session: SESSION, request_id: "req-1", question_id: "q-1", option_ids: ["opt-south"] }], "option 2 is answered by its host id, once");
         console.log("PASS the question card answers option 2 with its option id and goes away");
 
         // 4. model · effort and agent picks, then Send

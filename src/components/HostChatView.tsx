@@ -53,6 +53,10 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
   const submit = async (choice: PromptChoice): Promise<void> => {
     const ref = prompt.host;
     if ("request_id" in ref) {
+      if (choice.skip) {
+        await answerHost(machineId, { session, request_id: ref.request_id, question_id: ref.question_id, skip_question: true });
+        return;
+      }
       const picked = choice.option_indices ?? (choice.option_index !== undefined ? [choice.option_index] : []);
       // a typed answer names the "Other…" slot, whose host id is empty: the text goes as freeformValues
       const typed = choice.custom_text !== undefined && prompt.custom_option_index !== null ? [ref.option_ids[prompt.custom_option_index] ?? ""] : [];

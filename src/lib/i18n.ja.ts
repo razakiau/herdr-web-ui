@@ -648,6 +648,8 @@ export const JA: Record<string, string> = {
   "Questions": "質問一覧",
   "Not answered": "未回答",
   "Note: {note}": "メモ: {note}",
+  "(skipped)": "(スキップ)",
+  "Skip": "スキップ",
   "(answered)": "(回答済み)",
   "Agent is asking": "エージェントからの質問",
   "View plan": "プランを表示",

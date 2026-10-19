@@ -420,10 +420,12 @@ export function toolOutputOf(chat: ChatState, ref: string): string | null {
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
 const submitted = (answer: ChatInputAnswer | undefined): boolean => answer?.state === ChatInputAnswerState.Submitted;
+/** done with for the form: answered, or passed over with Skip */
+export const answerSettled = (answer: ChatInputAnswer | undefined): boolean => submitted(answer) || answer?.state === ChatInputAnswerState.Skipped;
 
 /** The question an open request asks now: its first one without a submitted answer. */
 export function currentQuestion(request: ChatInputRequest): ChatInputQuestion | undefined {
-  return (request.questions ?? []).find((question) => !submitted(request.answers?.[question.id]));
+  return (request.questions ?? []).find((question) => !answerSettled(request.answers?.[question.id]));
 }
 
 /** The chats the chat's subagent calls started, newest last: the bridge subscribes them to read their model and times. */
@@ -493,11 +495,13 @@ function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion):
     options,
     multi_select: question.kind === ChatInputQuestionKind.MultiSelect,
     custom_option_index: custom,
+    ...(question.required === true ? {} : { skippable: true as const }),
     ...(questions.length > 1 ? {
       steps: questions.map((each) => ({
         label: each.title ?? each.message,
         answered: submitted(request.answers?.[each.id]),
         current: each.id === question.id,
+        ...(request.answers?.[each.id]?.state === ChatInputAnswerState.Skipped ? { skipped: true as const } : {}),
       })),
     } : {}),
     host: { request_id: request.id, question_id: question.id, option_ids: ids },

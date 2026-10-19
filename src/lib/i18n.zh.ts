@@ -650,6 +650,8 @@ export const ZH: Record<string, string> = {
   "Questions": "问题列表",
   "Not answered": "未回答",
   "Note: {note}": "备注：{note}",
+  "(skipped)": "(已跳过)",
+  "Skip": "跳过",
   "(answered)": "(已回答)",
   "Agent is asking": "Agent 提问",
   "View plan": "查看计划",

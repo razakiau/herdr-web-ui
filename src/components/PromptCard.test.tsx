@@ -78,6 +78,15 @@ describe("a Copilot card's extras", () => {
   });
 });
 
+describe("an optional question", () => {
+  it("offers Skip only when the question is skippable, and marks a skipped step", () => {
+    expect(render(true, prompt({ skippable: true }))).toMatch(/<button[^>]*class="btn btn-ghost prompt-card-skip"[^>]*>Skip<\/button>/);
+    expect(render(true, prompt())).not.toContain("prompt-card-skip");
+    const steps = render(true, prompt({ skippable: true, steps: [{ label: "Color", answered: false, current: false, skipped: true }, { label: "Size", answered: false, current: true }] }));
+    expect(steps).toMatch(/<li class="prompt-card-step is-skipped"[^>]*>.*?\(skipped\)/);
+  });
+});
+
 describe("the typed-answer slot", () => {
   const renderIn = (language: "en" | "ko" | "ja" | "zh", markdown: boolean | undefined, value: InteractivePrompt): string => {
     const saved = Object.getOwnPropertyDescriptor(navigator, "languages");

@@ -636,6 +636,30 @@ describe("host chat read and write routes", () => {
     }
   });
 
+  it("an optional question is skipped on its own: the card moves on, and the last one completes the form with it skipped", async () => {
+    const optional = (question: Record<string, unknown>) => ({ ...question, required: false });
+    const r = await rig({ chats: { [chatUri(1)]: asking([optional(COLOR), optional(SIZE)]), [chatUri(2)]: chatState(2) } });
+    const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
+    expect(((await call(r, path)).json as HostChatRead).prompt).toMatchObject({ id: "req-1:q-color", skippable: true });
+    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", skip_question: true })).json).toEqual({ ok: true });
+    await until("the skip", () => actions(r.fake, "chat/inputAnswerChanged").length > 0);
+    expect(only(r.fake, "chat/inputAnswerChanged")).toEqual({ type: "chat/inputAnswerChanged", requestId: "req-1", questionId: "q-color", answer: { state: "skipped" } });
+    await until("the card to move on", () => r.conn.chat(sessionUri(1))?.activeTurn?.responseParts.some((part) => part.kind === "inputRequest" && part.request.answers?.["q-color"] !== undefined) === true);
+    const next = ((await call(r, path)).json as HostChatRead).prompt;
+    expect(next?.id).toBe("req-1:q-size");
+    expect(next?.steps?.[0]).toMatchObject({ answered: false, skipped: true });
+    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-size", skip_question: true })).json).toEqual({ ok: true });
+    await until("the form", () => actions(r.fake, "chat/inputCompleted").length > 0);
+    expect(only(r.fake, "chat/inputCompleted")).toEqual({ type: "chat/inputCompleted", requestId: "req-1", response: "accept", answers: { "q-color": { state: "skipped" }, "q-size": { state: "skipped" } } });
+  });
+
+  it("a required question is not skipped on its own", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
+    expect(((await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead).prompt?.skippable).toBeUndefined();
+    expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", skip_question: true })).status).toBe(400);
+    expect(actions(r.fake, "chat/inputAnswerChanged")).toEqual([]);
+  });
+
   it("skip declines with no answers", async () => {
     const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, SIZE]), [chatUri(2)]: chatState(2) } });
     expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", question_id: "q-color", skip: true })).json).toEqual({ ok: true });
