@@ -11,6 +11,20 @@
   align-items: center;
   gap: 0;
   width: max-content;
+  max-width: 100%;
+}
+
+/* the model's name is the one that gives: it ends in an ellipsis before the agent, the mode or the
+   permission level is cut (the full name is in its title, its label and its picker) */
+.host-chat-pill.host-chat-model {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.host-chat-model .host-chat-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .host-chat-pill {
@@ -74,6 +88,15 @@
   width: var(--space-4);
   height: var(--space-4);
   color: var(--text-dim);
+}
+
+/* a raised permission level wears a shield in the notice's color; on a narrow row it is the
+   level's only sign (its words stay in the title and the label) */
+.host-chat-pill-shield {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--notice);
 }
 
 .host-chat-pill-caret {
@@ -342,10 +365,11 @@ button.host-model-detail {
   color: var(--text-dim);
 }
 
-/* a phone's row: the mode keeps its glyph (its name is in the tooltip and read out) and the carets go,
-   so the model and the agent keep their words */
+/* a phone's row: the mode keeps its glyph and a raised level its shield (both named in the tooltip
+   and read out) and the carets go, so the model and the agent keep their words */
 @container pickers (max-width: 300px) {
   .host-chat-mode .host-chat-pill-label,
+  .host-chat-mode .host-chat-pill-aside,
   .host-chat-pill-caret {
     display: none;
   }

@@ -506,11 +506,11 @@ export function contextMeter(usage: HostContextUsage | null): { percent: number;
 
 /**
  * The header's connection chip for an open host chat (it has no pane, whose stream sets it): live
- * once its last read went through on a connected host whose list is current; `read` null is not
- * read yet. A failed read, a host down or a PC dropped says reconnecting.
+ * while its PC's host is connected and its list current. A read that is loading or failed says so
+ * in the chat itself; here it read as "reconnecting" and pulsed while the host was up.
  */
-export function hostChatLive(pc: HostPc | undefined, read: boolean | null): boolean {
-  return read === true && pc !== undefined && !pc.stale && pc.host?.state === "connected";
+export function hostChatLive(pc: HostPc | undefined): boolean {
+  return pc !== undefined && !pc.stale && pc.host?.state === "connected";
 }
 
 /**

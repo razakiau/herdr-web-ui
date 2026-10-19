@@ -11,7 +11,7 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ListChecks, MessageSquare, Rocket } from "lucide-react";
+import { ChevronDown, ListChecks, MessageSquare, Rocket, ShieldCheck } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
@@ -36,8 +36,6 @@ import { hostSlashItems, resolveHostSlash } from "../lib/hostSlash.ts";
 
 export interface HostChatViewProps {
   machineId: string; session: string;
-  /** each read of the chat went through (true) or failed (false): the header's connection chip */
-  onReadHealth?(ok: boolean): void;
   /** the chat's title as its reads give it: the header's, before the PC's list has the chat */
   onTitle?(title: string): void;
 }
@@ -77,7 +75,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
-export function HostChatView({ machineId, session, onReadHealth, onTitle }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle }: HostChatViewProps) {
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
@@ -95,9 +93,6 @@ export function HostChatView({ machineId, session, onReadHealth, onTitle }: Host
   const [contextOpen, setContextOpen] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const healthRef = useRef(onReadHealth);
-  healthRef.current = onReadHealth;
-  useEffect(() => source.onHealth((ok) => { if (mounted.current) healthRef.current?.(ok); }), [source]);
   const titleRef = useRef(onTitle);
   titleRef.current = onTitle;
   const readTitle = chat?.title ?? null;
@@ -228,7 +223,10 @@ export function HostChatView({ machineId, session, onReadHealth, onTitle }: Host
       <ModeIcon className="host-chat-pill-icon" aria-hidden="true" />
       {modeLabel && <span className="host-chat-pill-label">{modeLabel}</span>}
       {/* Manual is the default and says nothing; a raised level is named, as VS Code's summary does */}
-      {approvalsRaised && <span className="host-chat-pill-aside is-raised">{approvalsLabel}</span>}
+      {approvalsRaised && <>
+        <ShieldCheck className="host-chat-pill-shield" aria-hidden="true" />
+        <span className="host-chat-pill-aside is-raised">{approvalsLabel}</span>
+      </>}
       <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>}
   </span>;

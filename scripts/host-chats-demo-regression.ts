@@ -564,6 +564,25 @@ try {
         await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title") === "Plan · Manual");
         assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).map((post) => post.body), [{ session: SESSION, mode: "plan" }], "picking Plan posts the mode alone");
         console.log("PASS the model pill wears the Claude mark, search narrows to GLM, and Plan is the chat's mode");
+        // Allow all at 390 px: the row fits before Send (no sideways scroll), the level is a shield glyph in the notice's color
+        await modePill.click();
+        const modes2 = page.getByRole("dialog", { name: "Agent mode", exact: true });
+        await modes2.waitFor();
+        await modes2.locator('[data-approvals="autoApprove"]').click();
+        await modes2.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("data-approvals") === "autoApprove", undefined, { timeout: 10_000 })
+          .catch(() => assert.fail("the mode pill shows Allow all"));
+        const row = await view.locator(".composer-pickers").evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+        assert.ok(row.scroll <= row.client + 1, `the pickers fit before Send with Allow all (${row.scroll} > ${row.client})`);
+        assert.equal(await modePill.locator(".host-chat-pill-shield").count(), 1, "a raised level wears a shield");
+        await page.waitForFunction(() => document.querySelector(".modal-scrim, .host-picker") === null);
+        await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+        if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "composer-allow-all-390.png") });
+        await modePill.click();
+        await modes2.waitFor();
+        await modes2.locator('[data-approvals="default"]').click();
+        await modes2.waitFor({ state: "detached" });
+        console.log("PASS Allow all keeps the composer's pickers on one row before Send, as a shield");
         assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/);
         const drafts = await posts("/api/machines/remote/host-chats/chat/draft");
         assert.deepEqual(drafts.at(-1)?.body, { session: SESSION, model: { id: "fictional/model-b", effort: "high" } }, "the model pick is written to the chat's draft");
@@ -768,12 +787,16 @@ try {
         assert.equal((await posts("/api/machines/remote/host-chats/chat/read")).filter((post) => post.body["session"] === "fictional-session-0").length, 1, "read once on opening");
         console.log("PASS a folder row opens its unread chat as its tab and marks it read; a read that fails says the bridge's own words");
 
-        // 6c. "All agents on Build PC…": search finds the month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
-        const pcMenu = async () => {
+        // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row has no ⋯): search finds the
+        // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
+        const agentsMenu = async () => {
           await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-          await remoteGroup.getByRole("button", { name: "More for Build PC", exact: true }).click();
+          await page.locator(".agents-sidebar").getByRole("button", { name: "More for Agents", exact: true }).click();
         };
-        await pcMenu();
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        assert.equal(await remoteGroup.locator(".machine-header").getByRole("button", { name: "More for Build PC" }).count(), 0, "a PC row keeps sliders, fold and + only");
+        await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
+        await agentsMenu();
         await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
         const all = page.getByRole("dialog", { name: "All agents on Build PC", exact: true });
         await all.waitFor();
@@ -797,17 +820,21 @@ try {
         await page.waitForFunction(() => (window as unknown as { hostCalls: { models: string[] } }).hostCalls.models.includes("fictional-session-old"));
         console.log("PASS All agents on Build PC… finds an old chat by search and opens it as a tab of its workspace");
 
-        // 7. "New Copilot chat…" on the remote PC opens the "+" dialog with Copilot (host) picked: a
-        // folder chip, a model, a mode, the first message, Start
+        // 7. the PC's "+" with Copilot (host) picked: a folder chip, a model, a mode, the first message, Start
         const newChats = () => posts("/api/machines/remote/host-chats/chat/new");
         const openNewSheet = async () => {
-          await pcMenu();
-          await page.getByRole("button", { name: "New Copilot chat…", exact: true }).click();
+          await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await remoteGroup.getByRole("button", { name: "New workspace on Build PC", exact: true }).click();
           const form = page.getByRole("dialog", { name: "New workspace · Build PC" });
           await form.waitFor();
+          // the PC's agents come in a moment after the dialog opens; the picker remembers the last one
+          const pick = form.locator(".agent-picker-trigger");
+          if (!(await pick.innerText()).includes("Copilot (host)")) {
+            await pick.click();
+            await page.getByRole("option", { name: "Copilot (host)" }).click({ timeout: 10_000 });
+          }
           return form;
         };
-        assert.equal(await page.getByRole("region", { name: "PC Laptop", exact: true }).getByRole("button", { name: "More for Laptop" }).count(), 0, "a PC without the feature has no host menu");
         // the models and agents are a session's: the newest chat in the folder picked, else the PC's newest
         const modelReads = async (): Promise<string[]> => page.evaluate(() => [...(window as unknown as { hostCalls: { models: string[] } }).hostCalls.models]);
         const nextModelRead = async (after: number, what: string): Promise<string | undefined> => {
@@ -870,7 +897,7 @@ try {
         await header.locator(".conn.conn-live").waitFor({ state: "attached" });
         assert.equal(await page.locator(".host-chat-title").count(), 0, "the title is the header's alone: no second title bar over the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-11-header-390.png") });
-        console.log("PASS New Copilot chat… is the + dialog on Copilot (host): one chat/new, the mode set, and the header names the chat");
+        console.log("PASS the PC's + on Copilot (host): one chat/new, the mode set, and the header names the chat");
 
         // 7b. made, but its first message did not go: the chat opens with the words in its box, nothing re-sent
         await page.evaluate(() => { (window as unknown as { hostState: { newSent: boolean } }).hostState.newSent = false; });
@@ -959,7 +986,7 @@ try {
         await keptTab.waitFor({ state: "detached" });
         await kept.waitFor({ state: "detached" });
         assert.deepEqual(await actionPosts("archive"), [{ session: "fictional-new-2", archived: true }]);
-        await pcMenu();
+        await agentsMenu();
         await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
         await all.waitFor();
         await all.getByRole("button", { name: "Archived" }).click();

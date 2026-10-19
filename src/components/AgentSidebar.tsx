@@ -19,7 +19,7 @@ import { chatAge, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
 import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
-import { RowMenu } from "./RowMenu.tsx";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { hostChatItems, useHostChatActions, type HostChatRef } from "./HostChatActions.tsx";
 import { BackgroundBadge, displayPaneTitle, onRowContextMenu, PlanBadge, StatusBadge } from "./Sidebar.tsx";
 import "./AgentSidebar.css";
@@ -82,6 +82,8 @@ export interface AgentSidebarProps {
   hostChats?: ReadonlyMap<string, HostPc>;
   selectedHostChat?: HostChatTarget | null;
   onSelectHostChat?(target: HostChatTarget): void;
+  /** "All agents on <PC>…", one per PC with host chats: the section head's ⋯ */
+  allAgents?: RowMenuItem[];
 }
 
 /** the width under which the sidebar is a drawer (src/styles.css) */
@@ -101,7 +103,8 @@ interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: nu
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, onSelect, hostChats, selectedHostChat = null, onSelectHostChat }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, onSelect, hostChats, selectedHostChat = null, onSelectHostChat, allAgents = [] }: AgentSidebarProps) {
+  const [allMenu, setAllMenu] = useState<HTMLElement | null>(null);
   const t = useT();
   const listId = useId();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
@@ -238,11 +241,15 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // Settings -> Sidebar rows -> One line: an agent row is one line too, its place dim after its title
   const oneLine = settings.sidebarRows === "one";
   return <section ref={sectionRef} className={`agents-sidebar${collapsed ? " is-collapsed" : ""}${rows.length === 0 ? " is-empty" : ""}${oneLine ? " is-one-line" : ""}`} aria-label={t("Agents")}>
-    <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!collapsed} aria-controls={listId} onClick={() => setCollapsed(!collapsed)}>
-      {collapsed ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
-      <span>{t("Agents")}</span>
-      {collapsed && rows.length > 0 && <span className="agent-section-count">{rows.length}</span>}
-    </button>
+    <div className="agent-section-head">
+      <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!collapsed} aria-controls={listId} onClick={() => setCollapsed(!collapsed)}>
+        {collapsed ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
+        <span>{t("Agents")}</span>
+        {collapsed && rows.length > 0 && <span className="agent-section-count">{rows.length}</span>}
+      </button>
+      {allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
+    </div>
+    {allMenu && <RowMenu anchor={allMenu} title={t("Agents")} items={allAgents} onClose={() => setAllMenu(null)} />}
     <div className="agent-list-contents" id={listId} hidden={collapsed}>
       <p className={shownEmpty === null ? "visually-hidden" : "agent-empty"} role="status">{shownEmpty}</p>
       {rows.length > 0 && <>
