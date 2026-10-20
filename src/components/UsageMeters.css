@@ -109,6 +109,28 @@
   text-transform: uppercase;
 }
 
+.usage-popover-head > span:first-child { margin-right: auto; }
+
+/* the panel's order, a word not a caps label: what it does is read before what it is called */
+.usage-sort.btn {
+  height: var(--chip-h);
+  min-height: 0;
+  padding: 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.usage-sort[aria-pressed="true"] { color: var(--text-strong); }
+
+.usage-source {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
 .usage-popover-head .icon-button svg.is-spinning {
   animation: usage-spin 0.8s steps(8) infinite;
 }

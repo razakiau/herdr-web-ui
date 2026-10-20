@@ -30,6 +30,8 @@ export type AgentMarks = "color" | "mono";
 export type UsageCount = "used" | "left";
 /** the limit a plan meter shows: the plan's week, or its short session (5 hours on Claude and Codex) */
 export type UsageGlance = "week" | "session";
+/** the plan meters' panel order: Settings' order, or the limit closest to running out first */
+export type UsageSort = "order" | "closest";
 /** amber: the herdr look (the default before codex); charcoal: neutral Ghostty-style dark;
  *  catppuccin: Catppuccin Mocha in dark, Latte in light. A record naming a palette that was removed
  *  (report, lilac, forest) loads as amber. */
@@ -146,6 +148,12 @@ export interface Settings {
   usageOrder: string[];
   /** accounts left out of the plan meters, strip and popover alike, by ProviderUsage.key */
   usageHidden: string[];
+  /** the providers an OmniRoute gateway reports that the meters show (by ProviderUsage.id): one it starts reporting stays out until chosen */
+  usageShown: string[];
+  /** the OmniRoute providers already offered in Settings: the others are marked New */
+  usageKnown: string[];
+  /** the plan meters' panel: in the order above, or the limit closest to running out first */
+  usageSort: UsageSort;
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
   /** the language dictation listens for; auto: the UI language's, or the browser's the UI lacks (src/lib/voice.ts dictationLocale) */
@@ -176,10 +184,10 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks and the launch modes are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
+ * fileOpen, webLinks, the launch modes and the OmniRoute choices are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode">;
+  | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -252,7 +260,7 @@ export const SETTING_SCOPE = {
   theme: "shared", palette: "shared", darkTheme: "shared", lightTheme: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared",
   agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
-  usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device", suggestionChip: "device",
+  usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", usageShown: "shared", usageKnown: "shared", usageSort: "shared", defaultView: "device", suggestionChip: "device",
   terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", density: "device",
   terminalFontSize: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
@@ -315,6 +323,9 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultView: "auto",
   usageOrder: [],
   usageHidden: [],
+  usageShown: [],
+  usageKnown: [],
+  usageSort: "order",
   voiceInput: "auto",
   voiceLanguage: "auto",
   voicePolishChat: true,
@@ -503,6 +514,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     defaultView: record["defaultView"] === "chat" || record["defaultView"] === "terminal" || record["defaultView"] === "auto" ? record["defaultView"] : DEFAULT_SETTINGS.defaultView,
     usageOrder: usageKeys(record["usageOrder"]),
     usageHidden: usageKeys(record["usageHidden"]),
+    usageShown: usageKeys(record["usageShown"]),
+    usageKnown: usageKeys(record["usageKnown"]),
+    usageSort: record["usageSort"] === "closest" || record["usageSort"] === "order" ? record["usageSort"] : DEFAULT_SETTINGS.usageSort,
     voiceInput: voiceButton(record["voiceInput"]),
     voiceLanguage: DICTATION_LANGUAGES.includes(record["voiceLanguage"] as (typeof DICTATION_LANGUAGES)[number]) ? record["voiceLanguage"] as DictationLanguage : DEFAULT_SETTINGS.voiceLanguage,
     voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ProviderUsage, UsageProviderId, UsageReport, UsageWindow } from "../../shared/protocol.ts";
+import type { ProviderUsage, UsageProviderId, UsageProviderName, UsageReport, UsageWindow } from "../../shared/protocol.ts";
 import { fetchUsage } from "./api.ts";
 import type { UsageCount, UsageGlance } from "./settings.ts";
 import { t } from "./i18n.ts";
@@ -19,6 +19,31 @@ export const PROVIDER_MARK: Readonly<Record<UsageProviderId, string>> = {
   claude: "claude", codex: "codex", cursor: "cursor", copilot: "copilot", grok: "grok", antigravity: "agy", opencode: "opencode",
 };
 
+/** the providers only an OmniRoute gateway reports, as they name themselves; others are title-cased from the id */
+const OTHER_PROVIDER_NAME: Readonly<Record<string, string>> = {
+  glm: "GLM", "glm-cn": "GLM China", zai: "Z.ai", glmt: "GLM", kimi: "Kimi", "kimi-coding": "Kimi", "kimi-coding-apikey": "Kimi",
+  minimax: "MiniMax", "minimax-cn": "MiniMax China", deepseek: "DeepSeek", kiro: "Kiro", "amazon-q": "Amazon Q", qoder: "Qoder",
+  "ollama-cloud": "Ollama Cloud", nanogpt: "NanoGPT", crof: "Crof", "xiaomi-mimo": "Xiaomi MiMo", "xiaomi-mimo-token-plan": "Xiaomi MiMo",
+  vertex: "Vertex AI", "vertex-partner": "Vertex AI", "codebuddy-cn": "CodeBuddy", promptql: "PromptQL", pql: "PromptQL",
+  "adobe-firefly": "Adobe Firefly", firefly: "Adobe Firefly", hyperagent: "HyperAgent", ha: "HyperAgent",
+};
+
+const isKnown = (id: UsageProviderName): id is UsageProviderId => Object.hasOwn(PROVIDER_NAME, id);
+
+/** A provider's name: herdr's own, else the one OmniRoute's providers go by, else the id title-cased. */
+export function providerName(id: UsageProviderName): string {
+  if (isKnown(id)) return PROVIDER_NAME[id];
+  return OTHER_PROVIDER_NAME[id] ?? id.split("-").map((word) => word.length <= 3 ? word.toUpperCase() : word[0]!.toUpperCase() + word.slice(1)).join(" ");
+}
+
+/** AgentMark's name for a provider: its logo, or for one herdr has none of, the id (a lettered mark). */
+export function providerMark(id: UsageProviderName): string {
+  return isKnown(id) ? PROVIDER_MARK[id] : id;
+}
+
+/** An account read through an OmniRoute gateway, not this PC's own sign-in or the Hub's. */
+export const viaOmniRoute = (usage: Pick<ProviderUsage, "key" | "id">): boolean => usage.key.startsWith(`${usage.id}:omniroute:`);
+
 export const WINDOW_LABEL: Readonly<Record<UsageWindow["kind"], string>> = {
   session: "Session",
   day: "Daily",
@@ -32,9 +57,9 @@ export function providerForAgent(agent: string | null | undefined): UsageProvide
 }
 
 /** The first visible account in Settings order supplies the composer's compact reference. */
-export function composerUsage(providers: readonly ProviderUsage[], agent: string | null, order: readonly string[], hidden: readonly string[]): ProviderUsage | undefined {
+export function composerUsage(providers: readonly ProviderUsage[], agent: string | null, order: readonly string[], hidden: readonly string[], shown: readonly string[] = []): ProviderUsage | undefined {
   const providerId = providerForAgent(agent);
-  return orderProviders(providers, order).find((usage) => usage.id === providerId && !hidden.includes(usage.key));
+  return shownUsages(providers, { order, hidden, shown }).find((usage) => usage.id === providerId);
 }
 
 /** Plan-wide five-hour session first, then week; scoped limits do not stand in for either. */
@@ -66,7 +91,7 @@ export function windowLabel(window: UsageWindow): string {
 
 /** A provider and, when known, whose account it is: "Codex · me@example.com". */
 export function usageName(usage: ProviderUsage): string {
-  return usage.account ? `${PROVIDER_NAME[usage.id]} · ${usage.account}` : PROVIDER_NAME[usage.id];
+  return usage.account ? `${providerName(usage.id)} · ${usage.account}` : providerName(usage.id);
 }
 
 /** What a meter shows of a limit: the share used, or what is left. */
@@ -153,4 +178,26 @@ export function useUsage(enabled: boolean) {
 
   const refresh = useCallback(() => { if (enabled) void load(true); }, [enabled, load]);
   return { report, loading, refresh };
+}
+
+/** What decides which accounts the meters show: Settings' order and hidden accounts, and the OmniRoute providers chosen. */
+export interface UsageVisibility { order: readonly string[]; hidden: readonly string[]; shown: readonly string[] }
+
+/**
+ * The accounts the meters show, in Settings' order: this PC's and the Hub's unless hidden; an
+ * OmniRoute gateway's only for the providers chosen in Settings (it can report dozens), unless hidden.
+ */
+export function shownUsages(providers: readonly ProviderUsage[], { order, hidden, shown }: UsageVisibility): ProviderUsage[] {
+  return orderProviders(providers, order).filter((usage) => !hidden.includes(usage.key) && (!viaOmniRoute(usage) || shown.includes(usage.id)));
+}
+
+/** The providers an OmniRoute gateway reports that Settings has not offered yet, in report order. */
+export function newOmniRouteProviders(providers: readonly ProviderUsage[], known: readonly string[]): string[] {
+  return [...new Set(providers.filter(viaOmniRoute).map((usage) => usage.id))].filter((id) => !known.includes(id));
+}
+
+/** The accounts closest to a limit first, by each one's tightest window; one without numbers last. */
+export function closestFirst(providers: readonly ProviderUsage[]): ProviderUsage[] {
+  const used = (usage: ProviderUsage): number => tightestWindow(usage)?.used_percent ?? -1;
+  return [...providers].sort((a, b) => used(b) - used(a));
 }
