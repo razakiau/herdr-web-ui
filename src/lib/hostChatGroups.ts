@@ -18,7 +18,7 @@ export const folderKey = (cwd: string | null): string | null => (cwd ? cwd.repla
 
 const dayStart = (time: number): number => { const day = new Date(time); day.setHours(0, 0, 0, 0); return day.getTime(); };
 /** whole calendar days between `time` and `now` (0: today) */
-const daysBack = (time: number, now: number): number => Math.round((dayStart(now) - dayStart(time)) / 86_400_000);
+export const daysBack = (time: number, now: number): number => Math.round((dayStart(now) - dayStart(time)) / 86_400_000);
 
 function ageOf(row: HostChatRow, now: number): ChatAge {
   // an unreadable time is -Infinity: NaN days, which every test below fails, so Older

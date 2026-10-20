@@ -14,6 +14,7 @@ import { composerDrafts } from "./composerDraft.ts";
 import type { HostAgent, HostAnswer, HostFormAnswer, HostChatRead, HostChatRow, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
+import { daysBack } from "./hostChatGroups.ts";
 
 export async function fetchHostChats(machineId: string): Promise<HostChatRow[]> {
   return (await getJson<{ chats: HostChatRow[] }>(machinePath(machineId, "host-chats/chats"))).chats;
@@ -55,8 +56,11 @@ export function chatAge(row: HostChatRow, now: number, t: Translate): string {
   const minutes = Math.round((now - at) / 60_000);
   if (minutes < 2) return t("just now");
   if (minutes < 60) return t("{n} min ago", { n: minutes });
-  if (minutes < 60 * 48) return t("{n} h ago", { n: Math.round(minutes / 60) });
-  if (minutes < 60 * 24 * 30) return t("{n} days ago", { n: Math.round(minutes / (60 * 24)) });
+  // past today it counts calendar days, as All agents' groups do: a row never says "36 h ago" under Yesterday
+  const days = daysBack(at, now);
+  if (days <= 0) return t("{n} h ago", { n: Math.round(minutes / 60) });
+  if (days === 1) return t("Yesterday");
+  if (days < 30) return t("{n} days ago", { n: days });
   return new Date(at).toLocaleDateString(currentLocale());
 }
 
