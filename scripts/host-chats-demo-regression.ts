@@ -343,6 +343,7 @@ try {
           return rest;
         };
         const posts = async (path: string): Promise<Post[]> => (await page.evaluate(() => (window as unknown as { hostCalls: { posts: Post[] } }).hostCalls.posts)).filter((post) => post.path === path);
+        const sheetItems = async () => (await page.locator(".row-sheet .row-sheet-item").allInnerTexts()).map((text) => text.trim());
         const fits = async (what: string) => {
           const width = await page.evaluate(() => document.documentElement.scrollWidth);
           assert.ok(width <= 390, `${what}: no horizontal overflow at 390 px (scrollWidth ${width})`);
@@ -1112,7 +1113,7 @@ try {
         await page.getByRole("button", { name: "More", exact: true }).click();
         await page.locator(".row-sheet").waitFor();
         const headerFolder = await menuItems();
-        assert.deepEqual(headerFolder, ["Pin folder", "New Copilot chat…", "All agents on Build PC…", "Copy path"], "a Copilot folder's header ⋯: its own items");
+        assert.deepEqual(headerFolder, ["New agent host chat…", "Chats in fictional-docs…", "Pin folder", "Close workspace", "Copy path"], "an agent host workspace's header ⋯: its own items");
         if (shots) { await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false); await page.screenshot({ path: join(shots, "r9-folder-header-menu-390.png") }); }
         await page.keyboard.press("Escape");
         await page.locator(".row-sheet").waitFor({ state: "detached" });
@@ -1125,12 +1126,12 @@ try {
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
         await page.getByRole("button", { name: "More", exact: true }).click();
-        await page.locator(".row-sheet .row-sheet-item", { hasText: "All agents on Build PC…" }).click();
-        const fromHeader = page.getByRole("dialog", { name: "All agents on Build PC", exact: true });
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Chats in fictional-docs…" }).click();
+        const fromHeader = page.getByRole("dialog", { name: "Chats in fictional-docs", exact: true });
         await fromHeader.waitFor();
         await fromHeader.getByRole("button", { name: "Close dialog" }).click();
         await fromHeader.waitFor({ state: "detached" });
-        console.log("PASS a Copilot folder's header ⋯ is its row's menu: New Copilot chat, All agents, Copy path");
+        console.log("PASS an agent host workspace's header ⋯ is its row's menu: New agent host chat, Chats in <folder>, Pin, Close workspace, Copy path");
 
         // a Copilot folder pins as a workspace does: its row stands in Pinned, and its menus say Unpin
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
@@ -1147,7 +1148,7 @@ try {
         await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
         await page.getByRole("button", { name: "More", exact: true }).click();
         await page.locator(".row-sheet").waitFor();
-        assert.equal((await menuItems())[0], "Unpin folder", "the header ⋯ unpins the folder");
+        assert.equal((await menuItems())[2], "Unpin folder", "the header ⋯ unpins the folder");
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Unpin folder" }).click();
         await page.locator(".row-sheet").waitFor({ state: "detached" });
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
@@ -1159,8 +1160,11 @@ try {
 
         // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row has no ⋯): search finds the
         // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
+        const drawerOpen = async () => {
+          if (await page.locator("#workspace-drawer.is-open").count() === 0) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        };
         const agentsMenu = async () => {
-          await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await drawerOpen();
           await page.locator(".agents-sidebar").getByRole("button", { name: "More for Agents", exact: true }).click();
         };
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
@@ -1255,7 +1259,7 @@ try {
         const keepOpen = page.locator(".host-chat .look-bar").getByRole("button", { name: "Keep open", exact: true });
         await keepOpen.waitFor();
         assert.ok(!(await savedTabs()).remote!.open.some((each) => each.tabs.includes("fictional-session-old")), "a look is saved nowhere");
-        if (shots) await page.screenshot({ path: join(shots, "look-keep-open-390.png") });
+        if (shots) { await page.locator(".all-agents").waitFor({ state: "detached" }); await page.waitForTimeout(300); await page.screenshot({ path: join(shots, "look-keep-open-390.png") }); }
         // leaving it: its tab goes
         await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"] [role="tab"]`).click();
         await page.locator(`.host-chat[data-host-session="${SESSION}"]`).waitFor();
@@ -1307,6 +1311,79 @@ try {
         await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();
         console.log("PASS a listed chat opens as a look (saved nowhere, gone on leaving), Keep open makes it a tab, Close tab hides it and the last closes its workspace");
 
+        // 6e. agent host workspaces open and close as herdr's: New workspace → the agent host lists the
+        // folders its chats work in; picking one opens it (no chat made). Its ⋯ holds what is about the
+        // folder: Chats in <folder>… (that folder's chats, archived too) and Close workspace, which
+        // leaves its chats as they are. The PC's whole list stays on the Agents menu.
+        const openList = async () => {
+          await drawerOpen();
+          await remoteGroup.getByRole("button", { name: "New workspace on Build PC", exact: true }).click();
+          const dialog = page.getByRole("dialog", { name: "New workspace · Build PC" });
+          await dialog.waitFor();
+          const trigger = dialog.locator(".agent-picker-trigger");
+          if (!(await trigger.innerText()).includes("Copilot (host)")) {
+            await trigger.click();
+            await page.getByRole("option", { name: "Copilot (host)" }).click({ timeout: 10_000 });
+          }
+          return dialog;
+        };
+        const docsRow = remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]');
+        const folderMenu = async () => {
+          await drawerOpen();
+          await docsRow.getByRole("button", { name: "More for fictional-docs", exact: true }).click();
+          await page.locator(".row-sheet").waitFor();
+        };
+        // the docs folder's ⋯: about the folder only
+        await folderMenu();
+        assert.deepEqual(await sheetItems(), ["New agent host chat…", "Chats in fictional-docs…", "Pin folder", "Close workspace", "Copy path"], "the folder's menu: new chat, its chats, pin, close, copy path");
+        await page.locator(".row-sheet").getByRole("button", { name: "Chats in fictional-docs…", exact: true }).click();
+        const folderChats = page.getByRole("dialog", { name: "Chats in fictional-docs", exact: true });
+        await folderChats.waitFor();
+        assert.deepEqual(await folderChats.locator(".host-chat-item").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-host-session"))), ["fictional-session-0"], "only the folder's chats");
+        assert.equal(await folderChats.getByRole("radiogroup", { name: "Folders" }).count(), 0, "no folder pills in one folder's list");
+        await folderChats.getByRole("button", { name: "Close dialog" }).click();
+        await folderChats.waitFor({ state: "detached" });
+        // Close workspace: the row goes, the chat is kept
+        await folderMenu();
+        await page.locator(".row-sheet").getByRole("button", { name: "Close workspace", exact: true }).click();
+        await docsRow.waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("Close workspace leaves its row"));
+        assert.equal(await page.evaluate(() => (window as unknown as { hostEdits: { archived: Record<string, boolean> } }).hostEdits.archived["fictional-session-0"]), undefined, "Close workspace archives nothing");
+        await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
+        // the PC's whole list is still on the Agents menu
+        await agentsMenu();
+        assert.equal(await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).count(), 1, "All agents stays on the Agents menu");
+        await page.keyboard.press("Escape");
+        await page.getByRole("button", { name: "Close workspace list", exact: true }).click().catch(() => undefined);
+        // New workspace → agent host: the folders, newest first, each with its count; the open one says so
+        const newBefore = (await posts("/api/machines/remote/host-chats/chat/new")).length;
+        let listDialog = await openList();
+        const folderRows = listDialog.getByRole("radiogroup", { name: "Folders with chats" }).getByRole("radio");
+        await folderRows.first().waitFor();
+        const folderTexts = (await folderRows.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim());
+        // the repo's newest chat is the newest anywhere: it leads; the archived chat is not counted
+        assert.match(folderTexts[0] ?? "", /^fictional-repo Open \/tmp\/fictional-repo 2 chats · \S/, "the open repo first: name, Open, path, its two chats, the newest's age");
+        assert.match(folderTexts[1] ?? "", /^fictional-docs \/tmp\/fictional-docs 1 chat · \S/, "then the closed docs folder with its one chat");
+        assert.equal(folderTexts.length, 2, "one row per folder");
+        await fits("the agent host folder list");
+        await folderRows.filter({ hasText: "fictional-docs" }).click();
+        assert.equal(await listDialog.getByRole("button", { name: "Open workspace", exact: true }).count(), 1, "a picked folder opens a workspace");
+        if (shots) await page.screenshot({ path: join(shots, "agent-host-folders-390.png") });
+        await listDialog.getByRole("button", { name: "Open workspace", exact: true }).click();
+        await listDialog.waitFor({ state: "detached" });
+        await page.locator('.host-chat[data-host-session="fictional-session-0"]').waitFor();
+        assert.equal((await posts("/api/machines/remote/host-chats/chat/new")).length, newBefore, "opening a folder makes no chat");
+        await drawerOpen();
+        await docsRow.waitFor({ timeout: 3000 }).catch(() => assert.fail("the opened folder has no row"));
+        await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();
+        // typing another folder after a pick starts a chat again, as before
+        listDialog = await openList();
+        await listDialog.getByRole("radiogroup", { name: "Folders with chats" }).getByRole("radio").filter({ hasText: "fictional-docs" }).click();
+        await listDialog.getByRole("textbox", { name: "Directory" }).fill("/tmp/fictional-elsewhere");
+        assert.equal(await listDialog.getByRole("button", { name: "Start", exact: true }).count(), 1, "a typed folder starts a chat");
+        await listDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+        await listDialog.waitFor({ state: "detached" });
+        console.log("PASS agent host workspaces open from New workspace (no chat made), their ⋯ lists the folder's chats and closes them, and All agents stays on the Agents menu");
+
         // 7. the PC's "+" with Copilot (host) picked: VS Code's New Chat. The dialog asks the folder
         // only; Start makes the chat empty and opens it, and its first message is written in the
         // chat's own composer (the same one every chat has: pills, "/", attach, dictation, send menu)
@@ -1330,9 +1407,9 @@ try {
         assert.equal(await form.getByRole("textbox", { name: "Name" }).count(), 0, "a host chat has no name field");
         assert.equal(await form.getByRole("textbox", { name: "First message" }).count(), 0, "no second composer in the dialog: the chat's own takes the first message");
         const folder = form.getByRole("textbox", { name: "Directory" });
-        // the PC's chats' folders are chips
-        await form.getByRole("button", { name: "Use folder /tmp/fictional-repo", exact: true }).click();
-        assert.equal(await folder.inputValue(), "/tmp/fictional-repo", "the chip fills the folder");
+        // a folder typed (not picked from the list) starts a chat there
+        await folder.fill("/tmp/fictional-repo");
+        assert.equal(await form.getByRole("button", { name: "Start", exact: true }).count(), 1, "a typed folder starts a chat");
         await fits("the new-chat dialog");
         if (shots) await page.screenshot({ path: join(shots, "task-11-new-chat-390.png") });
         await form.getByRole("button", { name: "Start", exact: true }).click();
@@ -1413,7 +1490,6 @@ try {
         // unread (and a refusal undone), mark it done, delete it; a pane's tab keeps its own menu
         const keptTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-new-3"]');
         const actionPosts = async (route: string) => (await posts(`/api/machines/remote/host-chats/chat/${route}`)).map((post) => post.body);
-        const sheetItems = async () => (await page.locator(".row-sheet .row-sheet-item").allInnerTexts()).map((text) => text.trim());
         // a pane's tab: the menu it always had, none of a chat's items
         // the list's push carries the chats made, so they stand as tabs of their workspace; the drawer and sheet have gone
         await page.evaluate(() => (window as unknown as { pushHostList(): void }).pushHostList());
@@ -1450,7 +1526,7 @@ try {
         await page.getByRole("button", { name: "More", exact: true }).click();
         await page.locator(".row-sheet").waitFor();
         const workspaceItems = await sheetItems();
-        assert.ok(workspaceItems.includes("Search panes and actions") && !workspaceItems.includes("New Copilot chat…") && !workspaceItems.includes("Rename…"), `a herdr workspace's header ⋯ is its own: ${JSON.stringify(workspaceItems)}`);
+        assert.ok(workspaceItems.includes("Search panes and actions") && !workspaceItems.includes("New agent host chat…") && !workspaceItems.includes("Rename…"), `a herdr workspace's header ⋯ is its own: ${JSON.stringify(workspaceItems)}`);
         await page.keyboard.press("Escape");
         await page.locator(".row-sheet").waitFor({ state: "detached" });
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL renamed chat" }).click();

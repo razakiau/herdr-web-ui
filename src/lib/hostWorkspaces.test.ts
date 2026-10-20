@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -132,5 +132,16 @@ describe("agent host workspaces", () => {
     // the workspace's last tab: nothing of its own is left
     expect(tabAfterClose(pc, "q")).toBeNull();
     expect(tabAfterClose(pc, "gone")).toBeNull();
+  });
+
+  it("folders_to_open_list_each_with_its_chats", () => {
+    const chats = [
+      row("a1", "/a", { age: 5 * MIN }), row("a2", "/a/", { age: 60 * MIN }), row("b1", "/b", { age: 1 * MIN }),
+      row("gone", "/c", { archived: true }), row("none", null),
+    ];
+    expect(hostFolders(chats, { open: [{ cwd: "/a", tabs: ["a1"] }] })).toEqual([
+      { cwd: "/b", chats: 1, modified_at: chats[2]!.modified_at, open: false },
+      { cwd: "/a", chats: 2, modified_at: chats[0]!.modified_at, open: true },
+    ]);
   });
 });

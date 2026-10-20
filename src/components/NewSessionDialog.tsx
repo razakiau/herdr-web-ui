@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
-import { FolderOpen, X } from "lucide-react";
+import { Folder, FolderOpen, Search, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
@@ -18,7 +18,9 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { passingFolder, recentDirectories } from "../lib/recent-directories.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import { folderChoices } from "../lib/hostChats.ts";
+import { chatAge, folderChoices, useMinuteClock } from "../lib/hostChats.ts";
+import { hostFolders, type PcHostWorkspaces } from "../lib/hostWorkspaces.ts";
+import "./AllAgentsSheet.css";
 import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import { NewHostChatFields, type NewHostChatHandle } from "./NewHostChatFields.tsx";
 
@@ -49,6 +51,10 @@ export interface NewSessionDialogProps {
   hostChats?: readonly HostChatRow[];
   /** a Copilot host chat was made: the app opens it */
   onHostChat?: (session: string, cwd: string) => void;
+  /** the PC's open agent host workspaces: the folder list marks them */
+  hostOpen?: PcHostWorkspaces;
+  /** a folder picked from the agent host list: the app opens its workspace, and makes no chat */
+  onOpenHostWorkspace?: (cwd: string) => void;
 }
 
 export interface DialogFields {
@@ -68,7 +74,7 @@ function directoryBasename(value: string): string {
   return trimmed.split("/").pop() || value;
 }
 
-export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], hostChats = [], onHostChat }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], hostChats = [], onHostChat, hostOpen, onOpenHostWorkspace }: NewSessionDialogProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -82,12 +88,21 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   const [createdPaneId, setCreatedPaneId] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [recentFolders, setRecentFolders] = useState(() => recentDirectories.read(machineId));
+  // a folder picked from the agent host list: Start opens its workspace, and makes no chat
+  const [pickedFolder, setPickedFolder] = useState<string | null>(null);
+  const [folderQuery, setFolderQuery] = useState("");
   // folders kept before worktrees and temporary folders were left out are left out here too
   const hostChoice = agentKind === HOST_AGENT_KIND;
+  const now = useMinuteClock();
   const hostFields = useRef<NewHostChatHandle>(null);
   // a Copilot host chat also offers the folders its PC's chats work in, after the recent ones
   // (where a chat already works is a folder of its own, wherever it is: the passing-folder rule is the recents')
   const shownFolders = [...new Set([...(hostChoice ? folderChoices([...hostChats]) : []), ...recentFolders.filter((path) => !passingFolder(path, worktrees))])].slice(0, RECENT_FOLDERS_SHOWN);
+  // New workspace → Agent host: the folders its chats work in, to open one as a workspace
+  const hostFolderList = hostChoice && !tab && onOpenHostWorkspace ? hostFolders(hostChats, hostOpen) : [];
+  const folderWords = folderQuery.trim().toLowerCase();
+  const listedFolders = folderWords === "" ? hostFolderList : hostFolderList.filter((folder) => folder.cwd.toLowerCase().includes(folderWords));
+  const opensWorkspace = hostFolderList.length > 0 && pickedFolder !== null && pickedFolder === cwd;
   const firstFieldRef = useRef<HTMLButtonElement>(null);
   // a path longer than its field is shown from its end, where the folder's name is, whenever it is
   // set for the user (the last folder, a pick from Browse or a recent chip) and when the field is
@@ -117,6 +132,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     setPending(false);
     setCreatedPaneId(null);
     setBrowsing(false);
+    setPickedFolder(null);
+    setFolderQuery("");
     setRecentFolders(recentDirectories.read(machineId));
     const remembered = rememberedAgent();
     const stored = filled?.agent ?? remembered;
@@ -176,6 +193,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
 
   const startWorkspace = async (directory: string): Promise<void> => {
     if (pending) return;
+    if (opensWorkspace) { onOpenHostWorkspace?.(directory); return; }
     if (hostChoice) { await startHostChat(tab?.cwd ?? directory); return; }
     if (createdPaneId !== null) { onCreated(createdPaneId, false); return; }
     setPending(true);
@@ -239,7 +257,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <div className="field">
               <label className="field-label" htmlFor="new-session-cwd">{t("Directory")}</label>
               <div className="new-session-cwd">
-                <input ref={cwdField} id="new-session-cwd" className="input" value={cwd} placeholder="~/projects/app" disabled={fieldsDisabled} autoComplete="off" onChange={(event) => setCwd(event.target.value)} onBlur={showPathEnd} />
+                <input ref={cwdField} id="new-session-cwd" className="input" value={cwd} placeholder="~/projects/app" disabled={fieldsDisabled} autoComplete="off" onChange={(event) => { setCwd(event.target.value); setPickedFolder(null); }} onBlur={showPathEnd} />
                 <button type="button" className="btn" aria-expanded={browsing} disabled={fieldsDisabled} onClick={() => setBrowsing((open) => !open)}>
                   <FolderOpen aria-hidden="true" />
                   {t("Browse")}
@@ -248,16 +266,42 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
               {/* Browse updates Directory as you open folders, so Start uses what the path bar shows
                   even when Use this folder was never pressed (issue #1162); a folder under home
                   keeps the `~/…` form typed or picked, rather than turning absolute on opening Browse. */}
-              {browsing && <DirectoryBrowser start={cwd} onPick={(picked) => { setCwd(picked); setBrowsing(false); }} onFolder={(path, home) => setCwd(homeRelative(path, home))} />}
+              {browsing && <DirectoryBrowser start={cwd} onPick={(picked) => { setCwd(picked); setPickedFolder(null); setBrowsing(false); }} onFolder={(path, home) => { setCwd(homeRelative(path, home)); setPickedFolder(null); }} />}
               <span className="field-hint">{t("absolute path or ~/…")}</span>
             </div>
           )}
-          {!tab && shownFolders.length > 0 && <div className="field new-session-recents">
+          {hostFolderList.length > 0 && <div className="field new-host-folders">
+            <span className="field-label" id="new-host-folders">{t("Folders with chats")}</span>
+            {hostFolderList.length > 5 && <label className="all-agents-search new-host-folders-search">
+              <Search aria-hidden="true" />
+              <input className="input" type="search" value={folderQuery} aria-label={t("Search folders")} placeholder={t("Search folders")}
+                autoComplete="off" autoCapitalize="off" spellCheck={false} disabled={fieldsDisabled} onChange={(event) => setFolderQuery(event.target.value)} />
+            </label>}
+            <ul className="new-host-folder-list" role="radiogroup" aria-labelledby="new-host-folders">
+              {listedFolders.map((folder) => {
+                const on = opensWorkspace && pickedFolder === folder.cwd;
+                return <li key={folder.cwd}>
+                  <button type="button" role="radio" aria-checked={on} className={`new-host-folder${on ? " is-on" : ""}`} disabled={fieldsDisabled} title={folder.cwd}
+                    onClick={() => { setCwd(folder.cwd); setPickedFolder(folder.cwd); setBrowsing(false); }}>
+                    <Folder className="new-host-folder-icon" aria-hidden="true" />
+                    <span className="new-host-folder-copy">
+                      <span className="new-host-folder-name">{directoryBasename(folder.cwd)}{folder.open && <span className="pill new-host-folder-open">{t("Open")}</span>}</span>
+                      <span className="new-host-folder-path"><bdi dir="ltr">{folder.cwd}</bdi></span>
+                    </span>
+                    <span className="new-host-folder-meta">{folder.chats === 1 ? t("1 chat") : t("{n} chats", { n: folder.chats })} · {chatAge({ modified_at: folder.modified_at } as HostChatRow, now, t)}</span>
+                  </button>
+                </li>;
+              })}
+              {listedFolders.length === 0 && <li className="field-hint">{t("No folder matches")}</li>}
+            </ul>
+            <span className="field-hint">{t("Pick one to open it, or type a folder above to start a chat there.")}</span>
+          </div>}
+          {!tab && shownFolders.length > 0 && hostFolderList.length === 0 && <div className="field new-session-recents">
             <span className="field-label" id="new-session-recents">{t("Recent folders")}</span>
             <RecentFolderChips folders={shownFolders} disabled={fieldsDisabled} labelledBy="new-session-recents" basename={directoryBasename}
               onPick={(path) => { setCwd(path); setBrowsing(false); }} />
           </div>}
-          {hostChoice ? <NewHostChatFields ref={hostFields} machineId={machineId} /> : <label className="field">
+          {hostChoice ? opensWorkspace ? null : <NewHostChatFields ref={hostFields} machineId={machineId} /> : <label className="field">
             <span className="field-label">{t("Name")}</span>
             <input
               className="input"
@@ -275,7 +319,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending || (hostChoice && ((tab?.cwd ?? cwd).trim() === "" || !hostFields.current?.ready()))}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
+          <button type="submit" className="btn btn-primary" disabled={pending || (hostChoice && ((tab?.cwd ?? cwd).trim() === "" || (!opensWorkspace && !hostFields.current?.ready())))}>{t(pending ? "Starting…" : opensWorkspace ? "Open workspace" : createdPaneId !== null ? "Open" : "Start")}</button>
         </footer>
       </form>
     </div>

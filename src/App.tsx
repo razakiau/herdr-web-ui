@@ -24,14 +24,14 @@ import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
-import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems } from "./components/MachineSidebar.tsx";
+import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems, type AllAgentsOn } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
 import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
-import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
-import { closeTab, currentHostWorkspaces, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./lib/hostWorkspaces.ts";
+import { hostChatHome, pcPlacement, samePath } from "./lib/hostPlacement.ts";
+import { closeTab, closeWorkspace, currentHostWorkspaces, openWorkspace, tabsOf, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./lib/hostWorkspaces.ts";
 import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleHostFolderPin, toggleSidebarPin } from "./lib/sidebarPins.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
@@ -453,7 +453,7 @@ export function App() {
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
   // the PC whose "All agents on <PC>…" is open: the sidebar's ⋯ and a Copilot folder's header ⋯ open it
-  const [allAgentsOn, setAllAgentsOn] = useState<string | null>(null);
+  const [allAgentsOn, setAllAgentsOn] = useState<AllAgentsOn | null>(null);
   const { viewing, openFile, closeFile, setPresentation, releaseFile } = useFileViewer();
   // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
   const { viewing: diffViewing, openDiff, closeDiff, releaseDiff } = useRepoDiffViewer();
@@ -1050,6 +1050,16 @@ export function App() {
     }
     setHostWorkspaces({ ...state, [machineId]: closeTab(pc, session) });
   };
+  // an agent host workspace closed: its row and tabs go, its chats stay as they are. The chat on
+  // screen in it gives way to the PC's first pane, as a closed workspace's pane does
+  const closeHostWorkspace = (machineId: string, cwd: string): void => {
+    const state = currentHostWorkspaces();
+    const pc = state[machineId];
+    const shown = selectedHostChatRef.current;
+    const row = shown?.machineId === machineId ? hostChats.get(machineId)?.chats.find((chat) => chat.session === shown.session) : undefined;
+    if (row?.cwd && samePath(row.cwd) === samePath(cwd)) { setSelectedHostChat(null); setAutoSelected(true); }
+    if (pc) setHostWorkspaces({ ...state, [machineId]: closeWorkspace(pc, cwd) });
+  };
   // a host chat's own actions (components/HostChatActions.tsx), for its tab, its rows and the header
   const [hostRename, setHostRename] = useState<HostChatRef | null>(null);
   const [hostDelete, setHostDelete] = useState<HostChatRef | null>(null);
@@ -1644,13 +1654,14 @@ export function App() {
   // workspace of panes: the header's ⋯ is its row's menu (MachineSidebar hostFolderItems), and the
   // open chat's own actions stay on its tab. A herdr workspace keeps its menu, chats tabs of it or not.
   const hostFolderMenu = hostFolder !== null && selectedHostChat !== null ? hostFolderItems({
-    pc: selectedMachine?.name ?? selectedHostChat.machineId, canStart: hostChats.get(selectedHostChat.machineId)?.host?.state === "connected", cwd: hostFolder.cwd,
+    canStart: hostChats.get(selectedHostChat.machineId)?.host?.state === "connected", cwd: hostFolder.cwd,
     pin: {
       pinned: pinnedHostFolders(hostPins, selectedHostChat.machineId).includes(hostFolder.cwd),
       toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), selectedHostChat.machineId, hostFolder.cwd, hostChatFolders(hostChats.get(selectedHostChat.machineId)?.chats ?? []))),
     },
     onNewHostChat: () => { setNewPrefill({ cwd: hostFolder.cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(selectedHostChat.machineId); setNewTab(null); setNewSessionOpen(true); },
-    onAllAgents: () => setAllAgentsOn(selectedHostChat.machineId),
+    onFolderChats: () => setAllAgentsOn({ machineId: selectedHostChat.machineId, folder: hostFolder.cwd }),
+    onClose: () => closeHostWorkspace(selectedHostChat.machineId, hostFolder.cwd),
     onCopyPath: (cwd) => void copyText(cwd).then((ok) => { if (ok) setHeaderNote("copied"); }),
   }, t) : null;
   const moreItems: RowMenuItem[] = hostFolderMenu ?? [
@@ -1834,7 +1845,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} allAgentsOn={allAgentsOn} onAllAgents={setAllAgentsOn} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
+            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} allAgentsOn={allAgentsOn} onAllAgents={setAllAgentsOn} onCloseHostWorkspace={closeHostWorkspace} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
               onNewHostChat={(id, cwd) => { setNewPrefill({ cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
@@ -2020,6 +2031,18 @@ export function App() {
         defaultCwd={newSessionMachineId === selectedMachineId ? selectedPane?.cwd ?? null : null}
         prefill={newPrefill}
         hostChats={hostChats.get(newSessionMachineId)?.chats}
+        hostOpen={hostWorkspaces[newSessionMachineId]}
+        // a folder picked from the agent host list: its workspace opens (its live, unread and newest
+        // chats as tabs), no chat is made, and the first of them is shown
+        onOpenHostWorkspace={(cwd) => {
+          const chats = hostChats.get(newSessionMachineId)?.chats ?? [];
+          const state = currentHostWorkspaces();
+          const pc = openWorkspace(state[newSessionMachineId] ?? { open: [] }, cwd, chats);
+          setHostWorkspaces({ ...state, [newSessionMachineId]: pc });
+          closeNewSession();
+          const first = tabsOf(pc, cwd)[0];
+          if (first) selectHostChat({ machineId: newSessionMachineId, session: first }, "tab");
+        }}
         onHostChat={(session, cwd) => { closeNewSession(); selectHostChat({ machineId: newSessionMachineId, session }, "tab", cwd); setHostMadeIn(cwd); }}
         onDraft={setNewFields}
         onClose={closeNewSession}

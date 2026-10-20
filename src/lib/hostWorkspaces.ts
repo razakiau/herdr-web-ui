@@ -124,6 +124,22 @@ export function seedPc(chats: readonly HostChatRow[], pinnedFolders: ReadonlySet
 }
 
 /**
+ * The folders New workspace → Agent host offers: each folder the PC's chats work in (archived ones
+ * aside), with how many chats it has and when the newest changed, newest first, and whether it is open.
+ */
+export function hostFolders(chats: readonly HostChatRow[], pc: PcHostWorkspaces | undefined): { cwd: string; chats: number; modified_at: string; open: boolean }[] {
+  const folders = new Map<string, { cwd: string; chats: number; modified_at: string; open: boolean }>();
+  for (const row of chats) {
+    if (!usable(row)) continue;
+    const cwd = folderOf(row)!;
+    const was = folders.get(cwd);
+    if (!was) folders.set(cwd, { cwd, chats: 1, modified_at: row.modified_at, open: isOpenFolder(pc, cwd) });
+    else folders.set(cwd, { ...was, chats: was.chats + 1, modified_at: modified(row) > Date.parse(was.modified_at) ? row.modified_at : was.modified_at });
+  }
+  return [...folders.values()].sort((a, b) => Date.parse(b.modified_at) - Date.parse(a.modified_at));
+}
+
+/**
  * Whether to seed a PC now: nothing saved for it, and a list its connected host just gave (a host
  * that is not up, or a list that failed, says nothing about which chats exist).
  */
