@@ -24,11 +24,11 @@ import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
-import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
+import { MachineActionBanner, MachineSidebar, hostFolderItems } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
 import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
-import { HostChatActionsContext, RenameHostChatSheet, hostChatItems, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
+import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
 import { currentSidebarPins, hostChatPinKey, setSidebarPins, subscribeSidebarPins, toggleSidebarPin } from "./lib/sidebarPins.ts";
@@ -447,6 +447,8 @@ export function App() {
   const paneActionsRef = useRef<((target: HerdrPane) => RowMenuItem[]) | null>(null);
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
+  // the PC whose "All agents on <PC>…" is open: the sidebar's ⋯ and a Copilot folder's header ⋯ open it
+  const [allAgentsOn, setAllAgentsOn] = useState<string | null>(null);
   const { viewing, openFile, closeFile, setPresentation, releaseFile } = useFileViewer();
   // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
   const { viewing: diffViewing, openDiff, closeDiff, releaseDiff } = useRepoDiffViewer();
@@ -1396,8 +1398,8 @@ export function App() {
   // hidden only where it could do nothing: no system notifications and in-app alerts off
   const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
   // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
-  // the dot says the ⋯ holds Alerts: an open host chat's menu has none
-  const alertsOffDot = bellVisible && !bell.on && !(selectedHostChat && openHostRow);
+  // the dot says the ⋯ holds Alerts: a Copilot folder's menu has none
+  const alertsOffDot = bellVisible && !bell.on && !(hostFolder !== null && selectedHostChat !== null);
   // a host chat has no pane, whose terminal stream says live: its chip follows its own reads
   const hostShown = selectedHostChat !== null && selectedPane === null;
   const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId)) : connected;
@@ -1572,10 +1574,16 @@ export function App() {
   // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
   const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
   const paletteKeys = keyboardLikely ? formatKeys(shortcutDisplayKeys("palette", settings.shortcutOverrides)).join("+") : "";
-  // an open host chat is no pane: the header's ⋯ is that agent's own menu (its tab's: pin, rename,
-  // read, done, delete); the palette, the terminal's find, files, a link to the PC and the panes'
-  // alerts are a pane's, and none of them acts on the chat
-  const moreItems: RowMenuItem[] = selectedHostChat && openHostRow ? hostChatItems(hostActions, { machineId: selectedHostChat.machineId, chat: openHostRow }, t) : [
+  // a Copilot folder (the agent host's chats, AHP, in a folder no herdr workspace has) is no
+  // workspace of panes: the header's ⋯ is its row's menu (MachineSidebar hostFolderItems), and the
+  // open chat's own actions stay on its tab. A herdr workspace keeps its menu, chats tabs of it or not.
+  const hostFolderMenu = hostFolder !== null && selectedHostChat !== null ? hostFolderItems({
+    pc: selectedMachine?.name ?? selectedHostChat.machineId, canStart: hostChats.get(selectedHostChat.machineId)?.host?.state === "connected", cwd: hostFolder.cwd,
+    onNewHostChat: () => { setNewPrefill({ cwd: hostFolder.cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(selectedHostChat.machineId); setNewTab(null); setNewSessionOpen(true); },
+    onAllAgents: () => setAllAgentsOn(selectedHostChat.machineId),
+    onCopyPath: (cwd) => void copyText(cwd).then((ok) => { if (ok) setHeaderNote("copied"); }),
+  }, t) : null;
+  const moreItems: RowMenuItem[] = hostFolderMenu ?? [
     // first at every width: a phone's header has no palette button, and a touch screen no shortcut
     { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
@@ -1756,7 +1764,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
+            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} allAgentsOn={allAgentsOn} onAllAgents={setAllAgentsOn} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
               onNewHostChat={(id, cwd) => { setNewPrefill({ cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />

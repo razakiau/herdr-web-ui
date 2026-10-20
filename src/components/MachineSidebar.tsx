@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Download, ListTree, MessageSquarePlus, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, ListTree, MessageSquarePlus, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -19,9 +19,10 @@ import type { SidebarActivity } from "../lib/sidebarActivity.tsx";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageMeters } from "./UsageMeters.tsx";
 import "./Machines.css";
-import { useT } from "../lib/i18n.ts";
+import { useT, type Translate } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { saysHerdrAway } from "../lib/userError.ts";
+import { copyText } from "../lib/clipboard.ts";
 
 /** The PC header's state word; "connected" is the quiet default and shows as a dot alone, every other state also writes its word under the name. */
 export const STATE_WORD: Readonly<Record<MachineState, string>> = {
@@ -42,6 +43,9 @@ interface Props {
   onSelectHostChat?(target: HostChatTarget): void;
   /** each PC's host chats, for the PCs whose bridge has them (lib/hostChats.ts useHostChats, read in App.tsx) */
   hostChats?: ReadonlyMap<string, HostPc>;
+  /** the PC whose "All agents on <PC>…" is open, held by the app so the header's ⋯ opens it too; this sidebar keeps its own without them */
+  allAgentsOn?: string | null;
+  onAllAgents?(machineId: string | null): void;
 }
 
 const NO_HOST_CHATS: ReadonlyMap<string, HostPc> = new Map();
@@ -55,6 +59,23 @@ function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarA
     asking: statuses.filter((status) => status === "blocked").length + chats.filter((chat) => chat.status === "asks").length,
   };
 }
+/**
+ * A Copilot folder's menu (a folder of the PC's agent host chats, AHP: no herdr workspace): its
+ * sidebar row's ⋯, and the header's while one of its chats is open. New Copilot chat… in that
+ * folder, the PC's All agents…, and with a folder, Copy path. A herdr workspace keeps its own menu,
+ * whatever chats are tabs of it.
+ */
+export function hostFolderItems({ pc, canStart, cwd, onNewHostChat, onAllAgents, onCopyPath }: {
+  pc: string; canStart: boolean; cwd: string | null; onNewHostChat(): void; onAllAgents(): void; onCopyPath?(cwd: string): void;
+}, t: Translate): RowMenuItem[] {
+  return [
+    ...(canStart ? [{ id: "new-host-chat", label: t("New Copilot chat…"), icon: MessageSquarePlus, run: onNewHostChat }] : []),
+    { id: "all-agents", label: t("All agents on {pc}…", { pc }), icon: ListTree, run: onAllAgents },
+    ...(cwd !== null ? [{ id: "copy-path", label: t("Copy path"), icon: Copy, divider: true, run: () => (onCopyPath ?? copyPath)(cwd) }] : []),
+  ];
+}
+const copyPath = (cwd: string): void => { void copyText(cwd); };
+
 export function MachineSidebar(props: Props) {
   const t = useT();
   const { canInstall, installed, install, help } = useInstallPrompt();
@@ -66,7 +87,9 @@ export function MachineSidebar(props: Props) {
   const loadingWords = useAnnouncedText(props.machines.length === 0 ? t("Loading PCs…") : null);
   const hostChats = props.hostChats ?? NO_HOST_CHATS;
   // the PC whose "All agents on <PC>…" is open
-  const [allOn, setAllOn] = useState<string | null>(null);
+  const [ownAllOn, setOwnAllOn] = useState<string | null>(null);
+  const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
+  const setAllOn = props.onAllAgents ?? setOwnAllOn;
   // a PC picked from "Other PCs": a full group until another one is picked
   const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => { setPicked(null); }, [props.selectedMachineId]);
@@ -112,10 +135,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props
   const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, (session) => pins.includes(hostChatPinKey(machine.id, session)), openSession, now) : null;
   // a host that is not up cannot make a chat: the sheet's list says what it needs
   const canStart = hostChats?.host?.state === "connected";
-  const hostItems = (cwd: string | null): RowMenuItem[] => [
-    ...(canStart ? [{ id: "new-host-chat", label: t("New Copilot chat…"), icon: MessageSquarePlus, run: () => onNewHostChat(cwd) }] : []),
-    { id: "all-agents", label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: onAllAgents },
-  ];
+  const hostItems = (cwd: string | null): RowMenuItem[] => hostFolderItems({ pc: machine.name, canStart, cwd, onNewHostChat: () => onNewHostChat(cwd), onAllAgents }, t);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`herdr-web-ui:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(machine.name);
