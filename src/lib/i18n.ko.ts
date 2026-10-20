@@ -1527,6 +1527,8 @@ export const KO: Record<string, string> = {
   "Search models": "모델 검색",
   "Providers": "공급자",
   "No models match": "일치하는 모델이 없습니다",
+  "{name}, 1 model": "{name}, 모델 1개",
+  "{name}, {count} models": "{name}, 모델 {count}개",
   "Reasoning effort for {model}": "{model}의 추론 수준",
   "This chat's host has no modes to pick": "이 채팅의 호스트에는 선택할 모드가 없습니다",
   "Permissions": "권한",

@@ -1531,6 +1531,8 @@ export const ZH: Record<string, string> = {
   "Search models": "搜索模型",
   "Providers": "提供方",
   "No models match": "没有匹配的模型",
+  "{name}, 1 model": "{name}，1 个模型",
+  "{name}, {count} models": "{name}，{count} 个模型",
   "Reasoning effort for {model}": "{model} 的推理强度",
   "This chat's host has no modes to pick": "此聊天的主机没有可选的模式",
   "Permissions": "权限",

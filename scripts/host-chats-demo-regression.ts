@@ -755,7 +755,19 @@ try {
         const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        assert.deepEqual(await sheet.getByRole("tab").allTextContents(), ["All", "Copilot", "fictional"], "a tab per group, Copilot first");
+        assert.deepEqual(await sheet.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label") ?? tab.textContent)), ["All, 4 models", "Copilot, 1 model", "fictional, 3 models"], "a tab per group, Copilot first, each with its count");
+        // the provider tabs stay at the sheet's top while its list scrolls (the owner scrolled past Copilot's to reach OmniRoute's)
+        const tabsAt = await sheet.locator(".modal-body").evaluate((body) => {
+          body.style.flex = "none"; body.style.height = "160px";
+          body.scrollTop = body.scrollHeight;
+          const scrolled = body.scrollTop;
+          const box = body.querySelector(".host-picker-tabs")!.getBoundingClientRect();
+          const frame = body.getBoundingClientRect();
+          return { scrolled, top: Math.round(box.top - frame.top), shown: box.top >= frame.top - 1 && box.bottom <= frame.bottom };
+        });
+        assert.ok(tabsAt.scrolled > 100, `the list really scrolled: ${JSON.stringify(tabsAt)}`);
+        assert.ok(tabsAt.shown, `the provider tabs stay in view at the list's end: ${JSON.stringify(tabsAt)}`);
+        await sheet.locator(".modal-body").evaluate((body) => { body.style.flex = ""; body.style.height = ""; body.scrollTop = 0; });
         assert.deepEqual(await sheet.locator(".host-picker-group").evaluateAll((groups) => groups.map((group) => group.getAttribute("aria-label"))),
           ["Copilot", "fictional · Anthropic", "fictional · FICTIONAL Go", "fictional"], "Copilot's own, then the router split by the vendor its names carry");
         assert.equal((await sheet.locator('[data-model="fictional-own"] .host-model-rate').textContent())?.trim(), "27x", "a Copilot model says its premium-request rate");

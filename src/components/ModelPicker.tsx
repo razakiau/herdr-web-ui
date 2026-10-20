@@ -13,7 +13,7 @@ import { Check, ChevronDown, Pin, Search, Sparkles, TriangleAlert, X } from "luc
 
 import type { HostAgent, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { filterModels, groupName, modelTabs, multiplierLabel, pickerSections, pinnedModels, providerMark, recentModels, rememberRecent, rowDetail, SECTION_TITLES, togglePinned, type ModelMark, type PickerSection } from "../lib/modelProvider.ts";
+import { filterModels, groupName, modelGroupOf, modelTabs, multiplierLabel, pickerSections, pinnedModels, providerMark, recentModels, rememberRecent, rowDetail, SECTION_TITLES, togglePinned, type ModelMark, type PickerSection } from "../lib/modelProvider.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -121,13 +121,23 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
   const heading = (section: PickerSection): string => word(section.key.split("\n")[0] ?? "", section.title);
   const pick = (next: { id: string; effort?: string }): void => { rememberRecent(machineId, next.id); onModel(next); };
   return <>
+    {/* the search and the provider tabs stay at the top while a long list scrolls under them */}
+    <div className="host-picker-head">
     <label className="host-picker-search">
       <Search aria-hidden="true" />
       <input className="input" type="search" value={query} placeholder={t("Search models")} aria-label={t("Search models")} autoFocus onChange={(event) => setQuery(event.target.value)} />
     </label>
     {tabs.length > 0 && <div className="host-picker-tabs" role="tablist" aria-label={t("Providers")}>
-      {[null, ...tabs].map((each) => <button key={each ?? ""} type="button" role="tab" aria-selected={tab === each} className={`host-picker-tab${tab === each ? " is-picked" : ""}`} data-group={each ?? ""} onClick={() => setTab(each)}>{each === null ? t("All") : word(each, groupName(each))}</button>)}
+      {[null, ...tabs].map((each) => {
+        const name = each === null ? t("All") : word(each, groupName(each));
+        const count = each === null ? models.length : models.filter((model) => modelGroupOf(model) === each).length;
+        return <button key={each ?? ""} type="button" role="tab" aria-selected={tab === each} className={`host-picker-tab${tab === each ? " is-picked" : ""}`} data-group={each ?? ""}
+          aria-label={count === 1 ? t("{name}, 1 model", { name }) : t("{name}, {count} models", { name, count: String(count) })} onClick={() => setTab(each)}>
+          {name}<span className="host-picker-tab-count" aria-hidden="true">{count}</span>
+        </button>;
+      })}
     </div>}
+    </div>
     {shown.length === 0 && <p className="host-picker-state">{t("No models match")}</p>}
     {sections.map((section) => <section key={section.key} className="host-picker-group" aria-label={section.vendor ? `${heading(section)} · ${section.vendor}` : heading(section)}>
       <p className="host-picker-provider">{heading(section)}{section.vendor && <span className="host-picker-vendor"> · {section.vendor}</span>}</p>
