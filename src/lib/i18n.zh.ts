@@ -1568,4 +1568,9 @@ export const ZH: Record<string, string> = {
   "Couldn't try again: {reason}": "无法重试：{reason}",
   "The chat opens in this folder: write your first message there.": "聊天将在此文件夹中打开：在那里写第一条消息。",
   "Thinking": "思考",
+  "every finished turn": "每个完成的回合",
+  "long turns": "较长的回合",
+  "questions and {done}": "提问和{done}",
+  "questions": "提问",
+  "This server also posts alerts to the ntfy topic {topic}: {what}.": "此服务器也会把提醒发到 ntfy 主题 {topic}：{what}。",
 };

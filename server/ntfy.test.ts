@@ -13,7 +13,7 @@ import { createPushService } from "./push.ts";
  * that records what it was sent and with which token.
  */
 
-interface Posted { auth: string | null; body: { topic?: string; title?: string; message?: string; priority?: number; click?: string; tags?: string[] } }
+interface Posted { auth: string | null; body: { topic?: string; title?: string; message?: string; priority?: number; click?: string; tags?: string[]; icon?: string } }
 
 let stateDir: string;
 let server: ReturnType<typeof Bun.serve>;
@@ -62,6 +62,13 @@ describe("ntfyFromEnv", () => {
   it("refuses a URL that is not http(s)", () => {
     expect(() => ntfyFromEnv({ HERDR_WEB_NTFY_URL: "file:///etc/passwd", HERDR_WEB_NTFY_TOPIC: "t" })).toThrow();
   });
+
+  it("takes an http(s) icon, and refuses any other", () => {
+    const base = { HERDR_WEB_NTFY_URL: "https://ntfy.example", HERDR_WEB_NTFY_TOPIC: "t" };
+    expect(ntfyFromEnv(base)?.icon).toBeNull();
+    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_ICON: " https://ntfy.example/_static/herdr.png " })?.icon).toBe("https://ntfy.example/_static/herdr.png");
+    expect(() => ntfyFromEnv({ ...base, HERDR_WEB_NTFY_ICON: "javascript:alert(1)" })).toThrow();
+  });
 });
 
 describe("ntfy alerts", () => {
@@ -85,13 +92,22 @@ describe("ntfy alerts", () => {
       click: "https://herdr.example/?machine=mac&ws=w1&pane=w2%3Ap3&view=chat" }]);
   });
 
-  it("has no link without a click URL, and no Authorization without a token", async () => {
+  it("shows the icon it was given beside each alert", async () => {
+    const push = service({ HERDR_WEB_NTFY_ICON: "https://ntfy.example/_static/herdr.png" });
+    push.seed([pane("w1:p1", "working", "claude")]);
+    await push.onStatus("w1:p1", "blocked");
+    await push.settled();
+    expect(posted[0]!.body.icon).toBe("https://ntfy.example/_static/herdr.png");
+  });
+
+  it("has no link without a click URL, no icon without one, and no Authorization without a token", async () => {
     const push = service({ HERDR_WEB_NTFY_TOKEN: "" });
     push.seed([pane("w1:p1", "working", "claude")]);
     await push.onStatus("w1:p1", "blocked");
     await push.settled();
     expect(posted[0]!.auth).toBeNull();
     expect(posted[0]!.body.click).toBeUndefined();
+    expect("icon" in posted[0]!.body).toBe(false);
   });
 
   it("follows its own alerts setting, not a device's", async () => {
@@ -221,5 +237,22 @@ describe("host chat alerts", () => {
     push.onHostChats([chat("ahp:/s1", "asks")], "mac");
     await push.settled();
     expect(posted.map((each) => each.body.message)).toEqual(["waiting for your input"]);
+  });
+});
+
+describe("GET /api/push says where else alerts go", () => {
+  it("names the ntfy topic and its alerts, never the server or the token", async () => {
+    const { handlePushRequest } = await import("./push.ts");
+    const push = service({ HERDR_WEB_NTFY_DONE: "always", HERDR_WEB_NTFY_ICON: "https://ntfy.example/_static/herdr.png" });
+    const body = await (await handlePushRequest(new Request("http://localhost/api/push"), "/api/push", push, null))!.json();
+    expect(body.ntfy).toEqual({ topic: "herdr-agents", alerts: { input: true, done: "always" } });
+    expect(JSON.stringify(body)).not.toContain("tk_fictional");
+    expect(JSON.stringify(body)).not.toContain(String(server.port));
+  });
+
+  it("says null when no topic is set", async () => {
+    const { handlePushRequest } = await import("./push.ts");
+    const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 } });
+    expect((await (await handlePushRequest(new Request("http://localhost/api/push"), "/api/push", push, null))!.json()).ntfy).toBeNull();
   });
 });

@@ -90,6 +90,8 @@ export type PushDelivery = { ok: true } | { ok: false; status: number | null; go
 
 export interface PushService {
   publicKey(): string;
+  /** the ntfy topic these alerts also go to, and which: what the Alerts page says (never the server or token) */
+  ntfyTopic(): { topic: string; alerts: AlertPrefs } | null;
   /** `parseSubscription` with this service's endpoint rule: what POST /api/push/subscribe accepts */
   parse(value: unknown): PushSubscriptionRecord | null;
   /** `alerts` absent keeps what the device chose before (a re-registration on load) */
@@ -405,6 +407,7 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   return {
     publicKey: () => keys().publicKey,
+    ntfyTopic: () => options.ntfy ? { topic: options.ntfy.topic, alerts: options.ntfy.alerts } : null,
     parse: (value) => parseSubscription(value, options),
 
     subscribe(subscription, alerts, deviceId) {
@@ -601,7 +604,7 @@ export function createPushService(options: PushServiceOptions): PushService {
 /**
  * /api/push routes. All sit behind the token gate (they are /api/ and not health/auth):
  * a subscription receives pane titles until it is removed.
- *   GET    /api/push                        -> { public_key }
+ *   GET    /api/push                        -> { public_key, ntfy: { topic, alerts } | null }
  *   POST   /api/push/subscribe { subscription, alerts? } -> 204 (alerts: this device's AlertPrefs)
  *          | 410 subscription_gone (its push service retired the endpoint: subscribe anew)
  *   DELETE /api/push/subscribe { endpoint } -> 204
@@ -613,7 +616,7 @@ function subscriptionGone(): Response {
 
 export async function handlePushRequest(request: Request, pathname: string, push: PushService, deviceId: string | null | undefined): Promise<Response | null> {
   const route = `${request.method} ${pathname}`;
-  if (route === "GET /api/push") return jsonResponse({ public_key: push.publicKey() });
+  if (route === "GET /api/push") return jsonResponse({ public_key: push.publicKey(), ntfy: push.ntfyTopic() });
   if (route !== "POST /api/push/subscribe" && route !== "DELETE /api/push/subscribe" && route !== "POST /api/push/test") {
     const known = pathname === "/api/push" || pathname === "/api/push/subscribe" || pathname === "/api/push/test";
     return known ? badRequest("method_not_allowed", `${request.method} is not supported on ${pathname}`) : null;

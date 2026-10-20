@@ -27,6 +27,7 @@ export type {
 
 import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
 import type { AgentHostState } from "./host-chats.ts";
+import type { AlertPrefs } from "./notify-policy.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -440,6 +441,8 @@ export interface PortalStatus {
 /** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
 export interface PushKey {
   readonly public_key: string;
+  /** the ntfy topic the server also posts alerts to (server/ntfy.ts), and which; null without one */
+  readonly ntfy?: { readonly topic: string; readonly alerts: AlertPrefs } | null;
 }
 
 /** One turn of a structured agent conversation (the chat lens source). */

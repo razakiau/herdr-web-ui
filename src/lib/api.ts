@@ -774,6 +774,11 @@ export async function fetchPushKey(): Promise<string> {
   return (await getJson<PushKey>("/api/push")).public_key;
 }
 
+/** The ntfy topic the server also posts alerts to, as GET /api/push says; null without one (or from an older server). */
+export async function fetchNtfyTopic(): Promise<NonNullable<PushKey["ntfy"]> | null> {
+  return (await getJson<PushKey>("/api/push")).ntfy ?? null;
+}
+
 /** `alerts`: what this device wants to hear about; the server applies it to every alert it sends here. */
 export async function registerPushSubscription(subscription: PushSubscriptionJSON, alerts?: AlertPrefs): Promise<void> {
   await sendJson("/api/push/subscribe", "POST", alerts === undefined ? { subscription } : { subscription, alerts });

@@ -1566,4 +1566,9 @@ export const JA: Record<string, string> = {
   "Couldn't try again: {reason}": "再試行できませんでした: {reason}",
   "The chat opens in this folder: write your first message there.": "このフォルダでチャットが開きます。最初のメッセージはそこで書いてください。",
   "Thinking": "思考中",
+  "every finished turn": "終わったすべてのターン",
+  "long turns": "長いターン",
+  "questions and {done}": "質問と{done}",
+  "questions": "質問",
+  "This server also posts alerts to the ntfy topic {topic}: {what}.": "このサーバーは通知を ntfy のトピック {topic} にも送ります: {what}。",
 };
