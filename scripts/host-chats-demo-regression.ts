@@ -83,6 +83,10 @@ const patch = `(() => {
         { kind: "notice", text: "Subagent \`FICTIONAL explore\` has completed.", source: "system" },
         { kind: "question", text: "FICTIONAL which config?", options: ["FICTIONAL debug", "FICTIONAL release"], chosen: ["FICTIONAL release"], custom: null, skipped: false },
         { kind: "text", text: "FICTIONAL release it is." },
+        // a reply as the review chats write them: list items with long code and paths, and a table wider than the phone
+        { kind: "text", text: "FICTIONAL findings:\\n\\n- **FICTIONAL blocker**: \\\`FICTIONAL_unusually_long_function_name_that_never_breaks_anywhere()\\\` in /tmp/fictional-repo/src/some/deeply/nested/folder/structure/file.ts reads the wrong row\\n- FICTIONAL second point that is a plain long sentence and has to wrap onto several lines on a phone\\n\\n| FICTIONAL file | FICTIONAL finding | FICTIONAL severity | FICTIONAL suggested change |\\n|---|---|---|---|\\n| src/fictional/review/handlers/charge.ts | FICTIONAL the handler reads a stale snapshot | FICTIONAL high | FICTIONAL read the row inside the transaction |\\n| src/fictional/review/handlers/refund.ts | FICTIONAL no idempotency key | FICTIONAL medium | FICTIONAL key the request on the order id |" },
+        { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/src/refund.ts" }), output: "", error: false },
+        { kind: "text", text: "FICTIONAL done." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
       { role: "assistant", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
@@ -463,6 +467,26 @@ try {
         assert.equal(await pill.locator("svg").count(), 1, "and its icon");
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/host-chats/chat/watch")));
         await fits("the chat");
+        // nothing in the chat runs past its column: text wraps, and a table wider than the phone
+        // scrolls in its own wrap (the page's scrollWidth cannot see what a scroller clips)
+        const review = view.locator(".chat-turn-agent .markdown", { hasText: "FICTIONAL findings:" });
+        // the findings sit between two tool calls: the work block holds them, as the review chats' did
+        assert.equal(await review.evaluate((node) => node.parentElement?.className), "work-words", "the findings sit between two tool calls, as VS Code's words between tool groups");
+        await review.scrollIntoViewIfNeeded().catch(() => {});
+        const spill = await view.locator(".chat-transcript").evaluate((transcript) => {
+          const edge = transcript.getBoundingClientRect().right + 1;
+          const out: string[] = [];
+          for (const node of transcript.querySelectorAll<HTMLElement>(".markdown, .markdown :is(p, li, code, a, span, pre, table, .markdown-table-wrap)")) {
+            if (node.closest(".markdown-table-wrap") && !node.matches(".markdown-table-wrap")) continue;
+            const right = node.getBoundingClientRect().right;
+            if (right > edge) out.push(`${node.tagName.toLowerCase()}.${node.className} ${Math.round(right)} > ${Math.round(edge)}: ${(node.textContent ?? "").slice(0, 40)}`);
+          }
+          return out;
+        });
+        assert.deepEqual(spill, [], "nothing in the chat runs past its column");
+        const wrap = review.locator(".markdown-table-wrap");
+        const sizes = await wrap.evaluate((node) => ({ scroll: node.scrollWidth, client: node.clientWidth, overflow: getComputedStyle(node).overflowX }));
+        assert.ok(sizes.scroll > sizes.client && sizes.overflow === "auto", `the wide table scrolls sideways in its wrap (${JSON.stringify(sizes)})`);
         if (shots) await page.screenshot({ path: join(shots, "task-5-chat-390.png") });
         if (shots) await page.screenshot({ path: join(shots, "task-4-host-390.png") });
         console.log("PASS the chat renders through ChatView: a user turn, an assistant text and a folded tool row, and is watched");
@@ -1150,6 +1174,27 @@ try {
         });
         await fits("the All agents sheet");
         await noVsCode("the All agents sheet");
+        // a stroke that starts on a row's words scrolls the list: a clipped line (overflow: hidden) is a
+        // scroll container, and one that kept its overscroll held the stroke, so the list stalled until
+        // a finger landed between rows. The wheel takes the same chain as a finger.
+        await page.evaluate(() => { const body = document.querySelector<HTMLElement>(".all-agents .modal-body")!; body.style.maxHeight = `${body.scrollHeight - 60}px`; body.scrollTop = 0; });
+        // the sheet sits down at its new height, then the finger lands on the words of a row in sight
+        await page.waitForFunction(() => { const sheet = document.querySelector(".all-agents")!; return sheet.getBoundingClientRect().bottom <= window.innerHeight + 1 && sheet.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running"); });
+        const wordsAt = await page.evaluate(() => {
+          const body = document.querySelector(".all-agents .modal-body")!.getBoundingClientRect();
+          for (const node of document.querySelectorAll(".all-agents .host-chat-item .agent-context")) {
+            const box = node.getBoundingClientRect();
+            if (box.top >= body.top && box.bottom <= body.bottom) return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+          }
+          return null;
+        });
+        assert.ok(wordsAt, "a row's words are in sight");
+        assert.ok(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".agent-context") !== null, wordsAt), "the finger lands on the row's words");
+        await page.mouse.move(wordsAt.x, wordsAt.y);
+        await page.mouse.wheel(0, 200);
+        await page.waitForFunction(() => document.querySelector(".all-agents .modal-body")!.scrollTop > 0, null, { timeout: 2000 })
+          .catch(() => assert.fail("a stroke on a row's words does not scroll the list"));
+        await page.evaluate(() => { const body = document.querySelector<HTMLElement>(".all-agents .modal-body")!; body.style.maxHeight = ""; body.scrollTop = 0; });
         if (shots) await page.screenshot({ path: join(shots, "task-6-all-agents-390.png") });
         await all.getByRole("searchbox", { name: "Search agents" }).fill("release notes");
         assert.equal(await all.locator(".host-chat-item").count(), 1, "the search keeps the one it finds");

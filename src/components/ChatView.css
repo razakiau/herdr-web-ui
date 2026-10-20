@@ -1965,8 +1965,12 @@ button.question-summary-answer { cursor: pointer; }
 .question-summary-option-check { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
 
 /* VS Code's words between two tool groups: the agent's own voice, in the open, answer prose
-   (ChatView.tsx VscodeWork); the groups around them fold */
+   (ChatView.tsx VscodeWork); the groups around them fold. The turn is a column that starts its
+   children (align-items: flex-start): without a width of its own, words holding a wide table or
+   a long path took their unwrapped width and ran off the phone's edge */
 .work-words {
+  width: 100%;
+  min-width: 0;
   padding: var(--space-1) 0;
   color: var(--text);
 }
