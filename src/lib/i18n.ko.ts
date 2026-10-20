@@ -274,6 +274,8 @@ export const KO: Record<string, string> = {
   "Notify me when a pane needs input or finishes": "패널이 입력을 기다리거나 끝나면 알려줍니다",
   "On, pushed to this device": "켜짐, 이 기기로 푸시",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "알림 켜짐, 이 기기로 푸시됩니다. 앱을 닫아도 옵니다. 누르면 꺼집니다",
+  "Alerts on this device": "이 기기의 알림",
+  "Off: no push and no alert in the app here. Other devices keep theirs.": "끄면 이 기기에는 푸시도 앱 안의 알림도 오지 않습니다. 다른 기기는 그대로입니다.",
   "Alerts off": "알림 꺼짐",
   "Off on this device": "이 기기에서 꺼짐",
   "More": "더 보기",

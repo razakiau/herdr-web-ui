@@ -276,6 +276,8 @@ export const JA: Record<string, string> = {
   "Notify me when a pane needs input or finishes": "ペインが入力を待っているときや完了したときに通知します",
   "On, pushed to this device": "オン、この端末にプッシュ",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "通知オン。このデバイスにプッシュされます。アプリを閉じていても届きます。タップするとオフになります",
+  "Alerts on this device": "このデバイスの通知",
+  "Off: no push and no alert in the app here. Other devices keep theirs.": "オフ: このデバイスにはプッシュもアプリ内の通知も届きません。ほかのデバイスはそのままです。",
   "Alerts off": "通知オフ",
   "Off on this device": "この端末ではオフ",
   "More": "その他",

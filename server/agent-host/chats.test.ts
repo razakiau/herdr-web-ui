@@ -268,6 +268,26 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("rowsFrom_gives_a_forked_session_its_own_chat_status_not_the_roll_up", () => {
+    // live on a PC (2026-10-20): the fork asks (24), its source chat failed (2); AHP's session
+    // status promotes the fork's InputNeeded (24 | IsRead 32 = 56), so the source row said asks
+    const forked = {
+      resource: "copilotcli:/1", provider: "copilotcli", title: "FICTIONAL_source", status: 24 | 32, createdAt: AT, modifiedAt: "2026-01-01T00:00:01.000Z",
+      defaultChat: "ahp-chat://main/1",
+      chats: [
+        { resource: "ahp-chat://fork/1", title: "FICTIONAL_fork", origin: { kind: "fork" }, status: 24 },
+        { resource: "ahp-chat://main/1", title: "FICTIONAL_source", origin: { kind: "user" }, status: 2 | 32 },
+      ],
+    } as unknown as SessionSummary;
+    expect(rowsFrom([forked]).map(({ session, status, unread }) => ({ session, status, unread }))).toEqual([
+      { session: "copilotcli:/1", status: "error", unread: false },
+      { session: "ahp-chat://fork/1", status: "asks", unread: true },
+    ]);
+    // a default chat the host gave no status keeps the session's
+    const bare = { ...forked, chats: [{ resource: "ahp-chat://main/1", title: "FICTIONAL_source" }] } as unknown as SessionSummary;
+    expect(rowsFrom([bare])[0]?.status).toBe("asks");
+  });
+
   it("rowsFrom_reads_read_and_archived_flags", () => {
     // SessionStatus: IsRead = 32 and IsArchived = 64 sit beside the activity bits
     const row = (n: number, status: number): SessionSummary => ({ resource: `copilotcli:/${n}`, provider: "copilotcli", title: `FICTIONAL_${n}`, status, createdAt: AT, modifiedAt: `2026-01-01T00:00:0${n}.000Z` } as SessionSummary);

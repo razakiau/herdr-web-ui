@@ -67,6 +67,8 @@ export interface SettingsDialogProps {
   /** the herdr this app's server talks to, from the last health check */
   herdrVersion: string | null;
   onEnableNotifications: () => Promise<boolean>;
+  /** turns this device's alerts off: its push subscription goes too */
+  onDisableNotifications: () => Promise<void>;
   /** the last change the server refused to save (lib/preferencesSync.ts); null once a save lands */
   saveError: UserError | null;
   /** a file preview is open beneath: the dialog is drawn above it */
@@ -464,13 +466,17 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   );
 }
 
-function AlertsPage({ onEnableNotifications }: { onEnableNotifications: () => Promise<boolean> }) {
+function AlertsPage({ onEnableNotifications, onDisableNotifications }: { onEnableNotifications: () => Promise<boolean>; onDisableNotifications: () => Promise<void> }) {
   const { settings, update } = useSettings();
   const t = useT();
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(settings.alertSound);
   return (
     <SettingsGroup note={t("For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
+      {/* the page's own switch: a Copilot folder's ⋯ menu has no Alerts item */}
+      <SettingsRow label={t("Alerts on this device")} description={t("Off: no push and no alert in the app here. Other devices keep theirs.")}>
+        <Toggle label={t("Alerts on this device")} checked={settings.alertsOn} onChange={(on) => void (on ? onEnableNotifications() : onDisableNotifications())} />
+      </SettingsRow>
       <PushTestControls onEnable={onEnableNotifications} />
       <SettingsRow label={t("Needs input")} description={t("An agent waits for an answer or a permission")}>
         <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
@@ -997,7 +1003,7 @@ function SaveFailure({ error }: { error: UserError }) {
   </div>;
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, actions, updates, auth, herdrVersion, onEnableNotifications, saveError, overPreview = false }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, actions, updates, auth, herdrVersion, onEnableNotifications, onDisableNotifications, saveError, overPreview = false }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   // opened by Forward, the dialog shows what that entry of the history showed
@@ -1104,7 +1110,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "appearance": return <AppearancePage />;
       case "chat": return <ChatPage />;
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
-      case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} />;
+      case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} onDisableNotifications={onDisableNotifications} />;
       case "voice": return <VoicePage />;
       case "usage": return <UsageSettings onLocalLogin={onUsageLogin} />;
       case "shortcuts": return <ShortcutsPage />;

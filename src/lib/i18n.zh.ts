@@ -278,6 +278,8 @@ export const ZH: Record<string, string> = {
   "Notify me when a pane needs input or finishes": "窗格需要输入或完成时通知我",
   "On, pushed to this device": "已开启，推送到此设备",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "提醒已开启，推送到此设备。即使关闭应用也会收到。点按可关闭",
+  "Alerts on this device": "此设备上的提醒",
+  "Off: no push and no alert in the app here. Other devices keep theirs.": "关闭后，此设备不再收到推送，应用内也不提醒。其他设备不受影响。",
   "Alerts off": "提醒已关闭",
   "Off on this device": "此设备已关闭",
   "More": "更多",
