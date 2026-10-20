@@ -26,3 +26,4 @@
 - zhomelab bundle 1022: a chat row's age counts calendar days like its group; reply text between tool calls wraps and wide tables scroll inside it; All agents scrolls from any row (a stroke on a row's text no longer scrolls the chat behind); ntfy alerts carry an icon, and Settings → Alerts names the ntfy topic.
 - zhomelab bundle 1023: a forked Copilot chat no longer makes its source chat look like it asks (or alert in its name); Settings → Alerts has its own switch for this device.
 - zhomelab: Settings → Alerts grouped by channel (this device: push, in the app, sound; the server: ntfy, read-only); the ⋯ item is Push to this device.
+- zhomelab bundle 1024: an answered ask_user call reads as its question, with a folded Show report that opens the whole message as markdown.
