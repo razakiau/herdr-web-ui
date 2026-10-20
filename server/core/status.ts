@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentStatus, HerdrPane, PlanSummary, ServerMessage, SessionSnapshot } from "../../shared/protocol.ts";
 import { alertStatus, paneTitle } from "../../shared/notify-policy.ts";
 import { BackgroundWait } from "../background-wait.ts";
+import { ntfyFromEnv, type NtfyConfig } from "../ntfy.ts";
 import { ClaudeSubagentStatus } from "../claude-subagents.ts";
 import { codexOpenRollout, paneCodexHome } from "../codex.ts";
 import { startStatusCollector } from "../collector.ts";
@@ -39,6 +40,8 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     machines?: boolean;
     herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
     alertTiming?: Partial<AlertTiming>;
+    /** null: no ntfy even if the environment names one (tests); absent: HERDR_WEB_NTFY_* */
+    ntfy?: NtfyConfig | null;
     pushLoopbackHttp?: boolean;
     backgroundWait?: { grace: number; limit: number };
     statusNow?: () => number;
@@ -61,6 +64,8 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     loopbackHttp: options.pushLoopbackHttp === true,
     canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)),
     inUse: () => present.size > 0,
+    // the deployment's ntfy topic, if any (server/ntfy.ts); a test server passes its own or none
+    ntfy: (options.ntfy === undefined ? ntfyFromEnv(process.env) : options.ntfy) ?? undefined,
     lookupTitle: async (paneId) => {
       return paneTitle(await paneGet(paneId));
     },
