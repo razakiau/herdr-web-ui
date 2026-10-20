@@ -1108,6 +1108,22 @@ try {
         assert.equal(await all.getByRole("button", { name: "Archived" }).getAttribute("aria-expanded"), "false", "Archived starts folded");
         assert.equal(await all.locator('[data-host-session="fictional-session-done"]').count(), 0, "an archived chat waits under the fold");
         assert.ok((await all.locator('[data-host-session="fictional-session-old"]').innerText()).includes("20 days ago"), "relative time");
+        // VS Code's ages head the chats, and under All each row names its folder
+        const ages = await all.locator(".all-agents-age").allInnerTexts();
+        assert.equal(ages[0], "Today", "the newest chats sit under Today");
+        assert.equal(ages.at(-1), "Last 30 days", "the 20-day-old chat sits under Last 30 days");
+        assert.equal(await all.getByRole("region", { name: "Last 30 days" }).locator('[data-host-session="fictional-session-old"]').count(), 1, "the old chat under its age");
+        assert.ok((await all.locator('[data-host-session="fictional-session-old"]').innerText()).includes("fictional-repo"), "under All a row names its folder");
+        // a pill per folder, the most recently active first; one narrows the list to its folder
+        const pills = all.getByRole("radiogroup", { name: "Folders" }).getByRole("radio");
+        assert.deepEqual((await pills.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()), ["All 3", "fictional-repo 2", "fictional-docs 1"], "All, then each folder with its chats");
+        assert.equal(await pills.first().getAttribute("aria-checked"), "true", "All starts picked");
+        await pills.filter({ hasText: "fictional-docs" }).click();
+        assert.deepEqual(await all.locator(".host-chat-item").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-host-session"))), ["fictional-session-0"], "the docs pill keeps the docs chat only");
+        assert.equal(await all.locator(".all-agents-archived").count(), 0, "no archived chat in that folder: no Archived");
+        assert.ok(!(await all.locator('[data-host-session="fictional-session-0"]').innerText()).includes("fictional-docs"), "a folder's pill already names it: its rows don't");
+        await pills.first().click();
+        assert.equal(await all.locator('[data-host-session="fictional-session-old"]').count(), 1, "All brings every folder back");
         // a tap on Archived opens it on the chats it holds, and a second folds it again; the body is
         // cut short first, as a PC with many chats makes it, so Archived sits at the fold's edge
         await page.evaluate(() => {

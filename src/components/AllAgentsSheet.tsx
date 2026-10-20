@@ -1,8 +1,9 @@
 /**
  * "All agents on <PC>…": every host chat of a PC, the ones the sidebar does not place too
- * (lib/hostPlacement.ts). A sheet (a bottom sheet on a phone) with a search box; the chats grouped by
- * folder, newest first, each with when it last changed ("2 days ago"), and the archived ones last,
- * folded. Picking one opens it, as a tab of its workspace or its folder row.
+ * (lib/hostPlacement.ts). A sheet (a bottom sheet on a phone) with a search box, a pill per folder
+ * to narrow the list to one, and the chats under VS Code's session-list ages (Today, Yesterday, Last
+ * 7 days, Last 30 days, Older: lib/hostChatGroups.ts), each with when it last changed and, under All,
+ * its folder; the archived ones last, folded. Picking one opens it, as a tab of its workspace or its folder row.
  */
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,6 +16,7 @@ import "./AllAgentsSheet.css";
 
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
+import { byAge, folderKey, folderPills, type ChatAge } from "../lib/hostChatGroups.ts";
 import { basename, chatAge, hostLine, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
 import { hostChatStatus } from "../lib/hostPlacement.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -46,15 +48,16 @@ const modified = (row: HostChatRow): number => {
   return Number.isFinite(at) ? at : 0;
 };
 
-/** The chats grouped by folder, newest folder first and newest chat first within each; null folders last. */
-function byFolder(rows: readonly HostChatRow[]): { cwd: string | null; chats: HostChatRow[] }[] {
-  const groups = new Map<string | null, HostChatRow[]>();
-  for (const row of [...rows].sort((a, b) => modified(b) - modified(a))) {
-    const key = row.cwd ? row.cwd.replace(/(.)\/$/, "$1") : null;
-    groups.set(key, [...groups.get(key) ?? [], row]);
-  }
-  return [...groups].map(([cwd, chats]) => ({ cwd, chats })).sort((a, b) => (a.cwd === null ? 1 : 0) - (b.cwd === null ? 1 : 0));
-}
+/** VS Code's words for its session-list ages */
+const AGE_LABEL: Record<ChatAge, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  week: "Last 7 days",
+  month: "Last 30 days",
+  older: "Older",
+};
+/** "all": every folder; else one folder's key (null: chats without one) */
+type Pick = "all" | string | null;
 
 export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, onClose }: AllAgentsSheetProps) {
   const t = useT();
@@ -62,6 +65,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
   const now = useMinuteClock();
   const [query, setQuery] = useState("");
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [folder, setFolder] = useState<Pick>("all");
   // each chat's menu: its own actions (HostChatActions.tsx), over the sheet
   const actions = useHostChatActions();
   const [menu, setMenu] = useState<{ session: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null } | null>(null);
@@ -84,8 +88,12 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
   });
 
   const words = query.trim().toLowerCase();
-  const found = useMemo(() => pc.chats.filter((row) => words === "" || row.title.toLowerCase().includes(words) || (row.cwd ?? "").toLowerCase().includes(words)), [pc.chats, words]);
-  const current = byFolder(found.filter((row) => !row.archived));
+  const matched = useMemo(() => pc.chats.filter((row) => words === "" || row.title.toLowerCase().includes(words) || (row.cwd ?? "").toLowerCase().includes(words)), [pc.chats, words]);
+  // the pills count what the search keeps; a folder the search empties is let go
+  const pills = folderPills(matched.filter((row) => !row.archived));
+  const shownFolder: Pick = folder === "all" || pills.some((pill) => pill.cwd === folder) || matched.some((row) => row.archived && folderKey(row.cwd) === folder) ? folder : "all";
+  const found = shownFolder === "all" ? matched : matched.filter((row) => folderKey(row.cwd) === shownFolder);
+  const current = byAge(found.filter((row) => !row.archived), now);
   const archived = found.filter((row) => row.archived).sort((a, b) => modified(b) - modified(a));
   const line = pc.host ? hostLine(pc.host, t) : null;
   // a search looks in the archived ones too: what it finds there is shown
@@ -93,7 +101,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
 
   const item = (row: HostChatRow) => {
     const title = hostChatTitle(row, t);
-    const context = [row.status === "error" ? t("Error") : null, chatAge(row, now, t)].filter(Boolean).join(" · ");
+    // under All the row says its folder; a folder's pill already names it
+    const context = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t)].filter(Boolean).join(" · ");
     const menuOpen = menu?.session === row.session;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { session: row.session, anchor, point, previousFocus });
@@ -125,9 +134,20 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
               autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(event) => setQuery(event.target.value)} />
           </label>
           {line && <p className="field-hint" role="status">{line}</p>}
+          {/* a folder's chats only, as VS Code's sessions view filters by workspace; All is every folder */}
+          {pills.length > 1 && <div className="all-agents-pills" role="radiogroup" aria-label={t("Folders")}>
+            {[{ cwd: "all" as Pick, count: pills.reduce((sum, pill) => sum + pill.count, 0) }, ...pills].map((pill) => {
+              const name = pill.cwd === "all" ? t("All") : pill.cwd ? basename(pill.cwd) : t("No folder");
+              const on = shownFolder === pill.cwd;
+              return <button key={pill.cwd ?? "\0none"} type="button" role="radio" aria-checked={on} className={`all-agents-pill${on ? " is-on" : ""}`}
+                title={pill.cwd !== "all" && pill.cwd ? pill.cwd : undefined} onClick={() => setFolder(pill.cwd)}>
+                <span className="all-agents-pill-name">{name}</span><span className="all-agents-pill-count">{pill.count}</span>
+              </button>;
+            })}
+          </div>}
           {current.length === 0 && archived.length === 0 && <p className="agent-empty" role="status">{t(words === "" ? "No agents yet" : "No agents match")}</p>}
-          {current.map((group) => <section key={group.cwd ?? ""} className="all-agents-group" aria-label={group.cwd ?? t("No folder")}>
-            <h3 className="sidebar-section-label all-agents-folder" title={group.cwd ?? undefined}>{group.cwd ? basename(group.cwd) : t("No folder")}</h3>
+          {current.map((group) => <section key={group.age} className="all-agents-group" aria-label={t(AGE_LABEL[group.age])}>
+            <h3 className="sidebar-section-label all-agents-age">{t(AGE_LABEL[group.age])}</h3>
             <ul className="agent-list">{group.chats.map(item)}</ul>
           </section>)}
           {archived.length > 0 && <section className="all-agents-group" aria-label={t("Archived")}>
