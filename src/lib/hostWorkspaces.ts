@@ -159,6 +159,78 @@ export function upkeepPc(stored: HostWorkspaceState, machineId: string, read: Ho
   return next === was ? stored : { ...stored, [machineId]: next };
 }
 
+/** A herdr workspace's entry in a PC's saved sidebar order. */
+export function workspaceKey(id: string): string {
+  return `w:${id}`;
+}
+
+/** An agent host workspace's entry in a PC's saved sidebar order (and its row's id while it moves). */
+export function folderKey(cwd: string): string {
+  return `f:${samePath(cwd)}`;
+}
+
+export type MergedRow = { kind: "workspace"; id: string } | { kind: "folder"; cwd: string };
+
+/**
+ * One list of herdr's workspaces and the open agent host workspaces. herdr's rows keep herdr's order,
+ * which herdr owns and another browser may change. Each host row stays right after the row saved
+ * before it (first when none), so it moves with that row. Saved entries no longer shown are skipped;
+ * host rows never placed go last, in the order given.
+ */
+export function mergedOrder(herdrIds: readonly string[], hostCwds: readonly string[], saved: readonly string[] | undefined): MergedRow[] {
+  const herdr = new Set(herdrIds.map(workspaceKey));
+  const host = new Map(hostCwds.map((cwd) => [folderKey(cwd), samePath(cwd)] as const));
+  const after = new Map<string | null, string[]>();
+  let previous: string | null = null;
+  for (const key of new Set(saved ?? [])) {
+    if (herdr.has(key)) previous = key;
+    else if (host.has(key)) {
+      after.set(previous, [...after.get(previous) ?? [], key]);
+      previous = key;
+    }
+  }
+  const rows: MergedRow[] = [];
+  const placed = new Set<string>();
+  const emitFolders = (anchor: string | null): void => {
+    for (const key of after.get(anchor) ?? []) {
+      rows.push({ kind: "folder", cwd: host.get(key)! });
+      placed.add(key);
+      emitFolders(key);
+    }
+  };
+  emitFolders(null);
+  for (const id of herdrIds) {
+    rows.push({ kind: "workspace", id });
+    emitFolders(workspaceKey(id));
+  }
+  for (const [key, cwd] of host) if (!placed.has(key)) rows.push({ kind: "folder", cwd });
+  return rows;
+}
+
+export function mergedKeys(rows: readonly MergedRow[]): string[] {
+  return rows.map((row) => row.kind === "workspace" ? workspaceKey(row.id) : folderKey(row.cwd));
+}
+
+/** `item` moved before or after `target`; the same array when that changes nothing. */
+export function moveInMerged(keys: readonly string[], item: string, target: string, side: "before" | "after"): readonly string[] {
+  if (item === target || !keys.includes(item) || !keys.includes(target)) return keys;
+  const rest = keys.filter((key) => key !== item);
+  const at = rest.indexOf(target) + (side === "after" ? 1 : 0);
+  const next = [...rest.slice(0, at), item, ...rest.slice(at)];
+  return next.every((key, index) => key === keys[index]) ? keys : next;
+}
+
+/**
+ * The PC's saved sidebar order set; the same state when it already is that, or when nothing is saved
+ * for the PC yet (an order alone would stand for "seeded" and keep its first workspaces from opening).
+ */
+export function withOrder(stored: HostWorkspaceState, machineId: string, order: readonly string[]): HostWorkspaceState {
+  const was = stored[machineId];
+  if (was === undefined) return stored;
+  if (was.order && was.order.length === order.length && was.order.every((key, index) => key === order[index])) return stored;
+  return { ...stored, [machineId]: { ...was, order: [...order] } };
+}
+
 const STORAGE_KEY = "herdr-web-ui:host-workspaces";
 
 function storage(): Storage | null {

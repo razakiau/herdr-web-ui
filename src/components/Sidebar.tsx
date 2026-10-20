@@ -30,11 +30,12 @@ import { placeBlock, workspaceMoves, worktreeGroups as groupWorktrees } from "..
 import { worktreeLabel } from "../lib/worktreeName.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
-import { hostChatStatus, type HostPlacement } from "../lib/hostPlacement.ts";
+import { hostChatStatus, samePath, type HostPlacement } from "../lib/hostPlacement.ts";
+import { currentHostWorkspaces, folderKey, mergedKeys, mergedOrder, moveInMerged, setHostWorkspaces, subscribeHostWorkspaces, withOrder, workspaceKey } from "../lib/hostWorkspaces.ts";
 import { basename } from "../lib/hostChats.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
-import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspacePins, reorderWorkspacePins, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
+import { currentSidebarPins, hostFolderPinKey, isWorkspacePinKey, pinnedGroupIds, pinnedRowKeys, pinnedWorkspaceIds, pruneWorkspacePins, reorderPinnedRows, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
 
 const ERROR_NOTE_MS = 5000;
 
@@ -309,6 +310,42 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
   // a pinned head's worktrees remain outside the card, but cannot move away from their repository
   const fixedIds = useMemo(() => new Set([...pinnedGroupIds(worktreeGroups, pinnedIds, (workspace) => workspace.workspace_id)].filter((id) => !pinnedIds.includes(id))), [worktreeGroups, pinnedIds]);
   const movableGroups = shownGroups.rest.filter((group) => !fixedIds.has(group.workspace.workspace_id));
+  // The open agent host workspaces stand among herdr's as rows of their own. A folder row's id is
+  // its saved-order key (`f:<folder>`), which no herdr workspace id looks like.
+  type FolderRow = HostPlacement["folders"][number];
+  const placedFolders = hostChats?.placement.folders;
+  const pinnedFolders = hostChats?.pinnedFolders;
+  const folders = useMemo(() => placedFolders ?? [], [placedFolders]);
+  const folderById = useMemo(() => new Map(folders.map((folder) => [folderKey(folder.cwd), folder])), [folders]);
+  const pinnedFolderSet = useMemo(() => new Set((pinnedFolders ?? []).map(samePath)), [pinnedFolders]);
+  // Pinned: workspaces and folders together, in pin order; moves there change the pins
+  const pinnedList = useMemo(() => {
+    const groups = new Map(shownGroups.pinned.map((group) => [group.workspace.workspace_id, group]));
+    const workspacePrefix = workspacePinKey(machineId, "");
+    const folderPrefix = hostFolderPinKey(machineId, "");
+    return pinnedRowKeys(pins, machineId).flatMap((pin): { id: string; pin: string; group?: WorkspaceGroup<WorkspaceInfo>; folder?: FolderRow }[] => {
+      if (isWorkspacePinKey(pin)) {
+        const group = groups.get(pin.slice(workspacePrefix.length));
+        return group ? [{ id: group.workspace.workspace_id, pin, group }] : [];
+      }
+      const folder = folderById.get(folderKey(pin.slice(folderPrefix.length)));
+      return folder && pinnedFolderSet.has(folder.cwd) ? [{ id: folderKey(folder.cwd), pin, folder }] : [];
+    });
+  }, [shownGroups, pins, machineId, folderById, pinnedFolderSet]);
+  // the rest: herdr's groups in herdr's order, each folder after the row it was put after (lib/hostWorkspaces.ts mergedOrder)
+  const hostState = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
+  const savedOrder = hostState[machineId]?.order;
+  const restRows = useMemo(() => mergedOrder(shownGroups.rest.map((group) => group.workspace.workspace_id), folders.filter((folder) => !pinnedFolderSet.has(folder.cwd)).map((folder) => folder.cwd), savedOrder), [shownGroups, folders, pinnedFolderSet, savedOrder]);
+  const restKeys = useMemo(() => mergedKeys(restRows), [restRows]);
+  const restGroupById = new Map(shownGroups.rest.map((group) => [group.workspace.workspace_id, group]));
+  const rowKey = (id: string): string => folderById.has(id) ? id : workspaceKey(id);
+  const rowIdOf = (key: string): string => folderById.has(key) ? key : key.slice(workspaceKey("").length);
+  /** the rest-list row a drop on `id` lands by: a folder, or the head of the group `id` is in */
+  const restHeadOf = (id: string): string | undefined => {
+    if (folderById.has(id)) return pinnedFolderSet.has(folderById.get(id)!.cwd) ? undefined : id;
+    return shownGroups.rest.find((group) => group.workspace.workspace_id === id || group.children.some((child) => child.workspace_id === id))?.workspace.workspace_id;
+  };
+  const restMovable = (id: string): boolean => (folderById.has(id) && restHeadOf(id) === id) || movableGroups.some((group) => group.workspace.workspace_id === id);
   // a pin moves the row to the other list, so React draws it anew: the row that had the focus gets it back
   const refocusRow = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -495,12 +532,12 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
     });
   };
 
-  const onDragStart = (event: DragEvent<HTMLElement>, workspaceId: string, paneId: string): void => {
+  const onDragStart = (event: DragEvent<HTMLElement>, workspaceId: string, paneId: string | null): void => {
     setDragWorkspaceId(workspaceId);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("application/x-herdr-workspace", JSON.stringify({ machine_id: machineId, workspace_id: workspaceId }));
-    // dropped on the pane area instead, the row opens its pane in half of it (lib/split.ts)
-    event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId }));
+    // dropped on the pane area instead, the row opens its pane in half of it (lib/split.ts); a folder row has none
+    if (paneId !== null) event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId }));
   };
 
   const onDrop = (event: DragEvent<HTMLElement>, targetWorkspaceId: string): void => {
@@ -521,57 +558,83 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
     const whole = worktreeGroups.find((candidate) => candidate.workspace.workspace_id === group.workspace.workspace_id) ?? group;
     return [whole.workspace, ...whole.children].map((workspace) => workspace.workspace_id);
   };
-  const moveOrder = (workspaceId: string, direction: -1 | 1): string[] | null => {
-    const side = direction === 1 ? "after" : "before";
-    const groupIndex = movableGroups.findIndex((group) => group.workspace.workspace_id === workspaceId);
-    if (groupIndex >= 0) {
-      const target = movableGroups[groupIndex + direction];
-      return target ? placeBlock(workspaceOrder, groupIds(movableGroups[groupIndex]!), groupIds(target), side) : null;
-    }
-    const parent = movableGroups.find((group) => group.children.some((child) => child.workspace_id === workspaceId));
-    if (!parent) return null;
-    const sibling = parent.children[parent.children.findIndex((child) => child.workspace_id === workspaceId) + direction];
-    return sibling ? placeBlock(workspaceOrder, [workspaceId], [sibling.workspace_id], side) : null;
+  /**
+   * A rest-list row (a group's head or a folder) put before or after another: the saved order takes
+   * the new list, and a herdr group also moves in herdr's order: by the herdr row it was dropped on,
+   * else next to the herdr row it now follows (or before the one it now precedes).
+   */
+  const moveRest = (sourceId: string, targetId: string, side: "before" | "after"): void => {
+    const source = rowKey(sourceId);
+    const keys = moveInMerged(restKeys, source, rowKey(targetId), side);
+    if (keys === restKeys) return;
+    setHostWorkspaces(withOrder(currentHostWorkspaces(), machineId, keys));
+    const group = movableGroups.find((candidate) => candidate.workspace.workspace_id === sourceId);
+    if (!group) return;
+    const at = keys.indexOf(source);
+    const herdrRow = (key: string | undefined): WorkspaceGroup<WorkspaceInfo> | undefined => key === undefined || folderById.has(key) ? undefined : restGroupById.get(rowIdOf(key));
+    const dropped = herdrRow(rowKey(targetId));
+    const before = keys.slice(0, at).reverse().map(herdrRow).find(Boolean);
+    const after = keys.slice(at + 1).map(herdrRow).find(Boolean);
+    const [anchor, place] = dropped ? [dropped, side] as const : before ? [before, "after"] as const : after ? [after, "before"] as const : [undefined, side] as const;
+    if (!anchor) return;
+    const next = placeBlock(workspaceOrder, groupIds(group), groupIds(anchor), place);
+    if (next.some((id, index) => id !== workspaceOrder[index])) reorderWorkspaces(next);
   };
+  /** a worktree among its siblings, by the neighbours the list shows: herdr's order only */
+  const moveChild = (workspaceId: string, targetId: string, side: "before" | "after"): string[] | null => {
+    const parent = movableGroups.find((group) => group.children.some((child) => child.workspace_id === workspaceId));
+    if (!parent || workspaceId === targetId || !parent.children.some((child) => child.workspace_id === targetId)) return null;
+    return placeBlock(workspaceOrder, [workspaceId], [targetId], side);
+  };
+  const pinnedRowOf = (id: string) => pinnedList.find((row) => row.id === id || row.group?.children.some((child) => child.workspace_id === id));
   const moveVisible = (workspaceId: string, direction: -1 | 1): void => {
-    const pinnedIndex = shownGroups.pinned.findIndex((group) => group.workspace.workspace_id === workspaceId);
+    const side = direction === 1 ? "after" : "before";
+    const pinnedIndex = pinnedList.findIndex((row) => row.id === workspaceId);
     if (pinnedIndex >= 0) {
-      const target = shownGroups.pinned[pinnedIndex + direction];
-      if (target) setSidebarPins(reorderWorkspacePins(currentSidebarPins(), machineId, workspaceId, target.workspace.workspace_id));
+      const target = pinnedList[pinnedIndex + direction];
+      if (target) setSidebarPins(reorderPinnedRows(currentSidebarPins(), machineId, pinnedList[pinnedIndex]!.pin, target.pin));
       return;
     }
-    const next = moveOrder(workspaceId, direction);
+    if (restMovable(workspaceId)) {
+      // the neighbour the list shows, a pinned head's worktree left where it stands
+      const steps = restKeys.filter((key) => restMovable(rowIdOf(key)));
+      const target = steps[steps.indexOf(rowKey(workspaceId)) + direction];
+      if (target) moveRest(workspaceId, rowIdOf(target), side);
+      return;
+    }
+    const parent = movableGroups.find((group) => group.children.some((child) => child.workspace_id === workspaceId));
+    const sibling = parent?.children[parent.children.findIndex((child) => child.workspace_id === workspaceId) + direction];
+    const next = sibling ? moveChild(workspaceId, sibling.workspace_id, side) : null;
     if (next !== null) reorderWorkspaces(next);
   };
 
   /** A card drop belongs to the pin list; crossing the card's edge changes neither order. */
-  const pinnedDropTarget = (sourceId: string, targetId: string): WorkspaceGroup<WorkspaceInfo> | undefined =>
-    pinnedIds.includes(sourceId) && sourceId !== targetId
-      ? shownGroups.pinned.find((group) => group.workspace.workspace_id !== sourceId && (group.workspace.workspace_id === targetId || group.children.some((child) => child.workspace_id === targetId)))
-      : undefined;
-  const dropVisible = (sourceId: string, targetId: string): void => {
-    const target = pinnedDropTarget(sourceId, targetId);
-    if (target) {
-      setSidebarPins(reorderWorkspacePins(currentSidebarPins(), machineId, sourceId, target.workspace.workspace_id));
-      return;
-    }
-    const next = dropOrder(sourceId, targetId);
-    if (next !== null) reorderWorkspaces(next);
+  const pinnedDropTarget = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId || !pinnedList.some((row) => row.id === sourceId)) return undefined;
+    const target = pinnedRowOf(targetId);
+    return target && target.id !== sourceId ? target : undefined;
   };
-
-  /** the order a dropped workspace makes, or none when the drop crosses a group's edge */
-  const dropOrder = (sourceId: string, targetId: string): string[] | null => {
-    const sourceGroup = movableGroups.find((group) => group.workspace.workspace_id === sourceId);
-    if (sourceGroup) {
-      const targetGroup = movableGroups.find((group) => group.workspace.workspace_id === targetId || group.children.some((child) => child.workspace_id === targetId));
-      if (!targetGroup || targetGroup === sourceGroup) return null;
-      const movingDown = workspaceOrder.indexOf(sourceId) < workspaceOrder.indexOf(targetGroup.workspace.workspace_id);
-      return placeBlock(workspaceOrder, groupIds(sourceGroup), groupIds(targetGroup), movingDown ? "after" : "before");
+  /** where a drop of `sourceId` on `targetId` puts it, or none when it crosses a group's or the card's edge */
+  const dropPlan = (sourceId: string, targetId: string): { kind: "pin"; target: NonNullable<ReturnType<typeof pinnedRowOf>>; side: "before" | "after" } | { kind: "rest"; target: string; side: "before" | "after" } | { kind: "child"; target: string; side: "before" | "after" } | null => {
+    const pinned = pinnedDropTarget(sourceId, targetId);
+    if (pinned) return { kind: "pin", target: pinned, side: pinnedList.findIndex((row) => row.id === sourceId) < pinnedList.indexOf(pinned) ? "after" : "before" };
+    if (restMovable(sourceId)) {
+      const target = restHeadOf(targetId);
+      if (target === undefined || target === sourceId) return null;
+      return { kind: "rest", target, side: restKeys.indexOf(rowKey(sourceId)) < restKeys.indexOf(rowKey(target)) ? "after" : "before" };
     }
-    const parent = movableGroups.find((group) => group.children.some((child) => child.workspace_id === sourceId));
-    if (!parent || sourceId === targetId || !parent.children.some((child) => child.workspace_id === targetId)) return null;
-    const movingDown = workspaceOrder.indexOf(sourceId) < workspaceOrder.indexOf(targetId);
-    return placeBlock(workspaceOrder, [sourceId], [targetId], movingDown ? "after" : "before");
+    const side = workspaceOrder.indexOf(sourceId) < workspaceOrder.indexOf(targetId) ? "after" : "before";
+    return moveChild(sourceId, targetId, side) === null ? null : { kind: "child", target: targetId, side };
+  };
+  const dropVisible = (sourceId: string, targetId: string): void => {
+    const plan = dropPlan(sourceId, targetId);
+    if (plan === null) return;
+    if (plan.kind === "pin") setSidebarPins(reorderPinnedRows(currentSidebarPins(), machineId, pinnedList.find((row) => row.id === sourceId)!.pin, plan.target.pin));
+    else if (plan.kind === "rest") moveRest(sourceId, plan.target, plan.side);
+    else {
+      const next = moveChild(sourceId, plan.target, plan.side);
+      if (next !== null) reorderWorkspaces(next);
+    }
   };
 
   // a finger's drag lands where the mouse's does: the same groups, the same index for herdr
@@ -601,20 +664,12 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
   /** where a held row would land, drawn as a line: before or after a row, or after a group's worktrees */
   const dropMark = ((): { id: string; side: "before" | "after"; children: boolean } | null => {
     if (!touchDrag?.over || touchDrag.over === touchDrag.source) return null;
-    const pinnedTarget = pinnedDropTarget(touchDrag.source, touchDrag.over);
-    if (pinnedTarget) {
-      const down = pinnedIds.indexOf(touchDrag.source) < pinnedIds.indexOf(pinnedTarget.workspace.workspace_id);
-      return { id: pinnedTarget.workspace.workspace_id, side: down ? "after" : "before", children: down && pinnedTarget.children.length > 0 };
-    }
-    if (dropOrder(touchDrag.source, touchDrag.over) === null) return null;
-    const down = workspaceOrder.indexOf(touchDrag.source) < workspaceOrder.indexOf(touchDrag.over);
-    const sourceGroup = movableGroups.some((group) => group.workspace.workspace_id === touchDrag.source);
-    const targetGroup = sourceGroup ? movableGroups.find((group) => group.workspace.workspace_id === touchDrag.over || group.children.some((child) => child.workspace_id === touchDrag.over)) : undefined;
-    if (targetGroup) {
-      const groupDown = workspaceOrder.indexOf(touchDrag.source) < workspaceOrder.indexOf(targetGroup.workspace.workspace_id);
-      return { id: targetGroup.workspace.workspace_id, side: groupDown ? "after" : "before", children: groupDown && targetGroup.children.length > 0 };
-    }
-    return { id: touchDrag.over, side: down ? "after" : "before", children: false };
+    const plan = dropPlan(touchDrag.source, touchDrag.over);
+    if (plan === null) return null;
+    if (plan.kind === "child") return { id: plan.target, side: plan.side, children: false };
+    const id = plan.kind === "pin" ? plan.target.id : plan.target;
+    const children = (plan.kind === "pin" ? plan.target.group?.children : restGroupById.get(id)?.children)?.length ?? 0;
+    return { id, side: plan.side, children: plan.side === "after" && children > 0 };
   })();
 
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, workspaceId: string): void => {
@@ -773,8 +828,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
 
   // a folder no workspace works in: a row as a workspace's, whose tabs are its host chats
   const [folderMenu, setFolderMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; cwd: string; title: string } | null>(null);
-  const renderFolderRow = ({ cwd, chats }: { cwd: string; chats: HostChatRow[] }) => {
+  const renderFolderRow = ({ cwd, chats }: { cwd: string; chats: HostChatRow[] }, drop?: "before" | "after") => {
     if (!hostChats) return null;
+    const id = folderKey(cwd);
     const name = basename(cwd);
     const open = chats.find((chat) => chat.session === hostChats.selected);
     // the row opens the chat open there, else its newest
@@ -782,14 +838,24 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
     const lines = twoLine ? { title: lead.title.trim() || t("Copilot chat"), place: name } : null;
     const menuOpen = folderMenu?.cwd === cwd;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setFolderMenu(menuOpen ? null : { anchor, point, previousFocus, cwd, title: name });
-    return <li className={`workspace workspace-group pane-item host-folder${open ? " is-selected" : ""}`} key={`folder:${cwd}`} data-host-folder={cwd}>
+    return <li className={`workspace workspace-group pane-item host-folder${open ? " is-selected" : ""}${dragWorkspaceId === id ? " is-dragging" : ""}${touchDrag?.source === id ? " is-lifted" : ""}`} key={id} data-host-folder={cwd} data-workspace={id} data-drop={drop}
+      onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+      onDrop={(event) => onDrop(event, id)}>
       <div className="workspace-header"
         onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
         onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
         <WorkspaceFavicon root={cwd} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true"><Folder /></span>} />
         <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={open ? "true" : undefined} title={[cwd, ...chats.map((chat) => chat.title)].join(" — ")}
+          draggable={!coarsePointer}
+          onDragStart={(event) => onDragStart(event, id, null)}
+          onDragEnd={() => setDragWorkspaceId(null)}
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          aria-description={`${t("Reorder workspace {name}", { name })} · ${t("Drag to reorder · Alt+↑/↓")}`}
           onClick={() => hostChats.onSelect(lead.session)}
-          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); hostChats.onSelect(lead.session); } }}>
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); hostChats.onSelect(lead.session); return; }
+            onRowKeyDown(event, id);
+          }}>
           <span className="sidebar-mark" aria-hidden="true"><AgentMark agent="copilot" size={18} /></span>
           {lines ? <span className="workspace-copy is-two-line">
             <span className="workspace-line"><span className="workspace-name">{lines.title}</span></span>
@@ -808,10 +874,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
       </div>
     </li>;
   };
-  const folders = hostChats?.placement.folders ?? [];
-  const pinnedFolderSet = new Set(hostChats?.pinnedFolders ?? []);
-  const pinnedFolderRows = (hostChats?.pinnedFolders ?? []).flatMap((cwd) => folders.filter((folder) => folder.cwd === cwd));
-  const restFolders = folders.filter((folder) => !pinnedFolderSet.has(folder.cwd));
+  const folderDrop = (id: string): "before" | "after" | undefined => dropMark?.id === id ? dropMark.side : undefined;
   const pinnedWorkspacesShown = shownGroups.pinned.some(({ workspace }) => roster.some((pane) => pane.workspace_id === workspace.workspace_id));
 
   return (
@@ -825,15 +888,13 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
               <button type="button" className="btn" onClick={actions.openNewSession}><Plus aria-hidden="true" />{t("New workspace")}</button>
             </div>
           )}
-          {(pinnedWorkspacesShown || pinnedFolderRows.length > 0) && <>
+          {(pinnedWorkspacesShown || pinnedList.some((row) => row.folder)) && <>
             <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
             <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label={t("Pinned")}>
-              {pinnedWorkspacesShown && shownGroups.pinned.map(renderGroup)}
-              {pinnedFolderRows.map(renderFolderRow)}
+              {pinnedList.map((row) => row.folder ? renderFolderRow(row.folder, folderDrop(row.id)) : pinnedWorkspacesShown ? renderGroup(row.group!) : null)}
             </ul>
           </>}
-          <ul className="workspace-list">{shownGroups.rest.map(renderGroup)}</ul>
-          {restFolders.length > 0 && <ul className="workspace-list host-folder-list">{restFolders.map(renderFolderRow)}</ul>}
+          <ul className="workspace-list">{restRows.map((row) => row.kind === "folder" ? renderFolderRow(folderById.get(folderKey(row.cwd))!, folderDrop(folderKey(row.cwd))) : renderGroup(restGroupById.get(row.id)!))}</ul>
           {inlineError && inlineError.workspaceId === undefined && (
             <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>
           )}

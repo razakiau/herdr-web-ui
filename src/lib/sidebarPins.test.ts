@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, migratePins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, hostFolderPinKey, isHostFolderPinKey, pinnedHostFolders, pruneHostFolderPins, toggleHostFolderPin, workspacePinKey } from "./sidebarPins.ts";
+import { pinnedRowKeys, reorderPinnedRows, isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, migratePins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, hostFolderPinKey, isHostFolderPinKey, pinnedHostFolders, pruneHostFolderPins, toggleHostFolderPin, workspacePinKey } from "./sidebarPins.ts";
 
 describe("sidebar agent pins", () => {
   it("moves workspace pins in both directions without moving other pin slots", () => {
@@ -205,5 +205,19 @@ describe("toggleHostFolderPin", () => {
     const keys = [hostFolderPinKey("m", "/gone"), workspacePinKey("m", "w1")];
     expect(toggleHostFolderPin(keys, "m", "/w/a/", new Set(["/w/a"]))).toEqual(["m:workspace:w1", "m:folder:/w/a"]);
     expect(toggleHostFolderPin(["m:folder:/w/a", "m:workspace:w1"], "m", "/w/a", new Set(["/w/a"]))).toEqual(["m:workspace:w1"]);
+  });
+
+  it("pinned_rows_mix_workspaces_and_folders_in_pin_order", () => {
+    const pins = ["pc:workspace:a", "pc:p1", "pc:folder:/docs", "other:folder:/x", "pc:host:s1", "pc:workspace:b"];
+    expect(pinnedRowKeys(pins, "pc")).toEqual(["pc:workspace:a", "pc:folder:/docs", "pc:workspace:b"]);
+  });
+
+  it("reorders_pinned_rows_across_kinds_leaving_other_slots", () => {
+    const pins = ["pc:workspace:a", "pc:p1", "pc:folder:/docs", "other:workspace:a", "pc:workspace:b"];
+    expect(reorderPinnedRows(pins, "pc", "pc:folder:/docs", "pc:workspace:a")).toEqual(["pc:folder:/docs", "pc:p1", "pc:workspace:a", "other:workspace:a", "pc:workspace:b"]);
+    expect(reorderPinnedRows(pins, "pc", "pc:workspace:a", "pc:workspace:b")).toEqual(["pc:folder:/docs", "pc:p1", "pc:workspace:b", "other:workspace:a", "pc:workspace:a"]);
+    for (const [source, target] of [["pc:workspace:a", "pc:workspace:a"], ["pc:folder:/gone", "pc:workspace:a"], ["pc:p1", "pc:workspace:a"]]) {
+      expect(reorderPinnedRows(pins, "pc", source!, target!)).toEqual(pins);
+    }
   });
 });

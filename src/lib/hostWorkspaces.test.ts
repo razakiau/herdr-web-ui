@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { folderKey, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -143,5 +143,48 @@ describe("agent host workspaces", () => {
       { cwd: "/b", chats: 1, modified_at: chats[2]!.modified_at, open: false },
       { cwd: "/a", chats: 2, modified_at: chats[0]!.modified_at, open: true },
     ]);
+  });
+
+  describe("merged order", () => {
+    const names = (rows: ReturnType<typeof mergedOrder>): string[] => rows.map((each) => each.kind === "workspace" ? each.id : each.cwd);
+
+    it("merged_keeps_herdr_relative_order", () => {
+      const saved = [workspaceKey("w1"), folderKey("/a"), workspaceKey("w2")];
+      expect(names(mergedOrder(["w1", "w2", "w3"], ["/a"], saved))).toEqual(["w1", "/a", "w2", "w3"]);
+      // herdr moved w2 up: herdr's rows follow herdr, and /a stays right after w1
+      expect(names(mergedOrder(["w2", "w1", "w3"], ["/a"], saved))).toEqual(["w2", "w1", "/a", "w3"]);
+    });
+
+    it("folder_saved_first_stays_first", () => {
+      expect(names(mergedOrder(["w1", "w2"], ["/a", "/b"], [folderKey("/b"), folderKey("/a"), workspaceKey("w1")]))).toEqual(["/b", "/a", "w1", "w2"]);
+    });
+
+    it("drops_missing_ids", () => {
+      const saved = [workspaceKey("gone"), folderKey("/a"), folderKey("/closed"), workspaceKey("w1")];
+      expect(names(mergedOrder(["w1"], ["/a"], saved))).toEqual(["/a", "w1"]);
+      // a folder whose saved neighbour left lands after the row before that one
+      expect(names(mergedOrder(["w1", "w2"], ["/a"], [workspaceKey("w1"), workspaceKey("gone"), folderKey("/a"), workspaceKey("w2")]))).toEqual(["w1", "/a", "w2"]);
+    });
+
+    it("new_host_rows_go_last", () => {
+      expect(names(mergedOrder(["w1", "w2"], ["/new", "/a"], [folderKey("/a"), workspaceKey("w1")]))).toEqual(["/a", "w1", "w2", "/new"]);
+      expect(names(mergedOrder(["w1"], ["/a/"], undefined))).toEqual(["w1", "/a"]);
+    });
+
+    it("move_in_merged_places_the_row", () => {
+      const keys = mergedKeys(mergedOrder(["w1", "w2"], ["/a"], undefined));
+      expect(moveInMerged(keys, folderKey("/a"), workspaceKey("w1"), "before")).toEqual([folderKey("/a"), workspaceKey("w1"), workspaceKey("w2")]);
+      expect(moveInMerged(keys, workspaceKey("w1"), folderKey("/a"), "after")).toEqual([workspaceKey("w2"), folderKey("/a"), workspaceKey("w1")]);
+      expect(moveInMerged(keys, folderKey("/a"), folderKey("/a"), "before")).toBe(keys);
+    });
+
+    it("with_order_keeps_the_open_workspaces", () => {
+      const pc: PcHostWorkspaces = { open: [{ cwd: "/a", tabs: ["x"] }] };
+      const next = withOrder({ m: pc }, "m", [folderKey("/a")]);
+      expect(next.m).toEqual({ open: [{ cwd: "/a", tabs: ["x"] }], order: ["f:/a"] });
+      const none = {};
+      expect(withOrder(none, "m", ["w:w1"])).toBe(none);
+      expect(withOrder(next, "m", ["f:/a"])).toBe(next);
+    });
   });
 });
