@@ -156,6 +156,7 @@ const patch = `(() => {
     const path = match ? "/api" + match[2] : url.pathname;
     // a pane request without a pane: what a host chat's ChatView must never make
     if (path.startsWith("/api/pane/") && url.searchParams.get("pane_id") === "") (calls.paneless ??= []).push(url.pathname + url.search);
+    if (path === "/api/workspace/move") (calls.moves ??= []).push(machine);
     if (path.startsWith("/api/pane/") && url.searchParams.get("pane_id") === null && init?.body && String(init.body).includes('"pane_id":""')) (calls.paneless ??= []).push(url.pathname);
     // the six-PC fixture: FICTIONAL PC E's host chat waits on a question
     if (SIX && machine === "pc-e" && path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
@@ -1140,7 +1141,7 @@ try {
         await page.locator(".row-sheet").waitFor({ state: "detached" });
         const pinnedList = remoteGroup.locator(".sidebar-pinned");
         await pinnedList.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]').waitFor();
-        assert.equal(await remoteGroup.locator('.host-folder-list .host-folder[data-host-folder="/tmp/fictional-docs"]').count(), 0, "a pinned folder leaves the folder list");
+        assert.equal(await remoteGroup.locator('.workspace-list:not(.sidebar-pinned) > .host-folder[data-host-folder="/tmp/fictional-docs"]').count(), 0, "a pinned folder leaves the workspace list");
         assert.equal(await remoteGroup.locator(".sidebar-pinned-label").count(), 1, "Pinned says so once");
         assert.ok((await page.evaluate(() => localStorage.getItem("herdr-web-ui:sidebar-agent-pins")) ?? "").includes("remote:folder:/tmp/fictional-docs"), "the pin is saved by PC and folder");
         if (shots) await remoteGroup.screenshot({ path: join(shots, "r10-folder-pinned-390.png") });
@@ -1152,8 +1153,8 @@ try {
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Unpin folder" }).click();
         await page.locator(".row-sheet").waitFor({ state: "detached" });
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-        await remoteGroup.locator('.host-folder-list .host-folder[data-host-folder="/tmp/fictional-docs"]').waitFor();
-        assert.equal(await pinnedList.locator(".host-folder").count(), 0, "unpinned, the folder is back in its list");
+        await remoteGroup.locator('.workspace-list:not(.sidebar-pinned) > .host-folder[data-host-folder="/tmp/fictional-docs"]').waitFor();
+        assert.equal(await pinnedList.locator(".host-folder").count(), 0, "unpinned, the folder is back among the workspaces");
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
         console.log("PASS a Copilot folder pins from its row's ⋯ into Pinned, and unpins from the header's");
@@ -1374,6 +1375,26 @@ try {
         assert.equal((await posts("/api/machines/remote/host-chats/chat/new")).length, newBefore, "opening a folder makes no chat");
         await drawerOpen();
         await docsRow.waitFor({ timeout: 3000 }).catch(() => assert.fail("the opened folder has no row"));
+        // one order with herdr's workspaces: the folder row moves above the herdr group before it, and
+        // the move is the PC's saved order (another page of the same browser draws it the same way)
+        const restOrder = async (target = page) => target.getByRole("region", { name: "PC Build PC", exact: true }).locator(".sidebar-list > .workspace-list:not(.sidebar-pinned) > .workspace-group").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.workspace ?? ""));
+        const orderBefore = await restOrder();
+        const docsAt = orderBefore.indexOf("f:/tmp/fictional-docs");
+        assert.ok(docsAt > 0 && !orderBefore[docsAt - 1]!.startsWith("f:"), `a herdr group stands above the opened folder (${orderBefore.join(", ")})`);
+        const movesBefore = await page.evaluate(() => ((window as unknown as { hostCalls: { moves?: string[] } }).hostCalls.moves ?? []).length);
+        await docsRow.locator(".workspace-select").focus();
+        await page.keyboard.press("Alt+ArrowUp");
+        const expected = [...orderBefore.slice(0, docsAt - 1), orderBefore[docsAt]!, orderBefore[docsAt - 1]!, ...orderBefore.slice(docsAt + 1)];
+        await page.waitForFunction((want) => JSON.stringify([...document.querySelectorAll('[aria-label="PC Build PC"] .sidebar-list > .workspace-list:not(.sidebar-pinned) > .workspace-group')].map((row) => (row as HTMLElement).dataset.workspace)) === want, JSON.stringify(expected), { timeout: 3000 }).catch(async () => assert.fail(`Alt+↑ moved the folder above ${orderBefore[docsAt - 1]} (before ${orderBefore.join(", ")}; now ${(await restOrder()).join(", ")}; saved ${JSON.stringify((await savedTabs()).remote)})`));
+        assert.equal(await page.evaluate(() => ((window as unknown as { hostCalls: { moves?: string[] } }).hostCalls.moves ?? []).length), movesBefore, "a folder's move leaves herdr's order alone");
+        assert.deepEqual((await savedTabs()).remote?.["order" as never], expected.filter((id) => id !== "").map((id) => id.startsWith("f:") ? id : `w:${id}`), "the merged order is saved for the PC");
+        const otherPage = await page.context().newPage();
+        await otherPage.goto(page.url());
+        await otherPage.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await otherPage.locator('[data-host-folder="/tmp/fictional-docs"]').first().waitFor();
+        assert.deepEqual(await restOrder(otherPage), expected, "the order holds on another page");
+        await otherPage.close();
+        console.log("PASS an agent host workspace moves among herdr's workspaces (Alt+↑), and the order is saved");
         await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();
         // typing another folder after a pick starts a chat again, as before
         listDialog = await openList();

@@ -100,6 +100,23 @@ export function reorderWorkspacePins(keys: readonly string[], machineId: string,
   return keys.map((key) => own.has(key) ? replacements[index++]! : key);
 }
 
+/** This PC's pinned rows of the workspace list, herdr workspaces and agent host folders together, in pin order. */
+export function pinnedRowKeys(keys: readonly string[], machineId: string): string[] {
+  const workspace = workspacePinKey(machineId, "");
+  const folder = hostFolderPinKey(machineId, "");
+  return keys.filter((key) => (key.startsWith(workspace) && key.length > workspace.length) || (key.startsWith(folder) && key.length > folder.length));
+}
+
+/** One pinned row (by its pin key) moved to `target`'s slot, across kinds; every other pin keeps its slot. */
+export function reorderPinnedRows(keys: readonly string[], machineId: string, source: string, target: string): string[] {
+  const rows = pinnedRowKeys(keys, machineId);
+  if (source === target || !rows.includes(source) || !rows.includes(target)) return [...keys];
+  const order = placeBlock(rows, [source], [target], rows.indexOf(source) < rows.indexOf(target) ? "after" : "before");
+  const own = new Set(rows);
+  let index = 0;
+  return keys.map((key) => own.has(key) ? order[index++]! : key);
+}
+
 /** This PC's workspace pins whose workspace is gone leave with a change of the user's; every other pin stays. */
 export function pruneWorkspacePins(keys: readonly string[], machineId: string, liveWorkspaceIds: ReadonlySet<string>): string[] {
   const prefix = workspacePinKey(machineId, "");
