@@ -21,3 +21,4 @@
 - zhomelab bundle 1017: browser dictation keeps going through a pause (Chrome ends its session at each pause) and keeps the unfinished phrase.
 - zhomelab bundle 1018: a model row says its thinking level ("Medium · 528K") with a chevron that opens the levels, and the composer pill shows the default level before any pick.
 - zhomelab bundle 1019: the model picker keeps its search and provider tabs pinned at the top, each tab with its model count.
+- zhomelab bundle 1020: Fork Conversation on a Copilot chat request (as VS Code 1.142), and forks made in VS Code listed as chats of their own.
