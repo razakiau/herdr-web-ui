@@ -345,9 +345,30 @@
   white-space: nowrap;
 }
 
+/* a row with thinking levels opens them: VS Code's chevron says so, a dotted underline alone did not */
 button.host-model-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 2.25rem;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  text-decoration: underline dotted;
+}
+
+button.host-model-detail:hover,
+button.host-model-detail[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.host-model-detail-caret {
+  width: 0.875rem;
+  height: 0.875rem;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
+  transform: rotate(180deg);
 }
 
 .host-model-row > .host-picker-chips {

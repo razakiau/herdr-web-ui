@@ -242,7 +242,9 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
   const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
   const detail = modelEntry ? rowDetail(modelEntry, model?.effort ?? null) : model?.effort ?? "";
   // VS Code's input toolbar: quiet triggers that say what the next message goes with, each opening its picker
-  const effortLabel = model?.effort ? model.effort.charAt(0).toUpperCase() + model.effort.slice(1) : null;
+  // the host's default level until one is picked: the message is sent with it either way
+  const shownEffort = model?.effort ?? (model && modelEntry?.id === model.id ? modelEntry.efforts?.default ?? null : null);
+  const effortLabel = shownEffort ? shownEffort.charAt(0).toUpperCase() + shownEffort.slice(1) : null;
   const ModeIcon = config?.mode === "plan" ? ListChecks : config?.mode === "autopilot" ? Rocket : MessageSquare;
   const approvalsRaised = config?.approvals !== null && config?.approvals !== undefined && config.approvals !== "default";
   const pills = <span className="host-chat-pills">

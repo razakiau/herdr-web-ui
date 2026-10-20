@@ -23,14 +23,14 @@ export interface HostChatRow {
 
 /**
  * A model the PC's Copilot offers: `provider` is the host's (SessionModelInfo.provider), `efforts`
- * its reasoning-effort choice when it has one, `context` its maxContextWindow in tokens when known.
+ * its reasoning-effort choice when it has one (with the host's default, the one used until another is picked), `context` its maxContextWindow in tokens when known.
  * `group` is where the picker files it: "copilot" for Copilot's own catalogue (the host gives those,
  * and only those, a `_meta` with a multiplier, discount or category), else the id's "<router>/"
  * prefix, else "other". `multiplier` is Copilot's premium-request rate, `warning` its notice (a
  * planned deprecation). The three are absent from a bridge older than bundle 1007.
  */
 export interface HostModel {
-  id: string; name: string; provider: string; efforts: { key: string; values: string[] } | null; context: number | null;
+  id: string; name: string; provider: string; efforts: { key: string; values: string[]; default?: string } | null; context: number | null;
   group?: string; multiplier?: number | null; warning?: string | null;
 }
 

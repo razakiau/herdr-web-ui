@@ -9,7 +9,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Pin, Search, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, Pin, Search, Sparkles, TriangleAlert, X } from "lucide-react";
 
 import type { HostAgent, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
@@ -157,7 +157,7 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
             {rate !== null && <span className="host-model-rate" title={t("Premium requests per message")}>{rate}</span>}
           </button>
           {detail !== "" && (each.efforts
-            ? <button type="button" className="host-model-detail" aria-expanded={efforts === row} aria-label={t("Reasoning effort for {model}", { model: each.name })} onClick={() => setEfforts((open) => open === row ? null : row)}>{detail}</button>
+            ? <button type="button" className="host-model-detail" aria-expanded={efforts === row} aria-label={t("Reasoning effort for {model}", { model: each.name })} onClick={() => setEfforts((open) => open === row ? null : row)}>{detail}<ChevronDown className="host-model-detail-caret" aria-hidden="true" /></button>
             : <span className="host-model-detail">{detail}</span>)}
           {efforts === row && each.efforts && <div className="host-picker-chips" role="group" aria-label={t("Reasoning effort")}>
             {each.efforts.values.map((value) => <button key={value} type="button" className={`host-picker-chip${picked && model?.effort === value ? " is-picked" : ""}`} aria-pressed={picked && model?.effort === value} data-effort={value}

@@ -156,7 +156,7 @@ describe("host chat mappers", () => {
         { provider: "copilotcli", displayName: "Fictional Agent", description: "", models: [
           { id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", configSchema: { type: "object", properties: {
             mode: { type: "string", title: "Mode", enum: ["x", "y"] },
-            thinkingLevel: { type: "string", title: "Thinking Level", enum: ["low", "medium", "high"] },
+            thinkingLevel: { type: "string", title: "Thinking Level", enum: ["low", "medium", "high"], default: "medium" },
           } } },
           { id: "fictional/model-b", name: "Fictional Model B", provider: "copilotcli", configSchema: { type: "object", properties: { budget: { type: "string", title: "Budget", enum: ["small", "large"] } } } },
           { id: "fictional/model-c", name: "Fictional Model C", provider: "copilotcli" },
@@ -164,7 +164,7 @@ describe("host chat mappers", () => {
       ],
     } as unknown as RootState;
     expect(modelsFrom(root)).toEqual([
-      { id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: null, group: "fictional", multiplier: null, warning: null },
+      { id: "fictional/model-a", name: "Fictional Model A", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"], default: "medium" }, context: null, group: "fictional", multiplier: null, warning: null },
       { id: "fictional/model-b", name: "Fictional Model B", provider: "copilotcli", efforts: { key: "budget", values: ["small", "large"] }, context: null, group: "fictional", multiplier: null, warning: null },
       { id: "fictional/model-c", name: "Fictional Model C", provider: "copilotcli", efforts: null, context: null, group: "fictional", multiplier: null, warning: null },
     ]);

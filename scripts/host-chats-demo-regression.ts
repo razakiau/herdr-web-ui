@@ -211,7 +211,7 @@ const patch = `(() => {
         models: [
           { id: "fictional-own", name: "FICTIONAL Own", provider: "copilotcli", efforts: null, context: null, group: "copilot", multiplier: 27, warning: "FICTIONAL Own has a planned deprecation date." },
           { id: "fictional/model-a", name: "FICTIONAL Model A (Anthropic)", provider: "copilotcli", efforts: null, context: 200000 },
-          { id: "fictional/model-b", name: "FICTIONAL Model B", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"] }, context: 1000000 },
+          { id: "fictional/model-b", name: "FICTIONAL Model B", provider: "copilotcli", efforts: { key: "thinkingLevel", values: ["low", "medium", "high"], default: "medium" }, context: 1000000 },
           { id: "fictional/glm-x", name: "FICTIONAL GLM-X (FICTIONAL Go)", provider: "fictional-router", efforts: null, context: null },
         ],
         agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
@@ -769,14 +769,19 @@ try {
         assert.deepEqual(await sheet.locator("[data-model]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-model"))), ["fictional/glm-x"], "the search keeps the GLM row only");
         assert.equal(await sheet.locator('[data-model="fictional/glm-x"] svg[aria-label="zhipu"]').count(), 1, "GLM wears Zhipu's mark");
         await sheet.getByRole("searchbox", { name: "Search models" }).fill("");
-        assert.match(await sheet.locator('[data-model="fictional/model-b"] .host-model-detail').textContent() ?? "", /^1M$/, "a row says its context");
+        assert.match(await sheet.locator('[data-model="fictional/model-b"] .host-model-detail').textContent() ?? "", /^Medium · 1M$/, "a row says its default thinking level and its context");
+        // a row with a thinking level shows it can open, not only a dotted underline (the owner missed it, 2026-10-20)
+        assert.equal(await sheet.locator('[data-model="fictional/model-b"] .host-model-detail svg.host-model-detail-caret').count(), 1, "the thinking level wears a caret");
+        assert.equal(await sheet.locator('[data-model="fictional/model-a"] .host-model-detail svg').count(), 0, "a row without one has none");
         await sheet.locator('[data-model="fictional/model-b"] .host-model-pick').click();
         await sheet.waitFor({ state: "detached" });
+        assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "Medium", "the pill says the default thinking level until one is picked");
         await modelPill.click();
         // the pick is Recent now, above All models
         const recent = sheet.getByRole("region", { name: "Recent" });
         assert.deepEqual(await recent.locator("[data-model]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-model"))), ["fictional/model-b"], "the pick heads Recent");
         await recent.locator('[data-model="fictional/model-b"] button.host-model-detail').click();
+        await sheet.getByRole("group", { name: "Reasoning effort" }).waitFor();
         await sheet.locator('[data-effort="high"]').click();
         await sheet.waitFor({ state: "detached" });
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B/, "the pill says the model");
