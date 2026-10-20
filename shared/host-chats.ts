@@ -19,6 +19,8 @@ export interface HostChatRow {
   unread: boolean;
   /** put away as done: the host's `IsArchived` bit */
   archived: boolean;
+  /** a fork (VS Code's Fork Conversation): the session it was forked in, whose folder and agent it shares */
+  fork_of?: string;
 }
 
 /**

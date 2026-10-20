@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, RotateCcw, Target, Wrench,
+  ArrowDown, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, GitFork, Layers, RotateCcw, Target, Wrench,
   type LucideProps,
 } from "lucide-react";
 
@@ -193,7 +193,7 @@ export interface ChatViewProps {
   /** the pane's own name, as App's header shows it: the log is named by it, never by the pane id */
   title?: string | null;
   /** a host chat's checkpoints (HostChatRead), the one restored, and what a tap on one does */
-  checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void } | null;
+  checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void; /** VS Code's Fork Conversation at a request (never the first) */ onFork?(turn: string): void } | null;
 }
 
 interface ChatState {
@@ -876,6 +876,8 @@ interface TurnProps {
   checkpoint?: CheckpointRow | null;
   /** the checkpoint's action was tapped */
   onCheckpoint?: (turn: string) => void;
+  /** Fork Conversation was tapped on this request: a new chat with the turns before it */
+  onFork?: (turn: string) => void;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -1004,7 +1006,7 @@ function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey:
 // a turn that did not change keeps its object across polls: skip re-rendering it. A host chat's
 // row has paneId "": its pictures and outputs come through the chat's source, and UserImages shows
 // no `@image` mention without a pane, so such a row reads no file
-export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null, style = "classic", checkpoint = null, onCheckpoint }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null, style = "classic", checkpoint = null, onCheckpoint, onFork }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -1045,6 +1047,8 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       {copyError}
     </section>;
     const action = checkpoint?.turn && onCheckpoint && !checkpoint.faded ? checkpoint : null;
+    // VS Code forks before a request, so the first has nothing to fork
+    const forkAt = checkpoint?.turn && onFork && !checkpoint.faded && !checkpoint.first ? checkpoint.turn : null;
     return <article className={`chat-turn chat-turn-user${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
       <UserImages paneId={paneId} parts={turn.parts} text={text} />
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
@@ -1055,6 +1059,9 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
           {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
             aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
             <RotateCcw aria-hidden="true" /><span className="chat-checkpoint-word">{t(action.first ? "Start Over" : "Restore")}</span>
+          </button>}
+          {forkAt && <button type="button" className="chat-meta-btn chat-fork-btn" title={t("Fork Conversation")} aria-label={t("Fork Conversation")} onClick={() => onFork!(forkAt)}>
+            <GitFork aria-hidden="true" />
           </button>}
           {text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
       </div>
@@ -1804,6 +1811,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   const checkpointList = checkpoints?.list ?? null;
   const restoredTurn = checkpoints?.restored ?? null;
   const pickCheckpoint = checkpoints?.onPick;
+  const forkAt = checkpoints?.onFork;
   const rowCheckpoints = useMemo(() => checkpointList === null ? null
     : checkpointRows(shownTurns, checkpointList, restoredTurn, olderCursor !== null && olderCursor !== undefined), [shownTurns, checkpointList, restoredTurn, olderCursor]);
   const stickyRow = sticky === null ? undefined : timelineRows.find((row) => row.key === sticky);
@@ -1858,9 +1866,9 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t(hosted ? "This message can't be shown here." : "This message can't be shown here. The terminal has it.")}</p>}>
       <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} style={style}
-        checkpoint={rowCheckpoints?.get(index) ?? null} {...(pickCheckpoint ? { onCheckpoint: pickCheckpoint } : {})} />
+        checkpoint={rowCheckpoints?.get(index) ?? null} {...(pickCheckpoint ? { onCheckpoint: pickCheckpoint } : {})} {...(forkAt ? { onFork: forkAt } : {})} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style, rowCheckpoints, pickCheckpoint]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style, rowCheckpoints, pickCheckpoint, forkAt]);
   // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
   const shownTitle = title?.trim() ?? "";
   const logLabel = label ?? (shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation"));

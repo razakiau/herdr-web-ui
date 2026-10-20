@@ -149,3 +149,12 @@
   color: var(--text);
   font-size: var(--fs-sm);
 }
+
+/* a fork that failed: what happened, then the host's reason on a line of its own, never cut */
+.fork-bar { flex-wrap: wrap; }
+.fork-bar .checkpoint-bar-error {
+  order: 3;
+  flex: 1 0 100%;
+  padding-left: calc(14px + var(--space-2));
+  white-space: normal;
+}

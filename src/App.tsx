@@ -1866,7 +1866,8 @@ export function App() {
                 <main className="terminal-host">
                   {/* a host chat picked in the sidebar takes the pane's place in the active half */}
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
-                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle} />
+                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle}
+                      onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session })} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}

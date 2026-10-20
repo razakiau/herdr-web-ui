@@ -69,6 +69,8 @@ export interface FakeAgentHostSeed {
   completions?: Record<string, unknown[]>;
   /** Files and content refs by URI, as `resourceRead` / `resourceWrite` / `resourceDelete` see them. */
   files?: Record<string, string>;
+  /** The agent's `capabilities` (default: forks and side chats, as VS Code 1.142's copilotcli). */
+  capabilities?: Record<string, unknown>;
 }
 
 export interface FakeAgentHost {
@@ -122,6 +124,8 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
    * summary follows (the default chat's read flag is the session's; archived is the session's own action), announced as root/sessionSummaryChanged.
    */
   const follow = (channel: string, action: StateAction) => {
+    const forkOwner = sessions.find((s) => s.defaultChat !== channel && (s.chats ?? []).some((c) => c.resource === channel));
+    if (forkOwner) { followChat(forkOwner, channel, action); return; }
     const owner = sessions.find((s) => s.resource === channel || s.defaultChat === channel);
     if (!owner) return;
     const bit = action.type === "chat/isReadChanged" ? 32 : 0;
@@ -134,6 +138,28 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
       const on = action.type === "chat/isReadChanged" ? (action as { isRead: boolean }).isRead : (action as { isArchived: boolean }).isArchived;
       notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { status: on ? owner.status | bit : owner.status & ~bit } });
     }
+  };
+  /**
+   * A session's other chat (a fork), as VS Code 1.142's host keeps it (probed 2026-10-20): its title,
+   * read and archived bits and its activity are its own, in the session's catalog (SessionSummary.chats),
+   * announced as root/sessionSummaryChanged and session/chatUpdated; the session's own stay as they were.
+   */
+  const followChat = (owner: SessionSummary, channel: string, action: StateAction) => {
+    const entry = (owner.chats ?? []).find((c) => c.resource === channel)!;
+    let changes: Partial<NonNullable<SessionSummary["chats"]>[number]> | null = null;
+    const status = entry.status ?? 1;
+    if (action.type === "session/titleChanged") changes = { title: (action as { title: string }).title };
+    else if (action.type === "chat/isReadChanged") changes = { status: (action as { isRead: boolean }).isRead ? status | 32 : status & ~32 };
+    else if (action.type === "chat/isArchivedChanged") changes = { status: (action as { isArchived: boolean }).isArchived ? status | 64 : status & ~64 };
+    else if (action.type === "chat/turnStarted") changes = { status: (status & ~(1 | 2)) | 8 };
+    if (!changes) return;
+    chatCatalog(owner.resource, owner.chats!.map((c) => (c.resource === channel ? { ...c, ...changes } : c)));
+    const state = states[owner.resource];
+    if (state) { const sessionAction = { type: "session/chatUpdated", chat: channel, changes } as StateAction; apply(owner.resource, sessionAction); announce(owner.resource, sessionAction); }
+  };
+  /** A session's catalog changed: the list hears it as root/sessionSummaryChanged, as the host's does. */
+  const chatCatalog = (session: string, chats: NonNullable<SessionSummary["chats"]>) => {
+    notice(ROOT, { type: "root/sessionSummaryChanged", session, changes: { chats } });
   };
   const notice = (channel: string, item: FakeRootNotice) => {
     if (item.type === "root/sessionAdded") sessions.push(item.summary);
@@ -158,7 +184,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         ok({
           protocolVersion: "1.0.0",
           serverSeq,
-          snapshots: [{ resource: ROOT, fromSeq: serverSeq, state: { agents: [{ provider: "copilotcli", displayName: "Fictional Agent", description: "A fictional agent", models: seed.models }], activeSessions: 0 } }],
+          snapshots: [{ resource: ROOT, fromSeq: serverSeq, state: { agents: [{ provider: "copilotcli", displayName: "Fictional Agent", description: "A fictional agent", models: seed.models, capabilities: seed.capabilities ?? { multipleChats: { fork: true, sideChat: true } } }], activeSessions: 0 } }],
           defaultDirectory: "file:///tmp/fictional-repo",
         });
         return;
@@ -202,6 +228,40 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         if (summary!.defaultChat) delete chats[summary!.defaultChat];
         delete states[channel];
         notice(ROOT, { type: "root/sessionRemoved", session: channel });
+        return;
+      }
+      // VS Code's Fork Conversation (1.142): a new chat in the same session with the source chat's
+      // turns through `turnId`, in the session's catalog; the chat URI is the client's
+      case "createChat": {
+        const channel = String(params["channel"]);
+        const chat = String(params["chat"]);
+        const source = params["source"] as { kind: string; chat: string; turnId: string } | undefined;
+        const owner = sessions.find((s) => s.resource === channel);
+        const from = source ? chats[source.chat] : undefined;
+        const fork = (seed.capabilities as { multipleChats?: { fork?: boolean } } | undefined)?.multipleChats?.fork ?? true;
+        if (!owner || !source || source.kind !== "fork" || !from || !fork) { fail(-32602, "FICTIONAL createChat refused"); return; }
+        const at = from.turns.findIndex((turn) => turn.id === source.turnId);
+        if (at < 0) { fail(-32602, `no such turn ${source.turnId}`); return; }
+        ok(null);
+        if (chats[chat]) return;
+        const now = new Date(0).toISOString();
+        const title = `FICTIONAL fork of ${from.title}`;
+        chats[chat] = { resource: chat, title, status: 1, modifiedAt: now, turns: from.turns.slice(0, at + 1) } as unknown as ChatState;
+        const entry = { resource: chat, title, status: 1, origin: { kind: "fork", chat: source.chat, turnId: source.turnId } } as NonNullable<SessionSummary["chats"]>[number];
+        const state = states[channel];
+        if (state) { const added = { type: "session/chatAdded", summary: { ...entry, modifiedAt: now } } as StateAction; apply(channel, added); announce(channel, added); }
+        chatCatalog(channel, [...(owner.chats ?? [{ resource: owner.defaultChat!, title: owner.title, status: owner.status, origin: { kind: "user" } } as NonNullable<SessionSummary["chats"]>[number]]), entry]);
+        return;
+      }
+      case "disposeChat": {
+        const chat = String(params["channel"]);
+        const owner = sessions.find((s) => s.defaultChat !== chat && (s.chats ?? []).some((c) => c.resource === chat));
+        if (!owner) { fail(-32008, `no such chat ${chat}`); return; }
+        ok(null);
+        delete chats[chat];
+        const state = states[owner.resource];
+        if (state) { const removed = { type: "session/chatRemoved", chat } as StateAction; apply(owner.resource, removed); announce(owner.resource, removed); }
+        chatCatalog(owner.resource, owner.chats!.filter((c) => c.resource !== chat));
         return;
       }
       case "fetchTurns": {
