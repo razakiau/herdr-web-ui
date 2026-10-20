@@ -536,6 +536,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/portal/start" || path === "/api/portal/stop") return error("portal_unsupported", "The demo opens no public address.", 409);
   if (path === "/api/access") return json({ port: 7317, tailscale: { state: "running", dns_name: "workstation.example.ts.net", serving_url: "https://workstation.example.ts.net", serve_command: null, serve_url: null } });
   if (path === "/api/usage") return json(usageReport(), 200, { "cache-control": "no-store" });
+  if (path === "/api/usage/omniroute") return json({ configured: false, url: null, ok: false, problem: null, checked_at: null }, 200, { "cache-control": "no-store" });
   if (path === "/api/usage/login") {
     if (method === "GET") {
       if (url.searchParams.has("provider")) return json({ accounts: url.searchParams.get("provider") === "cursor" ? ["cursor@example.test"] : [] });

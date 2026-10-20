@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, Network, Plus } from "lucide-react";
-import type { CLIProxyStatus, ProviderUsage, UsageProviderId } from "../../shared/protocol.ts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, Network, Plus, Route } from "lucide-react";
+import type { CLIProxyStatus, OmniRouteStatus, ProviderUsage, UsageProviderName } from "../../shared/protocol.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
-import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "../lib/usage.ts";
+import { formatPercent, moveInOrder, newOmniRouteProviders, orderProviders, providerMark, providerName, tightestWindow, usageName, useUsage, viaOmniRoute } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
-import { cliProxyRequest } from "../lib/api.ts";
+import { cliProxyRequest, fetchOmniRouteStatus } from "../lib/api.ts";
 import { UsageAccountDialog } from "./UsageAccountDialog.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { Segmented, SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
 import "./UsageSettings.css";
 
-function ProviderAccounts({ id, providers }: { readonly id: UsageProviderId; readonly providers: readonly ProviderUsage[] }) {
+function ProviderAccounts({ id, providers }: { readonly id: UsageProviderName; readonly providers: readonly ProviderUsage[] }) {
   const { settings, update } = useSettings();
   const t = useT();
   const all = orderProviders(providers, settings.usageOrder);
@@ -22,7 +22,7 @@ function ProviderAccounts({ id, providers }: { readonly id: UsageProviderId; rea
     const keys = all.map((usage) => usage.id === id ? group[index++] ?? usage.key : usage.key);
     update({ usageOrder: [...keys, ...settings.usageOrder.filter((known) => !keys.includes(known))] });
   };
-  return ordered.length === 0 ? <p className="settings-item settings-hint">{t("No accounts signed in")}</p> : <ol aria-label={PROVIDER_NAME[id]}>
+  return ordered.length === 0 ? <p className="settings-item settings-hint">{t("No accounts signed in")}</p> : <ol aria-label={providerName(id)}>
     {ordered.map((usage, index) => {
       const name = usageName(usage);
       const hidden = settings.usageHidden.includes(usage.key);
@@ -31,9 +31,9 @@ function ProviderAccounts({ id, providers }: { readonly id: UsageProviderId; rea
       }[usage.problem];
       return <li key={usage.key} className={`usage-accounts-row${hidden ? " is-hidden" : ""}`}>
         <div className="usage-account-identity">
-          <span className="usage-accounts-account" title={usage.account ?? undefined}>{usage.account ?? PROVIDER_NAME[id]}</span>
+          <span className="usage-accounts-account" title={usage.account ?? undefined}>{usage.account ?? providerName(id)}</span>
           <span className="usage-account-meta">
-            <span>{usage.key.startsWith(`${id}:cliproxy:`) ? t("Hub") : t("This PC")}{usage.plan ? ` · ${usage.plan}` : ""}</span>
+            <span>{usage.key.startsWith(`${id}:cliproxy:`) ? t("Hub") : viaOmniRoute(usage) ? "OmniRoute" : t("This PC")}{usage.plan ? ` · ${usage.plan}` : ""}</span>
             <span className={`usage-account-status${usage.problem ? " has-problem" : ""}`}>{status}</span>
           </span>
         </div>
@@ -66,10 +66,18 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
       .catch((cause: unknown) => { if (!controller.signal.aborted) setHubError(cause instanceof Error ? cause.message : t("Hub request failed")); });
     return () => controller.abort();
   }, [t]);
-  const providers = usage.report?.providers ?? [];
-  const ids: readonly UsageProviderId[] = [...new Set(providers.map((usage) => usage.id))];
+  const [gateway, setGateway] = useState<OmniRouteStatus | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchOmniRouteStatus(controller.signal).then(setGateway).catch(() => { /* an older server has no gateway */ });
+    return () => controller.abort();
+  }, [usage.report]);
+  const reported = usage.report?.providers ?? [];
+  // an OmniRoute provider not chosen below stays out of the accounts: the gateway may report dozens
+  const providers = reported.filter((usage) => !viaOmniRoute(usage) || settings.usageShown.includes(usage.id));
+  const ids: readonly UsageProviderName[] = [...new Set(providers.map((usage) => usage.id))];
   const orderedIds = ["claude", "codex", ...ids.filter((id) => id !== "claude" && id !== "codex")]
-    .filter((id): id is UsageProviderId => ids.some((known) => known === id));
+    .filter((id) => ids.some((known) => known === id));
   return <>
     <SettingsGroup>
       <SettingsRow label={t("Show plan limits")} description={t("Shows plan usage beside Settings. Sign-ins are sent to each provider's usage API; never refreshed here.")}>
@@ -93,7 +101,7 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
     </div>
     {settings.showUsage && orderedIds.map((id) => <SettingsGroup key={id} className="usage-accounts usage-provider" section={`accounts-${id}`}>
       <div className="settings-item usage-provider-heading">
-        <AgentMark agent={PROVIDER_MARK[id]} size={20} /><span>{PROVIDER_NAME[id]}</span>
+        <AgentMark agent={providerMark(id)} size={20} /><span>{providerName(id)}</span>
         <span className="usage-account-count">{providers.filter((usage) => usage.id === id).length}</span>
       </div>
       <ProviderAccounts id={id} providers={providers} />
@@ -110,6 +118,7 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
         </div>
       </div>
     </SettingsGroup>}
+    {settings.showUsage && gateway?.configured && <OmniRouteProviders status={gateway} providers={reported} />}
     {confirmRemoval && <ConfirmDialog title={t("Remove hub?")}
       body={t("Its accounts disappear from this list. The hub itself is not changed.")}
       confirmLabel={t("Remove")} onClose={() => setConfirmRemoval(false)} onConfirm={async () => {
@@ -119,4 +128,72 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
       }} />}
     {dialog && <UsageAccountDialog editHub={dialog === "hub"} hub={hub} onHubChanged={setHub} onAccountsChanged={usage.refresh} onLocalLogin={onLocalLogin} onClose={() => setDialog(null)} />}
   </>;
+}
+
+/** past this many providers the list gets a search and a Shown/All switch */
+const SEARCH_FROM = 8;
+
+/**
+ * The providers an OmniRoute gateway reports, each shown in the meters only once chosen here: a
+ * gateway can hold dozens, and its list grows. One it starts reporting is marked New until this
+ * page is left; it stays out of the meters until switched on.
+ */
+function OmniRouteProviders({ status, providers }: { readonly status: OmniRouteStatus; readonly providers: readonly ProviderUsage[] }) {
+  const { settings, update } = useSettings();
+  const t = useT();
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "shown">("all");
+  const groups = useMemo(() => {
+    const byId = new Map<string, ProviderUsage[]>();
+    for (const usage of providers) if (viaOmniRoute(usage)) byId.set(usage.id, [...byId.get(usage.id) ?? [], usage]);
+    return [...byId].map(([id, accounts]) => ({ id, accounts, name: providerName(id) })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [providers]);
+  const fresh = newOmniRouteProviders(providers, settings.usageKnown);
+  // the New marks last while this page is open; leaving it, they are known
+  const seen = useRef<string[]>([]);
+  seen.current = fresh;
+  const known = useRef(settings.usageKnown);
+  known.current = settings.usageKnown;
+  useEffect(() => () => { if (seen.current.length > 0) update({ usageKnown: [...known.current, ...seen.current] }); }, [update]);
+  const shownCount = groups.filter((group) => settings.usageShown.includes(group.id)).length;
+  const searchable = groups.length > SEARCH_FROM;
+  const needle = query.trim().toLowerCase();
+  const listed = groups.filter((group) => (!searchable || filter === "all" || settings.usageShown.includes(group.id))
+    && (!searchable || needle === "" || group.name.toLowerCase().includes(needle) || group.id.includes(needle)));
+  const toggle = (id: string, on: boolean) => update({ usageShown: on ? [...settings.usageShown, id] : settings.usageShown.filter((known) => known !== id) });
+  const state = status.ok ? t("Connected") : status.problem ?? t("Not read yet");
+  return <SettingsGroup className="usage-gateway" section="usage-omniroute">
+    <div className="settings-item usage-connection">
+      <Route size={20} aria-hidden="true" />
+      <div className="usage-connection-info">
+        <span className="settings-label">OmniRoute</span>
+        <span className="settings-hint" role="status">{status.url} · {state}</span>
+      </div>
+    </div>
+    <div className="settings-item usage-gateway-head">
+      <span className="settings-label">{t("Providers to show")}</span>
+      <span className="settings-hint">{t("{shown} of {count} shown", { shown: String(shownCount), count: String(groups.length) })}{fresh.length > 0 ? ` · ${t("{count} new", { count: String(fresh.length) })}` : ""}</span>
+    </div>
+    {searchable && <div className="settings-item usage-gateway-tools">
+      <input className="input" type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search providers")} placeholder={t("Search providers")} />
+      <Segmented label={t("Providers listed")} value={filter} onChange={setFilter} options={[{ value: "all", label: t("All") }, { value: "shown", label: t("Shown") }]} />
+    </div>}
+    {groups.length === 0 && <p className="settings-item settings-hint">{t("OmniRoute reports no plan limits yet.")}</p>}
+    {groups.length > 0 && listed.length === 0 && <p className="settings-item settings-hint">{t("No provider matches.")}</p>}
+    {listed.length > 0 && <ul className="usage-gateway-list" aria-label={t("Providers to show")}>
+      {listed.map((group) => {
+        const on = settings.usageShown.includes(group.id);
+        const closest = group.accounts.map(tightestWindow).reduce<number | null>((most, window) => window === null ? most : Math.max(most ?? 0, window.used_percent), null);
+        const accounts = group.accounts.length === 1 ? t("1 account") : t("{count} accounts", { count: String(group.accounts.length) });
+        return <li key={group.id} className={`usage-gateway-row${on ? "" : " is-off"}`}>
+          <AgentMark agent={providerMark(group.id)} size={20} />
+          <span className="usage-gateway-identity">
+            <span className="usage-gateway-name">{group.name}{fresh.includes(group.id) && <span className="usage-gateway-new">{t("New")}</span>}</span>
+            <span className="usage-gateway-meta">{accounts}{closest !== null ? ` · ${t("closest {percent} used", { percent: formatPercent(closest) })}` : ""}</span>
+          </span>
+          <Toggle label={t("Show {name}", { name: group.name })} checked={on} onChange={(next) => toggle(group.id, next)} />
+        </li>;
+      })}
+    </ul>}
+  </SettingsGroup>;
 }

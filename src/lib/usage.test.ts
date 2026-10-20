@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
-import { composerUsage, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, orderProviders, providerForAgent, statusWindows, tightestWindow, usageName, windowLabel } from "./usage.ts";
+import { closestFirst, composerUsage, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, newOmniRouteProviders, orderProviders, providerForAgent, providerMark, providerName, shownUsages, statusWindows, tightestWindow, usageName, viaOmniRoute, windowLabel } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const window = (used_percent: number, kind: UsageWindow["kind"] = "week", scope: string | null = null): UsageWindow => ({ kind, scope, used_percent, resets_at: null, starts_at: null });
@@ -88,5 +88,45 @@ describe("usage meters", () => {
     expect(windowLabel(window(1, "week", "Sonnet"))).toBe("Weekly · Sonnet");
     expect(windowLabel(window(1, "month", "Premium"))).toBe("Monthly · Premium");
     expect(windowLabel(window(1, "month", "Cursor models"))).toBe("Monthly · Cursor models");
+  });
+});
+
+describe("OmniRoute accounts", () => {
+  const own = provider("claude", [window(10)], "me");
+  const viaClaude: ProviderUsage = { ...provider("claude", [window(90)]), key: "claude:omniroute:c1", account: "work" };
+  const viaGlm: ProviderUsage = { ...provider("glm", [window(40, "session")]), key: "glm:omniroute:g1" };
+
+  it("names providers herdr does not know, and gives them a lettered mark", () => {
+    expect(providerName("glm")).toBe("GLM");
+    expect(providerName("kimi-coding")).toBe("Kimi");
+    expect(providerName("acme-cloud")).toBe("Acme Cloud");
+    expect(providerName("copilot")).toBe("GitHub Copilot");
+    expect(providerMark("antigravity")).toBe("agy");
+    expect(providerMark("glm")).toBe("glm");
+    expect(usageName(viaGlm)).toBe("GLM");
+  });
+
+  it("tells an OmniRoute account from this PC's", () => {
+    expect([own, viaClaude, viaGlm].map(viaOmniRoute)).toEqual([false, true, true]);
+  });
+
+  it("shows this PC's accounts unless hidden, and OmniRoute's only for providers chosen", () => {
+    const all = [own, viaClaude, viaGlm];
+    expect(shownUsages(all, { order: [], hidden: [], shown: [] }).map((usage) => usage.key)).toEqual(["claude:me"]);
+    expect(shownUsages(all, { order: [], hidden: [], shown: ["glm"] }).map((usage) => usage.key)).toEqual(["claude:me", "glm:omniroute:g1"]);
+    expect(shownUsages(all, { order: [], hidden: ["glm:omniroute:g1"], shown: ["glm", "claude"] }).map((usage) => usage.key)).toEqual(["claude:me", "claude:omniroute:c1"]);
+  });
+
+  it("the providers OmniRoute reports that Settings has not offered yet, once each", () => {
+    expect(newOmniRouteProviders([own, viaClaude, viaGlm, { ...viaGlm, key: "glm:omniroute:g2" }], [])).toEqual(["claude", "glm"]);
+    expect(newOmniRouteProviders([own, viaClaude, viaGlm], ["claude"])).toEqual(["glm"]);
+  });
+
+  it("closest to its limit first, by each account's tightest window; ties keep their order", () => {
+    const a = provider("codex", [window(20), window(70, "session")], "a");
+    const b = provider("codex", [window(50)], "b");
+    const c = provider("codex", [], "c");
+    const d = provider("codex", [window(50)], "d");
+    expect(closestFirst([c, b, a, d]).map((usage) => usage.account)).toEqual(["a", "b", "d", "c"]);
   });
 });

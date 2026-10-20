@@ -52,6 +52,7 @@ import type {
   UsageReport,
   WorkspaceCreated,
   PluginActionRequest,
+  OmniRouteStatus,
   PluginActionResult,
   PluginActions,
   PluginActionsResponse,
@@ -96,6 +97,11 @@ export function fetchUsage(refresh = false): Promise<UsageReport> {
 }
 
 /** Local server's CLIProxyAPI controls; secrets are only ever sent, never read back. */
+/** The OmniRoute gateway this server reads plan limits from, if any (set in its environment). */
+export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteStatus> {
+  return getJson<OmniRouteStatus>("/api/usage/omniroute", { cache: "no-store", ...(signal ? { signal } : {}) });
+}
+
 export function cliProxyRequest<T>(path = "", init: RequestInit = {}): Promise<T> {
   return getJson<T>(`/api/cliproxy${path}`, { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(60_000) });
 }

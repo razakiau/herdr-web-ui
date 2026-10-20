@@ -301,7 +301,7 @@ export function Composer({
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
-  const usage = usageEnabled && usageReport !== null ? composerUsage(usageReport.providers, agent, settings.usageOrder, settings.usageHidden) : undefined;
+  const usage = usageEnabled && usageReport !== null ? composerUsage(usageReport.providers, agent, settings.usageOrder, settings.usageHidden, settings.usageShown) : undefined;
   const usageWindows = usage === undefined ? [] : statusWindows(usage);
   const usageLimit = usageWindows[0];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
