@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import { closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -67,5 +67,25 @@ describe("agent host workspaces", () => {
     expect(sanitizeHostWorkspaces({ m: { open: Array.from({ length: 201 }, (_, i) => ({ cwd: `/f${i}`, tabs: [] })) } })).toBeNull();
     const good = { m: { open: [{ cwd: "/a", tabs: ["x"] }], order: ["w:1", "f:/a"] } };
     expect(sanitizeHostWorkspaces(good)).toEqual(good);
+  });
+
+  it("store_saves_tells_and_reads_back", () => {
+    const stored = new Map<string, string>();
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } } });
+    try {
+      let heard = 0;
+      const stop = subscribeHostWorkspaces(() => { heard += 1; });
+      const state = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+      setHostWorkspaces(state);
+      setHostWorkspaces(structuredClone(state));
+      stop();
+      expect(heard).toBe(1);
+      expect(currentHostWorkspaces()).toEqual(state);
+      expect(JSON.parse(stored.get("herdr-web-ui:host-workspaces")!)).toEqual(state);
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
 });
