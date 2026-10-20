@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
+import { chatAge } from "./hostChats.ts";
 import { attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -13,6 +14,16 @@ const withoutId = (body: unknown): unknown => { const { id: _, ...rest } = body 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = (session: string, status: HostChatRow["status"], ageMs: number): HostChatRow => ({
   session, title: session, status, modified_at: new Date(NOW - ageMs).toISOString(), cwd: "/home/user/project", unread: false, archived: false,
+});
+
+describe("a chat row's age", () => {
+  const t = (key: string, vars?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? `{${name}}`));
+  // 2026-03-10 14:56 local, the age line read against the same calendar days as All agents' groups
+  const now = new Date(2026, 2, 10, 14, 56).getTime();
+  const ago = (hours: number) => chatAge({ session: "s", title: "s", status: "idle", modified_at: new Date(now - hours * 3_600_000).toISOString(), cwd: null, unread: false, archived: false }, now, t);
+  it("says minutes and hours today, then calendar days as the groups count them: no \"36 h ago\" under Yesterday", () => {
+    expect([ago(0.5), ago(3), ago(20), ago(36), ago(40), ago(24 * 5)]).toEqual(["30 min ago", "3 h ago", "Yesterday", "Yesterday", "2 days ago", "5 days ago"]);
+  });
 });
 
 describe("host chats per PC", () => {
