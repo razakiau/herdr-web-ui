@@ -1202,7 +1202,20 @@ try {
           const row = document.querySelector('.all-agents [data-host-session="fictional-session-done"]')!.getBoundingClientRect();
           return row.top >= body.top - 1 && row.bottom <= body.bottom + 1;
         }, null, { timeout: 3000 }).catch(() => assert.fail("the opened Archived rows stay out of sight"));
-        await all.locator(".all-agents-archived").click();
+        // VS Code's Unarchive: an archived row's menu restores it, and it joins the current chats
+        await all.locator('[data-host-session="fictional-session-done"]').getByRole("button", { name: /^More for / }).click();
+        await page.locator(".row-sheet").getByRole("button", { name: "Restore", exact: true }).click();
+        await page.waitForFunction(() => (window as unknown as { hostEdits: { archived: Record<string, boolean> } }).hostEdits.archived["fictional-session-done"] === false, null, { timeout: 3000 }).catch(() => assert.fail("Restore sent nothing"));
+        await page.waitForFunction(() => {
+          const row = document.querySelector('.all-agents [data-host-session="fictional-session-done"]');
+          return row !== null && row.closest(".all-agents-group")?.getAttribute("aria-label") !== "Archived";
+        }, null, { timeout: 3000 }).catch(() => assert.fail("the restored chat stays under Archived"));
+        assert.equal(await all.locator(".all-agents-archived").count(), 0, "nothing archived left: no Archived");
+        // archived again, as it was, for what follows
+        await all.locator('[data-host-session="fictional-session-done"]').getByRole("button", { name: /^More for / }).click();
+        await page.locator(".row-sheet").getByRole("button", { name: "Mark as done", exact: true }).click();
+        await all.locator(".all-agents-archived").waitFor({ timeout: 3000 });
+        if (await all.locator(".all-agents-archived").getAttribute("aria-expanded") === "true") await all.locator(".all-agents-archived").click();
         assert.equal(await all.locator('[data-host-session="fictional-session-done"]').count(), 0, "folded again");
         await page.evaluate(() => { document.querySelector<HTMLElement>(".all-agents .modal-body")!.style.maxHeight = ""; });
         await page.waitForFunction(() => {
@@ -1415,7 +1428,7 @@ try {
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as done" }).click();
         await keptTab.waitFor({ state: "detached" });
         await kept3.waitFor({ state: "detached" });
-        assert.deepEqual(await actionPosts("archive"), [{ session: "fictional-new-3", archived: true }]);
+        assert.deepEqual((await actionPosts("archive")).filter((post) => (post as { session?: string }).session !== "fictional-session-done"), [{ session: "fictional-new-3", archived: true }]);
         await agentsMenu();
         await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
         await all.waitFor();
