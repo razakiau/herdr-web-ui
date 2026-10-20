@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { resolveLink } from "./deepLink.ts";
-import { machineGone, machineMissing, notificationLanding, notificationTargetFromSearch, notificationTargets, notificationViewForPane, sameLink } from "./notificationTarget.ts";
+import { machineGone, machineMissing, notificationLanding, notificationTargetFromSearch, notificationTargets, notificationViewForPane, sameLink, hostChatFromSearch } from "./notificationTarget.ts";
 
 function messages() {
   let receive!: (event: MessageEvent) => void;
@@ -171,5 +171,31 @@ describe("notification landing", () => {
     expect(sameLink({ ...link, pane: "w1:p8" }, link)).toBe(false);
     expect(sameLink({ ...link, machine: "pc2" }, link)).toBe(false);
     expect(sameLink({ ...link, view: null }, link)).toBe(false);
+  });
+});
+
+describe("a host chat's alert", () => {
+  it("hands over the chat a tap names, as the newest while the app starts", () => {
+    const source = messages();
+    source.send({ type: "select-pane", pane_id: "older", machine_id: "local" });
+    source.send({ type: "select-host-chat", machine_id: "mac", session: "ahp:/s1" });
+    const selected: unknown[] = [];
+    source.subscribe((target) => selected.push(target));
+    expect(selected).toEqual([{ machine_id: "mac", session: "ahp:/s1" }]);
+  });
+
+  it("ignores one without a session", () => {
+    const source = messages();
+    source.send({ type: "select-host-chat", machine_id: "mac" });
+    const selected: unknown[] = [];
+    source.subscribe((target) => selected.push(target));
+    expect(selected).toEqual([]);
+  });
+
+  it("reads the chat an address names (an ntfy alert's link, a cold start)", () => {
+    expect(hostChatFromSearch("?machine=mac&chat=ahp%3A%2Fs1")).toEqual({ machine_id: "mac", session: "ahp:/s1" });
+    expect(hostChatFromSearch("?chat=ahp%3A%2Fs1")).toEqual({ machine_id: "local", session: "ahp:/s1" });
+    expect(hostChatFromSearch("?chat=")).toBeNull();
+    expect(hostChatFromSearch("?pane=w1:p1")).toBeNull();
   });
 });

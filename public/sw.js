@@ -210,7 +210,9 @@ self.addEventListener("push", (event) => {
         tag: payload.tag || "herdr",
         renotify: !watching,
         silent: watching,
-        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null },
+        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null,
+          // a host chat's alert (server/push.ts onHostChats): its tap opens the chat
+          ...(payload.host_session ? { host_session: payload.host_session } : {}) },
         icon: "/icons/icon-192.png?v=ram1",
         // Android's status bar and small icon: white on transparent, or Chrome's bell
         badge: "/icons/badge-96.png?v=ram1",
@@ -247,7 +249,9 @@ self.addEventListener("notificationclick", (event) => {
   const machineId = event.notification.data?.machine_id || "local";
   // the workspace the pane was last seen in: an ended pane's tap opens it (src/lib/deepLink.ts)
   const workspaceId = event.notification.data?.workspace_id || null;
-  const selection = paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat", ...(workspaceId ? { workspace_id: workspaceId } : {}) } : null;
+  const hostSession = event.notification.data?.host_session || null;
+  const selection = hostSession ? { type: "select-host-chat", machine_id: machineId, session: hostSession }
+    : paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat", ...(workspaceId ? { workspace_id: workspaceId } : {}) } : null;
   // Remember the intent before any lookup: an older focus can finish while this one
   // is still finding its window.
   latestNotificationSelection = selection;
@@ -257,7 +261,8 @@ self.addEventListener("notificationclick", (event) => {
       const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
         .filter((client) => isAppWindow(client.url));
       if (click !== latestNotificationClick) return;
-      const url = paneId ? `/?machine=${encodeURIComponent(machineId)}${workspaceId ? `&ws=${encodeURIComponent(workspaceId)}` : ""}&pane=${encodeURIComponent(paneId)}&view=chat` : "/";
+      const url = hostSession ? `/?machine=${encodeURIComponent(machineId)}&chat=${encodeURIComponent(hostSession)}`
+        : paneId ? `/?machine=${encodeURIComponent(machineId)}${workspaceId ? `&ws=${encodeURIComponent(workspaceId)}` : ""}&pane=${encodeURIComponent(paneId)}&view=chat` : "/";
       const selectLatest = (client) => { if (client && latestNotificationSelection) client.postMessage(latestNotificationSelection); };
       const open = async () => {
         // An opening can also finish after a newer tap. Repair that returned
