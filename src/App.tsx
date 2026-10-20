@@ -1,5 +1,5 @@
 import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Pencil, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
 import { ApiError, authenticate, createTab, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
@@ -28,7 +28,7 @@ import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
 import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
-import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
+import { HostChatActionsContext, RenameHostChatSheet, hostChatItems, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
 import { currentSidebarPins, hostChatPinKey, setSidebarPins, subscribeSidebarPins, toggleSidebarPin } from "./lib/sidebarPins.ts";
@@ -1396,7 +1396,8 @@ export function App() {
   // hidden only where it could do nothing: no system notifications and in-app alerts off
   const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
   // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
-  const alertsOffDot = bellVisible && !bell.on;
+  // the dot says the ⋯ holds Alerts: an open host chat's menu has none
+  const alertsOffDot = bellVisible && !bell.on && !(selectedHostChat && openHostRow);
   // a host chat has no pane, whose terminal stream says live: its chip follows its own reads
   const hostShown = selectedHostChat !== null && selectedPane === null;
   const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId)) : connected;
@@ -1571,11 +1572,12 @@ export function App() {
   // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
   const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
   const paletteKeys = keyboardLikely ? formatKeys(shortcutDisplayKeys("palette", settings.shortcutOverrides)).join("+") : "";
-  const moreItems: RowMenuItem[] = [
+  // an open host chat is no pane: the header's ⋯ is that agent's own menu (its tab's: pin, rename,
+  // read, done, delete); the palette, the terminal's find, files, a link to the PC and the panes'
+  // alerts are a pane's, and none of them acts on the chat
+  const moreItems: RowMenuItem[] = selectedHostChat && openHostRow ? hostChatItems(hostActions, { machineId: selectedHostChat.machineId, chat: openHostRow }, t) : [
     // first at every width: a phone's header has no palette button, and a touch screen no shortcut
     { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
-    // the open host chat's name, in the same sheet its row's Rename… opens
-    ...(selectedHostChat && openHostRow ? [{ id: "rename-chat", label: t("Rename chat…"), icon: Pencil, run: () => setHostRename({ machineId: selectedHostChat.machineId, chat: openHostRow }) }] : []),
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
     // from 769px Files has its own button beside the lens switch; a phone keeps it here
     ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),

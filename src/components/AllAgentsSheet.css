@@ -9,7 +9,28 @@
   --side-selected: var(--bg-hover);
 }
 .all-agents .modal-body { display: flex; flex-direction: column; gap: var(--space-2); }
-.all-agents-search { width: 100%; }
+/* a search field of the app's own: a lens inside it, and a phone's thumb-sized height (the app's
+   34 px control reads cramped as the sheet's one field) */
+.all-agents-search {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+.all-agents-search > svg {
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.all-agents-search .input {
+  width: 100%;
+  height: calc(var(--control-h) + var(--space-2));
+  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
+  border-radius: var(--radius-lg);
+}
 .all-agents-group { min-width: 0; }
 .all-agents-folder { padding-top: var(--space-2); }
 .all-agents .agent-item { padding-right: 0; }

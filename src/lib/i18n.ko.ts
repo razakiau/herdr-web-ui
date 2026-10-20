@@ -1505,7 +1505,6 @@ export const KO: Record<string, string> = {
   "Answer": "답변",
   // a host chat's own actions (components/HostChatActions.tsx)
   "Rename…": "이름 바꾸기…",
-  "Rename chat…": "채팅 이름 바꾸기…",
   "Rename chat": "채팅 이름 바꾸기",
   "Chat name": "채팅 이름",
   "A chat needs a name.": "채팅 이름을 입력하세요.",

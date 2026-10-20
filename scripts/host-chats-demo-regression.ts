@@ -1259,9 +1259,12 @@ try {
         // the chat is a tab of its workspace now: the header names the workspace, never the chat's new name
         assert.equal((await page.locator(".app-header .context-title-text").innerText()).trim(), "checkout-api", "the header names the chat's workspace, not its new name");
         assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-3", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
-        // the header's ⋯: Rename chat… in the sheet, the same route
+        // the header's ⋯ on an open chat is the chat's own menu, as its tab's: none of a pane's items
         await page.getByRole("button", { name: "More", exact: true }).click();
-        await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename chat…" }).click();
+        await page.locator(".row-sheet").waitFor();
+        assert.deepEqual(await sheetItems(), ["Pin agent", "Rename…", "Mark as unread", "Mark as done", "Delete…"], "the header's ⋯ is the chat's menu, no pane items");
+        if (shots) { await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false); await page.screenshot({ path: join(shots, "r8-header-menu-390.png") }); }
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename…" }).click();
         const renameSheet = page.getByRole("dialog", { name: "Rename chat" });
         await renameSheet.getByRole("textbox", { name: "Chat name" }).fill("FICTIONAL named in the header");
         await renameSheet.getByRole("button", { name: "Save", exact: true }).click();
