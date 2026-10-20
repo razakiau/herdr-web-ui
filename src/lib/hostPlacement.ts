@@ -37,13 +37,21 @@ export const isLive = (row: HostChatRow): boolean => row.status === "working" ||
 
 /**
  * One PC's chats placed: live, unread, pinned or changed in the last 7 days, at most 10 (live and
- * pinned are never cut, so they can make more), newest first; archived ones never. Each goes to the
- * first workspace whose panes' cwds hold its folder exactly, else to its folder's row.
+ * pinned are never cut, so they can make more, nor is a pinned folder's newest chat), newest first;
+ * archived ones never. Each goes to the first workspace whose panes' cwds hold its folder exactly,
+ * else to its folder's row.
  */
-export function placeHostChats(rows: HostChatRow[], workspaces: { workspace_id: string; cwds: string[] }[], pinned: (s: string) => boolean, now: number): HostPlacement {
+export function placeHostChats(rows: HostChatRow[], workspaces: { workspace_id: string; cwds: string[] }[], pinned: (s: string) => boolean, now: number, pinnedFolders: ReadonlySet<string> = new Set()): HostPlacement {
   const since = now - RECENT_DAYS * DAY_MS;
   const candidates = newestFirst(rows).filter((row) => !row.archived && row.cwd !== null && row.cwd !== "");
-  const kept = (row: HostChatRow): boolean => isLive(row) || pinned(row.session);
+  // a pinned folder keeps its row through its newest chat, however old
+  const folderLeads = new Set<string>();
+  const led = new Set<string>();
+  for (const row of candidates) {
+    const folder = samePath(row.cwd!);
+    if (pinnedFolders.has(folder) && !led.has(folder)) { led.add(folder); folderLeads.add(row.session); }
+  }
+  const kept = (row: HostChatRow): boolean => isLive(row) || pinned(row.session) || folderLeads.has(row.session);
   let room = RECENT_MAX - candidates.filter(kept).length;
   const shown = candidates.filter((row) => {
     if (kept(row)) return true;
@@ -104,8 +112,8 @@ export function hostChatStatus(row: HostChatRow): "working" | "blocked" | "done"
  * One PC's placement as the sidebar and the tab strip draw it: its pinned chats are kept, and so is
  * the chat open now, so one opened from "All agents on <PC>…" stands as a tab while it is open.
  */
-export function pcPlacement(snapshot: Parameters<typeof workspaceCwds>[0], chats: HostChatRow[], pinned: (session: string) => boolean, open: string | null, now: number): HostPlacement {
-  return placeHostChats(chats, workspaceCwds(snapshot), (session) => session === open || pinned(session), now);
+export function pcPlacement(snapshot: Parameters<typeof workspaceCwds>[0], chats: HostChatRow[], pinned: (session: string) => boolean, open: string | null, now: number, pinnedFolders?: ReadonlySet<string>): HostPlacement {
+  return placeHostChats(chats, workspaceCwds(snapshot), (session) => session === open || pinned(session), now, pinnedFolders);
 }
 
 /** Where a placed chat stands: its workspace's id, or its folder; null when it is not placed. */

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, ListTree, MessageSquarePlus, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -9,9 +9,9 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
-import { currentSidebarPins, subscribeSidebarPins, hostChatPinKey } from "../lib/sidebarPins.ts";
+import { currentSidebarPins, subscribeSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
 import { useMinuteClock, type HostPc } from "../lib/hostChats.ts";
-import { foldPcs, pcPlacement } from "../lib/hostPlacement.ts";
+import { foldPcs, pcPlacement, samePath } from "../lib/hostPlacement.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
 import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
@@ -61,20 +61,25 @@ function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarA
 }
 /**
  * A Copilot folder's menu (a folder of the PC's agent host chats, AHP: no herdr workspace): its
- * sidebar row's ⋯, and the header's while one of its chats is open. New Copilot chat… in that
- * folder, the PC's All agents…, and with a folder, Copy path. A herdr workspace keeps its own menu,
- * whatever chats are tabs of it.
+ * sidebar row's ⋯, and the header's while one of its chats is open. Pin folder (as a workspace
+ * pins), New Copilot chat… in that folder, the PC's All agents…, and with a folder, Copy path. A
+ * herdr workspace keeps its own menu, whatever chats are tabs of it.
  */
-export function hostFolderItems({ pc, canStart, cwd, onNewHostChat, onAllAgents, onCopyPath }: {
-  pc: string; canStart: boolean; cwd: string | null; onNewHostChat(): void; onAllAgents(): void; onCopyPath?(cwd: string): void;
+export function hostFolderItems({ pc, canStart, cwd, pin, onNewHostChat, onAllAgents, onCopyPath }: {
+  pc: string; canStart: boolean; cwd: string | null; pin?: { pinned: boolean; toggle(): void }; onNewHostChat(): void; onAllAgents(): void; onCopyPath?(cwd: string): void;
 }, t: Translate): RowMenuItem[] {
   return [
+    ...(pin && cwd !== null ? [pin.pinned
+      ? { id: "unpin-folder", label: t("Unpin folder"), icon: PinOff, run: pin.toggle }
+      : { id: "pin-folder", label: t("Pin folder"), icon: Pin, run: pin.toggle }] : []),
     ...(canStart ? [{ id: "new-host-chat", label: t("New Copilot chat…"), icon: MessageSquarePlus, run: onNewHostChat }] : []),
     { id: "all-agents", label: t("All agents on {pc}…", { pc }), icon: ListTree, run: onAllAgents },
     ...(cwd !== null ? [{ id: "copy-path", label: t("Copy path"), icon: Copy, divider: true, run: () => (onCopyPath ?? copyPath)(cwd) }] : []),
   ];
 }
 const copyPath = (cwd: string): void => { void copyText(cwd); };
+/** The folders a PC's chats work in, as pins compare them: a folder pin stays while one is left, archived or not. */
+export const hostChatFolders = (chats: readonly { cwd: string | null }[]): Set<string> => new Set(chats.flatMap((chat) => chat.cwd ? [samePath(chat.cwd)] : []));
 
 export function MachineSidebar(props: Props) {
   const t = useT();
@@ -132,10 +137,14 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const openSession = props.selectedHostChat?.machineId === machine.id ? props.selectedHostChat.session : null;
   // a PC whose bridge has host chats: they stand as tabs of its workspaces, or as folder rows (lib/hostPlacement.ts)
-  const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, (session) => pins.includes(hostChatPinKey(machine.id, session)), openSession, now) : null;
+  const pinnedFolders = pinnedHostFolders(pins, machine.id);
+  const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, (session) => pins.includes(hostChatPinKey(machine.id, session)), openSession, now, new Set(pinnedFolders)) : null;
   // a host that is not up cannot make a chat: the sheet's list says what it needs
   const canStart = hostChats?.host?.state === "connected";
-  const hostItems = (cwd: string | null): RowMenuItem[] => hostFolderItems({ pc: machine.name, canStart, cwd, onNewHostChat: () => onNewHostChat(cwd), onAllAgents }, t);
+  const hostItems = (cwd: string | null): RowMenuItem[] => hostFolderItems({
+    pc: machine.name, canStart, cwd, onNewHostChat: () => onNewHostChat(cwd), onAllAgents,
+    pin: hostChats && cwd !== null ? { pinned: pinnedFolders.includes(samePath(cwd)), toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), machine.id, cwd, hostChatFolders(hostChats.chats))) } : undefined,
+  }, t);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`herdr-web-ui:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(machine.name);
@@ -210,7 +219,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props
     {error && <p className="machine-error" role="alert">{error}</p>}
     {!collapsed && <div className={online ? "" : "machine-offline"} inert={!online}>
       {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions}
-        hostChats={placement ? { placement, selected: openSession, onSelect: (session) => props.onSelectHostChat?.({ machineId: machine.id, session }), folderMenu: (cwd) => hostItems(cwd) } : undefined} /></MachineContext.Provider>}
+        hostChats={placement ? { placement, selected: openSession, onSelect: (session) => props.onSelectHostChat?.({ machineId: machine.id, session }), folderMenu: (cwd) => hostItems(cwd), pinnedFolders } : undefined} /></MachineContext.Provider>}
     </div>}
   </section>;
 }

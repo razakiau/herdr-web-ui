@@ -4,6 +4,7 @@
  * old PC's pin; a workspace's key marks itself as one, after the PC.
  */
 
+import { samePath } from "./hostPlacement.ts";
 import { placeBlock } from "./workspaceOrder.ts";
 
 const STORAGE_KEY = "herdr-web-ui:sidebar-agent-pins";
@@ -50,6 +51,36 @@ export function hostChatPinKey(machineId: string, session: string): string {
 export function isHostChatPinKey(key: string): boolean {
   const machineId = pinMachineId(key);
   return machineId !== null && key.startsWith(HOST_CHAT_MARK, machineId.length + 1);
+}
+
+/** what follows the PC in a Copilot folder's key (a folder of host chats no workspace works in) */
+const HOST_FOLDER_MARK = "folder:";
+
+/** A Copilot folder's pin: the PC, then the folder as placement compares it (one trailing slash dropped). */
+export function hostFolderPinKey(machineId: string, cwd: string): string {
+  return `${machineId}:${HOST_FOLDER_MARK}${samePath(cwd)}`;
+}
+
+export function isHostFolderPinKey(key: string): boolean {
+  const machineId = pinMachineId(key);
+  return machineId !== null && key.startsWith(HOST_FOLDER_MARK, machineId.length + 1);
+}
+
+/** This PC's pinned Copilot folders, in pin order. */
+export function pinnedHostFolders(keys: readonly string[], machineId: string): string[] {
+  const prefix = hostFolderPinKey(machineId, "");
+  return keys.flatMap((key) => key.startsWith(prefix) && key.length > prefix.length ? [key.slice(prefix.length)] : []);
+}
+
+/** A Copilot folder pinned or unpinned; this PC's folder pins whose folder has no chat left leave with it. */
+export function toggleHostFolderPin(keys: readonly string[], machineId: string, cwd: string, liveFolders: ReadonlySet<string>): string[] {
+  return toggleSidebarPin(pruneHostFolderPins(keys, machineId, liveFolders), hostFolderPinKey(machineId, cwd));
+}
+
+/** This PC's folder pins whose folder has no chat left leave, with a change of the user's (as workspace pins do). */
+export function pruneHostFolderPins(keys: readonly string[], machineId: string, liveFolders: ReadonlySet<string>): string[] {
+  const prefix = hostFolderPinKey(machineId, "");
+  return keys.filter((key) => !key.startsWith(prefix) || liveFolders.has(key.slice(prefix.length)));
 }
 
 /** This PC's pinned workspaces, in pin order. */
@@ -138,12 +169,12 @@ function pinMachineId(key: string): string | null {
 
 /**
  * The agent pins whose pane is gone from a loaded PC leave; workspace pins are the workspace list's
- * to prune, and host chats' are their own: a chat is not a pane, and its PC's list may not be in.
+ * to prune, and host chats' and Copilot folders' are their own: a chat is not a pane, and its PC's list may not be in.
  */
 export function pruneSidebarPins(keys: readonly string[], liveKeys: ReadonlySet<string>, machines: readonly { id: string; snapshot: object | null }[]): string[] {
   if (machines.length === 0) return [...keys];
   const loading = new Set(machines.filter((machine) => machine.snapshot === null).map((machine) => machine.id));
-  return keys.filter((key) => isWorkspacePinKey(key) || isHostChatPinKey(key) || liveKeys.has(key) || (pinMachineId(key) !== null && loading.has(pinMachineId(key)!)));
+  return keys.filter((key) => isWorkspacePinKey(key) || isHostChatPinKey(key) || isHostFolderPinKey(key) || liveKeys.has(key) || (pinMachineId(key) !== null && loading.has(pinMachineId(key)!)));
 }
 
 export interface WorkspaceGroup<W> { workspace: W; children: W[] }

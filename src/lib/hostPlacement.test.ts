@@ -62,6 +62,20 @@ describe("placeHostChats", () => {
     expect(placed.hidden).toBe(1);
   });
 
+  it("a pinned folder keeps a row past seven days through its newest chat", () => {
+    const rows = [chat("old-new", "/w/p/", 30 * DAY), chat("old-older", "/w/p", 40 * DAY), chat("other-old", "/w/o", 30 * DAY)];
+    const placed = placeHostChats(rows, [], none, NOW, new Set(["/w/p"]));
+    expect(placed.folders).toEqual([{ cwd: "/w/p", chats: [rows[0]!] }]);
+    expect(placed.hidden).toBe(2);
+  });
+
+  it("a pinned folder's chat is never cut by the ten", () => {
+    const rows = [...Array.from({ length: 12 }, (_, i) => chat(`r${i}`, "/w/r", (i + 1) * 60_000)), chat("p", "/w/p", 2 * DAY)];
+    const placed = placeHostChats(rows, [], none, NOW, new Set(["/w/p"]));
+    expect(placed.folders.find((folder) => folder.cwd === "/w/p")!.chats.map((row) => row.session)).toEqual(["p"]);
+    expect([...placed.tabs.values(), ...placed.folders.map((folder) => folder.chats)].flat().length).toBe(10);
+  });
+
   it("archived_never_placed", () => {
     const rows = [chat("gone", "/w/a", 1000, { archived: true, status: "working", unread: true }), chat("kept", "/w/a", 2000)];
     const placed = placeHostChats(rows, [{ workspace_id: "w1", cwds: ["/w/a"] }], (session) => session === "gone", NOW);
