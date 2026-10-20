@@ -10,6 +10,7 @@
  *   HERDR_WEB_NTFY_TOPIC       the topic                                             required
  *   HERDR_WEB_NTFY_TOKEN       an access token (tk_…), or HERDR_WEB_NTFY_TOKEN_FILE  optional
  *   HERDR_WEB_NTFY_CLICK_URL   this app's address: a tap opens the pane there        optional
+ *   HERDR_WEB_NTFY_ICON        an image URL the phone shows beside each alert        optional
  *   HERDR_WEB_NTFY_INPUT       on|off: an agent waiting on you (default on)
  *   HERDR_WEB_NTFY_DONE        off|long|always: a finished turn (default long)
  */
@@ -25,16 +26,24 @@ export interface NtfyConfig {
   topic: string;
   token: string | null;
   click: string | null;
+  /** the phone fetches it itself: a public http(s) address */
+  icon: string | null;
   alerts: AlertPrefs;
 }
 
-/** null: not configured. Throws on a URL that is not http(s), so a typo fails the start, not every alert. */
+const httpUrl = (name: string, value: string): string => {
+  const parsed = new URL(value);
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error(`${name} must be http(s): ${parsed.protocol}`);
+  return value;
+};
+
+/** null: not configured. Throws on a URL (or icon) that is not http(s), so a typo fails the start, not every alert. */
 export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): NtfyConfig | null {
   const url = env["HERDR_WEB_NTFY_URL"]?.trim();
   const topic = env["HERDR_WEB_NTFY_TOPIC"]?.trim();
   if (!url || !topic) return null;
-  const parsed = new URL(url);
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error(`HERDR_WEB_NTFY_URL must be http(s): ${parsed.protocol}`);
+  httpUrl("HERDR_WEB_NTFY_URL", url);
+  const icon = env["HERDR_WEB_NTFY_ICON"]?.trim();
   const file = env["HERDR_WEB_NTFY_TOKEN_FILE"]?.trim();
   const token = (file ? readFileSync(file, "utf8") : env["HERDR_WEB_NTFY_TOKEN"] ?? "").trim();
   const click = env["HERDR_WEB_NTFY_CLICK_URL"]?.trim();
@@ -44,6 +53,7 @@ export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): 
     topic,
     token: token || null,
     click: click ? click.replace(/\/+$/, "") : null,
+    icon: icon ? httpUrl("HERDR_WEB_NTFY_ICON", icon) : null,
     alerts: parseAlerts({ input: input === "off" ? false : input === "on" ? true : DEFAULT_ALERTS.input, done: env["HERDR_WEB_NTFY_DONE"]?.trim() }),
   };
 }
@@ -86,6 +96,7 @@ export async function postNtfy(config: NtfyConfig, alert: NtfyAlert): Promise<bo
     priority: PRIORITY[alert.status] ?? 3,
     ...(tag ? { tags: [tag] } : {}),
     ...(config.click ? { click: clickFor(config.click, alert) } : {}),
+    ...(config.icon ? { icon: config.icon } : {}),
   };
   try {
     const response = await fetch(config.url, {

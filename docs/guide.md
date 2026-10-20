@@ -531,6 +531,7 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_NTFY_TOPIC` | unset | The ntfy topic the alerts go to |
 | `HERDR_WEB_NTFY_TOKEN` / `HERDR_WEB_NTFY_TOKEN_FILE` | unset | An ntfy access token (`tk_…`), or a file holding one, for a topic that needs it |
 | `HERDR_WEB_NTFY_CLICK_URL` | unset | This app's address: tapping an ntfy alert opens its pane there |
+| `HERDR_WEB_NTFY_ICON` | unset | An image URL ntfy shows beside each alert; the phone fetches it, so it must be reachable from there |
 | `HERDR_WEB_NTFY_INPUT` | `on` | `off` posts no alert for an agent waiting on you |
 | `HERDR_WEB_NTFY_DONE` | `long` | A finished turn: `off`, `long` (only after a turn that worked a minute or more) or `always` |
 | `HERDR_WEB_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |

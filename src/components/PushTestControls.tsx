@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { ApiError } from "../lib/api.ts";
+import { useEffect, useState } from "react";
+import { ApiError, fetchNtfyTopic } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
-import { pushSupported, testDevicePush } from "../lib/push.ts";
+import { ntfyLine, pushSupported, testDevicePush } from "../lib/push.ts";
 import { useSettings } from "../lib/settings.ts";
 
 type Result = Awaited<ReturnType<typeof testDevicePush>> | "gone" | "failed" | "sending" | null;
@@ -14,6 +14,13 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
   const denied = globalThis.Notification?.permission === "denied";
   const busy = result === "sending";
   const enable = !settings.alertsOn || result === "missing" || result === "gone" || result === "permission";
+  // the deployment's own ntfy topic, set on the server, not here: said, not offered as a switch
+  const [ntfy, setNtfy] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchNtfyTopic().then((topic) => { if (live) setNtfy(ntfyLine(topic, t)); }, () => {});
+    return () => { live = false; };
+  }, [t]);
 
   const send = async (repair: boolean) => {
     setResult("sending");
@@ -50,6 +57,7 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
       {enable && supported && !denied && <div className="settings-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void send(true)}>{t("Turn alerts on again")}</button>
       </div>}
+      {ntfy && <p className="settings-hint settings-ntfy">{ntfy}</p>}
     </div>
   );
 }

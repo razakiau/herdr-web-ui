@@ -1564,4 +1564,9 @@ export const KO: Record<string, string> = {
   "Couldn't try again: {reason}": "다시 시도할 수 없습니다: {reason}",
   "The chat opens in this folder: write your first message there.": "이 폴더에서 채팅이 열립니다. 첫 메시지는 거기서 작성하세요.",
   "Thinking": "생각하는 중",
+  "every finished turn": "끝난 모든 턴",
+  "long turns": "긴 턴",
+  "questions and {done}": "질문과 {done}",
+  "questions": "질문",
+  "This server also posts alerts to the ntfy topic {topic}: {what}.": "이 서버는 알림을 ntfy 주제 {topic}에도 보냅니다: {what}.",
 };
