@@ -9,8 +9,9 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
-import { currentSidebarPins, subscribeSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
-import { useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
+import type { HostPc } from "../lib/hostChats.ts";
+import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
 import { foldPcs, pcPlacement, samePath } from "../lib/hostPlacement.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
@@ -133,12 +134,13 @@ export function MachineSidebar(props: Props) {
 
 function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onAllAgents(): void }) {
   const t = useT();
-  const now = useMinuteClock();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
   const openSession = props.selectedHostChat?.machineId === machine.id ? props.selectedHostChat.session : null;
-  // a PC whose bridge has host chats: they stand as tabs of its workspaces, or as folder rows (lib/hostPlacement.ts)
+  // a PC whose bridge has host chats: the open ones stand as tabs of its workspaces, or of its open
+  // agent host workspaces (lib/hostPlacement.ts)
   const pinnedFolders = pinnedHostFolders(pins, machine.id);
-  const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, (session) => pins.includes(hostChatPinKey(machine.id, session)), openSession, now, new Set(pinnedFolders)) : null;
+  const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, hostWorkspaces[machine.id], openSession) : null;
   // a host that is not up cannot make a chat: the sheet's list says what it needs
   const canStart = hostChats?.host?.state === "connected";
   const hostItems = (cwd: string | null): RowMenuItem[] => hostFolderItems({

@@ -6,6 +6,7 @@
  */
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { sanitizeHostWorkspaces, type HostWorkspace, type HostWorkspaceState, type PcHostWorkspaces } from "../../shared/host-workspaces.ts";
+import { hostChatLive, type HostPc } from "./hostChats.ts";
 import { isLive, samePath } from "./hostPlacement.ts";
 
 export { sanitizeHostWorkspaces };
@@ -104,6 +105,26 @@ export function seedPc(chats: readonly HostChatRow[], pinnedFolders: ReadonlySet
   }
   const shown = chats.find((row) => row.session === onScreen && usable(row));
   return shown ? openTab(pc, shown) : pc;
+}
+
+/**
+ * Whether to seed a PC now: nothing saved for it, and a list its connected host just gave (a host
+ * that is not up, or a list that failed, says nothing about which chats exist).
+ */
+export function shouldSeed(stored: HostWorkspaceState, machineId: string, read: HostPc | undefined): boolean {
+  return stored[machineId] === undefined && hostChatLive(read);
+}
+
+/**
+ * A PC's saved state brought up to date with the list its connected host just gave: seeded the
+ * first time (seedPc), else its gone and archived tabs dropped (prunePc). The same object when
+ * nothing changed, so a caller writes only a change.
+ */
+export function upkeepPc(stored: HostWorkspaceState, machineId: string, read: HostPc | undefined, pinnedFolders: ReadonlySet<string>, onScreen: string | null): HostWorkspaceState {
+  if (!hostChatLive(read)) return stored;
+  const was = stored[machineId];
+  const next = was === undefined ? seedPc(read!.chats, pinnedFolders, onScreen) : prunePc(was, read!.chats);
+  return next === was ? stored : { ...stored, [machineId]: next };
 }
 
 const STORAGE_KEY = "herdr-web-ui:host-workspaces";

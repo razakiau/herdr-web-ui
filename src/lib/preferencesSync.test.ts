@@ -92,9 +92,10 @@ describe("preferences sync", () => {
     expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toBeNull();
     const closed = { m: { open: [] } };
     expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: closed })).toEqual({ settings: {}, hostWorkspaces: closed });
-    // the server has held none: they ride the first change, and alone they wait
+    // the server has held none: a page with nothing open writes nothing, and what was opened goes out on its own
     const unknown: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null };
-    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toBeNull();
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: {} })).toBeNull();
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toEqual({ settings: {}, hostWorkspaces: open });
     expect(preferencesChange(unknown, { settings: light, pins: [], hostWorkspaces: open })).toEqual({ settings: { theme: "light" }, hostWorkspaces: open });
   });
 

@@ -27,10 +27,11 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
-import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs, useMinuteClock } from "./lib/hostChats.ts";
+import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
+import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, upkeepPc } from "./lib/hostWorkspaces.ts";
 import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleHostFolderPin, toggleSidebarPin } from "./lib/sidebarPins.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
@@ -1066,12 +1067,20 @@ export function App() {
     setSelectedHostChat(null);
     setAutoSelected(true);
   }, [openHostKey, openHostLive]);
-  const hostNow = useMinuteClock();
-  // where the selected PC's host chats stand (lib/hostPlacement.ts): the open one is kept placed
-  const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [],
-    (session) => hostPins.includes(hostChatPinKey(selectedMachineId, session)),
-    selectedHostChat?.machineId === selectedMachineId ? selectedHostChat.session : null, hostNow,
-    new Set(pinnedHostFolders(hostPins, selectedMachineId))), [snapshot, hostChats, hostPins, selectedMachineId, selectedHostChat, hostNow]);
+  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
+  // each PC's open agent host workspaces kept up with its list (lib/hostWorkspaces.ts upkeepPc):
+  // seeded the first time it is seen, its gone chats' tabs dropped; only a live list counts
+  useEffect(() => {
+    let next = currentHostWorkspaces();
+    for (const [machineId, pc] of hostChats) {
+      const onScreen = selectedHostChat?.machineId === machineId ? selectedHostChat.session : null;
+      next = upkeepPc(next, machineId, pc, new Set(pinnedHostFolders(hostPins, machineId)), onScreen);
+    }
+    setHostWorkspaces(next);
+  }, [hostChats, hostPins, selectedHostChat]);
+  // where the selected PC's host chats stand (lib/hostPlacement.ts): the open tabs, and the one on screen
+  const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [], hostWorkspaces[selectedMachineId],
+    selectedHostChat?.machineId === selectedMachineId ? selectedHostChat.session : null), [snapshot, hostChats, hostWorkspaces, selectedMachineId, selectedHostChat]);
   const hostHome = selectedHostChat !== null && selectedHostChat.machineId === selectedMachineId ? hostChatHome(hostPlacement, selectedHostChat.session) : null;
   // a host chat open in a workspace: that workspace's strip, with none of its panes' tabs open
   const hostWorkspace = hostHome && "workspace" in hostHome ? snapshot?.workspaces.find((workspace) => workspace.workspace_id === hostHome.workspace) ?? null : null;

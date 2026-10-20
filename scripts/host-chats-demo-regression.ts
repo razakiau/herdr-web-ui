@@ -301,6 +301,10 @@ try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on" })));
+        // a returning user: Build PC's docs folder and its repo's build chat were opened before (lib/hostWorkspaces.ts)
+        await context.addInitScript((session) => {
+          if (localStorage.getItem("herdr-web-ui:host-workspaces") === null) localStorage.setItem("herdr-web-ui:host-workspaces", JSON.stringify({ remote: { open: [{ cwd: "/tmp/fictional-repo", tabs: [session] }, { cwd: "/tmp/fictional-docs", tabs: ["fictional-session-0"] }] } }));
+        }, SESSION);
         // the browser's speech engine, as a phone's: interim words as they come, then the final ones
         await context.addInitScript(() => {
           class FakeSpeech {

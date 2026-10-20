@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import type { HostPc } from "./hostChats.ts";
+import { upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -87,5 +88,30 @@ describe("agent host workspaces", () => {
       if (original) Object.defineProperty(globalThis, "localStorage", original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;
     }
+  });
+
+  it("seeds_only_after_a_list", () => {
+    const read = { host: { state: "connected" } as HostPc["host"], chats: [] };
+    expect(shouldSeed({}, "m", undefined)).toBe(false);
+    // a host that is not up lists nothing: seeding then would save an empty PC for good
+    expect(shouldSeed({}, "m", { host: null, chats: [] })).toBe(false);
+    expect(shouldSeed({}, "m", read)).toBe(true);
+    expect(shouldSeed({ m: { open: [] } }, "m", read)).toBe(false);
+    // a list kept from before the bridge answered again is not a read
+    expect(shouldSeed({}, "m", { ...read, stale: true })).toBe(false);
+  });
+
+  it("upkeep_seeds_then_prunes_only_from_a_live_list", () => {
+    const live = (chats: HostChatRow[]): HostPc => ({ host: { state: "connected" } as HostPc["host"], chats });
+    const chats = [row("w", "/a", { status: "working" }), row("i", "/b")];
+    const seeded = upkeepPc({}, "m", live(chats), new Set(), null);
+    expect(seeded.m!.open).toEqual([{ cwd: "/a", tabs: ["w"] }]);
+    // nothing changed: the same object, so nothing is written
+    expect(upkeepPc(seeded, "m", live(chats), new Set(), null)).toBe(seeded);
+    // a failed list or a host that is down prunes nothing
+    expect(upkeepPc(seeded, "m", { ...live([]), stale: true }, new Set(), null)).toBe(seeded);
+    expect(upkeepPc(seeded, "m", { host: null, chats: [] }, new Set(), null)).toBe(seeded);
+    // a live list without the chat drops its tab, and the workspace with its last
+    expect(upkeepPc(seeded, "m", live([row("i", "/b")]), new Set(), null)).toEqual({ m: { open: [] } });
   });
 });

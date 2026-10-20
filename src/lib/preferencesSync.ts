@@ -38,10 +38,11 @@ export function preferencesChange(base: Baseline, local: Local): PreferencesChan
   const now = sharedSettings(local.settings);
   const settings = Object.fromEntries(Object.entries(now).filter(([key, value]) => !same(value, base.settings[key as SharedSettingKey])));
   const pinsChanged = base.pins !== null && !same(local.pins, base.pins);
-  // the open host workspaces follow the pins' rule; a caller that keeps none (old tests, a page
-  // without them) leaves them out
+  // the open host workspaces: sent when they differ from what the server holds. Unlike pins they go
+  // out alone while it holds none: a PC's first seed (lib/hostWorkspaces.ts) is new, and waiting for
+  // a setting to change would leave each device with its own. A page with none open writes nothing.
   const known = base.hostWorkspaces ?? null;
-  const workspacesChanged = local.hostWorkspaces !== undefined && known !== null && !same(local.hostWorkspaces, known);
+  const workspacesChanged = local.hostWorkspaces !== undefined && (known === null ? Object.keys(local.hostWorkspaces).length > 0 : !same(local.hostWorkspaces, known));
   if (Object.keys(settings).length === 0 && !pinsChanged && !workspacesChanged) return null;
   const sendWorkspaces = local.hostWorkspaces !== undefined && (workspacesChanged || known === null);
   return {
