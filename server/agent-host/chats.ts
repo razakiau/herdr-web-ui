@@ -403,7 +403,24 @@ function questionParts(part: InputRequestResponsePart, running: boolean): Conver
   if (questions.length === 0) {
     return [{ kind: "question", text: request.message ?? "", options: [], chosen: [], custom: null, skipped: !accepted }];
   }
-  return questions.map((question) => questionPart(question, request.answers?.[question.id], accepted));
+  // the message a form came with (an ask_user report) leads the first question, once for the form
+  const report = request.message !== undefined && request.message.trim() !== "" ? { report: request.message } : {};
+  return questions.map((question, index) => ({ ...questionPart(question, request.answers?.[question.id], accepted), ...(index === 0 ? report : {}) }) as ConversationPart);
+}
+
+/**
+ * The ask calls whose form the turn also holds as an input request (VS Code's ask_user with a
+ * requestedSchema): that request reads as the report and its questions, so the call adds nothing.
+ */
+function askedThroughForm(parts: readonly ResponsePart[]): Set<string> {
+  const messages = new Set(parts.flatMap((part) => part.kind === ResponsePartKind.InputRequest && (part.request.questions?.length ?? 0) > 0 && part.request.message ? [part.request.message] : []));
+  return new Set(parts.flatMap((part) => {
+    if (part.kind !== ResponsePartKind.ToolCall || !ASK_TOOLS.has(part.toolCall.toolName)) return [];
+    try {
+      const input: unknown = JSON.parse("toolInput" in part.toolCall && typeof part.toolCall.toolInput === "string" ? part.toolCall.toolInput : "");
+      return isRecord(input) && typeof input["message"] === "string" && messages.has(input["message"]) ? [part.toolCall.toolCallId] : [];
+    } catch { return []; }
+  }));
 }
 
 /**
@@ -448,7 +465,9 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
     // resumable one offers Try Again (chat/turnResume); an error the host retried past is history
     const stoppedAt = "state" in turn && turn.state === TurnState.Error ? turn.responseParts.at(-1) : undefined;
     const latest = !chat.activeTurn && turn === chat.turns.at(-1);
-    const parts = turn.responseParts.flatMap((part): ConversationPart[] => part.kind !== ResponsePartKind.Error ? partsOf(part, read)
+    const viaForm = askedThroughForm(turn.responseParts);
+    const parts = turn.responseParts.flatMap((part): ConversationPart[] => part.kind === ResponsePartKind.ToolCall && viaForm.has(part.toolCall.toolCallId) ? []
+      : part.kind !== ResponsePartKind.Error ? partsOf(part, read)
       : part !== stoppedAt ? []
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
     return [

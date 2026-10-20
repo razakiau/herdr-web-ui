@@ -1588,6 +1588,5 @@ export const KO: Record<string, string> = {
   "This server's ntfy topic gets no alerts.": "이 서버의 ntfy 토픽은 알림을 받지 않습니다.",
   "What to tell you": "알릴 내용",
   "ntfy · {topic}": "ntfy · {topic}",
-  "Show report": "보고서 보기",
-  "Hide report": "보고서 숨기기",
+  "Report:": "보고서:",
 };

@@ -84,6 +84,27 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("an ask_user form is its report once, then one question per field: the tool call adds no entry", () => {
+    const report = "FICTIONAL **Shipped** the fix.\n\n- one";
+    const state = chat({ turns: [{
+      id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL go"),
+      responseParts: [
+        { kind: "toolCall", toolCall: {
+          status: "completed", toolCallId: "a1", toolName: "ask_user", displayName: "ask_user", invocationMessage: "ask_user",
+          toolInput: JSON.stringify({ message: report, requestedSchema: { properties: { color: {}, size: {} } } }), confirmed: "not-needed", success: true,
+          pastTenseMessage: "Ask User", content: [{ type: "text", text: "User responded:\ncolor: Blue\nsize: FICTIONAL big" }],
+        } },
+        { kind: "inputRequest", response: "accept", request: {
+          id: "req-1", message: report, questions: [QUESTION, SECOND],
+          answers: { "q-color": { state: "submitted", value: { kind: "selected", value: "blue" } }, "q-size": { state: "submitted", value: { kind: "text", value: "FICTIONAL big" } } },
+        } },
+      ],
+    }] });
+    const parts = turnsFrom(state)[1]!.parts;
+    expect(parts.map((part) => part.kind === "question" ? part.text : part.kind)).toEqual(["FICTIONAL which color?", "FICTIONAL what size?"]);
+    expect(parts.map((part) => part.kind === "question" ? part.report ?? null : null)).toEqual([report, null]);
+  });
+
   it("an answered input request reads back as a question part, not as text", () => {
     const state = chat({ turns: [{
       id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL ask"),

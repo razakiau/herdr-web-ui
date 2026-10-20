@@ -1592,6 +1592,5 @@ export const ZH: Record<string, string> = {
   "This server's ntfy topic gets no alerts.": "此服务器的 ntfy 主题不接收提醒。",
   "What to tell you": "提醒内容",
   "ntfy · {topic}": "ntfy · {topic}",
-  "Show report": "显示报告",
-  "Hide report": "隐藏报告",
+  "Report:": "报告：",
 };

@@ -1963,23 +1963,28 @@ button.question-summary-answer { cursor: pointer; }
 .question-summary-option.is-selected { background: var(--bg-hover); color: var(--text); }
 .question-summary-option-label { flex: 1; min-width: 0; }
 .question-summary-option-check { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
-/* the report an ask_user call carried: one muted line that opens to the message, read as the reply reads */
+/* the report an ask_user form came with, above its questions: one line, as "Question:" reads,
+   that opens to the message read as the reply reads */
 .question-summary-report { display: flex; flex-direction: column; min-width: 0; }
 .question-summary-report-toggle {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
   align-self: flex-start;
   padding: 0;
   border: 0;
   background: none;
   color: var(--text-dim);
   font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 .question-summary-report-toggle:hover { color: var(--text); }
 .question-summary-report-toggle:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); border-radius: var(--radius-sm); }
-.question-summary-report-toggle .work-row-caret svg { width: var(--fs-sm); height: var(--fs-sm); }
+.question-summary-report-toggle .work-row-caret svg { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
+.question-summary-report + .question-summary-question { margin-top: var(--space-1); }
 .question-summary-report-body {
   min-width: 0;
   margin-top: var(--space-1);

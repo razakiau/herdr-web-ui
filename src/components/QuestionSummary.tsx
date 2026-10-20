@@ -4,7 +4,7 @@
  * one line, then under an L connector a comment icon and "Answered: {answer}", which opens to the
  * options with a check by the chosen one, or "Custom answer: {text}". Skipped: "Skipped question".
  */
-import { Check, ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FileText, MessageSquare, X } from "lucide-react";
 
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
@@ -20,6 +20,12 @@ export type QuestionPart = Extract<ConversationPart, { kind: "question" }>;
 export function answerText(part: QuestionPart, multi = part.multi === true): string {
   if (multi) return [...part.chosen, ...(part.custom !== null ? [part.custom] : [])].join(", ");
   return part.custom ?? part.chosen.join(", ");
+}
+
+/** A report's first line as plain words: its heading's or list's mark and emphasis dropped. */
+export function reportHeadline(report: string): string {
+  const line = report.split("\n").map((each) => each.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, "").replace(/(\*\*|__|\*|_|`)(.+?)\1/g, "$2").trim()).find((each) => each !== "");
+  return (line ?? "").replace(/[:\s]+$/, "");
 }
 
 /** `memoryKey`: where the chat's row memory keeps it opened (one per question of a turn). */
@@ -42,17 +48,22 @@ export function QuestionSummary({ part, memoryKey = "question" }: { part: Questi
       : <><span className="question-summary-prefix">{t("Answered:")}</span> <span className="question-summary-answer-value" title={answer}>{answer}</span></>}
     {canOpen && <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>}
   </>;
+  // the report a form came with leads it, folded to its first line; the question follows, unless
+  // it is only that line again (an ask with no form: its message is the question and the report)
+  const headline = report !== null ? reportHeadline(report) : "";
+  const showQuestion = report === null || headline !== question;
   return <div className="question-summary" role="group" aria-label={t("Answered chat questions")}>
-    <p className="question-summary-question">
-      <span className="question-summary-prefix">{t("Question:")}</span> <span className="question-summary-question-value" title={question}>{question}</span>
-    </p>
     {report !== null && <div className="question-summary-report">
       <button type="button" className="question-summary-report-toggle" aria-expanded={reportShown === true} onClick={() => setReportShown(reportShown !== true)}>
+        <FileText className="question-summary-answer-icon" aria-hidden="true" />
+        <span className="question-summary-prefix">{t("Report:")}</span> <span className="question-summary-question-value" title={headline}>{headline}</span>
         <span className="work-row-caret" aria-hidden="true">{reportShown === true ? <ChevronDown /> : <ChevronRight />}</span>
-        {reportShown === true ? t("Hide report") : t("Show report")}
       </button>
       {reportShown === true && <div className="question-summary-report-body"><Markdown style="vscode">{report}</Markdown></div>}
     </div>}
+    {showQuestion && <p className="question-summary-question">
+      <span className="question-summary-prefix">{t("Question:")}</span> <span className="question-summary-question-value" title={question}>{question}</span>
+    </p>}
     <div className="question-summary-decision">
       {canOpen
         ? <button type="button" className="question-summary-answer" aria-expanded={open} onClick={() => setOpen(!open)}>{label}</button>
