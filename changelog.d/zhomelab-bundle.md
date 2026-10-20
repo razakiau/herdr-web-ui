@@ -23,3 +23,4 @@
 - zhomelab bundle 1019: the model picker keeps its search and provider tabs pinned at the top, each tab with its model count.
 - zhomelab bundle 1020: Fork Conversation on a Copilot chat request (as VS Code 1.142), and forks made in VS Code listed as chats of their own.
 - zhomelab bundle 1021: a Copilot folder's header ⋯ is its row's menu; All agents has a real search field, folder pills and VS Code's date groups; alerts also go to an ntfy topic, and host chats alert (asks, finishes, errors) with a tap that opens the chat.
+- zhomelab bundle 1022: a chat row's age counts calendar days like its group; reply text between tool calls wraps and wide tables scroll inside it; All agents scrolls from any row (a stroke on a row's text no longer scrolls the chat behind); ntfy alerts carry an icon, and Settings → Alerts names the ntfy topic.
