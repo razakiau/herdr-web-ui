@@ -145,7 +145,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await context.setExtraHTTPHeaders({ [RELOADED]: "1" });
     await page.reload();
     await page.locator(".sidebar-footer").waitFor();
-    assert.deepEqual(afterReload, [], "a hidden strip asks for nothing");
+    assert.deepEqual(afterReload, [], `a hidden strip asks for nothing: ${JSON.stringify(afterReload)}`);
     await context.setExtraHTTPHeaders({});
     assert.deepEqual(errors, []);
   } finally {
@@ -188,9 +188,12 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
 
 /** An OmniRoute gateway's accounts: opt-in per provider, New until Settings is left, searchable past eight, closest-first in the panel. */
 const GATEWAY_IDS = ["claude", "copilot", "opencode", "glm", "kimi-coding", "minimax", "deepseek", "kiro", "qoder", "nanogpt"];
+// as OmniRoute reports them: Claude's plan is an id, OpenCode's repeats the provider
+const GATEWAY_PLANS: Record<string, string> = { claude: "default_claude_max_20x", opencode: "OpenCode Go", glm: "coding_lite" };
+const LONG_ACCOUNT = "default.workspace.account.with.a.long.name@example.com";
 const gatewayReport = (): UsageReport => ({ providers: [
   { id: "codex", key: "codex:me", account: "me@example.com", plan: "pro", problem: null, checked_at: at(0), windows: [{ kind: "week", scope: null, used_percent: 20, resets_at: at(90), starts_at: null }] },
-  ...GATEWAY_IDS.map((id, index) => ({ id, key: `${id}:omniroute:c${index}`, account: index === 0 ? "work@example.com" : null, plan: null, problem: null, checked_at: at(-0.1),
+  ...GATEWAY_IDS.map((id, index) => ({ id, key: `${id}:omniroute:c${index}`, account: index === 0 ? LONG_ACCOUNT : null, plan: GATEWAY_PLANS[id] ?? null, problem: null, checked_at: at(-0.1),
     windows: [{ kind: "week" as const, scope: null, used_percent: 10 + index * 8, resets_at: at(100), starts_at: null }] })),
 ] });
 
@@ -246,10 +249,17 @@ async function checkOmniRouteUsage(browser: Browser, origin: string): Promise<vo
     const panel = page.getByRole("dialog", { name: "Subscription usage", exact: true });
     await panel.waitFor();
     const names = async () => (await panel.locator(".usage-provider").evaluateAll((sections) => sections.map((section) => section.getAttribute("aria-label"))));
-    assert.deepEqual(await names(), ["Codex · me@example.com", "Claude · work@example.com", "GLM"]);
+    assert.deepEqual(await names(), ["Codex · me@example.com", `Claude · ${LONG_ACCOUNT}`, "GLM"]);
     assert.equal(await panel.locator(".usage-source").count(), 2, "the gateway's accounts say where they come from");
+    assert.deepEqual(await panel.locator(".usage-plan").allTextContents(), ["Pro", "Max 20x", "Coding Lite"], "plans as their providers sell them, not raw ids");
+    // a long account or plan stays in its line: nothing sideways, the source still in view
+    assert.equal(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth), true, "the panel never scrolls sideways");
+    assert.equal(await panel.locator(".usage-provider-head").evaluateAll((heads) => heads.every((head) => [...head.querySelectorAll("*")].every((child) => {
+      const box = child.getBoundingClientRect(), outer = head.getBoundingClientRect();
+      return box.right <= outer.right + 0.5 && box.height <= 24;
+    }))), true, "every header part fits the card on one line");
     await panel.getByRole("button", { name: "Your order", exact: true }).click();
-    assert.deepEqual(await names(), ["GLM", "Codex · me@example.com", "Claude · work@example.com"], "closest to a limit first");
+    assert.deepEqual(await names(), ["GLM", "Codex · me@example.com", `Claude · ${LONG_ACCOUNT}`], "closest to a limit first");
     assert.equal(await panel.getByRole("button", { name: "Closest first", exact: true }).getAttribute("aria-pressed"), "true");
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-omniroute-panel-phone.png") });
     assert.deepEqual(errors, []);
