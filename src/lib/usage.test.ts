@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
-import { closestFirst, composerUsage, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, newOmniRouteProviders, orderProviders, providerForAgent, providerMark, providerName, shownUsages, statusWindows, tightestWindow, usageName, viaOmniRoute, windowLabel } from "./usage.ts";
+import { closestFirst, composerUsage, planLabel, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, newOmniRouteProviders, orderProviders, providerForAgent, providerMark, providerName, shownUsages, statusWindows, tightestWindow, usageName, viaOmniRoute, windowLabel } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const window = (used_percent: number, kind: UsageWindow["kind"] = "week", scope: string | null = null): UsageWindow => ({ kind, scope, used_percent, resets_at: null, starts_at: null });
@@ -128,5 +128,22 @@ describe("OmniRoute accounts", () => {
     const c = provider("codex", [], "c");
     const d = provider("codex", [window(50)], "d");
     expect(closestFirst([c, b, a, d]).map((usage) => usage.account)).toEqual(["a", "b", "d", "c"]);
+  });
+});
+
+describe("planLabel", () => {
+  it("names a plan the way its provider sells it, short enough for a pill", () => {
+    expect(planLabel("default_claude_max_20x", "claude")).toBe("Max 20x");
+    expect(planLabel("claude_pro", "claude")).toBe("Pro");
+    expect(planLabel("default_raven", "claude")).toBe("Raven");
+    expect(planLabel("OpenCode Go", "opencode")).toBe("Go");
+    expect(planLabel("business", "copilot")).toBe("Business");
+    expect(planLabel("max", "claude")).toBe("Max");
+  });
+  it("shows no pill for an empty plan or one that only repeats the provider", () => {
+    expect(planLabel(null, "claude")).toBeNull();
+    expect(planLabel("  ", "claude")).toBeNull();
+    expect(planLabel("OpenCode", "opencode")).toBeNull();
+    expect(planLabel("default", "claude")).toBeNull();
   });
 });

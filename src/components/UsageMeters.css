@@ -126,8 +126,6 @@
 
 .usage-source {
   flex: none;
-  color: var(--text-dim);
-  font-size: var(--fs-2xs);
   white-space: nowrap;
 }
 
@@ -147,26 +145,23 @@
   border-top: var(--hairline) solid var(--border);
 }
 
+/* mark, name and plan on the first line; whose account and where it was read on the second, so a
+   long account name ellipsizes in its own line instead of pushing the source off the card */
 .usage-provider-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) auto 1fr;
   align-items: center;
-  gap: var(--space-2);
+  column-gap: var(--space-2);
+  row-gap: 2px;
   min-width: 0;
 }
 
 .usage-provider-name {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-strong);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
-}
-
-.usage-account {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: var(--fs-2xs);
-  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -174,14 +169,41 @@
 .usage-plan {
   display: inline-flex;
   align-items: center;
+  max-width: 12ch;
   height: var(--chip-h);
   padding: 0 var(--space-2);
+  overflow: hidden;
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-pill);
   color: var(--text-dim);
-  font-family: var(--font-mono);
   font-size: var(--fs-2xs);
-  text-transform: capitalize;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* under the name, starting where the name does (past the mark) */
+.usage-provider-meta {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+}
+
+.usage-account {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-account + .usage-source::before {
+  content: "·";
+  margin-right: var(--space-2);
 }
 
 .usage-note {

@@ -41,6 +41,17 @@ export function providerMark(id: UsageProviderName): string {
   return isKnown(id) ? PROVIDER_MARK[id] : id;
 }
 
+/**
+ * A plan as a pill can hold it: providers report ids ("default_claude_max_20x", "OpenCode Go"),
+ * so the words that only repeat the provider or say "default" go, and the rest is title-cased.
+ * Null when nothing is left: the pill would only repeat the name next to it.
+ */
+export function planLabel(plan: string | null, id: UsageProviderName): string | null {
+  const repeats = new Set(["default", id.toLowerCase(), ...providerName(id).toLowerCase().split(/\s+/)]);
+  const words = (plan ?? "").toLowerCase().split(/[\s_-]+/).filter((word) => word && !repeats.has(word));
+  return words.length ? words.map((word) => word[0]!.toUpperCase() + word.slice(1)).join(" ") : null;
+}
+
 /** An account read through an OmniRoute gateway, not this PC's own sign-in or the Hub's. */
 export const viaOmniRoute = (usage: Pick<ProviderUsage, "key" | "id">): boolean => usage.key.startsWith(`${usage.id}:omniroute:`);
 

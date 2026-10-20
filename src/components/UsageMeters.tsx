@@ -6,7 +6,7 @@ import "./UsageMeters.css";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useSettings, type UsageCount, type UsageGlance } from "../lib/settings.ts";
-import { formatPercent, formatResetIn, glanceWindow, HIGH_PERCENT, closestFirst, meterPercent, meterText, providerMark, providerName, shownUsages, usageName, viaOmniRoute, useUsage, windowLabel } from "../lib/usage.ts";
+import { formatPercent, formatResetIn, glanceWindow, HIGH_PERCENT, closestFirst, meterPercent, meterText, planLabel, providerMark, providerName, shownUsages, usageName, viaOmniRoute, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 
 /** chips the strip holds when its width cannot be measured (before layout, or a test without one) */
@@ -51,14 +51,20 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
   const t = useT();
   const name = providerName(usage.id);
   const problem = problemText(t, usage);
+  const plan = planLabel(usage.plan, usage.id);
+  const via = viaOmniRoute(usage);
   return (
     <section className="usage-provider" aria-label={usageName(usage)}>
       <header className="usage-provider-head">
         <AgentMark agent={providerMark(usage.id)} size={16} />
         <span className="usage-provider-name">{name}</span>
-        {usage.plan && <span className="usage-plan">{usage.plan}</span>}
-        {usage.account && <span className="usage-account" title={usage.account}>{usage.account}</span>}
-        {viaOmniRoute(usage) && <span className="usage-source">{t("via OmniRoute")}</span>}
+        {plan && <span className="usage-plan" title={usage.plan ?? undefined}>{plan}</span>}
+        {(usage.account || via) && (
+          <span className="usage-provider-meta">
+            {usage.account && <span className="usage-account" title={usage.account}>{usage.account}</span>}
+            {via && <span className="usage-source">{t("via OmniRoute")}</span>}
+          </span>
+        )}
       </header>
       {problem && <p className={`usage-note${isError(usage) ? " is-problem" : ""}`}>{problem}</p>}
       {usage.windows.map((window, index) => {
