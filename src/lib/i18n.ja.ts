@@ -137,6 +137,8 @@ export const JA: Record<string, string> = {
   "Vesper": "Vesper",
   "Pin agent": "エージェントを固定",
   "Unpin agent": "エージェントの固定を解除",
+  "Pin folder": "フォルダーを固定",
+  "Unpin folder": "フォルダーの固定を解除",
   "Pin workspace": "ワークスペースを固定",
   "Unpin workspace": "ワークスペースの固定を解除",
   "Pinned": "固定済み",

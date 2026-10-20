@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, migratePins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, workspacePinKey } from "./sidebarPins.ts";
+import { isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, migratePins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, hostFolderPinKey, isHostFolderPinKey, pinnedHostFolders, pruneHostFolderPins, toggleHostFolderPin, workspacePinKey } from "./sidebarPins.ts";
 
 describe("sidebar agent pins", () => {
   it("moves workspace pins in both directions without moving other pin slots", () => {
@@ -171,5 +171,39 @@ describe("sidebar agent pins", () => {
       if (original) Object.defineProperty(globalThis, "localStorage", original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;
     }
+  });
+});
+
+describe("host folder pins", () => {
+  it("keys a Copilot folder by PC and path, one trailing slash dropped, apart from every other pin", () => {
+    expect(hostFolderPinKey("m", "/w/a/")).toBe("m:folder:/w/a");
+    expect(hostFolderPinKey("m", "/w/a")).toBe(hostFolderPinKey("m", "/w/a/"));
+    expect(isHostFolderPinKey(hostFolderPinKey("m", "/w/a"))).toBe(true);
+    expect(isHostFolderPinKey(hostChatPinKey("m", "s"))).toBe(false);
+    expect(isHostFolderPinKey(workspacePinKey("m", "w1"))).toBe(false);
+    expect(isHostChatPinKey(hostFolderPinKey("m", "/w/a"))).toBe(false);
+    expect(isWorkspacePinKey(hostFolderPinKey("m", "/w/a"))).toBe(false);
+  });
+
+  it("lists one PC's pinned folders in pin order", () => {
+    const keys = [hostFolderPinKey("m", "/b"), workspacePinKey("m", "w1"), hostFolderPinKey("other", "/x"), hostFolderPinKey("m", "/a")];
+    expect(pinnedHostFolders(keys, "m")).toEqual(["/b", "/a"]);
+  });
+
+  it("pruning agent pins keeps folder pins", () => {
+    expect(pruneSidebarPins([hostFolderPinKey("m", "/w/a"), "m:gone-pane"], new Set(), [{ id: "m", snapshot: {} }])).toEqual(["m:folder:/w/a"]);
+  });
+
+  it("prunes only this PC's folder pins whose folder has no chat left", () => {
+    const keys = [hostFolderPinKey("m", "/kept"), hostFolderPinKey("m", "/gone"), hostFolderPinKey("o", "/gone"), workspacePinKey("m", "w9")];
+    expect(pruneHostFolderPins(keys, "m", new Set(["/kept"]))).toEqual(["m:folder:/kept", "o:folder:/gone", "m:workspace:w9"]);
+  });
+});
+
+describe("toggleHostFolderPin", () => {
+  it("pins a folder at the end, unpins it, and drops dead folder pins of that PC only on the change", () => {
+    const keys = [hostFolderPinKey("m", "/gone"), workspacePinKey("m", "w1")];
+    expect(toggleHostFolderPin(keys, "m", "/w/a/", new Set(["/w/a"]))).toEqual(["m:workspace:w1", "m:folder:/w/a"]);
+    expect(toggleHostFolderPin(["m:folder:/w/a", "m:workspace:w1"], "m", "/w/a", new Set(["/w/a"]))).toEqual(["m:workspace:w1"]);
   });
 });

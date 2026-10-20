@@ -1104,7 +1104,7 @@ try {
         await page.getByRole("button", { name: "More", exact: true }).click();
         await page.locator(".row-sheet").waitFor();
         const headerFolder = await menuItems();
-        assert.deepEqual(headerFolder, ["New Copilot chat…", "All agents on Build PC…", "Copy path"], "a Copilot folder's header ⋯: its own items");
+        assert.deepEqual(headerFolder, ["Pin folder", "New Copilot chat…", "All agents on Build PC…", "Copy path"], "a Copilot folder's header ⋯: its own items");
         if (shots) { await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false); await page.screenshot({ path: join(shots, "r9-folder-header-menu-390.png") }); }
         await page.keyboard.press("Escape");
         await page.locator(".row-sheet").waitFor({ state: "detached" });
@@ -1123,6 +1123,31 @@ try {
         await fromHeader.getByRole("button", { name: "Close dialog" }).click();
         await fromHeader.waitFor({ state: "detached" });
         console.log("PASS a Copilot folder's header ⋯ is its row's menu: New Copilot chat, All agents, Copy path");
+
+        // a Copilot folder pins as a workspace does: its row stands in Pinned, and its menus say Unpin
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await folderRow.getByRole("button", { name: /^More for / }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Pin folder" }).click();
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        const pinnedList = remoteGroup.locator(".sidebar-pinned");
+        await pinnedList.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]').waitFor();
+        assert.equal(await remoteGroup.locator('.host-folder-list .host-folder[data-host-folder="/tmp/fictional-docs"]').count(), 0, "a pinned folder leaves the folder list");
+        assert.equal(await remoteGroup.locator(".sidebar-pinned-label").count(), 1, "Pinned says so once");
+        assert.ok((await page.evaluate(() => localStorage.getItem("herdr-web-ui:sidebar-agent-pins")) ?? "").includes("remote:folder:/tmp/fictional-docs"), "the pin is saved by PC and folder");
+        if (shots) await remoteGroup.screenshot({ path: join(shots, "r10-folder-pinned-390.png") });
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
+        await page.getByRole("button", { name: "More", exact: true }).click();
+        await page.locator(".row-sheet").waitFor();
+        assert.equal((await menuItems())[0], "Unpin folder", "the header ⋯ unpins the folder");
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "Unpin folder" }).click();
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await remoteGroup.locator('.host-folder-list .host-folder[data-host-folder="/tmp/fictional-docs"]').waitFor();
+        assert.equal(await pinnedList.locator(".host-folder").count(), 0, "unpinned, the folder is back in its list");
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
+        console.log("PASS a Copilot folder pins from its row's ⋯ into Pinned, and unpins from the header's");
 
         // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row has no ⋯): search finds the
         // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace

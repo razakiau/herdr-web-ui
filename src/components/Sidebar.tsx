@@ -192,6 +192,8 @@ export interface HostChatRows {
   onSelect(session: string): void;
   /** the folder row's menu: a new chat there (the new-chat sheet), and the PC's every chat */
   folderMenu(cwd: string): RowMenuItem[];
+  /** the folders pinned on this PC, in pin order: their rows stand in Pinned, with the pinned workspaces */
+  pinnedFolders?: readonly string[];
 }
 
 /**
@@ -807,6 +809,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
     </li>;
   };
   const folders = hostChats?.placement.folders ?? [];
+  const pinnedFolderSet = new Set(hostChats?.pinnedFolders ?? []);
+  const pinnedFolderRows = (hostChats?.pinnedFolders ?? []).flatMap((cwd) => folders.filter((folder) => folder.cwd === cwd));
+  const restFolders = folders.filter((folder) => !pinnedFolderSet.has(folder.cwd));
+  const pinnedWorkspacesShown = shownGroups.pinned.some(({ workspace }) => roster.some((pane) => pane.workspace_id === workspace.workspace_id));
 
   return (
     <div className={`machine-workspaces${twoLine ? " is-two-line" : ""}`} ref={workspaceRoot}>
@@ -819,12 +825,15 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
               <button type="button" className="btn" onClick={actions.openNewSession}><Plus aria-hidden="true" />{t("New workspace")}</button>
             </div>
           )}
-          {shownGroups.pinned.some(({ workspace }) => roster.some((pane) => pane.workspace_id === workspace.workspace_id)) && <>
+          {(pinnedWorkspacesShown || pinnedFolderRows.length > 0) && <>
             <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
-            <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{shownGroups.pinned.map(renderGroup)}</ul>
+            <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label={t("Pinned")}>
+              {pinnedWorkspacesShown && shownGroups.pinned.map(renderGroup)}
+              {pinnedFolderRows.map(renderFolderRow)}
+            </ul>
           </>}
           <ul className="workspace-list">{shownGroups.rest.map(renderGroup)}</ul>
-          {folders.length > 0 && <ul className="workspace-list host-folder-list">{folders.map(renderFolderRow)}</ul>}
+          {restFolders.length > 0 && <ul className="workspace-list host-folder-list">{restFolders.map(renderFolderRow)}</ul>}
           {inlineError && inlineError.workspaceId === undefined && (
             <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>
           )}

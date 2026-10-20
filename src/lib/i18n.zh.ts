@@ -139,6 +139,8 @@ export const ZH: Record<string, string> = {
   "Vesper": "Vesper",
   "Pin agent": "固定 Agent",
   "Unpin agent": "取消固定 Agent",
+  "Pin folder": "固定文件夹",
+  "Unpin folder": "取消固定文件夹",
   "Pin workspace": "固定工作区",
   "Unpin workspace": "取消固定工作区",
   "Pinned": "已固定",
