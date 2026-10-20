@@ -1529,6 +1529,8 @@ export const JA: Record<string, string> = {
   "Search models": "モデルを検索",
   "Providers": "プロバイダー",
   "No models match": "一致するモデルはありません",
+  "{name}, 1 model": "{name}、モデル 1 件",
+  "{name}, {count} models": "{name}、モデル {count} 件",
   "Reasoning effort for {model}": "{model} の推論レベル",
   "This chat's host has no modes to pick": "このチャットのホストには選べるモードがありません",
   "Permissions": "アクセス許可",
