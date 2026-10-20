@@ -2,7 +2,7 @@ import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEff
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
-import { ApiError, authenticate, createTab, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
+import { ApiError, authenticate, createTab, fetchHealth, fetchNtfyTopic, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
@@ -637,7 +637,8 @@ export function App() {
   // In-app alerts (components/Droplet.tsx): only while the app is on screen - a hidden app has
   // its system notifications - and never for the pane already open in front of the user.
   const dropIn = useCallback((machine: Machine, pane: HerdrPane, kind: DropletKind) => {
-    if (!alertsOnRef.current || !alertInAppRef.current || document.visibilityState !== "visible") return;
+    // a channel of its own: push to this device (alertsOn) does not hold it
+    if (!alertInAppRef.current || document.visibilityState !== "visible") return;
     const open = selectionRef.current;
     if (open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
     if (splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
@@ -656,13 +657,13 @@ export function App() {
   const alertTurns = useRef<ReturnType<typeof createAlertTurnPlayer> | null>(null);
   useEffect(() => {
     const player = createAlertTurnPlayer({
-      play: (kind) => alertsOnRef.current && alertSoundRef.current && playAlertSound(kind),
+      play: (kind) => alertSoundRef.current && playAlertSound(kind),
     });
     alertTurns.current = player;
     return () => { player.dispose(); alertTurns.current = null; };
   }, []);
   const chime = useCallback((machine: Machine, pane: HerdrPane, kind: AlertSoundKind) => {
-    if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
+    if (!alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
     if (document.visibilityState === "visible" && splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
@@ -802,6 +803,15 @@ export function App() {
       cancelled = true;
     };
   }, [locked, notifications, alerts, alertsOn]);
+
+  // the server's ntfy topic, when it has one: with it, push off here is a choice, not a gap
+  const [ntfyTopic, setNtfyTopic] = useState<string | null>(null);
+  useEffect(() => {
+    if (locked !== false) return;
+    let live = true;
+    fetchNtfyTopic().then((ntfy) => { if (live) setNtfyTopic(ntfy?.topic ?? null); }, () => {});
+    return () => { live = false; };
+  }, [locked]);
 
   const unlock = useCallback(() => {
     setLocked(false);
@@ -1387,34 +1397,27 @@ export function App() {
   }, []);
 
 
-  // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
-  // need none, so they count as on. A device that has not answered the permission question is
-  // asked by the item; one that has answered gets a plain switch.
+  // The menu's push item: web push to this device, one channel of the alerts beside the in-app
+  // ones and the server's ntfy topic (Settings -> Alerts holds all three). A device that has not
+  // answered the permission question is asked by the item; one that has answered gets a plain switch.
   const bell: { state: string; title: string; on: boolean; run: () => Promise<unknown> } =
-    !alertsOn
-      ? { state: t("Off on this device"), title: t("Alerts off on this device. Tap to turn them on"), on: false, run: enableNotifications }
-      : notifications !== "granted"
-        ? !settings.alertInApp
-          ? { state: t("Off on this device"), title: t("Notify me when a pane needs input or finishes"), on: false, run: enableNotifications }
-          : notifications === "default"
-            ? { state: t("On in the app"), title: t("Alerts on in the app. Tap to allow them when it is closed too"), on: true, run: enableNotifications }
-            : { state: t("On in the app"), title: t("Alerts on in the app. Tap to turn them off"), on: true, run: disableNotifications }
-        : pushOn
-          ? { state: t("On, pushed to this device"), title: t("Alerts on, pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
-          : {
-              state: t("On in this tab"),
-              // turning them off and on again retries the push subscription
-              title: pushSupported()
-                ? t("Alerts on while this tab is open. Tap to turn them off")
-                : t("Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to turn them off"),
-              on: true,
-              run: disableNotifications,
-            };
-  // hidden only where it could do nothing: no system notifications and in-app alerts off
-  const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
+    !alertsOn || notifications !== "granted"
+      ? { state: t("Off"), title: t("Push alerts to this device, even with the app closed. Tap to turn them on"), on: false, run: enableNotifications }
+      : pushOn
+        ? { state: t("On"), title: t("Alerts are pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
+        : {
+            state: t("On while this tab is open"),
+            // turning them off and on again retries the push subscription
+            title: t("The push service could not be reached: alerts show while this tab is open. Tap to turn them off"),
+            on: true,
+            run: disableNotifications,
+          };
+  // hidden where push cannot work: no push in this browser, or notifications blocked
+  const bellVisible = pushSupported() && notifications !== "denied";
   // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
   // the dot says the ⋯ holds Alerts: a Copilot folder's menu has none
-  const alertsOffDot = bellVisible && !bell.on && !(hostFolder !== null && selectedHostChat !== null);
+  // only when nothing tells this device at all: no push, no in-app alerts, no ntfy topic
+  const alertsOffDot = bellVisible && !bell.on && !settings.alertInApp && ntfyTopic === null && !(hostFolder !== null && selectedHostChat !== null);
   // a host chat has no pane, whose terminal stream says live: its chip follows its own reads
   const hostShown = selectedHostChat !== null && selectedPane === null;
   const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId)) : connected;
@@ -1606,7 +1609,7 @@ export function App() {
     ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
-    ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
+    ...(bellVisible ? [{ id: "alerts", label: t("Push to this device"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
   ];
 
   // the chat's surface is what the pane column shows: the header's pane zone and the tab strip

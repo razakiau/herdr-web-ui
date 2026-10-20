@@ -332,7 +332,7 @@ Only devices in your tailnet can open that address. Your own devices get in with
 
 1. Open the address.
 2. Install the app: in Safari, choose **Share → Add to Home Screen**; in Chrome, choose **Install app**. Each PC installs as an app of its own: set `HERDR_WEB_APP_NAME` on each to tell them apart (see [Configuration](#configuration)).
-3. Open the **⋯** menu at the top right and tap **Alerts** to turn on alerts for that device. iPhone needs iOS 16.4+ and the home-screen app.
+3. Open the **⋯** menu at the top right and tap **Push to this device** (or **Settings → Alerts → Push to this device**) to have that device's alerts pushed, even with the app closed. iPhone needs iOS 16.4+ and the home-screen app. The in-app alerts and their sound have their own switches on the same page, and a server with an ntfy topic shows it there.
 
 To check alerts later, choose **Settings → Alerts → Send test**. The result tells you
 whether the test was sent or failed; a missing subscription offers **Turn alerts on again**.
