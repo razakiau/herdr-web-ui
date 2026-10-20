@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -113,5 +113,24 @@ describe("agent host workspaces", () => {
     expect(upkeepPc(seeded, "m", { host: null, chats: [] }, new Set(), null)).toBe(seeded);
     // a live list without the chat drops its tab, and the workspace with its last
     expect(upkeepPc(seeded, "m", live([row("i", "/b")]), new Set(), null)).toEqual({ m: { open: [] } });
+    // the chat on screen keeps its tab: a new chat is not listed until its first message
+    const fresh = { m: { open: [{ cwd: "/a", tabs: ["new"] }] } };
+    expect(upkeepPc(fresh, "m", live([]), new Set(), "new")).toBe(fresh);
+  });
+
+  it("a_look_is_not_a_tab", () => {
+    const pc: PcHostWorkspaces = { open: [{ cwd: "/a", tabs: ["x", "y", "z"] }] };
+    expect(isTabOpen(pc, "y")).toBe(true);
+    expect(isTabOpen(pc, "q")).toBe(false);
+    expect(isTabOpen(undefined, "y")).toBe(false);
+  });
+
+  it("closing_the_tab_on_screen_moves_to_its_neighbour", () => {
+    const pc: PcHostWorkspaces = { open: [{ cwd: "/a", tabs: ["x", "y", "z"] }, { cwd: "/b", tabs: ["q"] }] };
+    expect(tabAfterClose(pc, "y")).toBe("z");
+    expect(tabAfterClose(pc, "z")).toBe("y");
+    // the workspace's last tab: nothing of its own is left
+    expect(tabAfterClose(pc, "q")).toBeNull();
+    expect(tabAfterClose(pc, "gone")).toBeNull();
   });
 });

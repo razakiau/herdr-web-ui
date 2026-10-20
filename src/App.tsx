@@ -31,7 +31,7 @@ import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView,
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement } from "./lib/hostPlacement.ts";
-import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, upkeepPc } from "./lib/hostWorkspaces.ts";
+import { closeTab, currentHostWorkspaces, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./lib/hostWorkspaces.ts";
 import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleHostFolderPin, toggleSidebarPin } from "./lib/sidebarPins.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
@@ -304,6 +304,10 @@ export function App() {
   });
   // a host chat shown in the pane's place (lib/hostChats.ts): picking one clears the pane, and a pane picked clears it
   const [selectedHostChat, setSelectedHostChat] = useState<HostChatTarget | null>(null);
+  const selectedHostChatRef = useRef(selectedHostChat); selectedHostChatRef.current = selectedHostChat;
+  // set where the PCs' chats are read (below): selectHostChat and the actions reach them through these
+  const keepHostTabRef = useRef<(target: HostChatTarget, cwd?: string | null) => void>(() => undefined);
+  const closeHostTabRef = useRef<(machineId: string, session: string) => void>(() => undefined);
   // the open host chat's last read: went through (true), failed (false), not read yet (null)
   // and its title as its reads give it (a chat just made is not on its PC's list yet)
   const [hostReadTitle, setHostReadTitle] = useState<string | null>(null);
@@ -873,11 +877,15 @@ export function App() {
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
   // a host chat takes the pane's place on its PC; the chat screen draws it (Task 5)
-  const selectHostChat = useCallback((target: HostChatTarget) => {
+  // `how`: "tab" makes it a tab of its agent host workspace for good (a new chat, a fork, a pick
+  // from a strip); "look" (Agents, All agents, an alert) shows it without saving anything, unless it
+  // is a tab already. A look's tab stands only while it is on screen (lib/hostWorkspaces.ts).
+  const selectHostChat = useCallback((target: HostChatTarget, how: "tab" | "look" = "look", cwd?: string | null) => {
     selectTarget(target.machineId, null);
     setSelectedHostChat(target);
     setHostReadTitle(null);
     setHostMadeIn(null);
+    if (how === "tab") keepHostTabRef.current(target, cwd);
   }, [selectTarget]);
   const selectHostChatRef = useRef(selectHostChat); selectHostChatRef.current = selectHostChat;
   // an address naming a chat (an ntfy alert's link, a tapped alert's cold start) opens it once,
@@ -1018,6 +1026,30 @@ export function App() {
   // each PC's host chats (lib/hostChats.ts), read once for the sidebar and the tab strip
   const { pcs: hostChats, tracker: hostTracker } = useHostChatPcs(machines);
   const hostPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  // the agent host workspaces open per PC, and their tabs (lib/hostWorkspaces.ts)
+  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
+  // a chat made a tab for good: its row's folder, else the one it was made in
+  keepHostTabRef.current = (target, cwd) => {
+    const folder = hostChats.get(target.machineId)?.chats.find((chat) => chat.session === target.session)?.cwd ?? cwd ?? null;
+    if (folder === null) return;
+    const state = currentHostWorkspaces();
+    const next = openTab(state[target.machineId] ?? { open: [] }, { session: target.session, cwd: folder });
+    if (next !== state[target.machineId]) setHostWorkspaces({ ...state, [target.machineId]: next });
+  };
+  // a tab closed: hidden, never archived. The one on screen gives way to its neighbour, else to the
+  // PC's first pane, as a closed pane's tab does
+  closeHostTabRef.current = (machineId, session) => {
+    const state = currentHostWorkspaces();
+    const pc = state[machineId];
+    if (!pc) return;
+    const shown = selectedHostChatRef.current;
+    if (shown?.machineId === machineId && shown.session === session) {
+      const next = tabAfterClose(pc, session);
+      if (next !== null) selectHostChat({ machineId, session: next }, "tab");
+      else { setSelectedHostChat(null); setAutoSelected(true); }
+    }
+    setHostWorkspaces({ ...state, [machineId]: closeTab(pc, session) });
+  };
   // a host chat's own actions (components/HostChatActions.tsx), for its tab, its rows and the header
   const [hostRename, setHostRename] = useState<HostChatRef | null>(null);
   const [hostDelete, setHostDelete] = useState<HostChatRef | null>(null);
@@ -1036,11 +1068,16 @@ export function App() {
       askRename: (target) => setHostRename(target),
       rename: (machineId, session, title) => { void hostTracker.rename(machineId, session, title).catch(said(t("Rename"))); },
       setRead: (machineId, session, read) => { void hostTracker.setRead(machineId, session, read).catch(said(t(read ? "Mark as read" : "Mark as unread"))); },
-      setArchived: (machineId, session, archived) => { void hostTracker.setArchived(machineId, session, archived).catch(said(t(archived ? "Mark as done" : "Restore"))); },
+      // Mark as done also closes the tab, once the host took it (a refusal leaves both)
+      setArchived: (machineId, session, archived) => {
+        void hostTracker.setArchived(machineId, session, archived).then(() => { if (archived) closeHostTabRef.current(machineId, session); }, said(t(archived ? "Mark as done" : "Restore")));
+      },
       askDelete: (target) => setHostDelete(target),
+      isTab: (machineId, session) => isTabOpen(hostWorkspaces[machineId], session),
+      closeTab: (machineId, session) => closeHostTabRef.current(machineId, session),
       asking: hostRename !== null || hostDelete !== null,
     };
-  }, [hostTracker, hostPins, t, hostRename, hostDelete]);
+  }, [hostTracker, hostPins, t, hostRename, hostDelete, hostWorkspaces]);
   // the open chat marked done (archived chats are not placed) or deleted, here or on the PC: it is
   // let go as a closed pane is, and the PC's first pane is opened in its place. Only that change
   // does it: a chat just made (not listed yet) or opened from Archived stays open
@@ -1067,7 +1104,6 @@ export function App() {
     setSelectedHostChat(null);
     setAutoSelected(true);
   }, [openHostKey, openHostLive]);
-  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
   // each PC's open agent host workspaces kept up with its list (lib/hostWorkspaces.ts upkeepPc):
   // seeded the first time it is seen, its gone chats' tabs dropped; only a live list counts
   useEffect(() => {
@@ -1081,6 +1117,8 @@ export function App() {
   // where the selected PC's host chats stand (lib/hostPlacement.ts): the open tabs, and the one on screen
   const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [], hostWorkspaces[selectedMachineId],
     selectedHostChat?.machineId === selectedMachineId ? selectedHostChat.session : null), [snapshot, hostChats, hostWorkspaces, selectedMachineId, selectedHostChat]);
+  // the chat on screen is a look: shown, its tab saved nowhere
+  const hostLook = selectedHostChat !== null && !isTabOpen(hostWorkspaces[selectedHostChat.machineId], selectedHostChat.session);
   const hostHome = selectedHostChat !== null && selectedHostChat.machineId === selectedMachineId ? hostChatHome(hostPlacement, selectedHostChat.session) : null;
   // a host chat open in a workspace: that workspace's strip, with none of its panes' tabs open
   const hostWorkspace = hostHome && "workspace" in hostHome ? snapshot?.workspaces.find((workspace) => workspace.workspace_id === hostHome.workspace) ?? null : null;
@@ -1881,7 +1919,7 @@ export function App() {
                 <RenderBoundary resetKey={`${machineId}:${paneId ?? ""}`} fallback={(retry) => <>{slotBar}<RegionCrash message={t("This pane can't be shown.")} retry={retry} onShown={active ? paneLost : undefined} /></>}>
                 <CrashProbe region="pane" />
                 {/* a host chat open in its folder row: its folder's chats are the tabs */}
-                {active && hostFolder && selectedHostChat && <HostChatTabStrip folder={basename(hostFolder.cwd)} chats={hostFolder.chats} selectedSession={selectedHostChat.session} onSelect={(session) => selectHostChat({ machineId, session })} />}
+                {active && hostFolder && selectedHostChat && <HostChatTabStrip folder={basename(hostFolder.cwd)} chats={hostFolder.chats} selectedSession={selectedHostChat.session} onSelect={(session) => selectHostChat({ machineId, session }, "tab")} />}
                 {active && !pane && hostWorkspace && hostWorkspacePane && slotSnapshot && selectedHostChat && (
                   <TabStrip snapshot={slotSnapshot} workspace={hostWorkspace} selectedPane={hostWorkspacePane} panelId={slotPanelId} onSelectPane={onSelect}
                     onNewTab={() => actions.openNewTab({ machineId, workspaceId: hostWorkspace.workspace_id })}
@@ -1892,7 +1930,7 @@ export function App() {
                 {slotSnapshot && pane && workspace && (
                   <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect} end={slotEnd}
                     // a workspace's host chats are tabs after its panes' (lib/hostPlacement.ts)
-                    hostTabs={active ? hostPlacement.tabs.get(workspace.workspace_id) : undefined} onSelectHostChat={(session) => selectHostChat({ machineId, session })}
+                    hostTabs={active ? hostPlacement.tabs.get(workspace.workspace_id) : undefined} onSelectHostChat={(session) => selectHostChat({ machineId, session }, "tab")}
                     onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
                     onNewTerminal={() => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
                     paneActions={active ? (paneId) => {
@@ -1909,7 +1947,9 @@ export function App() {
                   {/* a host chat picked in the sidebar takes the pane's place in the active half */}
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
                     <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle}
-                      onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session })} />
+                      onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session }, "tab", openHostRow?.cwd ?? hostMadeIn)}
+                      // a look: Keep open makes it a tab, and so does a message sent in it
+                      look={hostLook ? () => keepHostTabRef.current(selectedHostChat, hostMadeIn) : undefined} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
@@ -1980,7 +2020,7 @@ export function App() {
         defaultCwd={newSessionMachineId === selectedMachineId ? selectedPane?.cwd ?? null : null}
         prefill={newPrefill}
         hostChats={hostChats.get(newSessionMachineId)?.chats}
-        onHostChat={(session, cwd) => { closeNewSession(); selectHostChat({ machineId: newSessionMachineId, session }); setHostMadeIn(cwd); }}
+        onHostChat={(session, cwd) => { closeNewSession(); selectHostChat({ machineId: newSessionMachineId, session }, "tab", cwd); setHostMadeIn(cwd); }}
         onDraft={setNewFields}
         onClose={closeNewSession}
         onCreated={(paneId, agentStarted) => {

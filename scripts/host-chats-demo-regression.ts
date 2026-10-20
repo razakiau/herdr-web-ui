@@ -1260,6 +1260,66 @@ try {
         await page.waitForFunction(() => (window as unknown as { hostCalls: { models: string[] } }).hostCalls.models.includes("fictional-session-old"));
         console.log("PASS All agents on Build PC… finds an old chat by search and opens it as a tab of its workspace");
 
+        // 6d. a chat opened from a list is a look: its tab stands while it is on screen, and nothing is
+        // saved. Keep open makes it a tab for good; Close tab hides one (never archives), and a
+        // workspace's last closes it (lib/hostWorkspaces.ts)
+        const savedTabs = async (): Promise<Record<string, { open: { cwd: string; tabs: string[] }[] }>> => JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:host-workspaces") ?? "{}"));
+        const oldTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-old"]');
+        const keepOpen = page.locator(".host-chat .look-bar").getByRole("button", { name: "Keep open", exact: true });
+        await keepOpen.waitFor();
+        assert.ok(!(await savedTabs()).remote!.open.some((each) => each.tabs.includes("fictional-session-old")), "a look is saved nowhere");
+        if (shots) await page.screenshot({ path: join(shots, "look-keep-open-390.png") });
+        // leaving it: its tab goes
+        await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"] [role="tab"]`).click();
+        await page.locator(`.host-chat[data-host-session="${SESSION}"]`).waitFor();
+        await oldTab.waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("a look's tab stays after leaving it"));
+        assert.equal(await page.locator(".host-chat .look-bar").count(), 0, "a tab is no look");
+        // again, and Keep open: it stays a tab after leaving
+        await agentsMenu();
+        await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        await all.waitFor();
+        await all.getByRole("searchbox", { name: "Search agents" }).fill("release notes");
+        await all.locator('[data-host-session="fictional-session-old"] .agent-select').click();
+        await all.waitFor({ state: "detached" });
+        await keepOpen.click();
+        await page.locator(".host-chat .look-bar").waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("Keep open leaves the look bar"));
+        assert.deepEqual((await savedTabs()).remote!.open.find((each) => each.cwd === "/tmp/fictional-repo")!.tabs, [SESSION, "fictional-session-old"], "Keep open saves it as the strip's last tab");
+        await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"] [role="tab"]`).click();
+        await page.locator(`.host-chat[data-host-session="${SESSION}"]`).waitFor();
+        assert.equal(await oldTab.count(), 1, "a kept tab stays after leaving it");
+        // Close tab: the tab goes, the chat is kept (not archived), and the strip moves on to a neighbour
+        await oldTab.locator('[role="tab"]').click();
+        await page.locator('.host-chat[data-host-session="fictional-session-old"]').waitFor();
+        await oldTab.getByRole("button", { name: /^Actions for / }).click();
+        await page.locator(".row-sheet").getByRole("button", { name: "Close tab", exact: true }).click();
+        await oldTab.waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("Close tab leaves the tab"));
+        await page.locator(`.host-chat[data-host-session="${SESSION}"]`).waitFor({ timeout: 3000 }).catch(() => assert.fail("closing the tab on screen does not move to its neighbour"));
+        assert.equal(await page.evaluate(() => (window as unknown as { hostEdits: { archived: Record<string, boolean> } }).hostEdits.archived["fictional-session-old"]), undefined, "Close tab archives nothing");
+        // the docs workspace's only tab: closing it closes the workspace, and its row leaves the sidebar
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"] .workspace-select').click();
+        const docsTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-0"]');
+        await docsTab.getByRole("button", { name: /^Actions for / }).click();
+        await page.locator(".row-sheet").getByRole("button", { name: "Close tab", exact: true }).click();
+        await docsTab.waitFor({ state: "detached", timeout: 3000 });
+        assert.ok(!(await savedTabs()).remote!.open.some((each) => each.cwd === "/tmp/fictional-docs"), "the last tab closes its workspace");
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        assert.equal(await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]').count(), 0, "a closed workspace has no row");
+        await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
+        // the docs folder open again, for what follows: Keep open on a look reopens its workspace
+        await agentsMenu();
+        await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        await all.waitFor();
+        await all.locator('[data-host-session="fictional-session-0"] .agent-select').click();
+        await all.waitFor({ state: "detached" });
+        await keepOpen.click();
+        await page.locator(".host-chat .look-bar").waitFor({ state: "detached" });
+        assert.ok((await savedTabs()).remote!.open.some((each) => each.cwd === "/tmp/fictional-docs"), "Keep open opens its workspace");
+        await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"]`).waitFor({ state: "attached" }).catch(() => undefined);
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();
+        console.log("PASS a listed chat opens as a look (saved nowhere, gone on leaving), Keep open makes it a tab, Close tab hides it and the last closes its workspace");
+
         // 7. the PC's "+" with Copilot (host) picked: VS Code's New Chat. The dialog asks the folder
         // only; Start makes the chat empty and opens it, and its first message is written in the
         // chat's own composer (the same one every chat has: pills, "/", attach, dictation, send menu)
@@ -1382,7 +1442,7 @@ try {
         // the open chat's tab: ⋯ opens the chat's menu
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL new chat" }).click();
         await page.locator(".row-sheet").waitFor();
-        assert.deepEqual(await sheetItems(), ["Pin agent", "Rename…", "Mark as unread", "Mark as done", "Delete…"], "the chat's menu: pin, rename, unread, done, delete");
+        assert.deepEqual(await sheetItems(), ["Pin agent", "Rename…", "Mark as unread", "Close tab", "Mark as done", "Delete…"], "the chat's menu: pin, rename, unread, close tab, done, delete");
         await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false);
         await fits("the chat tab's menu");
         await noVsCode("the chat tab's menu");
