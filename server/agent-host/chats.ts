@@ -274,8 +274,52 @@ function commandLine(input: string): string | null {
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The ask tools a Copilot chat asks through: VS Code's ask_user and TaskSync's askUser. */
+const ASK_TOOLS = new Set(["ask_user", "askUser"]);
+// TaskSync appends its own reminder to the answer, after a blank line
+const ASK_REMINDER = /\n\n(?:REQUIRED:|TaskSync assigned )[\s\S]*$/;
+
+/** A line of markdown as plain words: emphasis, code ticks and a heading's or list's mark dropped. */
+const plainLine = (line: string): string => line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, "").replace(/(\*\*|__|\*|_|`)(.+?)\1/g, "$2").trim();
+
+/**
+ * A finished ask call as the question it was (QuestionSummary): its first line is the question, the
+ * whole message the report it carried, kept when it holds more than that line; the answer as the
+ * tool returned it. null while it runs (the prompt card asks it) or for an input it cannot read.
+ */
+function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<ConversationPart, { kind: "question" }> | null {
+  if (!ASK_TOOLS.has(tool.toolName) || tool.status !== ToolCallStatus.Completed) return null;
+  let input: unknown;
+  try { input = JSON.parse("toolInput" in tool && typeof tool.toolInput === "string" ? tool.toolInput : ""); } catch { return null; }
+  if (!isRecord(input)) return null;
+  const message = typeof input["message"] === "string" ? input["message"] : typeof input["question"] === "string" ? input["question"] : "";
+  const lines = message.split("\n").map(plainLine).filter((line) => line !== "");
+  const text = lines[0] ?? "";
+  const out = content.flatMap((item) => (item.type === ToolResultContentType.Text ? [item.text] : [])).join("\n").trim();
+  const base = { kind: "question" as const, text, ...(lines.length > 1 ? { report: message } : {}), options: [], chosen: [] };
+  const answer = tool.success === false || /^User (?:cancelled|declined|dismissed)\b/.test(out) ? null : answerOf(out);
+  return answer === null ? { ...base, custom: null, skipped: true } : { ...base, custom: answer, skipped: false };
+}
+
+/** The user's words in an ask tool's result: VS Code's "User responded:" field lines, or TaskSync's JSON. */
+function answerOf(out: string): string | null {
+  if (out.startsWith("User responded:")) {
+    const fields = out.slice("User responded:".length).split("\n").map((line) => line.trim()).filter((line) => line !== "" && !/:\s*$/.test(line));
+    return fields.length > 0 ? fields.join(", ") : null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(out);
+    if (isRecord(parsed) && typeof parsed["response"] === "string") return parsed["response"].replace(ASK_REMINDER, "").trim() || null;
+  } catch { /* plain text */ }
+  return out === "" ? null : out;
+}
+
 function toolPart(tool: ToolCallState, turn: TurnRead): ConversationPart {
   const content = contentOf(tool);
+  const asked = askPart(tool, content);
+  if (asked) return asked;
   const subagent = content.find((item): item is ToolResultSubagentContent => item.type === ToolResultContentType.Subagent);
   if (subagent) return subagentPart(tool, subagent, turn);
   const state = stateOf(tool);

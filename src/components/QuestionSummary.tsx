@@ -9,6 +9,7 @@ import { Check, ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
 import { useT } from "../lib/i18n.ts";
+import { Markdown } from "./Markdown.tsx";
 
 export type QuestionPart = Extract<ConversationPart, { kind: "question" }>;
 
@@ -25,6 +26,9 @@ export function answerText(part: QuestionPart, multi = part.multi === true): str
 export function QuestionSummary({ part, memoryKey = "question" }: { part: QuestionPart; memoryKey?: string }) {
   const t = useT();
   const [chosen, setOpen] = useChatRowToggle(memoryKey, false);
+  // the report the question came with (a Copilot ask_user message), folded as VS Code folds work
+  const [reportShown, setReportShown] = useChatRowToggle(`${memoryKey}:report`, false);
+  const report = part.report ?? null;
   const canOpen = part.options.length > 0 && !part.skipped;
   const open = canOpen && chosen === true;
   // VS Code drops the question's trailing colon and spaces
@@ -42,6 +46,13 @@ export function QuestionSummary({ part, memoryKey = "question" }: { part: Questi
     <p className="question-summary-question">
       <span className="question-summary-prefix">{t("Question:")}</span> <span className="question-summary-question-value" title={question}>{question}</span>
     </p>
+    {report !== null && <div className="question-summary-report">
+      <button type="button" className="question-summary-report-toggle" aria-expanded={reportShown === true} onClick={() => setReportShown(reportShown !== true)}>
+        <span className="work-row-caret" aria-hidden="true">{reportShown === true ? <ChevronDown /> : <ChevronRight />}</span>
+        {reportShown === true ? t("Hide report") : t("Show report")}
+      </button>
+      {reportShown === true && <div className="question-summary-report-body"><Markdown style="vscode">{report}</Markdown></div>}
+    </div>}
     <div className="question-summary-decision">
       {canOpen
         ? <button type="button" className="question-summary-answer" aria-expanded={open} onClick={() => setOpen(!open)}>{label}</button>

@@ -59,6 +59,31 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("a finished ask_user call reads as a question with its whole report, not as a tool row", () => {
+    const ask = (toolCallId: string, toolName: string, input: unknown, out: string, success = true) => ({ kind: "toolCall", toolCall: {
+      status: "completed", toolCallId, toolName, displayName: toolName, invocationMessage: toolName, toolInput: JSON.stringify(input),
+      confirmed: "not-needed", success, pastTenseMessage: "Ask User", content: [{ type: "text", text: out }],
+    } });
+    const report = "FICTIONAL **Shipped** the fix.\n\n- one\n- two";
+    const state = chat({ turns: [{
+      id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL go"),
+      responseParts: [
+        // VS Code's own ask_user: message plus a form, answered as "User responded:" lines
+        ask("a1", "ask_user", { message: report, requestedSchema: { properties: { next: { type: "string" } } } }, "User responded:\nnext: FICTIONAL merge it\nnotes: "),
+        // TaskSync's askUser: question, answered as JSON whose response carries its own reminder after a blank line
+        ask("a2", "askUser", { question: "FICTIONAL Which one?", session_id: "4" }, JSON.stringify({ session_id: "4", response: "FICTIONAL the second\n\nREQUIRED: FICTIONAL reminder" })),
+        ask("a3", "ask_user", { message: "FICTIONAL ok?" }, "User cancelled the request."),
+        ask("a4", "askUser", { question: "FICTIONAL lost?" }, "External tool request failed", false),
+      ],
+    }] });
+    expect(turnsFrom(state)[1]!.parts).toEqual([
+      { kind: "question", text: "FICTIONAL Shipped the fix.", report, options: [], chosen: [], custom: "next: FICTIONAL merge it", skipped: false },
+      { kind: "question", text: "FICTIONAL Which one?", options: [], chosen: [], custom: "FICTIONAL the second", skipped: false },
+      { kind: "question", text: "FICTIONAL ok?", options: [], chosen: [], custom: null, skipped: true },
+      { kind: "question", text: "FICTIONAL lost?", options: [], chosen: [], custom: null, skipped: true },
+    ]);
+  });
+
   it("an answered input request reads back as a question part, not as text", () => {
     const state = chat({ turns: [{
       id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL ask"),

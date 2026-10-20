@@ -1571,4 +1571,6 @@ export const JA: Record<string, string> = {
   "This server's ntfy topic gets no alerts.": "このサーバーの ntfy トピックには通知が届きません。",
   "What to tell you": "知らせる内容",
   "ntfy · {topic}": "ntfy · {topic}",
+  "Show report": "レポートを表示",
+  "Hide report": "レポートを隠す",
 };

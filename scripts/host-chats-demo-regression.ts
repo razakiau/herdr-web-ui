@@ -89,7 +89,7 @@ const patch = `(() => {
         { kind: "text", text: "FICTIONAL done." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
-      { role: "assistant", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
+      { role: "assistant", ts: at(2), parts: [        { kind: "question", text: "FICTIONAL Bundle 9 is live.", report: "FICTIONAL **Bundle 9** is live.\\n\\n- FICTIONAL the row reads its own chat\\n- FICTIONAL a path that runs long: /tmp/fictional-repo/src/some/deeply/nested/folder/structure/file.ts", options: [], chosen: [], custom: "FICTIONAL ship it", skipped: false }, { kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
     ];
     for (const text of state.pushed) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: "FICTIONAL from the PC" }] }, { role: "assistant", ts: at(1), parts: [{ kind: "text", text }] });
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
@@ -476,13 +476,21 @@ try {
         const spill = await view.locator(".chat-transcript").evaluate((transcript) => {
           const edge = transcript.getBoundingClientRect().right + 1;
           const out: string[] = [];
-          for (const node of transcript.querySelectorAll<HTMLElement>(".markdown, .markdown :is(p, li, code, a, span, pre, table, .markdown-table-wrap)")) {
+          for (const node of transcript.querySelectorAll<HTMLElement>(".markdown, .markdown :is(p, li, code, a, span, pre, table, .markdown-table-wrap), .question-summary-report-body")) {
             if (node.closest(".markdown-table-wrap") && !node.matches(".markdown-table-wrap")) continue;
             const right = node.getBoundingClientRect().right;
             if (right > edge) out.push(`${node.tagName.toLowerCase()}.${node.className} ${Math.round(right)} > ${Math.round(edge)}: ${(node.textContent ?? "").slice(0, 40)}`);
           }
           return out;
         });
+        // the ask_user report: folded under its question, opened as markdown, and still in the column
+        const asked = view.locator(".question-summary", { hasText: "FICTIONAL Bundle 9 is live." });
+        await asked.getByRole("button", { name: "Show report", exact: true }).click();
+        await asked.locator(".question-summary-report-body strong", { hasText: "Bundle 9" }).waitFor();
+        assert.equal(await asked.locator(".question-summary-report-body li").count(), 2, "the report is the whole markdown message");
+        assert.equal(await asked.locator(".question-summary-answer-value").innerText(), "FICTIONAL ship it");
+        await asked.scrollIntoViewIfNeeded();
+        if (shots) await page.screenshot({ path: join(shots, "ask-report-390.png") });
         assert.deepEqual(spill, [], "nothing in the chat runs past its column");
         const wrap = review.locator(".markdown-table-wrap");
         const sizes = await wrap.evaluate((node) => ({ scroll: node.scrollWidth, client: node.clientWidth, overflow: getComputedStyle(node).overflowX }));
