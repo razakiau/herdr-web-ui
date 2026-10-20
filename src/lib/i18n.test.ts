@@ -81,6 +81,7 @@ function labelMapKeys(): string[] {
     ...grab("components/HostChatStatus.tsx", "CONTEXT_PART", value),
     ...grab("lib/modelProvider.ts", "SECTION_TITLES", /"([^"]+)"/g),
     ...grab("lib/hostSlash.ts", "HOST_SLASH_DETAIL", value),
+    ...grab("components/AllAgentsSheet.tsx", "AGE_LABEL", value),
   ];
 }
 
