@@ -527,6 +527,12 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new releases without asking |
 | `HERDR_WEB_TELEMETRY` | unset (on) | `0` sends no [anonymous usage counts](#anonymous-usage-counts), whatever the switch in Settings says. `DO_NOT_TRACK=1` does the same |
 | `HERDR_WEB_PUSH_SUBJECT` | this repository's URL | VAPID contact URL or `mailto:` address |
+| `HERDR_WEB_NTFY_URL` | unset (off) | An [ntfy](https://ntfy.sh) server: with `HERDR_WEB_NTFY_TOPIC` set too, the alerts a device gets (an agent waiting on you, a finished turn, an ended terminal) are also posted to that topic, on the same schedule, and held the same way while a window of the app is in use |
+| `HERDR_WEB_NTFY_TOPIC` | unset | The ntfy topic the alerts go to |
+| `HERDR_WEB_NTFY_TOKEN` / `HERDR_WEB_NTFY_TOKEN_FILE` | unset | An ntfy access token (`tk_…`), or a file holding one, for a topic that needs it |
+| `HERDR_WEB_NTFY_CLICK_URL` | unset | This app's address: tapping an ntfy alert opens its pane there |
+| `HERDR_WEB_NTFY_INPUT` | `on` | `off` posts no alert for an agent waiting on you |
+| `HERDR_WEB_NTFY_DONE` | `long` | A finished turn: `off`, `long` (only after a turn that worked a minute or more) or `always` |
 | `HERDR_WEB_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |
 | `HERDR_WEB_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
 | `HERDR_WEB_AGENT_HOST` | unset (off) | `on` shows the Copilot chats each PC's agent host runs (host chats). The bridges this server starts on other PCs get the same switch |

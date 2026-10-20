@@ -29,6 +29,9 @@
  * connected page that is visible and has focus, which says so over its WebSocket): the
  * person is at a screen that already shows the change (#751). It is asked when an alert
  * would go out, so a window brought forward while the alert waits still holds it back.
+ *
+ * An ntfy topic the deployment names (`ntfy`, server/ntfy.ts) is one more recipient on the same
+ * schedule, with its own choice of alerts: it hears what a device with that choice would.
  */
 
 import { createHash } from "node:crypto";
@@ -50,6 +53,7 @@ import {
 } from "../shared/notify-policy.ts";
 import { badRequest, jsonResponse } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
+import { type NtfyConfig, postNtfy } from "./ntfy.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
@@ -123,7 +127,12 @@ export interface PushServiceOptions {
   inUse?: () => boolean;
   /** accept plain-http loopback endpoints: only for the tests' fake push service (push.fake.ts) */
   loopbackHttp?: boolean;
+  /** an ntfy topic that gets the same alerts (server/ntfy.ts ntfyFromEnv) */
+  ntfy?: NtfyConfig;
 }
+
+/** Who one delay's alert goes to: these devices, and the ntfy topic or not. */
+interface Recipients { devices: PushSubscriptionRecord[]; ntfy: boolean }
 
 export { defaultStateDir } from "./update-state.ts";
 
@@ -346,7 +355,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   }
 
   /** One timer per delay, each for the devices that wait that long; all called off together. */
-  function schedule(key: string, groups: Map<number, PushSubscriptionRecord[]>, send: (to: PushSubscriptionRecord[]) => Promise<void>): void {
+  function schedule(key: string, groups: Map<number, Recipients>, send: (to: Recipients) => Promise<void>): void {
     const cancels: Array<() => void> = [];
     let remaining = groups.size;
     for (const [delay, to] of groups) {
@@ -458,13 +467,20 @@ export function createPushService(options: PushServiceOptions): PushService {
         turnStart.delete(key);
       }
       if (!shouldNotifyStatus(previous, status)) return;
-      const groups = new Map<number, PushSubscriptionRecord[]>();
+      const groups = new Map<number, Recipients>();
+      const group = (delay: number): Recipients => {
+        const found = groups.get(delay) ?? { devices: [], ntfy: false };
+        groups.set(delay, found);
+        return found;
+      };
       for (const subscription of store().values()) {
         const delay = delayFor(subscription.alerts ?? DEFAULT_ALERTS, status, worked);
-        if (delay !== null) groups.set(delay, [...(groups.get(delay) ?? []), subscription]);
+        if (delay !== null) group(delay).devices.push(subscription);
       }
+      const ntfyDelay = options.ntfy ? delayFor(options.ntfy.alerts, status, worked) : null;
+      if (ntfyDelay !== null) group(ntfyDelay).ntfy = true;
       if (groups.size === 0) return;
-      schedule(key, groups, async (to) => {
+      schedule(key, groups, async ({ devices: to, ntfy }) => {
         if (options.inUse?.()) return;
         const title = machineId === "local" ? await titleOf(paneId) : titles.get(key) ?? paneId;
         // the title can wait for herdr: a window that came into use meanwhile still holds the alert
@@ -474,7 +490,11 @@ export function createPushService(options: PushServiceOptions): PushService {
           const current = store().get(subscription.endpoint);
           return current && current.device_id === subscription.device_id ? [current] : [];
         });
-        await broadcast({ ...statusMessage(paneId, title, status), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live);
+        const message = { ...statusMessage(paneId, title, status), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) };
+        await Promise.all([
+          live.length > 0 ? broadcast(message, status === "blocked" ? "high" : "normal", live) : undefined,
+          ntfy && options.ntfy ? postNtfy(options.ntfy, { title, status, body: message.body, machineId, paneId, workspaceId: message.workspace_id }) : undefined,
+        ]);
       });
     },
 
@@ -484,9 +504,14 @@ export function createPushService(options: PushServiceOptions): PushService {
       turnStart.delete(key);
       // an ended terminal is a finish of its own: a device that wants none hears none
       const to = [...store().values()].filter((subscription) => (subscription.alerts ?? DEFAULT_ALERTS).done !== "off");
-      if (to.length === 0 || options.inUse?.()) return;
+      const ntfy = options.ntfy && options.ntfy.alerts.done !== "off" ? options.ntfy : null;
+      if ((to.length === 0 && !ntfy) || options.inUse?.()) return;
       // the pane may already be gone from herdr: the seeded title is what is left
-      await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, "normal", to);
+      const message = { ...endedMessage(paneId, titles.get(key) ?? paneId), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) };
+      await Promise.all([
+        to.length > 0 ? broadcast(message, "normal", to) : undefined,
+        ntfy ? postNtfy(ntfy, { title: message.title, status: "ended", body: message.body, machineId, paneId, workspaceId: message.workspace_id }) : undefined,
+      ]);
     },
 
     async settled() {
