@@ -44,6 +44,27 @@ describe("QuestionSummary", () => {
     expect(items[0]!.body).not.toContain("lucide-check");
   });
 
+  it("an ask_user report opens under the question, as markdown, folded at first", () => {
+    const report = "FICTIONAL **Shipped** the fix.\n\n- FICTIONAL one\n- FICTIONAL two";
+    const asked = part({ text: "FICTIONAL Shipped the fix.", report, options: [], chosen: [], custom: "FICTIONAL merge it" });
+    const folded = render(createElement(QuestionSummary, { part: asked }));
+    expect(text(folded)).toContain("Show report");
+    expect(folded).not.toContain("question-summary-report-body");
+    const memory = { toggles: new Map<string, boolean | null>([["question:report", true]]), outputs: new Map<string, string>() };
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    let open = "";
+    try { open = renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(ChatRowMemoryContext.Provider, { value: memory, children: createElement(QuestionSummary, { part: asked }) }) })); }
+    finally { if (saved) Object.defineProperty(navigator, "languages", saved); else Reflect.deleteProperty(navigator, "languages"); }
+    expect(open).toContain("question-summary-report-body");
+    expect(open).toContain("<strong><span>Shipped</span></strong>");
+    expect(open.match(/<li>/g)?.length).toBe(2);
+    expect(text(open)).toContain("Hide report");
+    expect(text(open)).toContain("Answered: FICTIONAL merge it");
+    // a question without one has no such row
+    expect(render(createElement(QuestionSummary, { part: part() }))).not.toContain("question-summary-report");
+  });
+
   it("a skipped question shows Skipped question, no Answered prefix", () => {
     const html = render(createElement(QuestionSummary, { part: part({ chosen: [], skipped: true }) }));
     expect(text(html)).toContain("Skipped question");
