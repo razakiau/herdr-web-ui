@@ -100,8 +100,32 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
     await openSettingsPage(page, "Alerts");
     assert.equal(await send.isDisabled(), true, "testing must not turn alerts on implicitly");
     await page.getByRole("button", { name: "Turn alerts on again", exact: true }).waitFor();
+
+    // the page itself turns this device's alerts on and off: a Copilot folder's ⋯ has no Alerts
+    // item, and a phone that follows ntfy wants web push gone without hunting for one (ZAC-191)
+    const device = page.getByRole("switch", { name: "Alerts on this device", exact: true });
+    assert.equal(await device.getAttribute("aria-checked"), "false");
+    await device.click();
+    for (const deadline = Date.now() + 10_000; (await device.getAttribute("aria-checked")) !== "true";) {
+      assert.ok(Date.now() < deadline, "the switch turns alerts on");
+      await page.waitForTimeout(100);
+    }
+    const unsubscribed: string[] = [];
+    await context.route("**/api/push/subscribe", (route) => {
+      if (route.request().method() === "DELETE") unsubscribed.push(route.request().postDataJSON().endpoint);
+      else registrations++;
+      return route.fulfill({ status: 204 });
+    });
+    await device.click();
+    for (const deadline = Date.now() + 10_000; unsubscribed.length === 0;) {
+      assert.ok(Date.now() < deadline, "turning the switch off drops this device's push subscription");
+      await page.waitForTimeout(100);
+    }
+    assert.deepEqual(unsubscribed, [endpoint]);
+    assert.equal(await device.getAttribute("aria-checked"), "false");
+    assert.equal(await send.isDisabled(), true, "off: nothing to test");
     assert.deepEqual(errors, []);
-    console.log("PASS Settings push test: sent, stale/local missing subscription, recovery, failure, off, mobile layout");
+    console.log("PASS Settings push test: sent, stale/local missing subscription, recovery, failure, off, the page's own switch, mobile layout");
   } finally {
     release?.();
     await context.close();

@@ -85,10 +85,13 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
     .filter((summary) => summary.provider === PROVIDER)
     .flatMap((summary) => {
       const cwd = pathOf(summary.workingDirectories?.[0] ?? summary.project?.uri);
+      // a session's status promotes any chat's InputNeeded and Error (AHP's aggregation rule): its
+      // row is its default chat, so it reads that chat's own activity, as each fork's row reads its own
+      const own = summary.chats?.find((chat) => chat.resource === summary.defaultChat)?.status;
       const row: HostChatRow = {
         session: summary.resource,
         title: summary.title,
-        status: statusOf(summary.status),
+        status: statusOf(own ?? summary.status),
         modified_at: summary.modifiedAt,
         cwd,
         // the flags beside the activity bits (VS Code's isSessionStatusRead / isSessionStatusArchived)
