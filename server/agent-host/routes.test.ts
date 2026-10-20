@@ -1237,6 +1237,20 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect(r.fake.requests.filter((each) => each.method === "completions").length).toBe(1);
   });
 
+  it("a new chat, whose runtime has not started (no skills in its completions), lists the newest chat's skills until it has its own", async () => {
+    const skill = (name: string) => ({ insertText: `/${name} `, rangeStart: 0, rangeEnd: 1, attachment: { type: "simple", label: name, _meta: { command: name, isSkill: true } } });
+    const builtIn = { insertText: "/compact ", rangeStart: 0, rangeEnd: 1, attachment: { type: "simple", label: "compact", _meta: { command: "compact" } } };
+    const completions: Record<string, unknown[]> = { [sessionUri(1)]: [builtIn], [sessionUri(2)]: [builtIn, skill("fictional-plugin:brainstorm")] };
+    const r = await rig({ sessions: [summary(1), summary(2)], completions });
+    const names = async () => ((await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json.commands as Array<{ name: string }>).map((each) => each.name);
+    expect(await names()).toContain("fictional-plugin:brainstorm");
+    // borrowed, not kept: once its own runtime lists skills, the next read has its own
+    completions[sessionUri(1)] = [builtIn, skill("fictional-own")];
+    const own = await names();
+    expect(own).toContain("fictional-own");
+    expect(own).not.toContain("fictional-plugin:brainstorm");
+  });
+
   it("files lists the chat's folder for @, and refuses a session it does not know", async () => {
     const folder = temp();
     mkdirSync(join(folder, "src"), { recursive: true });

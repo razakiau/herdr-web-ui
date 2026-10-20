@@ -461,20 +461,38 @@ const skillSets = new WeakMap<AgentHost, Map<string, SkillsEntry>>();
  * The skills the host completes for "/" on `session`. VS Code's own "/" menu asks `completions`
  * with the session's URI: copilotcli's runtime list carries the plugins' skills, which the
  * session's customizations do not (on a Coder workspace none of them). A failed ask keeps the last list.
+ *
+ * A new chat's runtime starts with its first message: until then the host completes only its
+ * built-in commands (measured 2026-10-20: 61 items, 0 skills, still none 10 s after createSession;
+ * an older session on the same host: 182). That empty answer is not kept: the session is asked
+ * again on its next read, and meanwhile lists the skills of another Copilot session, one in the
+ * same folder first, else the newest.
  */
-async function sessionSkills(host: AgentHost, session: string): Promise<HostCommand[]> {
+async function sessionSkills(host: AgentHost, session: string, borrow = true): Promise<HostCommand[]> {
   let sessions = skillSets.get(host);
   if (!sessions) { sessions = new Map(); skillSets.set(host, sessions); }
   const entry = sessions.get(session) ?? { skills: [], at: -Infinity, asking: null };
   sessions.set(session, entry);
   if (Date.now() - entry.at < SKILLS_TTL_MS) return entry.skills;
+  const first = entry.skills.length === 0;
   entry.asking ??= host.request("completions", { kind: CompletionItemKind.UserMessage, channel: ownerOf(host, session), text: "/", offset: 1 })
-    .then((result) => { entry.skills = skillsFrom(result.items ?? []); entry.at = Date.now(); })
+    .then((result) => { entry.skills = skillsFrom(result.items ?? []); entry.at = entry.skills.length > 0 ? Date.now() : -Infinity; })
     .catch(() => { /* the last list stands; the next read asks again */ })
     .finally(() => { entry.asking = null; });
   // the first list is waited for (briefly); a stale one is shown while the new one comes
-  if (entry.at === -Infinity) await Promise.race([entry.asking, Bun.sleep(SKILLS_WAIT_MS)]);
-  return entry.skills;
+  if (first) await Promise.race([entry.asking, Bun.sleep(SKILLS_WAIT_MS)]);
+  if (entry.skills.length > 0 || !borrow) return entry.skills;
+  const lender = skillsLender(host, session);
+  return lender ? sessionSkills(host, lender, false) : [];
+}
+
+/** The Copilot session whose skills a new chat lists meanwhile: one in its folder first, else the newest. */
+function skillsLender(host: AgentHost, session: string): string | null {
+  const rows = host.summaries().filter((row) => row.provider === PROVIDER && row.resource !== session);
+  const folder = host.summaries().find((row) => row.resource === session)?.workingDirectories?.[0];
+  const newest = (a: SessionSummary, b: SessionSummary) => String(b.modifiedAt ?? "").localeCompare(String(a.modifiedAt ?? ""));
+  const same = folder === undefined ? [] : rows.filter((row) => row.workingDirectories?.[0] === folder).sort(newest);
+  return (same[0] ?? [...rows].sort(newest)[0])?.resource ?? null;
 }
 
 /**
