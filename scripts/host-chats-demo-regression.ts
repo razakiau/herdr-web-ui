@@ -89,7 +89,7 @@ const patch = `(() => {
         { kind: "text", text: "FICTIONAL done." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
-      { role: "assistant", ts: at(2), parts: [        { kind: "question", text: "FICTIONAL Bundle 9 is live.", report: "FICTIONAL **Bundle 9** is live.\\n\\n- FICTIONAL the row reads its own chat\\n- FICTIONAL a path that runs long: /tmp/fictional-repo/src/some/deeply/nested/folder/structure/file.ts", options: [], chosen: [], custom: "FICTIONAL ship it", skipped: false }, { kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
+      { role: "assistant", ts: at(2), parts: [        { kind: "question", text: "FICTIONAL Next", report: "FICTIONAL **Bundle 9** is live.\\n\\n- FICTIONAL the row reads its own chat\\n- FICTIONAL a path that runs long: /tmp/fictional-repo/src/some/deeply/nested/folder/structure/file.ts", options: [], chosen: [], custom: "FICTIONAL ship it", skipped: false }, { kind: "question", text: "FICTIONAL Notes (optional)", options: [], chosen: [], custom: null, skipped: true }, { kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
     ];
     for (const text of state.pushed) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: "FICTIONAL from the PC" }] }, { role: "assistant", ts: at(1), parts: [{ kind: "text", text }] });
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
@@ -484,8 +484,12 @@ try {
           return out;
         });
         // the ask_user report: folded under its question, opened as markdown, and still in the column
+        // a form: its report once, first, then one question per field
         const asked = view.locator(".question-summary", { hasText: "FICTIONAL Bundle 9 is live." });
-        await asked.getByRole("button", { name: "Show report", exact: true }).click();
+        await asked.waitFor();
+        assert.deepEqual(await asked.locator("xpath=..").locator(".question-summary-prefix").allInnerTexts(), ["Report:", "Question:", "Answered:", "Question:"], "the report leads, then each field's question once");
+        if (shots) await asked.locator("xpath=..").screenshot({ path: join(shots, "ask-form-folded-390.png") });
+        await asked.getByRole("button", { name: /Report: FICTIONAL Bundle 9 is live/ }).click();
         await asked.locator(".question-summary-report-body strong", { hasText: "Bundle 9" }).waitFor();
         assert.equal(await asked.locator(".question-summary-report-body li").count(), 2, "the report is the whole markdown message");
         assert.equal(await asked.locator(".question-summary-answer-value").innerText(), "FICTIONAL ship it");
