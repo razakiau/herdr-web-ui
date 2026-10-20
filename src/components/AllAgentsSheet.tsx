@@ -3,7 +3,8 @@
  * (lib/hostPlacement.ts). A sheet (a bottom sheet on a phone) with a search box, a pill per folder
  * to narrow the list to one, and the chats under VS Code's session-list ages (Today, Yesterday, Last
  * 7 days, Last 30 days, Older: lib/hostChatGroups.ts), each with when it last changed and, under All,
- * its folder; the archived ones last, folded. Picking one opens it, as a tab of its workspace or its folder row.
+ * its folder; the archived ones last, folded. Picking one opens it, as a look (App.tsx selectHostChat).
+ * With `folder` it is "Chats in <folder>…", an agent host workspace's own list: that folder's chats only.
  */
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -18,7 +19,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, folderKey, folderPills, type ChatAge } from "../lib/hostChatGroups.ts";
 import { basename, chatAge, hostLine, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
-import { hostChatStatus } from "../lib/hostPlacement.ts";
+import { hostChatStatus, samePath } from "../lib/hostPlacement.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -33,6 +34,8 @@ export interface AllAgentsSheetProps {
   pc: HostPc;
   /** the chat open now, marked in the list */
   selected: string | null;
+  /** set: "Chats in <folder>", that folder's chats only (an agent host workspace's menu), with no folder pills */
+  folder?: string;
   onOpen(session: string): void;
   onClose(): void;
 }
@@ -59,7 +62,7 @@ const AGE_LABEL: Record<ChatAge, string> = {
 /** "all": every folder; else one folder's key (null: chats without one) */
 type Pick = "all" | string | null;
 
-export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, onClose }: AllAgentsSheetProps) {
+export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: only, onOpen, onClose }: AllAgentsSheetProps) {
   const t = useT();
   const id = useId();
   const now = useMinuteClock();
@@ -88,10 +91,11 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
   });
 
   const words = query.trim().toLowerCase();
-  const matched = useMemo(() => pc.chats.filter((row) => words === "" || row.title.toLowerCase().includes(words) || (row.cwd ?? "").toLowerCase().includes(words)), [pc.chats, words]);
+  const matched = useMemo(() => pc.chats.filter((row) => (only === undefined || (row.cwd !== null && samePath(row.cwd) === samePath(only)))
+    && (words === "" || row.title.toLowerCase().includes(words) || (row.cwd ?? "").toLowerCase().includes(words))), [pc.chats, words, only]);
   // the pills count what the search keeps; a folder the search empties is let go
-  const pills = folderPills(matched.filter((row) => !row.archived));
-  const shownFolder: Pick = folder === "all" || pills.some((pill) => pill.cwd === folder) || matched.some((row) => row.archived && folderKey(row.cwd) === folder) ? folder : "all";
+  const pills = only === undefined ? folderPills(matched.filter((row) => !row.archived)) : [];
+  const shownFolder: Pick = only !== undefined ? folderKey(only) : folder === "all" || pills.some((pill) => pill.cwd === folder) || matched.some((row) => row.archived && folderKey(row.cwd) === folder) ? folder : "all";
   const found = shownFolder === "all" ? matched : matched.filter((row) => folderKey(row.cwd) === shownFolder);
   const current = byAge(found.filter((row) => !row.archived), now);
   const archived = found.filter((row) => row.archived).sort((a, b) => modified(b) - modified(a));
@@ -124,7 +128,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
     <div className="modal-scrim new-session-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={surface} className="modal new-session-modal all-agents" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}>
         <header className="modal-header">
-          <h2 className="modal-title" id={`${id}-title`}>{t("All agents on {pc}", { pc: machineName })}</h2>
+          <h2 className="modal-title" id={`${id}-title`}>{only === undefined ? t("All agents on {pc}", { pc: machineName }) : t("Chats in {folder}", { folder: basename(only) })}</h2>
           <button type="button" className="icon-button" aria-label={t("Close dialog")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body all-agents-body">

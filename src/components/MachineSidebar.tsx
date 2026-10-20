@@ -10,7 +10,7 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
 import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
-import type { HostPc } from "../lib/hostChats.ts";
+import { basename, type HostPc } from "../lib/hostChats.ts";
 import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
 import { foldPcs, pcPlacement, samePath } from "../lib/hostPlacement.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
@@ -44,12 +44,17 @@ interface Props {
   onSelectHostChat?(target: HostChatTarget): void;
   /** each PC's host chats, for the PCs whose bridge has them (lib/hostChats.ts useHostChats, read in App.tsx) */
   hostChats?: ReadonlyMap<string, HostPc>;
-  /** the PC whose "All agents on <PC>…" is open, held by the app so the header's ⋯ opens it too; this sidebar keeps its own without them */
-  allAgentsOn?: string | null;
-  onAllAgents?(machineId: string | null): void;
+  /** the PC whose "All agents on <PC>…" is open (with `folder`, "Chats in <folder>…"), held by the app so the header's ⋯ opens it too; this sidebar keeps its own without them */
+  allAgentsOn?: AllAgentsOn | null;
+  onAllAgents?(on: AllAgentsOn | null): void;
+  /** an agent host workspace closed (its ⋯ or the header's); the app moves off it when it is on screen */
+  onCloseHostWorkspace?(machineId: string, cwd: string): void;
 }
 
 const NO_HOST_CHATS: ReadonlyMap<string, HostPc> = new Map();
+
+/** Which list of a PC's host chats is open: the whole PC's, or with `folder`, that folder's. */
+export interface AllAgentsOn { machineId: string; folder?: string }
 
 /** What works and what asks on a PC: its agents' panes and its host chats. */
 function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarActivity): PcActivity {
@@ -61,21 +66,24 @@ function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarA
   };
 }
 /**
- * A Copilot folder's menu (a folder of the PC's agent host chats, AHP: no herdr workspace): its
- * sidebar row's ⋯, and the header's while one of its chats is open. Pin folder (as a workspace
- * pins), New Copilot chat… in that folder, the PC's All agents…, and with a folder, Copy path. A
- * herdr workspace keeps its own menu, whatever chats are tabs of it.
+ * An agent host workspace's menu (a folder of the PC's agent host chats, AHP: no herdr workspace):
+ * its sidebar row's ⋯, and the header's while one of its chats is open. Only what is about the
+ * folder: New agent host chat… there, Chats in <folder>… (its chats, archived ones too), Pin, Close
+ * workspace (as herdr's; it also unpins, and leaves every chat as it is), and Copy path. The PC's
+ * whole list stays on the PC's and Agents' menus. A herdr workspace keeps its own menu, whatever
+ * chats are tabs of it.
  */
-export function hostFolderItems({ pc, canStart, cwd, pin, onNewHostChat, onAllAgents, onCopyPath }: {
-  pc: string; canStart: boolean; cwd: string | null; pin?: { pinned: boolean; toggle(): void }; onNewHostChat(): void; onAllAgents(): void; onCopyPath?(cwd: string): void;
+export function hostFolderItems({ canStart, cwd, pin, onNewHostChat, onFolderChats, onClose, onCopyPath }: {
+  canStart: boolean; cwd: string; pin?: { pinned: boolean; toggle(): void }; onNewHostChat(): void; onFolderChats(): void; onClose(): void; onCopyPath?(cwd: string): void;
 }, t: Translate): RowMenuItem[] {
   return [
-    ...(pin && cwd !== null ? [pin.pinned
+    ...(canStart ? [{ id: "new-host-chat", label: t("New agent host chat…"), icon: MessageSquarePlus, run: onNewHostChat }] : []),
+    { id: "folder-chats", label: t("Chats in {folder}…", { folder: basename(cwd) }), icon: ListTree, run: onFolderChats },
+    ...(pin ? [pin.pinned
       ? { id: "unpin-folder", label: t("Unpin folder"), icon: PinOff, run: pin.toggle }
       : { id: "pin-folder", label: t("Pin folder"), icon: Pin, run: pin.toggle }] : []),
-    ...(canStart ? [{ id: "new-host-chat", label: t("New Copilot chat…"), icon: MessageSquarePlus, run: onNewHostChat }] : []),
-    { id: "all-agents", label: t("All agents on {pc}…", { pc }), icon: ListTree, run: onAllAgents },
-    ...(cwd !== null ? [{ id: "copy-path", label: t("Copy path"), icon: Copy, divider: true, run: () => (onCopyPath ?? copyPath)(cwd) }] : []),
+    { id: "close-workspace", label: t("Close workspace"), icon: X, run: () => { if (pin?.pinned) pin.toggle(); onClose(); } },
+    { id: "copy-path", label: t("Copy path"), icon: Copy, divider: true, run: () => (onCopyPath ?? copyPath)(cwd) },
   ];
 }
 const copyPath = (cwd: string): void => { void copyText(cwd); };
@@ -93,7 +101,7 @@ export function MachineSidebar(props: Props) {
   const loadingWords = useAnnouncedText(props.machines.length === 0 ? t("Loading PCs…") : null);
   const hostChats = props.hostChats ?? NO_HOST_CHATS;
   // the PC whose "All agents on <PC>…" is open
-  const [ownAllOn, setOwnAllOn] = useState<string | null>(null);
+  const [ownAllOn, setOwnAllOn] = useState<AllAgentsOn | null>(null);
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
   // a PC picked from "Other PCs": a full group until another one is picked
@@ -103,19 +111,19 @@ export function MachineSidebar(props: Props) {
   // the one picked from the fold, and every PC with a question or an approval waiting stay open
   const { open: openPcs, folded } = foldPcs(props.machines, props.selectedMachineId,
     (id) => id === picked || pcActivity(props.machines.find((machine) => machine.id === id)!, hostChats.get(id), activity).asking > 0);
-  const allPc = allOn !== null ? hostChats.get(allOn) : undefined;
-  const allMachine = props.machines.find((machine) => machine.id === allOn);
+  const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
+  const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
   return <SidebarActivityProvider value={activity}><div className="sidebar-shell">
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onAllAgents={() => setAllOn(machine.id)} />)}
+      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })} />)}
       {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={setPicked} />}
       <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect}
       hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
       // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
-      allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn(machine.id) }))} />
+      allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />
     <footer className="sidebar-footer">
       {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
       {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />{t("Install app")}</button>}
@@ -125,14 +133,14 @@ export function MachineSidebar(props: Props) {
         <UsageMeters />
       </div>
     </footer>
-    {allOn !== null && allPc && allMachine && <AllAgentsSheet machineId={allOn} machineName={allMachine.name} pc={allPc}
-      selected={props.selectedHostChat?.machineId === allOn ? props.selectedHostChat.session : null} onClose={() => setAllOn(null)}
-      // the chat opens as a tab of its workspace or its folder row; on a phone the drawer goes as a pick's does
-      onOpen={(session) => { setAllOn(null); props.onSelectHostChat?.({ machineId: allOn, session }); }} />}
+    {allOn !== null && allPc && allMachine && <AllAgentsSheet key={allOn.folder ?? ""} machineId={allOn.machineId} machineName={allMachine.name} pc={allPc} folder={allOn.folder}
+      selected={props.selectedHostChat?.machineId === allOn.machineId ? props.selectedHostChat.session : null} onClose={() => setAllOn(null)}
+      // the chat opens as a look (App.tsx); on a phone the drawer goes as a pick's does
+      onOpen={(session) => { setAllOn(null); props.onSelectHostChat?.({ machineId: allOn.machineId, session }); }} />}
   </div></SidebarActivityProvider>;
 }
 
-function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onAllAgents(): void }) {
+function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void }) {
   const t = useT();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
@@ -143,9 +151,10 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onAllAgents, ...props
   const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, hostWorkspaces[machine.id], openSession) : null;
   // a host that is not up cannot make a chat: the sheet's list says what it needs
   const canStart = hostChats?.host?.state === "connected";
-  const hostItems = (cwd: string | null): RowMenuItem[] => hostFolderItems({
-    pc: machine.name, canStart, cwd, onNewHostChat: () => onNewHostChat(cwd), onAllAgents,
-    pin: hostChats && cwd !== null ? { pinned: pinnedFolders.includes(samePath(cwd)), toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), machine.id, cwd, hostChatFolders(hostChats.chats))) } : undefined,
+  const hostItems = (cwd: string): RowMenuItem[] => hostFolderItems({
+    canStart, cwd, onNewHostChat: () => onNewHostChat(cwd), onFolderChats: () => onFolderChats(cwd),
+    onClose: () => props.onCloseHostWorkspace?.(machine.id, cwd),
+    pin: hostChats ? { pinned: pinnedFolders.includes(samePath(cwd)), toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), machine.id, cwd, hostChatFolders(hostChats.chats))) } : undefined,
   }, t);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`herdr-web-ui:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [editing, setEditing] = useState(false);
