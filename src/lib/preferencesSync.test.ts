@@ -85,4 +85,33 @@ describe("preferences sync", () => {
     expect(taken.patch).toEqual({ theme: "dark" });
     expect(taken.pins).toEqual([]);
   });
+
+  it("sends_host_workspaces_only_when_changed", () => {
+    const open = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    const known: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: open };
+    expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toBeNull();
+    const closed = { m: { open: [] } };
+    expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: closed })).toEqual({ settings: {}, hostWorkspaces: closed });
+    // the server has held none: they ride the first change, and alone they wait
+    const unknown: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null };
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toBeNull();
+    expect(preferencesChange(unknown, { settings: light, pins: [], hostWorkspaces: open })).toEqual({ settings: { theme: "light" }, hostWorkspaces: open });
+  });
+
+  it("takes_remote_unless_edited_here", () => {
+    const here = { m: { open: [{ cwd: "/a", tabs: ["x"] }] }, local: { open: [{ cwd: "/l", tabs: ["y"] }] } };
+    // the first the server holds: its PCs win, this browser's other PCs are kept
+    const first = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: here }, { revision: 1, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(first.hostWorkspaces).toEqual({ m: { open: [] }, local: here.local });
+    expect(first.base.hostWorkspaces).toEqual({ m: { open: [] } });
+    // after that, the last write wins, unless changed here and not yet sent
+    const known = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    const later = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: known }, { revision: 2, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(later.hostWorkspaces).toEqual({ m: { open: [] } });
+    const edited = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: here }, { revision: 2, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(edited.hostWorkspaces).toBeNull();
+    const absent = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: known }, { revision: 3, settings: {} }, null);
+    expect(absent.hostWorkspaces).toBeNull();
+    expect(absent.base.hostWorkspaces).toEqual(known);
+  });
 });

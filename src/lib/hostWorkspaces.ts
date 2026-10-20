@@ -5,10 +5,10 @@
  * caller writes only a change.
  */
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import type { HostWorkspace, PcHostWorkspaces } from "../../shared/host-workspaces.ts";
+import { sanitizeHostWorkspaces, type HostWorkspace, type HostWorkspaceState, type PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 import { isLive, samePath } from "./hostPlacement.ts";
 
-export { sanitizeHostWorkspaces } from "../../shared/host-workspaces.ts";
+export { sanitizeHostWorkspaces };
 export type { HostWorkspace, HostWorkspaceState, PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 
 const modified = (row: HostChatRow): number => {
@@ -104,4 +104,43 @@ export function seedPc(chats: readonly HostChatRow[], pinnedFolders: ReadonlySet
   }
   const shown = chats.find((row) => row.session === onScreen && usable(row));
   return shown ? openTab(pc, shown) : pc;
+}
+
+const STORAGE_KEY = "herdr-web-ui:host-workspaces";
+
+function storage(): Storage | null {
+  try { return typeof localStorage === "undefined" ? null : localStorage; }
+  catch { return null; }
+}
+
+function load(): HostWorkspaceState {
+  try {
+    const value = storage()?.getItem(STORAGE_KEY);
+    return value ? sanitizeHostWorkspaces(JSON.parse(value)) ?? {} : {};
+  } catch { return {}; }
+}
+
+/**
+ * The open host workspaces this page holds, for the sidebar and the tab strip and for the sync with
+ * the other browsers (lib/preferencesSync.ts): set here, they are saved and every reader hears it.
+ */
+let state: HostWorkspaceState | null = null;
+const listeners = new Set<() => void>();
+
+export function currentHostWorkspaces(): HostWorkspaceState {
+  state ??= load();
+  return state;
+}
+
+export function setHostWorkspaces(next: HostWorkspaceState): void {
+  if (JSON.stringify(next) === JSON.stringify(currentHostWorkspaces())) return;
+  state = next;
+  try { storage()?.setItem(STORAGE_KEY, JSON.stringify(next)); }
+  catch { /* storage denied: they last for the session */ }
+  for (const listener of [...listeners]) listener();
+}
+
+export function subscribeHostWorkspaces(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
 }
