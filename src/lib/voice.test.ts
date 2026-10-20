@@ -378,10 +378,12 @@ describe("createVoiceEngine", () => {
     continuous = false;
     interimResults = false;
     onaudiostart: (() => void) | null = null;
-    onresult = null;
-    onerror = null;
+    onresult: ((event: { readonly results: Parameters<typeof speechTranscript>[0] }) => void) | null = null;
+    onerror: ((event: { error: string }) => void) | null = null;
     onend: (() => void) | null = null;
     constructor() { FakeSpeech.made.push(this); }
+    /** what Chrome sends: every result of this session so far */
+    hear(...results: Array<[string, boolean]>) { this.onresult?.({ results: results.map(([transcript, isFinal]) => ({ isFinal, 0: { transcript } })) }); }
     start() { this.onaudiostart?.(); }
     stop() { this.onend?.(); }
     abort() { this.onend?.(); }
@@ -450,6 +452,39 @@ describe("createVoiceEngine", () => {
 
   /** lets the engine's own continuations after a resolved promise run; nothing here waits on time */
   const drain = async (): Promise<void> => { for (let turn = 0; turn < 10; turn++) await Promise.resolve(); };
+
+  it("keeps listening when Chrome ends a browser take on its own at a pause, with the words heard so far", () => {
+    // Chrome on Android ends recognition at the first pause, the last phrase still not final
+    const { voice, states, texts } = engine("en-US", "browser");
+    voice.press();
+    FakeSpeech.made[0]!.hear(["hello world", true], ["how are", false]);
+    FakeSpeech.made[0]!.onend!();
+    expect(FakeSpeech.made).toHaveLength(2);
+    expect(states.at(-1)).toBe("recording");
+    expect(texts).toEqual([]);
+    FakeSpeech.made[1]!.hear(["you", true]);
+    voice.press();
+    expect(texts).toEqual(["hello world how are you"]);
+    expect(states.at(-1)).toBe("idle");
+  });
+
+  it("does not listen again after a refusal, and stops after three silent restarts", () => {
+    const refused = engine("en-US", "browser");
+    refused.voice.press();
+    FakeSpeech.made[0]!.onerror!({ error: "not-allowed" });
+    FakeSpeech.made[0]!.onend!();
+    expect(FakeSpeech.made).toHaveLength(1);
+    expect(refused.states.at(-1)).toBe("idle");
+
+    FakeSpeech.made = [];
+    const quiet = engine("en-US", "browser");
+    quiet.voice.press();
+    FakeSpeech.made[0]!.hear(["note this", true]);
+    for (let index = 0; index < 5; index++) FakeSpeech.made[index]!.onend!();
+    expect(FakeSpeech.made).toHaveLength(5);
+    expect(quiet.texts).toEqual(["note this"]);
+    expect(quiet.states.at(-1)).toBe("idle");
+  });
 
   it("passes the selected full locale to browser recognition without uploading audio", () => {
     const { voice } = engine("hu-HU", "browser");
