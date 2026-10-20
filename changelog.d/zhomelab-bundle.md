@@ -27,3 +27,4 @@
 - zhomelab bundle 1023: a forked Copilot chat no longer makes its source chat look like it asks (or alert in its name); Settings → Alerts has its own switch for this device.
 - zhomelab: Settings → Alerts grouped by channel (this device: push, in the app, sound; the server: ntfy, read-only); the ⋯ item is Push to this device.
 - zhomelab bundle 1024: an answered ask_user call reads as its question, with a folded Show report that opens the whole message as markdown.
+- zhomelab bundle 1025: plan limits from the OmniRoute gateway, each provider opt-in in Settings → Subscription usage (New, search, Shown); the usage panel can sort closest to a limit first; a Copilot folder pins into Pinned.
