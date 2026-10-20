@@ -1165,6 +1165,8 @@ export interface PushPayload {
   /** Absent in legacy payloads means local. */
   machine_id?: string;
   pane_id: string | null;
+  /** A host chat's session (shared/host-chats.ts), when the alert is a chat's, not a pane's: its tap opens the chat. */
+  host_session?: string;
   /** The workspace the pane was last seen in, so the tap of an ended pane opens that workspace. Absent when not known. */
   workspace_id?: string;
   title: string;

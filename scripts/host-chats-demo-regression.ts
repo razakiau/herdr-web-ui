@@ -1455,6 +1455,13 @@ try {
         await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).waitFor();
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS six PCs: Other PCs folds the ones not in use, the one that needs you stays open, and the fold is remembered");
+        // a host chat's alert links to it (an ntfy tap, a tapped push on a cold start): the address opens
+        // the chat on its PC, then lets the chat go from the address
+        await six.goto(`http://127.0.0.1:${server.port}/?machine=remote&chat=${encodeURIComponent("fictional-session-old")}`);
+        await six.locator('.host-chat[data-host-session="fictional-session-old"]').waitFor({ timeout: 10_000 }).catch(() => assert.fail("a chat's link opens nothing"));
+        assert.ok(!new URL(six.url()).searchParams.has("chat"), "the chat leaves the address once open");
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS a host chat's alert link opens the chat on its PC");
       } finally { await sixContext.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }

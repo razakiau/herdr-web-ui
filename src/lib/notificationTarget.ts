@@ -3,7 +3,9 @@ import type { AppLink } from "./deepLink.ts";
 export type NotificationPaneView = "chat" | "terminal";
 /** `workspace_id`: the workspace the pane was last seen in (server/push.ts), so an ended pane's tap opens it. */
 export type NotificationTarget = { machine_id: string; pane_id: string; view?: NotificationPaneView; workspace_id?: string };
-type Target = NotificationTarget;
+/** A host chat's alert (server/push.ts onHostChats): its tap opens the chat on its PC. */
+export type HostChatAlertTarget = { machine_id: string; session: string };
+type Target = NotificationTarget | HostChatAlertTarget;
 type Select = (target: Target) => void;
 
 export function notificationTargetFromSearch(search: string): NotificationTarget | null {
@@ -12,6 +14,17 @@ export function notificationTargetFromSearch(search: string): NotificationTarget
   const view = params.get("view");
   if (!pane_id || (view !== "chat" && view !== "terminal")) return null;
   return { machine_id: params.get("machine") ?? "local", pane_id, view };
+}
+
+/** The chat an address names (`?machine=<pc>&chat=<session>`): an ntfy alert's link, or a tapped alert's cold start. */
+export function hostChatFromSearch(search: string): HostChatAlertTarget | null {
+  const params = new URLSearchParams(search);
+  const session = params.get("chat")?.trim();
+  return session ? { machine_id: params.get("machine") ?? "local", session } : null;
+}
+
+export function isHostChatTarget(target: Target): target is HostChatAlertTarget {
+  return "session" in target;
 }
 
 export function notificationViewForPane(target: NotificationTarget | null, machineId: string, paneId: string | null): NotificationPaneView | null {
@@ -60,14 +73,16 @@ export function notificationTargets(source?: MessageSource): (select: Select) =>
   let pending: Target | null = null;
   let consumer: Select | null = null;
   source?.addEventListener("message", (event) => {
-    const data = event.data as { type?: unknown; pane_id?: unknown; machine_id?: unknown; view?: unknown; workspace_id?: unknown } | null;
-    if (data?.type !== "select-pane" || typeof data.pane_id !== "string") return;
-    const target: Target = {
-      machine_id: typeof data.machine_id === "string" ? data.machine_id : "local",
-      pane_id: data.pane_id,
-    };
-    if (data.view === "chat" || data.view === "terminal") target.view = data.view;
-    if (typeof data.workspace_id === "string" && data.workspace_id !== "") target.workspace_id = data.workspace_id;
+    const data = event.data as { type?: unknown; pane_id?: unknown; machine_id?: unknown; view?: unknown; workspace_id?: unknown; session?: unknown } | null;
+    const machine_id = typeof data?.machine_id === "string" ? data.machine_id : "local";
+    let target: Target;
+    if (data?.type === "select-host-chat" && typeof data.session === "string" && data.session !== "") target = { machine_id, session: data.session };
+    else if (data?.type === "select-pane" && typeof data.pane_id === "string") {
+      const pane: NotificationTarget = { machine_id, pane_id: data.pane_id };
+      if (data.view === "chat" || data.view === "terminal") pane.view = data.view;
+      if (typeof data.workspace_id === "string" && data.workspace_id !== "") pane.workspace_id = data.workspace_id;
+      target = pane;
+    } else return;
     if (consumer) consumer(target);
     else pending = target;
   });

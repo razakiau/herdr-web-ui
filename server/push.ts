@@ -41,6 +41,7 @@ import webpush from "web-push";
 
 import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, PushPayload } from "../shared/protocol.ts";
+import type { HostChatRow } from "../shared/host-chats.ts";
 import {
   type AlertPrefs,
   DEFAULT_ALERTS,
@@ -111,6 +112,12 @@ export interface PushService {
   /** Schedules the alert this change is worth, and calls off the one it overtakes. */
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
+  /**
+   * A PC's host chats as its list now reads (server/agent-host/chats.ts rowsFrom): a chat that
+   * starts asking, finishes a turn or fails is alerted as a pane is, on the same schedule; a
+   * chat first seen is only the baseline, and one gone from the list takes its alert with it.
+   */
+  onHostChats(rows: readonly HostChatRow[], machineId?: string, machineName?: string): void;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
 }
@@ -190,6 +197,20 @@ export function endedMessage(paneId: string, title: string): PushPayload {
   return { pane_id: paneId, title, body: ENDED_NOTIFICATION_BODY, tag: paneNotificationTag(paneId) };
 }
 
+/** One notification slot per host chat, as per pane (shared/notify-policy.ts paneNotificationTag). */
+export function hostChatTag(machineId: string, session: string): string {
+  return `herdr-chat-${encodeURIComponent(machineId)}-${encodeURIComponent(session)}`;
+}
+
+/** A host chat's change as the alerts take it: a question, a finish, a failure, or nothing. */
+function hostChatAlert(previous: HostChatRow["status"] | undefined, next: HostChatRow["status"]): "blocked" | "done" | "error" | null {
+  if (previous === undefined || previous === next) return null;
+  if (next === "asks") return "blocked";
+  if (next === "error") return "error";
+  return next === "idle" && previous === "working" || next === "idle" && previous === "asks" ? "done" : null;
+}
+const HOST_ERROR_BODY = "stopped with an error";
+
 export function createPushService(options: PushServiceOptions): PushService {
   const vapidPath = join(options.stateDir, "vapid.json");
   const subscriptionsPath = join(options.stateDir, "push-subscriptions.json");
@@ -198,6 +219,8 @@ export function createPushService(options: PushServiceOptions): PushService {
   let vapid: { publicKey: string; privateKey: string } | null = null;
   let subscriptions: Map<string, PushSubscriptionRecord> | null = null;
   const lastStatus = new Map<string, AgentStatus>();
+  /** each host chat's last status, keyed `chat:<pc>:<session>` (apart from every pane key) */
+  const hostStatus = new Map<string, HostChatRow["status"]>();
   const titles = new Map<string, string>();
   // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
   // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
@@ -512,6 +535,61 @@ export function createPushService(options: PushServiceOptions): PushService {
         to.length > 0 ? broadcast(message, "normal", to) : undefined,
         ntfy ? postNtfy(ntfy, { title: message.title, status: "ended", body: message.body, machineId, paneId, workspaceId: message.workspace_id }) : undefined,
       ]);
+    },
+
+    onHostChats(rows, machineId = "local", machineName) {
+      const prefix = `chat:${encodeURIComponent(machineId)}:`;
+      const listed = new Set<string>();
+      for (const row of rows) {
+        const key = prefix + encodeURIComponent(row.session);
+        listed.add(key);
+        const previous = hostStatus.get(key);
+        hostStatus.set(key, row.status);
+        if (previous === row.status) continue;
+        callOff(key);
+        const busy = row.status === "working" || row.status === "asks";
+        if (busy && previous !== undefined && previous !== "working" && previous !== "asks") turnStart.set(key, now());
+        let worked: number | null = null;
+        if (!busy) { const start = turnStart.get(key); worked = start === undefined ? null : now() - start; turnStart.delete(key); }
+        const alert = row.archived ? null : hostChatAlert(previous, row.status);
+        if (alert === null) continue;
+        // a failure is told as a finish is: a device that wants no finishes hears none
+        const as: AgentStatus = alert === "error" ? "done" : alert;
+        const groups = new Map<number, Recipients>();
+        const group = (delay: number): Recipients => {
+          const found = groups.get(delay) ?? { devices: [], ntfy: false };
+          groups.set(delay, found);
+          return found;
+        };
+        for (const subscription of store().values()) {
+          const delay = delayFor(subscription.alerts ?? DEFAULT_ALERTS, as, worked);
+          if (delay !== null) group(delay).devices.push(subscription);
+        }
+        const ntfyDelay = options.ntfy ? delayFor(options.ntfy.alerts, as, worked) : null;
+        if (ntfyDelay !== null) group(ntfyDelay).ntfy = true;
+        if (groups.size === 0) continue;
+        const title = `${machineName ? machineName + " · " : ""}${row.title}`;
+        const body = alert === "error" ? HOST_ERROR_BODY : statusNotificationBody(alert);
+        const message: PushPayload = { pane_id: null, host_session: row.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, row.session) };
+        schedule(key, groups, async ({ devices: to, ntfy }) => {
+          if (options.inUse?.()) return;
+          const live = to.flatMap((subscription) => {
+            const current = store().get(subscription.endpoint);
+            return current && current.device_id === subscription.device_id ? [current] : [];
+          });
+          await Promise.all([
+            live.length > 0 ? broadcast(message, alert === "blocked" ? "high" : "normal", live) : undefined,
+            ntfy && options.ntfy ? postNtfy(options.ntfy, { title, status: alert, body, machineId, session: row.session }) : undefined,
+          ]);
+        });
+      }
+      // a chat gone from its PC's list (deleted, or its host restarted without it): no alert speaks for it
+      for (const key of [...hostStatus.keys()]) {
+        if (!key.startsWith(prefix) || listed.has(key)) continue;
+        callOff(key);
+        turnStart.delete(key);
+        hostStatus.delete(key);
+      }
     },
 
     async settled() {

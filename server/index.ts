@@ -78,6 +78,7 @@ import { handleMachineRequest } from "./machine-api.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { hostChatsRoute } from "./agent-host/routes.ts";
+import { rowsFrom } from "./agent-host/chats.ts";
 import { withHostAgent } from "./agent-host/agents.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
@@ -651,7 +652,11 @@ export function createServer(
     platform: process.platform,
     env: agentHost.env ?? process.env,
     startHost: agentHost.startHost,
-    onChange: (event) => broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null }),
+    onChange: (event) => {
+      broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null });
+      // the list's statuses are what the alerts watch (server/push.ts onHostChats)
+      if (event.kind === "chats") push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
+    },
   }) : null;
   agentHostConnection?.start();
 

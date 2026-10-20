@@ -638,3 +638,14 @@ describe("push resync after lost status events", () => {
     expect(fake.received.length).toBe(sent + 2);
   });
 });
+
+it("tells a device about a host chat, with what its tap needs to open it", async () => {
+  const push = subscribed();
+  const row = (status: "working" | "asks") => ({ session: "ahp:/s1", title: "fix the build", status, modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived: false });
+  push.onHostChats([row("working")], "mac", "Mac");
+  push.onHostChats([row("asks")], "mac", "Mac");
+  await push.settled();
+  expect(fake.received.map((received) => [received.payload, received.urgency])).toEqual([[{
+    pane_id: null, host_session: "ahp:/s1", machine_id: "mac", title: "Mac · fix the build", body: "waiting for your input", tag: "herdr-chat-mac-ahp%3A%2Fs1",
+  }, "high"]]);
+});

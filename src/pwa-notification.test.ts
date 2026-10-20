@@ -375,3 +375,43 @@ describe("notification clicks", () => {
     expect(worker.opened).toEqual(["/?machine=local&pane=pane-a&view=chat"]);
   });
 });
+
+describe("a host chat's alert", () => {
+  function hostClick(worker: ReturnType<typeof notificationsWithData>, data: unknown): Promise<void> { return worker.clickData(data); }
+  function notificationsWithData(windows: WindowClient[]) {
+    const base = notifications(windows);
+    const listeners = new Map<string, (event: unknown) => void>();
+    const opened: string[] = [];
+    const self = {
+      addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener),
+      clients: { matchAll: async () => windows, openWindow: async (url: string) => { opened.push(url); return null; } },
+      registration: { showNotification: async () => {} },
+    };
+    loadWorker(self);
+    return {
+      ...base, opened,
+      clickData: (data: unknown): Promise<void> => {
+        let completion!: Promise<void>;
+        listeners.get("notificationclick")!({ notification: { data, close: () => {} }, waitUntil: (promise: Promise<void>) => { completion = promise; } });
+        return completion;
+      },
+    };
+  }
+
+  it("keeps the chat's session with the notification", async () => {
+    const worker = notifications([]);
+    await worker.push({ pane_id: null, host_session: "ahp:/s1", machine_id: "mac", title: "t", body: "b", tag: "x" });
+    expect(worker.shown.map((shown) => shown.options.data)).toEqual([{ pane_id: null, machine_id: "mac", workspace_id: null, host_session: "ahp:/s1" }]);
+  });
+
+  it("a tap tells an open window to open the chat, and opens the app on it from cold", async () => {
+    const posted: unknown[] = [];
+    const app = { url: APP, focused: false, focus: async () => {}, postMessage: (data: unknown) => { posted.push(data); } };
+    const worker = notificationsWithData([app as unknown as WindowClient]);
+    await hostClick(worker, { pane_id: null, machine_id: "mac", workspace_id: null, host_session: "ahp:/s1" });
+    expect(posted[0]).toEqual({ type: "select-host-chat", machine_id: "mac", session: "ahp:/s1" });
+    const cold = notificationsWithData([]);
+    await hostClick(cold, { pane_id: null, machine_id: "mac", workspace_id: null, host_session: "ahp:/s1" });
+    expect(cold.opened).toEqual(["/?machine=mac&chat=ahp%3A%2Fs1"]);
+  });
+});

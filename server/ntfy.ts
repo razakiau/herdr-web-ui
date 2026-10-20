@@ -51,23 +51,28 @@ export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): 
 /** What one alert says, and where its tap lands. */
 export interface NtfyAlert {
   title: string;
-  status: AgentStatus | "ended";
+  status: AgentStatus | "ended" | "error";
   body: string;
   machineId: string;
-  paneId: string;
+  /** a pane's alert names the pane; a host chat's names its session instead */
+  paneId?: string;
+  session?: string;
   workspaceId?: string;
 }
 
 const PRIORITY: Partial<Record<string, number>> = { blocked: 4 };
-const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign" };
+const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x" };
 
-/** The app's address for the pane, as a tapped web push opens it (public/sw.js, src/lib/deepLink.ts). */
+/** The app's address for the pane or the chat, as a tapped web push opens it (public/sw.js, src/lib/deepLink.ts). */
 function clickFor(base: string, alert: NtfyAlert): string {
   const query = new URLSearchParams();
   if (alert.machineId !== "local") query.set("machine", alert.machineId);
-  if (alert.workspaceId) query.set("ws", alert.workspaceId);
-  query.set("pane", alert.paneId);
-  query.set("view", "chat");
+  if (alert.session !== undefined) query.set("chat", alert.session);
+  else {
+    if (alert.workspaceId) query.set("ws", alert.workspaceId);
+    query.set("pane", alert.paneId ?? "");
+    query.set("view", "chat");
+  }
   return `${base}/?${query.toString()}`;
 }
 

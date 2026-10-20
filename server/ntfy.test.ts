@@ -164,3 +164,62 @@ describe("ntfy alerts", () => {
     expect(posted).toHaveLength(1);
   });
 });
+
+describe("host chat alerts", () => {
+  const chat = (session: string, status: "working" | "asks" | "idle" | "error", title = "fix the build", archived = false) =>
+    ({ session, title, status, modified_at: "2026-03-10T10:00:00Z", cwd: "/tmp/repo", unread: false, archived });
+
+  it("a chat that starts asking is a question; its link opens the chat on its PC", async () => {
+    const push = service({ HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" });
+    push.onHostChats([chat("ahp:/s1", "working")], "mac", "Mac");
+    push.onHostChats([chat("ahp:/s1", "asks")], "mac", "Mac");
+    await push.settled();
+    expect(posted.map((each) => each.body)).toEqual([{ topic: "herdr-agents", title: "Mac · fix the build", message: "waiting for your input", priority: 4, tags: ["question"],
+      click: "https://herdr.example/?machine=mac&chat=ahp%3A%2Fs1" }]);
+  });
+
+  it("a chat seen for the first time is no news, whatever it is doing", async () => {
+    const push = service({});
+    push.onHostChats([chat("ahp:/s1", "asks"), chat("ahp:/s2", "idle")], "local");
+    await push.settled();
+    expect(posted).toEqual([]);
+  });
+
+  it("a finished turn is a finish, and one that failed says so", async () => {
+    const push = service({});
+    push.onHostChats([chat("ahp:/s1", "working"), chat("ahp:/s2", "working", "docs")], "local");
+    push.onHostChats([chat("ahp:/s1", "idle"), chat("ahp:/s2", "error", "docs")], "local");
+    await push.settled();
+    expect(posted.map((each) => [each.body.title, each.body.message])).toEqual([["fix the build", "work finished"], ["docs", "stopped with an error"]]);
+  });
+
+  it("an answered question is called off, and a chat that left the list takes its alert with it", async () => {
+    const push = createPushService({ stateDir, timing: { short: 40, long: 40, longTurn: 0 },
+      ntfy: ntfyFromEnv({ HERDR_WEB_NTFY_URL: `http://127.0.0.1:${server.port}`, HERDR_WEB_NTFY_TOPIC: "t" })! });
+    push.onHostChats([chat("ahp:/s1", "working"), chat("ahp:/s2", "working")], "local");
+    push.onHostChats([chat("ahp:/s1", "asks"), chat("ahp:/s2", "asks")], "local");
+    push.onHostChats([chat("ahp:/s1", "working")], "local");
+    await push.settled();
+    expect(posted).toEqual([]);
+  });
+
+  it("an archived chat says nothing", async () => {
+    const push = service({});
+    push.onHostChats([chat("ahp:/s1", "working", "x", true)], "local");
+    push.onHostChats([chat("ahp:/s1", "asks", "x", true)], "local");
+    await push.settled();
+    expect(posted).toEqual([]);
+  });
+
+  it("chats on two PCs with the same id are two chats", async () => {
+    const push = service({});
+    // each settled: a later change on the same key would call a wrong alert off unseen
+    push.onHostChats([chat("ahp:/s1", "working")], "mac");
+    await push.settled();
+    push.onHostChats([chat("ahp:/s1", "idle")], "pc");
+    await push.settled();
+    push.onHostChats([chat("ahp:/s1", "asks")], "mac");
+    await push.settled();
+    expect(posted.map((each) => each.body.message)).toEqual(["waiting for your input"]);
+  });
+});

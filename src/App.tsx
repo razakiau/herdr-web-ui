@@ -68,7 +68,7 @@ import {
   type NotificationState,
 } from "./lib/notifications.ts";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
-import { machineGone, notificationLanding, notificationTargetFromSearch, sameLink, notificationViewForPane, onNotificationTarget, type NotificationTarget } from "./lib/notificationTarget.ts";
+import { hostChatFromSearch, isHostChatTarget, machineGone, notificationLanding, notificationTargetFromSearch, sameLink, notificationViewForPane, onNotificationTarget, type HostChatAlertTarget, type NotificationTarget } from "./lib/notificationTarget.ts";
 import { useUpdates } from "./lib/updates.ts";
 import { UpdateNotice } from "./components/UpdateControls.tsx";
 import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
@@ -868,6 +868,18 @@ export function App() {
     setHostReadTitle(null);
     setHostMadeIn(null);
   }, [selectTarget]);
+  const selectHostChatRef = useRef(selectHostChat); selectHostChatRef.current = selectHostChat;
+  // an address naming a chat (an ntfy alert's link, a tapped alert's cold start) opens it once,
+  // then leaves the address: the chat is not a place the address keeps (lib/deepLink.ts)
+  useEffect(() => {
+    const linked = hostChatFromSearch(window.location.search);
+    if (!linked) return;
+    selectHostChat({ machineId: linked.machine_id, session: linked.session });
+    const query = new URLSearchParams(window.location.search);
+    query.delete("chat");
+    const rest = query.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
     // a closed pane (including one remembered across reloads) must release its selection.
@@ -964,7 +976,10 @@ export function App() {
   // yet waits as a link does (this also keeps a cold start's link, which the worker names again
   // once the page is up), and so does one on a PC this roster lacks: a roster asked for now says
   // whether it was removed (the [machines] effect below) or set up since this one was read
-  const takeNotificationTarget = useCallback((target: NotificationTarget): void => {
+  const takeNotificationTarget = useCallback((tapped: NotificationTarget | HostChatAlertTarget): void => {
+    // a host chat's alert opens the chat in the pane's place (server/push.ts onHostChats)
+    if (isHostChatTarget(tapped)) { selectHostChatRef.current({ machineId: tapped.machine_id, session: tapped.session }); return; }
+    const target = tapped;
     const landing = notificationLanding(machinesRef.current, target);
     if (landing.kind === "select") {
       selectTargetRef.current(target.machine_id, target.pane_id, target.view);
