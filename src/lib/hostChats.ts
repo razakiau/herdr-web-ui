@@ -321,6 +321,14 @@ export async function restoreHostCheckpoint(machineId: string, session: string, 
   return post<{ files: number }>(machineId, "host-chats/chat/checkpoint/restore", { session, turn });
 }
 
+/**
+ * VS Code's Fork Conversation: a new chat in the same session with this chat's turns before `turn`
+ * (the request forked at). Its id is made here, so a retry of a lost answer makes no second fork.
+ */
+export async function forkHostChat(machineId: string, session: string, turn: string, id: string = crypto.randomUUID()): Promise<{ session: string }> {
+  return post<{ session: string }>(machineId, "host-chats/chat/fork", { session, turn, id });
+}
+
 /** Redo: puts back the edits a restore undid. */
 export async function redoHostCheckpoint(machineId: string, session: string): Promise<{ files: number }> {
   return post<{ files: number }>(machineId, "host-chats/chat/checkpoint/redo", { session });

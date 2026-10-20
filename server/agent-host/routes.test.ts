@@ -1538,3 +1538,93 @@ describe("host chat checkpoints: Restore Checkpoint, Start Over and Redo (VS Cod
     expect({ status: none.status, code: none.json.error.code }).toEqual({ status: 409, code: "nothing_to_redo" });
   });
 });
+
+describe("host chat forks: VS Code's Fork Conversation", () => {
+  const turns = [turn("t1", "FICTIONAL one"), turn("t2", "FICTIONAL two"), turn("t3", "FICTIONAL three")];
+  const forking = (overrides: Partial<FakeAgentHostSeed> = {}) => rig({ chats: { [chatUri(1)]: chatState(1, { turns }), [chatUri(2)]: chatState(2) }, ...overrides });
+  const forkUri = (id: string) => `ahp-chat://${id}/${Buffer.from(sessionUri(1)).toString("base64")}`;
+  const fork = async (r: Rig, at = "t3", id = uuid(77)) => call(r, "/api/host-chats/chat/fork", { session: sessionUri(1), turn: at, id });
+  const rows = async (r: Rig) => (await call(r, "/api/host-chats/chats")).json.chats as Array<Record<string, unknown>>;
+  const read = async (r: Rig, session: string) => (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(session)}`)).json as HostChatRead;
+  const asked = (got: HostChatRead) => got.turns.filter((each) => each.role === "user").length;
+  const on = async (r: Rig, type: string, n = 1) => { await until(type, () => actions(r.fake, type).length >= n); return actions(r.fake, type).map((each) => each.channel); };
+
+  it("forks before the request: createChat on the session with the turn before it, and answers the fork's chat URI, listed beside its session", async () => {
+    const r = await forking();
+    const done = await fork(r);
+    expect(done).toEqual({ status: 200, json: { session: forkUri(uuid(77)) } });
+    const asked = r.fake.requests.filter((each) => each.method === "createChat");
+    expect(asked.map((each) => each.params)).toEqual([{ channel: sessionUri(1), chat: forkUri(uuid(77)), source: { kind: "fork", chat: chatUri(1), turnId: "t2" } }]);
+    const row = (await rows(r)).find((each) => each["session"] === forkUri(uuid(77)));
+    expect(row).toEqual({ session: forkUri(uuid(77)), title: "FICTIONAL fork of FICTIONAL_chat_1", status: "idle", modified_at: "2026-01-01T00:00:01.000Z", cwd: "/tmp/fictional-repo", unread: true, archived: false, fork_of: sessionUri(1) });
+    expect((await rows(r)).filter((each) => each["session"] === sessionUri(1))).toHaveLength(1);
+  });
+
+  it("the fork reads its own turns; the source chat keeps all of its", async () => {
+    const r = await forking();
+    const forked = (await fork(r)).json.session as string;
+    const got = await read(r, forked);
+    expect({ session: got.session, title: got.title, asked: asked(got) }).toEqual({ session: forked, title: "FICTIONAL fork of FICTIONAL_chat_1", asked: 2 });
+    expect(asked(await read(r, sessionUri(1)))).toBe(3);
+  });
+
+  it("a send on the fork starts its turn on the fork's chat channel, never the source's", async () => {
+    const r = await forking();
+    const forked = (await fork(r)).json.session as string;
+    const id = crypto.randomUUID();
+    expect((await call(r, "/api/host-chats/chat/send", { id, session: forked, text: "FICTIONAL other way" })).json).toEqual({ queued: false });
+    expect(await on(r, "chat/turnStarted")).toEqual([forked]);
+    await until("the fork's turn", () => r.conn.chat(forked)?.activeTurn?.id === id);
+    expect(r.conn.chat(sessionUri(1))?.activeTurn).toBeUndefined();
+  });
+
+  it("rename, read and archive on a fork go on its chat's channel; the session's own title and flags stay", async () => {
+    const r = await forking();
+    const forked = (await fork(r)).json.session as string;
+    await call(r, "/api/host-chats/chat/rename", { session: forked, title: "FICTIONAL the other road" });
+    expect(await on(r, "session/titleChanged")).toEqual([forked]);
+    await call(r, "/api/host-chats/chat/read", { session: forked, read: true });
+    await call(r, "/api/host-chats/chat/archive", { session: forked, archived: true });
+    expect(await on(r, "chat/isArchivedChanged")).toEqual([forked]);
+    expect(actions(r.fake, "session/isArchivedChanged")).toEqual([]);
+    await until("the catalog", () => (r.conn.summaries()[0]!.chats ?? []).some((each) => each.title === "FICTIONAL the other road" && ((each.status ?? 0) & 64) !== 0));
+    const listed = await rows(r);
+    expect(listed.find((each) => each["session"] === forked)).toMatchObject({ title: "FICTIONAL the other road", unread: false, archived: true });
+    expect(listed.find((each) => each["session"] === sessionUri(1))).toMatchObject({ title: "FICTIONAL_chat_1", archived: false });
+  });
+
+  it("delete on a fork disposes that chat alone (disposeChat); its session stays", async () => {
+    const r = await forking();
+    const forked = (await fork(r)).json.session as string;
+    expect(await call(r, "/api/host-chats/chat/delete", { session: forked })).toEqual({ status: 200, json: { ok: true } });
+    expect(r.fake.requests.filter((each) => each.method === "disposeChat" || each.method === "disposeSession").map((each) => [each.method, each.params])).toEqual([["disposeChat", { channel: forked }]]);
+    await until("the catalog", () => !(r.conn.summaries()[0]!.chats ?? []).some((each) => each.resource === forked));
+    expect((await rows(r)).map((each) => each["session"])).not.toContain(forked);
+    expect(asked(await read(r, sessionUri(1)))).toBe(3);
+  });
+
+  it("the same id again makes no second fork; the first turn, an unknown turn and an agent that does not fork are refused", async () => {
+    const r = await forking();
+    await fork(r);
+    expect((await fork(r)).json).toEqual({ session: forkUri(uuid(77)) });
+    expect(r.fake.requests.filter((each) => each.method === "createChat")).toHaveLength(1);
+    const first = await fork(r, "t1", uuid(78));
+    expect({ status: first.status, code: first.json.error.code }).toEqual({ status: 409, code: "first_turn" });
+    const unknown = await fork(r, "t9", uuid(79));
+    expect({ status: unknown.status, code: unknown.json.error.code }).toEqual({ status: 404, code: "unknown_turn" });
+    const plain = await forking({ capabilities: {} });
+    const refused = await fork(plain);
+    expect({ status: refused.status, code: refused.json.error.code }).toEqual({ status: 409, code: "fork_unsupported" });
+    expect(plain.fake.requests.filter((each) => each.method === "createChat")).toHaveLength(0);
+  });
+
+  it("a hidden chat and a tool's are not listed", async () => {
+    const hidden = { ...summary(1), chats: [
+      { resource: chatUri(1), title: "FICTIONAL_chat_1", status: 33, origin: { kind: "user" } },
+      { resource: forkUri("h"), title: "FICTIONAL hidden", status: 33, interactivity: "hidden", origin: { kind: "fork", chat: chatUri(1), turnId: "t1" } },
+      { resource: forkUri("t"), title: "FICTIONAL tool", status: 33, origin: { kind: "tool" } },
+    ] } as unknown as SessionSummary;
+    const r = await forking({ sessions: [hidden, summary(2)] });
+    expect((await rows(r)).map((each) => each["session"])).toEqual([sessionUri(2), sessionUri(1)]);
+  });
+});

@@ -116,7 +116,8 @@ class Coalescer {
   }
 }
 
-interface Watch { count: number; chat: string | null; ready: Promise<void> }
+/** `session`: the session channel it subscribes (a fork's key is its chat URI, its session another). */
+interface Watch { count: number; session: string; chat: string | null; ready: Promise<void> }
 /** A chat watched on its own (a subagent's worker chat), for the session whose chat started it. */
 /** `inner`: the worker's own chat when its URI names a session (VS Code 1.142 names subagents `<session>/subagent/<id>`). */
 interface ChatWatch { count: number; session: string; ready: Promise<void>; inner?: string }
@@ -249,14 +250,26 @@ export class AgentHostConnection {
     if (watch.inner) await this.subscribe(client, watch.inner, "chat");
   }
 
-  /** Subscribes `session` and its default chat, shared and reference-counted; the returned function releases this hold. */
+  /**
+   * The session a session's other chat (a fork, VS Code's Fork Conversation) is in, by its chat URI,
+   * from the list's catalog (SessionSummary.chats); null for a session's own URI or an unknown chat.
+   */
+  ownerOf(chat: string): string | null {
+    if (!chat.startsWith("ahp-chat:")) return null;
+    return this.sessionList.find((summary) => summary.defaultChat !== chat && (summary.chats ?? []).some((each) => each.resource === chat))?.resource ?? null;
+  }
+
+  /**
+   * Subscribes `session` and its default chat, shared and reference-counted; the returned function
+   * releases this hold. A session's other chat (a fork) is watched by its chat URI: its session and that chat.
+   */
   async watch(session: string): Promise<() => void> {
     if (!this.live) throw new AgentHostError("not_connected");
     let watch = this.watches.get(session);
     if (watch) {
       watch.count += 1;
     } else {
-      watch = { count: 1, chat: null, ready: Promise.resolve() };
+      watch = { count: 1, session, chat: null, ready: Promise.resolve() };
       this.watches.set(session, watch);
       watch.ready = this.subscribeWatch(session, watch);
     }
@@ -426,9 +439,12 @@ export class AgentHostConnection {
   private async subscribeWatch(session: string, watch: Watch): Promise<void> {
     const live = this.live;
     if (!live) throw new AgentHostError("not_connected");
-    const state = (await this.subscribe(live.client, session, "session")).state as SessionState;
-    live.client.dispatch(session, { type: "session/activeClientSet", activeClient: { clientId: this.clientId, displayName: "herdr-web", tools: [] } } as StateAction);
-    watch.chat = state.defaultChat ?? null;
+    const owner = this.ownerOf(session);
+    if (session.startsWith("ahp-chat:") && !owner) throw new AgentHostError("rpc_error");
+    watch.session = owner ?? session;
+    const state = (await this.subscribe(live.client, watch.session, "session")).state as SessionState;
+    live.client.dispatch(watch.session, { type: "session/activeClientSet", activeClient: { clientId: this.clientId, displayName: "herdr-web", tools: [] } } as StateAction);
+    watch.chat = owner ? session : state.defaultChat ?? null;
     if (watch.chat) await this.subscribe(live.client, watch.chat, "chat");
   }
 
@@ -455,8 +471,10 @@ export class AgentHostConnection {
 
   private drop(session: string, watch: Watch): void {
     this.watches.delete(session);
-    const channels = watch.chat ? [session, watch.chat] : [session];
-    for (const channel of channels) {
+    const channels = watch.chat ? [watch.session, watch.chat] : [watch.session];
+    // a session's channel stays while another of its chats is watched
+    const held = new Set([...this.watches.values()].flatMap((other) => [other.session, other.chat]));
+    for (const channel of channels.filter((each) => !held.has(each))) {
       this.store.forget(channel);
       this.fromSeq.delete(channel);
       void this.live?.client.unsubscribe(channel).catch(() => {});
@@ -476,11 +494,15 @@ export class AgentHostConnection {
   }
 
   /** The session whose watch covers `channel` (its own channel or its chat's, or a worker chat it started). */
-  private watcherOf(channel: string): string | null {
-    if (this.watches.has(channel)) return channel;
-    for (const [session, watch] of this.watches) if (watch.chat === channel) return session;
-    for (const [uri, watch] of this.chatWatches) if (uri === channel || watch.inner === channel) return watch.session;
-    return null;
+  private watcherOf(channel: string): string | null { return this.watchersOf(channel)[0] ?? null; }
+
+  /** Every watch `channel` is part of: a session's channel is its forks' too. */
+  private watchersOf(channel: string): string[] {
+    const found = new Set<string>();
+    if (this.watches.has(channel)) found.add(channel);
+    for (const [key, watch] of this.watches) if (watch.chat === channel || watch.session === channel) found.add(key);
+    for (const [uri, watch] of this.chatWatches) if (uri === channel || watch.inner === channel) found.add(watch.session);
+    return [...found];
   }
 
   /** Reads every event until the connection closes. */
@@ -495,8 +517,7 @@ export class AgentHostConnection {
             if (this.current.state === "connected") this.setState(this.connectedState(this.current.protocol));
             continue;
           }
-          const session = this.watcherOf(channel);
-          if (session) this.changed({ kind: "chat", session });
+          for (const session of this.watchersOf(channel)) this.changed({ kind: "chat", session });
         } else if (event.type === "sessionAdded") {
           const added = event.params.summary;
           this.sessionList = [...this.sessionList.filter((s) => s.resource !== added.resource), added];

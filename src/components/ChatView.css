@@ -2106,7 +2106,8 @@ button.question-summary-answer { cursor: pointer; }
   font-size: var(--fs-xs);
 }
 
-.chat-checkpoint-btn svg {
+.chat-checkpoint-btn svg,
+.chat-fork-btn svg {
   width: 13px;
   height: 13px;
 }

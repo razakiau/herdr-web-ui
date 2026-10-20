@@ -11,7 +11,7 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ListChecks, MessageSquare, Rocket, ShieldCheck } from "lucide-react";
+import { ChevronDown, GitFork, ListChecks, MessageSquare, Rocket, ShieldCheck } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
@@ -22,7 +22,7 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, answerHostForm, choose, discardHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
+  agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
@@ -39,6 +39,8 @@ export interface HostChatViewProps {
   machineId: string; session: string;
   /** the chat's title as its reads give it: the header's, before the PC's list has the chat */
   onTitle?(title: string): void;
+  /** opens another chat of this PC: a fork just made */
+  onOpenChat?(session: string): void;
 }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
@@ -89,7 +91,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
-export function HostChatView({ machineId, session, onTitle }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle, onOpenChat }: HostChatViewProps) {
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
@@ -107,6 +109,9 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
   const [contextOpen, setContextOpen] = useState(false);
   // the checkpoint a tap asked to restore (its sheet is up), and the message a restore put back in the box
   const [restoring, setRestoring] = useState<string | null>(null);
+  // Fork Conversation: the request being forked at, and why the last one failed
+  const [forking, setForking] = useState<string | null>(null);
+  const [forkError, setForkError] = useState<string | null>(null);
   const [putBack, setPutBack] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -223,12 +228,25 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
   useEffect(() => { if (!busy) setJoined(false); }, [busy]);
   const sendMenu = useMemo(() => ({ default: "steer" as const, onPick: (mode: HostSendPick, text: string, attached?: SentAttachment[]) => sendAs(mode, text, attached) }), [sendAs]);
 
+  // VS Code's Fork Conversation: a new chat with the turns before the request, opened once the PC has it
+  const openChat = useRef(onOpenChat); openChat.current = onOpenChat;
+  const fork = useCallback((turn: string) => {
+    if (forking !== null) return;
+    setForking(turn);
+    setForkError(null);
+    void forkHostChat(machineId, session, turn).then(({ session: forked }) => {
+      if (mounted.current) setForking(null);
+      openChat.current?.(forked);
+    }, (cause: unknown) => {
+      if (mounted.current) { setForking(null); setForkError(errorText(cause)); }
+    });
+  }, [forking, machineId, session]);
   // VS Code's checkpoints: a tap opens the sheet; a restore puts the files back, fades the turns
   // from that message on and puts its text in the box; the next send cuts the chat there
   const checkpointList = chat?.checkpoints ?? null;
   const restoredTurn = chat?.restored?.turn ?? null;
   const checkpoints = useMemo(() => checkpointList === null ? null
-    : { list: checkpointList, restored: restoredTurn, onPick: (turn: string) => setRestoring(turn) }, [checkpointList, restoredTurn]);
+    : { list: checkpointList, restored: restoredTurn, onPick: (turn: string) => setRestoring(turn), ...(onOpenChat ? { onFork: fork } : {}) }, [checkpointList, restoredTurn, onOpenChat, fork]);
   const restoringAt = restoring === null || checkpointList === null ? -1 : checkpointList.findIndex((each) => each.turn === restoring);
   const restoreText = (turn: string): string | null => {
     const at = checkpointList?.findIndex((each) => each.turn === turn) ?? -1;
@@ -285,6 +303,12 @@ export function HostChatView({ machineId, session, onTitle }: HostChatViewProps)
         reread();
       }} />}
     </div>
+    {(forking !== null || forkError !== null) && <div className="checkpoint-bar fork-bar" role="status">
+      <GitFork className="checkpoint-bar-icon" aria-hidden="true" />
+      <span className="checkpoint-bar-text">{forking !== null ? t("Forking conversation…") : t("Couldn't fork the conversation")}</span>
+      {forkError !== null && <span className="checkpoint-bar-error" role="alert">{forkError}</span>}
+      {forkError !== null && <button type="button" className="btn btn-ghost checkpoint-bar-redo" onClick={() => setForkError(null)}>{t("Dismiss")}</button>}
+    </div>}
     {chat?.restored && <CheckpointBar files={chat.restored.files} onRedo={async () => {
       await redoHostCheckpoint(machineId, session);
       if (mounted.current) { setPutBack(null); reread(); }

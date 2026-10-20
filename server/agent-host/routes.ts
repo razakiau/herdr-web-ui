@@ -18,6 +18,7 @@ import { basename, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ActionType,
+  ChatSourceKind,
   ChatInputAnswerState,
   ChatInputAnswerValueKind,
   ChatInputQuestionKind,
@@ -263,6 +264,7 @@ const POSTS: Record<string, Handler> = {
   "chat/confirm": confirmTool,
   "chat/draft": writeDraft,
   "chat/new": newChat,
+  "chat/fork": forkChat,
   "chat/rename": renameChat,
   "chat/read": markRead,
   "chat/archive": markArchived,
@@ -371,11 +373,29 @@ function connected(host: AgentHost): void {
 
 const missing = (): never => refuse(jsonResponse({ error: { code: "host_chat_missing", message: "no such host chat on this PC" } }, 404));
 
-/** A Copilot CLI session the host knows; another provider's session is not one of these chats, whatever its id. */
-function known(host: AgentHost, session: string): boolean {
+/**
+ * The session a chat id is in: a session's own URI is itself; a session's other chat (a fork, VS
+ * Code's Fork Conversation) is listed by its chat URI, and is in the session whose catalog
+ * (SessionSummary.chats) names it.
+ */
+function ownerOf(host: AgentHost, id: string): string {
+  if (!id.startsWith("ahp-chat:")) return id;
+  return host.summaries().find((summary) => summary.defaultChat !== id && (summary.chats ?? []).some((each) => each.resource === id))?.resource ?? id;
+}
+/** Whether `id` names a session's other chat (a fork) rather than a session. */
+const isFork = (host: AgentHost, id: string): boolean => ownerOf(host, id) !== id;
+
+/** A Copilot CLI session the host knows, or one of its forks; another provider's session is not one of these chats, whatever its id. */
+function known(host: AgentHost, id: string): boolean {
+  const session = ownerOf(host, id);
+  if (session.startsWith("ahp-chat:")) return false;
   const provider = host.summaries().find((summary) => summary.resource === session)?.provider ?? host.mirror().getSession(session)?.provider;
   return provider === PROVIDER;
 }
+
+/** The channel a chat id's messages go on: a fork's own chat URI, else the session's default chat. */
+const channelOf = (host: AgentHost, id: string): string | undefined =>
+  isFork(host, id) ? id : host.mirror().getSession(id)?.defaultChat ?? undefined;
 
 /** Takes or renews the session's lease, so its chat is in the mirror; the chat's channel and state. */
 async function watched({ host, leases }: Call, session: string): Promise<{ channel: string; chat: ChatState }> {
@@ -387,13 +407,16 @@ async function watched({ host, leases }: Call, session: string): Promise<{ chann
     if (error instanceof AgentHostError && error.code === "rpc_error") missing();
     throw error;
   }
-  const channel = host.mirror().getSession(session)?.defaultChat;
+  const channel = channelOf(host, session);
   const chat = host.chat(session);
   return channel && chat ? { channel, chat } : missing();
 }
 
-const titleOf = (host: AgentHost, session: string): string =>
-  host.summaries().find((summary) => summary.resource === session)?.title ?? host.mirror().getSession(session)?.title ?? "";
+const titleOf = (host: AgentHost, id: string): string => {
+  const session = ownerOf(host, id);
+  if (session !== id) return host.summaries().find((summary) => summary.resource === session)?.chats?.find((each) => each.resource === id)?.title ?? "";
+  return host.summaries().find((summary) => summary.resource === session)?.title ?? host.mirror().getSession(session)?.title ?? "";
+};
 
 /** Polls the mirror (the host's turnsLoaded follows its fetchTurns answer) until `ready`, or the deadline. */
 async function settle(ready: () => boolean, ms: number): Promise<void> {
@@ -422,7 +445,7 @@ function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): R
   const windows = new Map(models.map((model) => [model.id, model.context]));
   return {
     chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelWindow: (id) => windows.get(id) ?? null,
-    ...(session ? { session: () => host.mirror().getSession(session) } : {}),
+    ...(session ? { session: () => host.mirror().getSession(ownerOf(host, session)) } : {}),
     ...(skills ? { skills: () => skills } : {}),
   };
 }
@@ -445,7 +468,7 @@ async function sessionSkills(host: AgentHost, session: string): Promise<HostComm
   const entry = sessions.get(session) ?? { skills: [], at: -Infinity, asking: null };
   sessions.set(session, entry);
   if (Date.now() - entry.at < SKILLS_TTL_MS) return entry.skills;
-  entry.asking ??= host.request("completions", { kind: CompletionItemKind.UserMessage, channel: session, text: "/", offset: 1 })
+  entry.asking ??= host.request("completions", { kind: CompletionItemKind.UserMessage, channel: ownerOf(host, session), text: "/", offset: 1 })
     .then((result) => { entry.skills = skillsFrom(result.items ?? []); entry.at = Date.now(); })
     .catch(() => { /* the last list stands; the next read asks again */ })
     .finally(() => { entry.asking = null; });
@@ -529,7 +552,7 @@ async function listModels(call: Call): Promise<Response> {
   const session = call.url.searchParams.get("session");
   // a session's agents are in its state, which the mirror holds while the session is watched
   if (session) await watched(call, session);
-  const agents = session ? agentsFrom(call.host.mirror().getSession(session)) : [];
+  const agents = session ? agentsFrom(call.host.mirror().getSession(ownerOf(call.host, session))) : [];
   return jsonResponse({ models: modelsFrom(call.host.mirror().root), agents });
 }
 
@@ -550,7 +573,7 @@ const folderOf = (host: AgentHost, session: string): string | null => {
   const listed = rowsFrom(host.summaries()).find((row) => row.session === session);
   if (listed) return listed.cwd;
   // a chat made empty is not listed before its first message: its own state names the folder
-  const uri = host.mirror().getSession(session)?.workingDirectories?.[0];
+  const uri = host.mirror().getSession(ownerOf(host, session))?.workingDirectories?.[0];
   if (!uri?.startsWith("file:")) return null;
   try { return fileURLToPath(uri); } catch { return null; }
 };
@@ -703,7 +726,7 @@ const APPROVAL_MODES_KEY = "availableApprovalModes";
 
 interface SessionConfig { schema: { properties: Record<string, { enum?: unknown[] }> }; values: Record<string, unknown> }
 const configOf = (host: AgentHost, session: string): SessionConfig | undefined =>
-  (host.mirror().getSession(session) as { config?: SessionConfig } | undefined)?.config;
+  (host.mirror().getSession(ownerOf(host, session)) as { config?: SessionConfig } | undefined)?.config;
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
 
 /** What the chat's mode and approvals can be, and are: approvals the host offers this session (availableApprovalModes), else its schema's. */
@@ -755,7 +778,8 @@ async function writeConfig(call: Call): Promise<Response> {
     config[APPROVALS_KEY] = approvals;
   }
   if (Object.keys(config).length === 0) return badRequest("missing_config", "give mode or approvals");
-  call.host.dispatch(session, { type: ActionType.SessionConfigChanged, config } as StateAction);
+  // the mode and approvals are the session's: a fork's are its session's
+  call.host.dispatch(ownerOf(call.host, session), { type: ActionType.SessionConfigChanged, config } as StateAction);
   return jsonResponse({ ok: true });
 }
 
@@ -891,6 +915,38 @@ async function newChat(call: Call): Promise<Response> {
     return jsonResponse({ session, sent: false });
   }
   return jsonResponse({ session });
+}
+
+/** How long a fork waits for the host's catalog to list it after createChat answers. */
+const FORK_WAIT_MS = 5_000;
+
+/**
+ * VS Code's Fork Conversation: a new chat in the same session with the chat's turns before `turn`
+ * (the request it is forked at, as VS Code forks "before" a request: createChat with the turn
+ * before it), listed beside it by its chat URI. The phone's id names the fork, so a retry makes
+ * nothing. Refused on the first turn (nothing before it) and on an agent that does not fork.
+ */
+async function forkChat(call: Call): Promise<Response> {
+  const id = sessionOf(call.body);
+  const turn = call.body["turn"];
+  if (!text(turn) || turn === "") return badRequest("missing_turn", "turn is required");
+  const forkId = idOf(call.body["id"]);
+  const { channel, chat } = await watched(call, id);
+  const session = ownerOf(call.host, id);
+  const provider = call.host.summaries().find((summary) => summary.resource === session)?.provider ?? PROVIDER;
+  const agent = call.host.mirror().root.agents.find((each) => each.provider === provider);
+  if (agent?.capabilities?.multipleChats?.fork !== true) return conflictResponse("fork_unsupported", "this PC's agent does not fork chats");
+  const at = chat.turns.findIndex((each) => each.id === turn);
+  if (at < 0) return jsonResponse({ error: { code: "unknown_turn", message: "the chat has no such turn loaded" } }, 404);
+  if (at === 0) return conflictResponse("first_turn", "there is nothing before the first request to fork");
+  const tail = (call.host.mirror().getSession(session)?.defaultChat ?? "").replace(/^ahp-chat:\/\/[^/]*\//, "");
+  const fork = `ahp-chat://${forkId}/${tail}`;
+  if (!isFork(call.host, fork)) {
+    await call.host.request("createChat", { channel: session, chat: fork, source: { kind: ChatSourceKind.Fork, chat: channel, turnId: chat.turns[at - 1]!.id } } as never);
+    await settle(() => isFork(call.host, fork), FORK_WAIT_MS);
+    if (!isFork(call.host, fork)) return jsonResponse({ error: { code: "agent_host_failed", message: "the agent host did not list the fork" } }, 502);
+  }
+  return jsonResponse({ session: fork });
 }
 
 /**
@@ -1043,6 +1099,7 @@ async function renameChat(call: Call): Promise<Response> {
   const title = text(raw) ? raw.trim() : "";
   if (title === "") return badRequest("missing_title", "title is required");
   await watched(call, session);
+  // a fork's id is its chat's URI: the same action there renames that chat alone (probed on 1.142)
   call.host.dispatch(session, { type: ActionType.SessionTitleChanged, title } as StateAction);
   return jsonResponse({ ok: true });
 }
@@ -1058,7 +1115,12 @@ async function markRead(call: Call): Promise<Response> {
 async function markArchived(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const isArchived = flag(call.body["archived"], "archived");
-  await watched(call, session);
+  const { channel } = await watched(call, session);
+  // a fork is archived on its own chat's channel, as VS Code's archiveChat: the host takes it there
+  if (isFork(call.host, session)) {
+    call.host.dispatch(channel, { type: ActionType.ChatIsArchivedChanged, isArchived } as StateAction);
+    return jsonResponse({ ok: true });
+  }
   // on the session, as VS Code's setSessionArchived: the host refuses chat/isArchivedChanged on a
   // session's default chat ("Only a known independently manageable non-default chat can be
   // archived"), so that marked nothing and the chat came back after a reload
@@ -1081,7 +1143,9 @@ async function deleteChat(call: Call): Promise<Response> {
     throw error;
   });
   if (open?.chat.activeTurn) call.host.dispatch(open.channel, { type: ActionType.ChatTurnCancelled, turnId: open.chat.activeTurn.id, duration: 0 } as StateAction);
-  await call.host.request("disposeSession", { channel: session });
+  // a fork goes alone (disposeChat); its session and other chats stay
+  if (isFork(call.host, session)) await call.host.request("disposeChat", { channel: session });
+  else await call.host.request("disposeSession", { channel: session });
   // its watch would keep the gone session in the mirror, and known() with it
   call.leases.sessions.release(session);
   return jsonResponse({ ok: true });

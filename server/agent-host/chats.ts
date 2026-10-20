@@ -7,6 +7,8 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   ChatInputAnswerState,
+  ChatInteractivity,
+  ChatOriginKind,
   ChatInputAnswerValueKind,
   ChatInputQuestionKind,
   ChatInputResponseKind,
@@ -72,20 +74,39 @@ function pathOf(uri: string | undefined): string | null {
   try { return fileURLToPath(uri); } catch { return null; }
 }
 
-/** The chat list: Copilot CLI sessions only, newest first. */
+/**
+ * The chat list: Copilot CLI sessions only, newest first. A session's other chats a user made (VS
+ * Code's Fork Conversation: SessionSummary.chats, origin fork or user) are rows of their own, by
+ * their chat URI, beside it: their own title and status, the session's folder and time (a catalog
+ * entry has none). Hidden chats and a tool's are not listed, as VS Code lists none of them.
+ */
 export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
   return summaries
     .filter((summary) => summary.provider === PROVIDER)
-    .map((summary) => ({
-      session: summary.resource,
-      title: summary.title,
-      status: statusOf(summary.status),
-      modified_at: summary.modifiedAt,
-      cwd: pathOf(summary.workingDirectories?.[0] ?? summary.project?.uri),
-      // the flags beside the activity bits (VS Code's isSessionStatusRead / isSessionStatusArchived)
-      unread: (summary.status & SessionStatus.IsRead) === 0,
-      archived: (summary.status & SessionStatus.IsArchived) !== 0,
-    }))
+    .flatMap((summary) => {
+      const cwd = pathOf(summary.workingDirectories?.[0] ?? summary.project?.uri);
+      const row: HostChatRow = {
+        session: summary.resource,
+        title: summary.title,
+        status: statusOf(summary.status),
+        modified_at: summary.modifiedAt,
+        cwd,
+        // the flags beside the activity bits (VS Code's isSessionStatusRead / isSessionStatusArchived)
+        unread: (summary.status & SessionStatus.IsRead) === 0,
+        archived: (summary.status & SessionStatus.IsArchived) !== 0,
+      };
+      const forks = (summary.chats ?? []).filter((chat) => chat.resource !== summary.defaultChat
+        && chat.interactivity !== ChatInteractivity.Hidden && (chat.origin === undefined || chat.origin.kind === ChatOriginKind.Fork || chat.origin.kind === ChatOriginKind.User));
+      return [row, ...forks.map((chat): HostChatRow => {
+        // a chat without a status is unknown: neither unread nor archived (AHP's rule)
+        const status = chat.status ?? (SessionStatus.Idle | SessionStatus.IsRead);
+        return {
+          session: chat.resource, title: chat.title, status: statusOf(status), modified_at: summary.modifiedAt, cwd,
+          unread: (status & SessionStatus.IsRead) === 0, archived: (status & SessionStatus.IsArchived) !== 0,
+          fork_of: summary.resource,
+        };
+      })];
+    })
     .sort((a, b) => (a.modified_at < b.modified_at ? 1 : a.modified_at > b.modified_at ? -1 : 0));
 }
 

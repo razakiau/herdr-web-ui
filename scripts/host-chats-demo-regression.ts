@@ -175,6 +175,14 @@ const patch = `(() => {
         return json({ path: "/tmp/fictional-repo/.herdr-web-ui/" + body.name });
       }
       if (path === "/api/host-chats/chat/resume") { state.resumed = true; return json({ ok: true }); }
+      // VS Code's Fork Conversation: a chat in the same folder with the turns before the request
+      if (path === "/api/host-chats/chat/fork") {
+        if (state.failFork) return json({ error: { code: "first_turn", message: "FICTIONAL nothing to fork" } }, 409);
+        const session = "fictional-fork-" + (state.created.length + 1);
+        state.created.push({ session, cwd: "/tmp/fictional-repo", text: "FICTIONAL forked from " + body.turn, sent: true });
+        edits.titles[session] = "FICTIONAL forked chat";
+        return json({ session });
+      }
       if (path === "/api/host-chats/chat/checkpoint/restore") { state.restored = { turn: body.turn, files: body.turn === "h1" || body.turn === "h0" ? 1 : 0 }; return json({ files: state.restored.files }); }
       if (path === "/api/host-chats/chat/checkpoint/redo") { const files = state.restored?.files ?? 0; state.restored = null; return json({ files }); }
       if (path === "/api/host-chats/chat/stop") { state.stopped += 1; state.busy = false; return json({ ok: true }); }
@@ -1313,6 +1321,51 @@ try {
         await noVsCode("after the delete");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS delete asks, naming the chat, and the chat is gone");
+
+        // 7d. VS Code's Fork Conversation: on every request but the first, beside Restore; a fork
+        // that fails says why in the bar over the box; one that goes opens the new chat as a tab
+        if (await page.locator("#workspace-drawer.is-open").count() > 0) await page.keyboard.press("Escape");
+        await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
+        await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"] [role="tab"]`).click();
+        await view.waitFor();
+        const firstForkAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL an earlier ask" });
+        // the list draws what is in view: the chat's first request is at its top
+        for (let tries = 0; tries < 20 && await firstForkAsk.count() === 0; tries++) {
+          await view.locator(".chat-view").evaluate((node) => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll")); });
+          await page.waitForTimeout(100);
+        }
+        await firstForkAsk.waitFor();
+        assert.equal(await firstForkAsk.getByRole("button", { name: "Fork Conversation" }).count(), 0, "the first request has nothing before it to fork");
+        const forkAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" });
+        await forkAsk.scrollIntoViewIfNeeded();
+        const forkButton = forkAsk.getByRole("button", { name: "Fork Conversation" });
+        assert.equal(await forkButton.count(), 1, "a later request offers Fork Conversation");
+        const meta = await forkAsk.locator(".chat-turn-meta").evaluate((node) => [...node.querySelectorAll("button")].map((each) => each.getAttribute("aria-label")));
+        assert.deepEqual(meta, ["Restore Checkpoint", "Fork Conversation", "Copy message"], "Fork sits between Restore and Copy");
+        await page.evaluate(() => { (window as unknown as { hostState: { failFork: boolean } }).hostState.failFork = true; });
+        await forkButton.click();
+        const forkBar = view.locator(".fork-bar");
+        await forkBar.locator(".checkpoint-bar-error", { hasText: "FICTIONAL nothing to fork" }).waitFor();
+        assert.equal((await forkBar.locator(".checkpoint-bar-text").innerText()).trim(), "Couldn't fork the conversation");
+        await fits("the fork error");
+        if (shots) await page.screenshot({ path: join(shots, "r8-fork-error-390.png") });
+        await forkBar.getByRole("button", { name: "Dismiss" }).click();
+        await forkBar.waitFor({ state: "detached" });
+        await page.evaluate(() => { (window as unknown as { hostState: { failFork: boolean } }).hostState.failFork = false; });
+        await forkButton.click();
+        const forked = page.locator('.host-chat[data-host-session^="fictional-fork-"]');
+        await forked.waitFor();
+        const forkPosts = (await posts("/api/machines/remote/host-chats/chat/fork")).map((post) => post.body);
+        assert.equal(forkPosts.length, 2, "two forks asked: the refused one and this one");
+        assert.deepEqual(forkPosts.map((body) => [body["session"], body["turn"]]), [[SESSION, "h1"], [SESSION, "h1"]], "forked at that request");
+        assert.ok(forkPosts.every((body) => /^[0-9a-f-]{36}$/.test(String(body["id"]))) && forkPosts[0]!["id"] !== forkPosts[1]!["id"], "each fork carries its own id");
+        await page.evaluate(() => (window as unknown as { pushHostList(): void }).pushHostList());
+        await page.locator('.tab-strip .host-chat-tab[data-host-session^="fictional-fork-"] .tab-strip-label', { hasText: "FICTIONAL forked chat" }).waitFor();
+        assert.equal(await view.count(), 0, "the fork replaced the chat it came from on screen");
+        await fits("the forked chat");
+        if (shots) await page.screenshot({ path: join(shots, "r8-forked-390.png") });
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS Fork Conversation is offered on later requests, says why when refused, and opens the fork as a tab");
 
         // 8. six PCs: five fold under "Other PCs (5)"; the one whose chat asks stays open outside it
       } finally { await context.close(); }
