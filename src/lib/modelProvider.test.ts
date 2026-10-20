@@ -33,6 +33,10 @@ describe("the model picker's rows", () => {
     expect(rowDetail(model("a", "A", "copilotcli", { context: 500_000 }), null)).toBe("500K");
     expect(rowDetail(model("a", "A"), "medium")).toBe("Medium");
     expect(rowDetail(model("a", "A"), null)).toBe("");
+    // the host's default effort shows until one is picked (VS Code's row reads "Medium · 528K" too)
+    const thinking = { ...model("a", "A", "copilotcli", { context: 528_000 }), efforts: { key: "thinkingLevel", values: ["low", "medium", "high"], default: "medium" } };
+    expect(rowDetail(thinking, null)).toBe("Medium · 528K");
+    expect(rowDetail(thinking, "high")).toBe("High · 528K");
     expect(contextLabel(200_000)).toBe("200K");
     expect(contextLabel(1_048_576)).toBe("1M");
   });

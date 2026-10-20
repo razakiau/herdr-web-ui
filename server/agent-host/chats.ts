@@ -567,13 +567,15 @@ export function promptFrom(chat: ChatState): HostChatRead["prompt"] {
 function effortsOf(schema: HostModelSchema | undefined): HostModel["efforts"] {
   const properties = schema?.properties ?? {};
   const named = properties["thinkingLevel"];
-  const entry: [string, { enum?: unknown[] }] | undefined = Array.isArray(named?.enum)
+  const entry: [string, { enum?: unknown[]; default?: unknown }] | undefined = Array.isArray(named?.enum)
     ? ["thinkingLevel", named]
     : Object.entries(properties).find(([, property]) => Array.isArray(property.enum));
   if (!entry) return null;
-  return { key: entry[0], values: (entry[1].enum ?? []).map(String) };
+  const values = (entry[1].enum ?? []).map(String);
+  const fallback = entry[1].default;
+  return typeof fallback === "string" && values.includes(fallback) ? { key: entry[0], values, default: fallback } : { key: entry[0], values };
 }
-type HostModelSchema = { properties?: Record<string, { enum?: unknown[] }> };
+type HostModelSchema = { properties?: Record<string, { enum?: unknown[]; default?: unknown }> };
 
 /** Copilot's own models carry these in `_meta` (probed 2026-10-19, VS Code 1.142); a custom endpoint's carry none. */
 const COPILOT_META = ["multiplierNumeric", "discountPercent", "category"];

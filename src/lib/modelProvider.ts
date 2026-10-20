@@ -53,7 +53,8 @@ const capital = (word: string): string => word.charAt(0).toUpperCase() + word.sl
 
 /** A row's right side: "{Effort} · {context}", either alone, or nothing. */
 export function rowDetail(model: HostModel, effort: string | null): string {
-  return [effort ? capital(effort) : null, model.context ? contextLabel(model.context) : null].filter((part) => part !== null).join(" · ");
+  const shown = effort ?? model.efforts?.default ?? null;
+  return [shown ? capital(shown) : null, model.context ? contextLabel(model.context) : null].filter((part) => part !== null).join(" · ");
 }
 
 /** Where a model is filed: the bridge's group, or the same rule for a bridge older than 1007. */
