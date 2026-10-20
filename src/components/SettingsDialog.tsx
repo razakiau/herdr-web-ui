@@ -24,9 +24,10 @@ import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalle
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
-import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
+import { fetchNtfyTopic, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
+import { ntfyLine } from "../lib/push.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
-import type { AgentIntegration, HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
+import type { AgentIntegration, HealthAuth, PluginActions, PushKey, RemoteAccess } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { loadIntegrations, outcomeFor, type IntegrationsResult } from "../lib/integrations.ts";
 import type { VoiceStatus } from "../../shared/voice.ts";
@@ -472,29 +473,54 @@ function AlertsPage({ onEnableNotifications, onDisableNotifications }: { onEnabl
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(settings.alertSound);
   return (
-    <SettingsGroup note={t("For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
-      {/* the page's own switch: a Copilot folder's ⋯ menu has no Alerts item */}
-      <SettingsRow label={t("Alerts on this device")} description={t("Off: no push and no alert in the app here. Other devices keep theirs.")}>
-        <Toggle label={t("Alerts on this device")} checked={settings.alertsOn} onChange={(on) => void (on ? onEnableNotifications() : onDisableNotifications())} />
-      </SettingsRow>
-      <PushTestControls onEnable={onEnableNotifications} />
-      <SettingsRow label={t("Needs input")} description={t("An agent waits for an answer or a permission")}>
-        <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
-      </SettingsRow>
-      <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
-        <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
-      </SettingsRow>
-      <SettingsRow label={t("In the app")} description={t("While the app is open, these drop in from the top of the screen at once. Tap one to open its pane.")}>
-        <Toggle label={t("In the app")} checked={settings.alertInApp} onChange={(alertInApp) => update({ alertInApp })} />
-      </SettingsRow>
-      <SettingsRow label={t("Sound")} description={t("While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.")}>
-        <Toggle label={t("Sound")} checked={settings.alertSound} onChange={(alertSound) => {
-          update({ alertSound });
-          alertSoundWanted.current = alertSound;
-          // this tap is the gesture the page needs to play audio; the chime is the preview,
-          // unless the switch went off again while the audio was getting ready
-          if (alertSound) void unlockAlertSound().then((ready) => { if (ready && alertSoundWanted.current) previewAlertSound(); });
-        }} />
+    <>
+      <SettingsGroup title={t("What to tell you")} section="what" note={t("An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
+        <SettingsRow label={t("Needs input")} description={t("An agent waits for an answer or a permission")}>
+          <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
+        </SettingsRow>
+        <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
+          <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
+        </SettingsRow>
+      </SettingsGroup>
+      <SettingsGroup title={t("On this device")} section="device">
+        {/* web push alone: the in-app alerts below and the server's ntfy topic are channels of their own */}
+        <SettingsRow label={t("Push to this device")} description={t("A system notification, even with the app closed.")}>
+          <Toggle label={t("Push to this device")} checked={settings.alertsOn} onChange={(on) => void (on ? onEnableNotifications() : onDisableNotifications())} />
+        </SettingsRow>
+        <PushTestControls onEnable={onEnableNotifications} />
+        <SettingsRow label={t("In the app")} description={t("While the app is open, these drop in from the top of the screen at once. Tap one to open its pane.")}>
+          <Toggle label={t("In the app")} checked={settings.alertInApp} onChange={(alertInApp) => update({ alertInApp })} />
+        </SettingsRow>
+        <SettingsRow label={t("Sound")} description={t("While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.")}>
+          <Toggle label={t("Sound")} checked={settings.alertSound} onChange={(alertSound) => {
+            update({ alertSound });
+            alertSoundWanted.current = alertSound;
+            // this tap is the gesture the page needs to play audio; the chime is the preview,
+            // unless the switch went off again while the audio was getting ready
+            if (alertSound) void unlockAlertSound().then((ready) => { if (ready && alertSoundWanted.current) previewAlertSound(); });
+          }} />
+        </SettingsRow>
+      </SettingsGroup>
+      <NtfyChannel />
+    </>
+  );
+}
+
+/** The server's ntfy topic, read-only: the deployment sets it for every phone that follows it, not a device. */
+function NtfyChannel() {
+  const t = useT();
+  const [ntfy, setNtfy] = useState<NonNullable<PushKey["ntfy"]> | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchNtfyTopic().then((topic) => { if (live) setNtfy(topic); }, () => {});
+    return () => { live = false; };
+  }, []);
+  const line = ntfyLine(ntfy, t);
+  if (!ntfy) return null;
+  return (
+    <SettingsGroup title={t("On the server")} section="server">
+      <SettingsRow label={t("ntfy · {topic}", { topic: ntfy.topic })} description={line ?? t("This server's ntfy topic gets no alerts.")}>
+        <span className="settings-value">{line ? t("On") : t("Off")}</span>
       </SettingsRow>
     </SettingsGroup>
   );

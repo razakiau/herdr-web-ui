@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { ApiError, fetchNtfyTopic } from "../lib/api.ts";
+import { useState } from "react";
+import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
-import { ntfyLine, pushSupported, testDevicePush } from "../lib/push.ts";
+import { pushSupported, testDevicePush } from "../lib/push.ts";
 import { useSettings } from "../lib/settings.ts";
 
 type Result = Awaited<ReturnType<typeof testDevicePush>> | "gone" | "failed" | "sending" | null;
@@ -14,14 +14,6 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
   const denied = globalThis.Notification?.permission === "denied";
   const busy = result === "sending";
   const enable = !settings.alertsOn || result === "missing" || result === "gone" || result === "permission";
-  // the deployment's own ntfy topic, set on the server, not here: said, not offered as a switch
-  const [ntfy, setNtfy] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    fetchNtfyTopic().then((topic) => { if (live) setNtfy(ntfyLine(topic, t)); }, () => {});
-    return () => { live = false; };
-  }, [t]);
-
   const send = async (repair: boolean) => {
     setResult("sending");
     try {
@@ -49,7 +41,7 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
               : result === "gone" ? t("The push service retired this device's subscription. Turn alerts on again to make a new one.")
               : result === "permission" ? t("Allow notifications to test alerts on this device.")
               : result === "failed" ? t("Could not send the test notification. Try again.")
-              : !settings.alertsOn ? t("Alerts off") : null}
+              : !settings.alertsOn ? t("Push is off on this device") : null}
           </span>
         </div>
         <button type="button" className="btn" disabled={busy || !settings.alertsOn || !supported || denied} onClick={() => void send(false)}>{busy ? t("Sending…") : t("Send test")}</button>
@@ -57,7 +49,6 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
       {enable && supported && !denied && <div className="settings-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void send(true)}>{t("Turn alerts on again")}</button>
       </div>}
-      {ntfy && <p className="settings-hint settings-ntfy">{ntfy}</p>}
     </div>
   );
 }
