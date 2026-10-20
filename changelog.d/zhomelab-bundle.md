@@ -20,3 +20,4 @@
 - zhomelab bundle 1016: New chat opens an empty chat in the chat's own composer (skills, permissions, dictation, attach), dropped again if you leave it empty; dictation in a question card shows over its field; Chrome on Android no longer repeats dictated words.
 - zhomelab bundle 1017: browser dictation keeps going through a pause (Chrome ends its session at each pause) and keeps the unfinished phrase.
 - zhomelab bundle 1018: a model row says its thinking level ("Medium · 528K") with a chevron that opens the levels, and the composer pill shows the default level before any pick.
+- zhomelab bundle 1019: the model picker keeps its search and provider tabs pinned at the top, each tab with its model count.
