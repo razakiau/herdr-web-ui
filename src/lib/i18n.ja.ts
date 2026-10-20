@@ -1507,7 +1507,6 @@ export const JA: Record<string, string> = {
   "Answer": "回答",
   // a host chat's own actions (components/HostChatActions.tsx)
   "Rename…": "名前を変更…",
-  "Rename chat…": "チャットの名前を変更…",
   "Rename chat": "チャットの名前を変更",
   "Chat name": "チャット名",
   "A chat needs a name.": "チャットには名前が必要です。",

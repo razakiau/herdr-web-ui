@@ -6,7 +6,7 @@
  */
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Ellipsis, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Search, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -119,8 +119,11 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, onOpen, o
           <button type="button" className="icon-button" aria-label={t("Close dialog")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body all-agents-body">
-          <input className="input all-agents-search" type="search" value={query} aria-label={t("Search agents")} placeholder={t("Search agents")}
-            autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(event) => setQuery(event.target.value)} />
+          <label className="all-agents-search">
+            <Search aria-hidden="true" />
+            <input className="input" type="search" value={query} aria-label={t("Search agents")} placeholder={t("Search agents")}
+              autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(event) => setQuery(event.target.value)} />
+          </label>
           {line && <p className="field-hint" role="status">{line}</p>}
           {current.length === 0 && archived.length === 0 && <p className="agent-empty" role="status">{t(words === "" ? "No agents yet" : "No agents match")}</p>}
           {current.map((group) => <section key={group.cwd ?? ""} className="all-agents-group" aria-label={group.cwd ?? t("No folder")}>

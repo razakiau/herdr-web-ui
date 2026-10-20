@@ -1509,7 +1509,6 @@ export const ZH: Record<string, string> = {
   "Answer": "回答",
   // a host chat's own actions (components/HostChatActions.tsx)
   "Rename…": "重命名…",
-  "Rename chat…": "重命名聊天…",
   "Rename chat": "重命名聊天",
   "Chat name": "聊天名称",
   "A chat needs a name.": "聊天需要一个名称。",
