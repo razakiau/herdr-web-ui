@@ -16,7 +16,7 @@ const modified = (row: HostChatRow): number => {
   const at = Date.parse(row.modified_at);
   return Number.isFinite(at) ? at : 0;
 };
-const folderOf = (row: HostChatRow): string | null => (row.cwd ? samePath(row.cwd) : null);
+const folderOf = (row: Pick<HostChatRow, "cwd">): string | null => (row.cwd ? samePath(row.cwd) : null);
 const usable = (row: HostChatRow): boolean => !row.archived && folderOf(row) !== null;
 
 function find(pc: PcHostWorkspaces | undefined, cwd: string): HostWorkspace | undefined {
@@ -30,6 +30,18 @@ export function isOpenFolder(pc: PcHostWorkspaces | undefined, cwd: string): boo
 
 export function tabsOf(pc: PcHostWorkspaces | undefined, cwd: string): string[] {
   return find(pc, cwd)?.tabs ?? [];
+}
+
+/** Whether the chat is an open tab; one on screen that is not is a look, which nothing saves. */
+export function isTabOpen(pc: PcHostWorkspaces | undefined, session: string): boolean {
+  return pc?.open.some((each) => each.tabs.includes(session)) ?? false;
+}
+
+/** The tab to show when `session`'s closes while on screen: the next in its strip, else the one before; null when it was the last. */
+export function tabAfterClose(pc: PcHostWorkspaces, session: string): string | null {
+  const tabs = pc.open.find((each) => each.tabs.includes(session))?.tabs ?? [];
+  const at = tabs.indexOf(session);
+  return at < 0 ? null : tabs[at + 1] ?? tabs[at - 1] ?? null;
 }
 
 const withOpen = (pc: PcHostWorkspaces, open: HostWorkspace[]): PcHostWorkspaces => ({ ...pc, open });
@@ -59,7 +71,7 @@ export function closeWorkspace(pc: PcHostWorkspaces, cwd: string): PcHostWorkspa
 }
 
 /** The chat as a tab of its folder's workspace, which opens (with this tab only) if it was closed. */
-export function openTab(pc: PcHostWorkspaces, chat: HostChatRow): PcHostWorkspaces {
+export function openTab(pc: PcHostWorkspaces, chat: Pick<HostChatRow, "session" | "cwd">): PcHostWorkspaces {
   const folder = folderOf(chat);
   if (folder === null) return pc;
   const open = find(pc, folder);
@@ -78,9 +90,13 @@ export function closeTab(pc: PcHostWorkspaces, session: string): PcHostWorkspace
   }));
 }
 
-/** Tabs whose chat is gone or archived dropped; a workspace left with none closes. */
-export function prunePc(pc: PcHostWorkspaces, chats: readonly HostChatRow[]): PcHostWorkspaces {
+/**
+ * Tabs whose chat is gone or archived dropped; a workspace left with none closes. `keep` (the chat
+ * on screen) stays: a new chat is not listed until its first message.
+ */
+export function prunePc(pc: PcHostWorkspaces, chats: readonly HostChatRow[], keep: string | null = null): PcHostWorkspaces {
   const alive = new Set(chats.filter((row) => !row.archived).map((row) => row.session));
+  if (keep !== null && !chats.some((row) => row.session === keep && row.archived)) alive.add(keep);
   let changed = false;
   const open = pc.open.flatMap((each) => {
     const tabs = each.tabs.filter((tab) => alive.has(tab));
@@ -123,7 +139,7 @@ export function shouldSeed(stored: HostWorkspaceState, machineId: string, read: 
 export function upkeepPc(stored: HostWorkspaceState, machineId: string, read: HostPc | undefined, pinnedFolders: ReadonlySet<string>, onScreen: string | null): HostWorkspaceState {
   if (!hostChatLive(read)) return stored;
   const was = stored[machineId];
-  const next = was === undefined ? seedPc(read!.chats, pinnedFolders, onScreen) : prunePc(was, read!.chats);
+  const next = was === undefined ? seedPc(read!.chats, pinnedFolders, onScreen) : prunePc(was, read!.chats, onScreen);
   return next === was ? stored : { ...stored, [machineId]: next };
 }
 

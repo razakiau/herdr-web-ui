@@ -11,7 +11,7 @@
  */
 import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArchiveRestore, Mail, MailOpen, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
@@ -35,6 +35,10 @@ export interface HostChatActions {
   rename(machineId: string, session: string, title: string): void;
   setRead(machineId: string, session: string, read: boolean): void;
   setArchived(machineId: string, session: string, archived: boolean): void;
+  /** whether the chat is an open tab of its agent host workspace (lib/hostWorkspaces.ts) */
+  isTab(machineId: string, session: string): boolean;
+  /** its tab closed: hidden, never archived; the workspace closes with its last tab */
+  closeTab(machineId: string, session: string): void;
   /** the confirm, naming the chat; Delete there deletes it */
   askDelete(target: HostChatRef): void;
   /** the rename sheet or the delete confirm is up: a sheet under it leaves Back to it (lib/sheetHistory.ts) */
@@ -49,7 +53,8 @@ export const hostChatTitle = (chat: HostChatRow, t: Translate): string => chat.t
 
 /**
  * The menu's items for one chat. `rename` overrides how Rename… starts (a tab's field in place);
- * without one it opens the sheet. Pin first, as an Agents row's menu has it; Delete last, apart.
+ * without one it opens the sheet. Pin first, as an Agents row's menu has it; Close tab while it is
+ * one (it hides the tab and loses nothing, so it never asks); Delete last, apart.
  */
 export function hostChatItems(actions: HostChatActions, target: HostChatRef, t: Translate, rename?: () => void): RowMenuItem[] {
   const { machineId, chat } = target;
@@ -62,6 +67,7 @@ export function hostChatItems(actions: HostChatActions, target: HostChatRef, t: 
     chat.unread
       ? { id: "mark-read", label: t("Mark as read"), icon: MailOpen, run: () => actions.setRead(machineId, chat.session, true) }
       : { id: "mark-unread", label: t("Mark as unread"), icon: Mail, run: () => actions.setRead(machineId, chat.session, false) },
+    ...(actions.isTab(machineId, chat.session) ? [{ id: "close-tab", label: t("Close tab"), icon: X, run: () => actions.closeTab(machineId, chat.session) }] : []),
     chat.archived
       ? { id: "restore", label: t("Restore"), icon: ArchiveRestore, run: () => actions.setArchived(machineId, chat.session, false) }
       : { id: "mark-done", label: t("Mark as done"), icon: Archive, run: () => actions.setArchived(machineId, chat.session, true) },

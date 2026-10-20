@@ -11,7 +11,7 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, GitFork, ListChecks, MessageSquare, Rocket, ShieldCheck } from "lucide-react";
+import { ChevronDown, Eye, GitFork, ListChecks, MessageSquare, Rocket, ShieldCheck } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
@@ -41,6 +41,8 @@ export interface HostChatViewProps {
   onTitle?(title: string): void;
   /** opens another chat of this PC: a fork just made */
   onOpenChat?(session: string): void;
+  /** set while the chat is a look (opened from Agents, All agents or an alert, not a tab): keeps it open as a tab */
+  look?(): void;
 }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
@@ -91,7 +93,8 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
-export function HostChatView({ machineId, session, onTitle, onOpenChat }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle, onOpenChat, look }: HostChatViewProps) {
+  const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
@@ -205,6 +208,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat }: HostCh
         if (words === "" && attached.length === 0) return true;
       }
       unused.current = false;
+      // a message sent in a look keeps it open: the user acts in it
+      lookRef.current?.();
       // sent: sendHost lets the stored draft go even if this screen is gone by now
       const result = await sendHost(machineId, { session, text: words, ...(mode === "send" ? {} : { mode }), ...(attached.length > 0 ? { attachments: attached } : {}) }, { model: chat?.model ?? null, agent: chat?.agent ?? null }, true);
       if (mounted.current) {
@@ -303,6 +308,11 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat }: HostCh
         reread();
       }} />}
     </div>
+    {look && <div className="checkpoint-bar look-bar">
+      <Eye className="checkpoint-bar-icon" aria-hidden="true" />
+      <span className="checkpoint-bar-text">{t("Not open in its workspace")}</span>
+      <button type="button" className="btn btn-ghost checkpoint-bar-redo" onClick={look}>{t("Keep open")}</button>
+    </div>}
     {(forking !== null || forkError !== null) && <div className="checkpoint-bar fork-bar" role="status">
       <GitFork className="checkpoint-bar-icon" aria-hidden="true" />
       <span className="checkpoint-bar-text">{forking !== null ? t("Forking conversation…") : t("Couldn't fork the conversation")}</span>
