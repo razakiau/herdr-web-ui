@@ -1067,6 +1067,31 @@ try {
         assert.equal((await posts("/api/machines/remote/host-chats/chat/read")).filter((post) => post.body["session"] === "fictional-session-0").length, 1, "read once on opening");
         console.log("PASS a folder row opens its unread chat as its tab and marks it read; a read that fails says the bridge's own words");
 
+        // a Copilot folder (AHP chats, no herdr workspace): the header's ⋯ is its row's menu, none of a pane's items
+        const menuItems = async () => (await page.locator(".row-sheet .row-sheet-item").allInnerTexts()).map((text) => text.trim());
+        await page.getByRole("button", { name: "More", exact: true }).click();
+        await page.locator(".row-sheet").waitFor();
+        const headerFolder = await menuItems();
+        assert.deepEqual(headerFolder, ["New Copilot chat…", "All agents on Build PC…", "Copy path"], "a Copilot folder's header ⋯: its own items");
+        if (shots) { await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false); await page.screenshot({ path: join(shots, "r9-folder-header-menu-390.png") }); }
+        await page.keyboard.press("Escape");
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await folderRow.getByRole("button", { name: /^More for / }).click();
+        await page.locator(".row-sheet").waitFor();
+        assert.deepEqual(await menuItems(), headerFolder, "the folder row's ⋯ is the same menu");
+        await page.keyboard.press("Escape");
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
+        await page.getByRole("button", { name: "More", exact: true }).click();
+        await page.locator(".row-sheet .row-sheet-item", { hasText: "All agents on Build PC…" }).click();
+        const fromHeader = page.getByRole("dialog", { name: "All agents on Build PC", exact: true });
+        await fromHeader.waitFor();
+        await fromHeader.getByRole("button", { name: "Close dialog" }).click();
+        await fromHeader.waitFor({ state: "detached" });
+        console.log("PASS a Copilot folder's header ⋯ is its row's menu: New Copilot chat, All agents, Copy path");
+
         // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row has no ⋯): search finds the
         // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
         const agentsMenu = async () => {
@@ -1259,19 +1284,20 @@ try {
         // the chat is a tab of its workspace now: the header names the workspace, never the chat's new name
         assert.equal((await page.locator(".app-header .context-title-text").innerText()).trim(), "checkout-api", "the header names the chat's workspace, not its new name");
         assert.deepEqual(await actionPosts("rename"), [{ session: "fictional-new-3", title: "FICTIONAL renamed chat" }], "one rename, trimmed, never the empty one");
-        // the header's ⋯ on an open chat is the chat's own menu, as its tab's: none of a pane's items
+        // a herdr workspace with chat tabs keeps its own header ⋯ (a pane's): the chat's actions are its tab's
         await page.getByRole("button", { name: "More", exact: true }).click();
         await page.locator(".row-sheet").waitFor();
-        assert.deepEqual(await sheetItems(), ["Pin agent", "Rename…", "Mark as unread", "Mark as done", "Delete…"], "the header's ⋯ is the chat's menu, no pane items");
-        if (shots) { await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false); await page.screenshot({ path: join(shots, "r8-header-menu-390.png") }); }
+        const workspaceItems = await sheetItems();
+        assert.ok(workspaceItems.includes("Search panes and actions") && !workspaceItems.includes("New Copilot chat…") && !workspaceItems.includes("Rename…"), `a herdr workspace's header ⋯ is its own: ${JSON.stringify(workspaceItems)}`);
+        await page.keyboard.press("Escape");
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        await keptTab.getByRole("button", { name: "Actions for FICTIONAL renamed chat" }).click();
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename…" }).click();
-        const renameSheet = page.getByRole("dialog", { name: "Rename chat" });
-        await renameSheet.getByRole("textbox", { name: "Chat name" }).fill("FICTIONAL named in the header");
-        await renameSheet.getByRole("button", { name: "Save", exact: true }).click();
-        await renameSheet.waitFor({ state: "detached" });
+        await nameField.fill("FICTIONAL named in the header");
+        await nameField.press("Enter");
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL named in the header" }).waitFor();
-        assert.equal((await actionPosts("rename")).length, 2, "the header's rename went too");
-        console.log("PASS rename from the tab's menu and the header's ⋯: the new title on the tab and over the chat");
+        assert.equal((await actionPosts("rename")).length, 2, "the second rename went too");
+        console.log("PASS rename from the tab's menu, twice: the new title on the tab, and the workspace keeps its own ⋯");
 
         // read and unread: shown at once; a refusal puts it back and says so
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL named in the header" }).click();
