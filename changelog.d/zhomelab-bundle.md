@@ -22,3 +22,4 @@
 - zhomelab bundle 1018: a model row says its thinking level ("Medium · 528K") with a chevron that opens the levels, and the composer pill shows the default level before any pick.
 - zhomelab bundle 1019: the model picker keeps its search and provider tabs pinned at the top, each tab with its model count.
 - zhomelab bundle 1020: Fork Conversation on a Copilot chat request (as VS Code 1.142), and forks made in VS Code listed as chats of their own.
+- zhomelab bundle 1021: a Copilot folder's header ⋯ is its row's menu; All agents has a real search field, folder pills and VS Code's date groups; alerts also go to an ntfy topic, and host chats alert (asks, finishes, errors) with a tap that opens the chat.
