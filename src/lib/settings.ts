@@ -28,6 +28,12 @@ export type AgentOrder = "workspace" | "activity";
 export type AgentMarks = "color" | "mono";
 /** what the plan meters count: the share of a limit used, or what is left of it */
 export type UsageCount = "used" | "left";
+/** the plan meters: one chip per provider (its accounts averaged by plan size), or one per account */
+export const USAGE_GROUPS = ["provider", "account"] as const;
+export type UsageGroup = (typeof USAGE_GROUPS)[number];
+/** which agent host folders open by themselves the first time a PC is seen (lib/hostWorkspaces.ts seedPc) */
+export const HOST_AUTO_OPENS = ["active", "pinned", "none"] as const;
+export type HostAutoOpen = (typeof HOST_AUTO_OPENS)[number];
 /** the limit a plan meter shows: the plan's week, or its short session (5 hours on Claude and Codex) */
 export type UsageGlance = "week" | "session";
 /** the plan meters' panel order: Settings' order, or the limit closest to running out first */
@@ -154,6 +160,8 @@ export interface Settings {
   usageKnown: string[];
   /** the plan meters' panel: in the order above, or the limit closest to running out first */
   usageSort: UsageSort;
+  /** the strip: a provider's accounts as one chip (averaged by plan size), or a chip per account */
+  usageGroup: UsageGroup;
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
   /** the language dictation listens for; auto: the UI language's, or the browser's the UI lacks (src/lib/voice.ts dictationLocale) */
@@ -175,6 +183,16 @@ export interface Settings {
   claudeLaunchMode: ClaudeLaunchMode;
   /** the same for Codex: a sandbox and approval preset */
   codexLaunchMode: CodexLaunchMode;
+  /** the PCs' VS Code agent host chats in the sidebar, Agents and New: off is herdr without them (their alerts too) */
+  hostChatsShown: boolean;
+  /** the folders opened the first time a PC is seen: pinned, working or asking, and on screen; pinned only; none */
+  hostAutoOpen: HostAutoOpen;
+  /** a new agent host chat's model as the host names it; null leaves the host's default */
+  hostNewModel: { id: string; effort?: string } | null;
+  /** a new agent host chat's permissions (the host's autoApprove value); null leaves the host's default */
+  hostNewApprovals: string | null;
+  /** archived chats in All agents and Chats in <folder> (folded at the end); off leaves them out */
+  hostShowArchived: boolean;
 }
 
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
@@ -184,10 +202,11 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks, the launch modes and the OmniRoute choices are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
+ * fileOpen, webLinks, the launch modes, the OmniRoute choices and the agent host ones are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode">;
+  | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
+  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -272,6 +291,7 @@ export const SETTING_SCOPE = {
   wrapCode: "device", markdownWidth: "device", diffStyle: "device", fileOpen: "device", webLinks: "device",
   // a new agent starts the same way whichever device opened it
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
+  usageGroup: "shared", hostChatsShown: "shared", hostAutoOpen: "shared", hostNewModel: "shared", hostNewApprovals: "shared", hostShowArchived: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -326,6 +346,7 @@ export const DEFAULT_SETTINGS: Settings = {
   usageShown: [],
   usageKnown: [],
   usageSort: "order",
+  usageGroup: "provider",
   voiceInput: "auto",
   voiceLanguage: "auto",
   voicePolishChat: true,
@@ -337,6 +358,11 @@ export const DEFAULT_SETTINGS: Settings = {
   webLinks: "tab",
   claudeLaunchMode: "default",
   codexLaunchMode: "default",
+  hostChatsShown: true,
+  hostAutoOpen: "active",
+  hostNewModel: null,
+  hostNewApprovals: null,
+  hostShowArchived: true,
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -528,7 +554,21 @@ export function sanitizeSettings(raw: unknown): Settings {
     webLinks: WEB_LINK_TARGETS.find((target) => target === record["webLinks"]) ?? DEFAULT_SETTINGS.webLinks,
     claudeLaunchMode: CLAUDE_LAUNCH_MODES.find((mode) => mode === record["claudeLaunchMode"]) ?? DEFAULT_SETTINGS.claudeLaunchMode,
     codexLaunchMode: CODEX_LAUNCH_MODES.find((mode) => mode === record["codexLaunchMode"]) ?? DEFAULT_SETTINGS.codexLaunchMode,
+    usageGroup: USAGE_GROUPS.find((group) => group === record["usageGroup"]) ?? DEFAULT_SETTINGS.usageGroup,
+    hostChatsShown: typeof record["hostChatsShown"] === "boolean" ? record["hostChatsShown"] : DEFAULT_SETTINGS.hostChatsShown,
+    hostAutoOpen: HOST_AUTO_OPENS.find((policy) => policy === record["hostAutoOpen"]) ?? DEFAULT_SETTINGS.hostAutoOpen,
+    hostNewModel: hostModelChoice(record["hostNewModel"]),
+    hostNewApprovals: typeof record["hostNewApprovals"] === "string" && record["hostNewApprovals"] !== "" && record["hostNewApprovals"].length <= 64 ? record["hostNewApprovals"] : DEFAULT_SETTINGS.hostNewApprovals,
+    hostShowArchived: typeof record["hostShowArchived"] === "boolean" ? record["hostShowArchived"] : DEFAULT_SETTINGS.hostShowArchived,
   };
+}
+
+/** A model as the host names it, with its effort if a string: anything else is the host's default. */
+function hostModelChoice(value: unknown): { id: string; effort?: string } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const { id, effort } = value as Record<string, unknown>;
+  if (typeof id !== "string" || id === "" || id.length > 200) return null;
+  return typeof effort === "string" && effort !== "" && effort.length <= 64 ? { id, effort } : { id };
 }
 
 export function loadSettings(): Settings {

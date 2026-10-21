@@ -20,6 +20,14 @@ describe("agent host workspaces", () => {
     expect(tabsOf(seeded, "/c")).toContain("c-shown");
   });
 
+  it("seed_follows_the_auto_open_setting", () => {
+    const chats = [row("b-asks", "/b", { status: "asks" }), row("c-shown", "/c"), row("d-idle", "/d")];
+    expect(seedPc(chats, new Set(["/d"]), "c-shown", "pinned").open.map((each) => each.cwd).sort()).toEqual(["/c", "/d"]);
+    expect(seedPc(chats, new Set(["/d"]), "c-shown", "none").open.map((each) => each.cwd)).toEqual(["/c"]);
+    expect(seedPc(chats, new Set(["/d"]), null, "none").open).toEqual([]);
+    expect(upkeepPc({}, "m", { host: { state: "connected" }, chats } as unknown as HostPc, new Set(["/d"]), null, "pinned")).toEqual({ m: seedPc(chats, new Set(["/d"]), null, "pinned") });
+  });
+
   it("open_seeds_live_unread_and_newest", () => {
     const chats = [
       row("o", "/a", { age: 90 * MIN }), row("n", "/a", { age: 1 * MIN }), row("u", "/a", { age: 50 * MIN, unread: true }), row("w", "/a", { age: 70 * MIN, status: "working" }),

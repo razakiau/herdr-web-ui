@@ -18,7 +18,7 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { passingFolder, recentDirectories } from "../lib/recent-directories.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import { chatAge, folderChoices, useMinuteClock } from "../lib/hostChats.ts";
+import { chatAge, folderChoices, offeredAgents, useMinuteClock } from "../lib/hostChats.ts";
 import { hostFolders, type PcHostWorkspaces } from "../lib/hostWorkspaces.ts";
 import "./AllAgentsSheet.css";
 import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
@@ -142,8 +142,10 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     setAgentKind(stored);
     let cancelled = false;
     void fetchAgentKinds()
-      .then((next) => {
+      .then((all) => {
         if (cancelled) return;
+        // Agent host only while Settings shows agent host chats
+        const next = offeredAgents(all, settings.hostChatsShown);
         setAgents(next);
         // a linked agent herdr does not offer gives way to the last one picked, as an unknown remembered one does to a shell
         if (stored && !next.some((agent) => agent.kind === stored)) setAgentKind(stored !== remembered && next.some((agent) => agent.kind === remembered) ? remembered : "");

@@ -32,7 +32,7 @@ import { type Client, send } from "./connections.ts";
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Lease>({ options, devices, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false }: {
+export function createStatusHub<Lease>({ options, devices, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -56,6 +56,8 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
   usageLogin: UsageLoginService;
   /** HERDR_WEB_AGENT_HOST: the bridges this server starts on other PCs get the same switch */
   agentHostEnabled?: boolean;
+  /** Settings' shared "Show agent host chats" (server/preferences.ts): off, their alerts stay quiet */
+  hostChatsShown?: () => boolean;
 }) {
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
@@ -64,6 +66,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     loopbackHttp: options.pushLoopbackHttp === true,
     canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)),
     inUse: () => present.size > 0,
+    hostChatsShown,
     // the deployment's ntfy topic, if any (server/ntfy.ts); a test server passes its own or none
     ntfy: (options.ntfy === undefined ? ntfyFromEnv(process.env) : options.ntfy) ?? undefined,
     lookupTitle: async (paneId) => {

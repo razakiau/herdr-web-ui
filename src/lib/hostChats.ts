@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import { machinePath } from "../../shared/machines.ts";
+import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
 import type { HostAgent, HostAnswer, HostFormAnswer, HostChatRead, HostChatRow, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
@@ -91,8 +92,9 @@ async function post<T>(machineId: string, path: string, body: unknown): Promise<
 }
 
 /** The models the PC's Copilot offers, and the custom agents enabled in this chat. */
-export function fetchHostModels(machineId: string, session: string): Promise<{ models: HostModel[]; agents: HostAgent[] }> {
-  return getJson(machinePath(machineId, `host-chats/models?${new URLSearchParams({ session }).toString()}`));
+/** The host's models, and a session's custom agents; without a session, the models alone (Settings' new chat default). */
+export function fetchHostModels(machineId: string, session?: string): Promise<{ models: HostModel[]; agents: HostAgent[] }> {
+  return getJson(machinePath(machineId, session === undefined ? "host-chats/models" : `host-chats/models?${new URLSearchParams({ session }).toString()}`));
 }
 
 export function fetchHostConfig(machineId: string, session: string): Promise<HostSessionConfig> {
@@ -164,6 +166,20 @@ export function deleteHostChat(machineId: string, session: string): Promise<{ ok
 /** Writes the model into the chat's shared draft, so VS Code's own picker shows it too. */
 export async function setHostDraftModel(machineId: string, session: string, model: { id: string; effort?: string }): Promise<void> {
   await post(machineId, "host-chats/chat/draft", { session, model });
+}
+
+/**
+ * A chat just made, set to Settings' new chat defaults (Agent host): the model as the chat's pick
+ * (its draft, and the pills, carry it to the first send, as a pick in the chat's own picker does)
+ * and the permissions as the session's. Either one the host refuses leaves the host's own: the
+ * chat is made, and its pills show what it really has.
+ */
+export async function applyNewChatDefaults(machineId: string, session: string, defaults: { model: { id: string; effort?: string } | null; approvals: string | null }): Promise<void> {
+  if (defaults.model) {
+    choose(machineId, session, { model: defaults.model });
+    await setHostDraftModel(machineId, session, defaults.model).catch(() => undefined);
+  }
+  if (defaults.approvals) await setHostConfig(machineId, session, { approvals: defaults.approvals }).catch(() => undefined);
 }
 
 /** The model and agent the phone picked for a chat's next message; `agent: null` is "Agent", no custom agent. */
@@ -765,6 +781,21 @@ export class HostPcs {
     this.pcs = next;
     for (const listener of [...this.listeners]) listener();
   }
+}
+
+/**
+ * The PCs whose host chats are read: all of them, or none while Settings hides agent host chats
+ * (Agent host, Show agent host chats). Read from no PC, they leave the sidebar, the tab strips,
+ * Agents and All agents together, as if the PCs had none: herdr as it is without them.
+ */
+export function hostChatRoster<T>(machines: readonly T[], shown: boolean): readonly T[] {
+  return shown ? machines : NO_MACHINES;
+}
+const NO_MACHINES: readonly never[] = [];
+
+/** The agents New offers: Agent host only while agent host chats are shown. */
+export function offeredAgents<T extends { kind: string }>(agents: T[], hostShown: boolean): T[] {
+  return hostShown ? agents : agents.filter((agent) => agent.kind !== HOST_AGENT_KIND);
 }
 
 /** The host chats of every connected PC whose bridge has them (HostPcs, in React). */

@@ -5,7 +5,7 @@ import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { chatAge } from "./hostChats.ts";
-import { attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
+import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -159,6 +159,29 @@ describe("the phone's model and agent choice", () => {
     calls = record(200, { discarded: true });
     expect(await discardHostChat("desk", "s-empty")).toBe(true);
     expect(calls).toEqual([{ url: "/api/machines/desk/host-chats/chat/discard", body: { session: "s-empty" } }]);
+  });
+
+  it("with agent host chats hidden, no PC is read and New offers no Agent host", () => {
+    const machines = [{ id: "a" }, { id: "b" }] as never[];
+    expect(hostChatRoster(machines, true)).toBe(machines);
+    expect(hostChatRoster(machines, false)).toEqual([]);
+    const agents = [{ kind: "claude", label: "Claude", installed: true }, { kind: "copilot-host", label: "Agent host", installed: true }];
+    expect(offeredAgents(agents, true)).toBe(agents);
+    expect(offeredAgents(agents, false).map((agent) => agent.kind)).toEqual(["claude"]);
+  });
+
+  it("a new chat starts on Settings' model and permissions, as picks; none leaves the host's own", async () => {
+    let calls = record(200, { ok: true });
+    await applyNewChatDefaults("desk", "s-new", { model: { id: "fictional/model-b", effort: "high" }, approvals: "autoApprove" });
+    expect(calls).toEqual([
+      { url: "/api/machines/desk/host-chats/chat/draft", body: { session: "s-new", model: { id: "fictional/model-b", effort: "high" } } },
+      { url: "/api/machines/desk/host-chats/session/config", body: { session: "s-new", approvals: "autoApprove" } },
+    ]);
+    expect(chosenFor("desk", "s-new")).toEqual({ model: { id: "fictional/model-b", effort: "high" } });
+    calls = record(200, { ok: true });
+    await applyNewChatDefaults("desk", "s-plain", { model: null, approvals: null });
+    expect(calls).toEqual([]);
+    expect(chosenFor("desk", "s-plain")).toEqual({});
   });
 
   it("every send carries what the pills show: a pick, then the same pick again on the next message", async () => {

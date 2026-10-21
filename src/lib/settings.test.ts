@@ -1018,3 +1018,30 @@ describe("shared settings", () => {
   });
 });
 
+
+describe("agent host settings", () => {
+  it("default to what the app did before they existed", () => {
+    expect(sanitizeSettings({})).toMatchObject({ hostChatsShown: true, hostAutoOpen: "active", hostNewModel: null, hostNewApprovals: null, hostShowArchived: true, usageGroup: "provider" });
+  });
+
+  it("keep only values they can take", () => {
+    expect(sanitizeSettings({ hostChatsShown: false, hostAutoOpen: "pinned", hostShowArchived: false, usageGroup: "account" }))
+      .toMatchObject({ hostChatsShown: false, hostAutoOpen: "pinned", hostShowArchived: false, usageGroup: "account" });
+    expect(sanitizeSettings({ hostAutoOpen: "none" }).hostAutoOpen).toBe("none");
+    for (const bad of ["false", 0, null]) expect(sanitizeSettings({ hostChatsShown: bad, hostShowArchived: bad })).toMatchObject({ hostChatsShown: true, hostShowArchived: true });
+    for (const bad of ["all", "", null, 1]) expect(sanitizeSettings({ hostAutoOpen: bad }).hostAutoOpen).toBe("active");
+    for (const bad of ["accounts", null, true]) expect(sanitizeSettings({ usageGroup: bad }).usageGroup).toBe("provider");
+  });
+
+  it("keep a new chat's model and permissions as the host names them, or the host's own", () => {
+    expect(sanitizeSettings({ hostNewModel: { id: "claude-opus-4.5", effort: "high" }, hostNewApprovals: "autoApprove" }))
+      .toMatchObject({ hostNewModel: { id: "claude-opus-4.5", effort: "high" }, hostNewApprovals: "autoApprove" });
+    expect(sanitizeSettings({ hostNewModel: { id: "gpt-5", effort: 3, extra: "x" } }).hostNewModel).toEqual({ id: "gpt-5" });
+    for (const bad of ["gpt-5", { id: "" }, { id: 3 }, { id: "x".repeat(201) }, []]) expect(sanitizeSettings({ hostNewModel: bad }).hostNewModel).toBeNull();
+    for (const bad of ["", 1, "x".repeat(65)]) expect(sanitizeSettings({ hostNewApprovals: bad }).hostNewApprovals).toBeNull();
+  });
+
+  it("are the same on every device", () => {
+    for (const key of ["hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "usageGroup"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+  });
+});

@@ -649,3 +649,20 @@ it("tells a device about a host chat, with what its tap needs to open it", async
     pane_id: null, host_session: "ahp:/s1", machine_id: "mac", title: "Mac · fix the build", body: "waiting for your input", tag: "herdr-chat-mac-ahp%3A%2Fs1",
   }, "high"]]);
 });
+
+it("says nothing of host chats while Settings hides them, and picks up from their state when shown again", async () => {
+  let shown = false;
+  const push = subscribed({ hostChatsShown: () => shown });
+  const row = (status: "working" | "asks") => ({ session: "ahp:/s1", title: "fix the build", status, modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived: false });
+  push.onHostChats([row("working")], "mac", "Mac");
+  push.onHostChats([row("asks")], "mac", "Mac");
+  await push.settled();
+  expect(fake.received).toEqual([]);
+  shown = true;
+  // still asking: no change, so no alert for a question asked while hidden
+  push.onHostChats([row("asks")], "mac", "Mac");
+  push.onHostChats([row("working")], "mac", "Mac");
+  push.onHostChats([row("asks")], "mac", "Mac");
+  await push.settled();
+  expect(fake.received.length).toBe(1);
+});

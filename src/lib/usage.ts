@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProviderUsage, UsageProviderId, UsageProviderName, UsageReport, UsageWindow } from "../../shared/protocol.ts";
 import { fetchUsage } from "./api.ts";
-import type { UsageCount, UsageGlance } from "./settings.ts";
+import type { UsageCount, UsageGlance, UsageGroup } from "./settings.ts";
 import { t } from "./i18n.ts";
 import { usePageVisible } from "./visibility.ts";
 
@@ -213,8 +213,9 @@ export function closestFirst(providers: readonly ProviderUsage[]): ProviderUsage
   return [...providers].sort((a, b) => used(b) - used(a));
 }
 
-/** A provider's accounts together, providers in the order their first account is shown. */
-export function providerGroups(providers: readonly ProviderUsage[]): ProviderUsage[][] {
+/** A provider's accounts together, providers in the order their first account is shown; by "account", each its own. */
+export function providerGroups(providers: readonly ProviderUsage[], by: UsageGroup = "provider"): ProviderUsage[][] {
+  if (by === "account") return providers.map((usage) => [usage]);
   const groups = new Map<string, ProviderUsage[]>();
   for (const usage of providers) {
     const group = groups.get(usage.id);

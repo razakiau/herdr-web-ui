@@ -19,6 +19,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, folderKey, folderPills, type ChatAge } from "../lib/hostChatGroups.ts";
 import { basename, chatAge, hostLine, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { useSettings } from "../lib/settings.ts";
 import { hostChatStatus, samePath } from "../lib/hostPlacement.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
@@ -66,6 +67,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const t = useT();
   const id = useId();
   const now = useMinuteClock();
+  const { settings } = useSettings();
   const [query, setQuery] = useState("");
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [folder, setFolder] = useState<Pick>("all");
@@ -98,7 +100,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const shownFolder: Pick = only !== undefined ? folderKey(only) : folder === "all" || pills.some((pill) => pill.cwd === folder) || matched.some((row) => row.archived && folderKey(row.cwd) === folder) ? folder : "all";
   const found = shownFolder === "all" ? matched : matched.filter((row) => folderKey(row.cwd) === shownFolder);
   const current = byAge(found.filter((row) => !row.archived), now);
-  const archived = found.filter((row) => row.archived).sort((a, b) => modified(b) - modified(a));
+  // archived chats only while Settings shows them (Agent host); a search then finds none either
+  const archived = settings.hostShowArchived ? found.filter((row) => row.archived).sort((a, b) => modified(b) - modified(a)) : [];
   const line = pc.host ? hostLine(pc.host, t) : null;
   // a search looks in the archived ones too: what it finds there is shown
   const showArchived = archivedOpen || (words !== "" && archived.length > 0);

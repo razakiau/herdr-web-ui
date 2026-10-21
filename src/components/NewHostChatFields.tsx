@@ -8,7 +8,8 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 
 import { useT } from "../lib/i18n.ts";
-import { attemptFor, openEmptyHostChat, sendErrorText } from "../lib/hostChats.ts";
+import { applyNewChatDefaults, attemptFor, openEmptyHostChat, sendErrorText } from "../lib/hostChats.ts";
+import { useSettings } from "../lib/settings.ts";
 
 export interface NewHostChatHandle {
   /** makes the chat in `cwd`: its session, or a reason it was not made */
@@ -19,6 +20,7 @@ export interface NewHostChatHandle {
 export const NewHostChatFields = forwardRef<NewHostChatHandle, { machineId: string }>(
   function NewHostChatFields({ machineId }, ref) {
     const t = useT();
+    const { settings } = useSettings();
     // the id this chat goes under: kept while the same folder is tried again after a failure (the
     // bridge then makes the chat once), new when the folder changes
     const attempt = useRef<{ key: string; id: string } | null>(null);
@@ -27,12 +29,15 @@ export const NewHostChatFields = forwardRef<NewHostChatHandle, { machineId: stri
       async start(folder) {
         attempt.current = attemptFor(attempt.current, JSON.stringify([machineId, folder]));
         try {
-          return { session: await openEmptyHostChat(machineId, { id: attempt.current.id, cwd: folder }) };
+          const session = await openEmptyHostChat(machineId, { id: attempt.current.id, cwd: folder });
+          // Settings' new chat defaults (Agent host), before the chat opens: its pills show them
+          await applyNewChatDefaults(machineId, session, { model: settings.hostNewModel, approvals: settings.hostNewApprovals });
+          return { session };
         } catch (cause) {
           return { error: sendErrorText(cause, t, true) };
         }
       },
-    }), [machineId, t]);
+    }), [machineId, t, settings.hostNewModel, settings.hostNewApprovals]);
     return <p className="field-hint new-host-chat-hint">{t("The chat opens in this folder: write your first message there.")}</p>;
   },
 );
