@@ -17,3 +17,8 @@
   dialog offers **Agent host** again; it no longer starts another host while one is still starting
   (VS Code downloading its server took longer than the 30 s deadline).
 - A chat VS Code opened and never sent no longer shows as a "Session" row that opens nothing.
+- When every agent host on a PC started with no models, herdr moves to one as soon as it is signed in,
+  instead of waiting for its connection to drop.
+- On a phone, **Rename…** in a chat tab's ⋯ opens the Rename chat sheet (the field squeezed into the
+  tab was a sliver and Enter did nothing).
+- **Mark as done** on the open chat shows the tab beside it, as **Close tab** does, not the PC's shell.
