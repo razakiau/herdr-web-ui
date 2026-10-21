@@ -932,7 +932,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
     if (!hostChats) return null;
     const id = folderKey(cwd);
     // the chats the host was given no folder for share one row, named for what they lack, not their scratch folder
-    const { noFolder, branch } = folderFace(chats);
+    const facts = folderFace(chats);
+    const { noFolder } = facts;
+    // herdr's rows say a detached checkout as Detached HEAD (branchTitle above); so does a folder's
+    const branch = facts.branch ?? (facts.detached ? t("Detached HEAD") : null);
     const name = noFolder ? t("No folder") : basename(cwd);
     const folded = worktrees.length > 0 && collapsedWorktrees.has(folderFold(cwd));
     // as herdr's rows say a branch: a top-level folder on a second line, a worktree's beside its name

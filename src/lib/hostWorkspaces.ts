@@ -146,11 +146,11 @@ export function hostFolders(chats: readonly HostChatRow[], pc: PcHostWorkspaces 
 /**
  * What a folder row says beyond its name: whether it is the No folder row (chats the host was given
  * no folder for), and its branch, the newest chat's (VS Code reports the checkout per chat; a
- * detached HEAD has none to say).
+ * detached HEAD has none: herdr's rows then say Detached HEAD, and so does this one).
  */
-export function folderFace(chats: readonly HostChatRow[]): { noFolder: boolean; branch: string | null } {
+export function folderFace(chats: readonly HostChatRow[]): { noFolder: boolean; branch: string | null; detached: boolean } {
   const newest = [...chats].sort((a, b) => modified(b) - modified(a))[0];
-  return { noFolder: chats.some((row) => row.no_folder === true), branch: newest?.branch ?? null };
+  return { noFolder: chats.some((row) => row.no_folder === true), branch: newest?.branch ?? null, detached: newest?.detached === true };
 }
 
 /**

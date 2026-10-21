@@ -160,11 +160,12 @@ describe("agent host workspaces", () => {
   });
 
   it("folderFace_names_the_no_folder_row_and_says_the_newest_chats_branch", () => {
-    expect(folderFace([row("lost", "/h/.copilot/chats", { no_folder: true })])).toEqual({ noFolder: true, branch: null });
+    expect(folderFace([row("lost", "/h/.copilot/chats", { no_folder: true })])).toEqual({ noFolder: true, branch: null, detached: false });
     // the newest chat's branch: the folder's checkout as VS Code saw it last
-    expect(folderFace([row("old", "/a", { branch: "old/branch", age: 90 * MIN }), row("new", "/a", { branch: "main", age: 5 * MIN })])).toEqual({ noFolder: false, branch: "main" });
-    expect(folderFace([row("new", "/a", { detached: true, age: 5 * MIN }), row("old", "/a", { branch: "main", age: 90 * MIN })])).toEqual({ noFolder: false, branch: null });
-    expect(folderFace([])).toEqual({ noFolder: false, branch: null });
+    expect(folderFace([row("old", "/a", { branch: "old/branch", age: 90 * MIN }), row("new", "/a", { branch: "main", age: 5 * MIN })])).toEqual({ noFolder: false, branch: "main", detached: false });
+    // a detached HEAD is said as herdr's rows say it (Detached HEAD), not left blank
+    expect(folderFace([row("new", "/a", { detached: true, age: 5 * MIN }), row("old", "/a", { branch: "main", age: 90 * MIN })])).toEqual({ noFolder: false, branch: null, detached: true });
+    expect(folderFace([])).toEqual({ noFolder: false, branch: null, detached: false });
   });
 
   describe("merged order", () => {
