@@ -1602,6 +1602,7 @@ export const ZH: Record<string, string> = {
   "No folder matches": "没有匹配的文件夹",
   "Not open in its workspace": "未在其工作区中打开",
   "Open workspace": "打开工作区",
-  "Pick one to open it, or type a folder above to start a chat there.": "选择一个将其打开，或在上方输入文件夹以在那里开始聊天。",
+  "Pick one to open it as a workspace or start a new chat there.": "选择一个以工作区打开，或在那里开始新聊天。",
+  "New chat": "新建聊天",
   "Search folders": "搜索文件夹",
 };

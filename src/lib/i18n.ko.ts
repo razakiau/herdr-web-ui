@@ -1598,6 +1598,7 @@ export const KO: Record<string, string> = {
   "No folder matches": "일치하는 폴더 없음",
   "Not open in its workspace": "워크스페이스에 열려 있지 않음",
   "Open workspace": "워크스페이스 열기",
-  "Pick one to open it, or type a folder above to start a chat there.": "하나를 골라 열거나, 위에 폴더를 입력해 그곳에서 채팅을 시작하세요.",
+  "Pick one to open it as a workspace or start a new chat there.": "하나를 골라 워크스페이스로 열거나 그곳에서 새 채팅을 시작하세요.",
+  "New chat": "새 채팅",
   "Search folders": "폴더 검색",
 };
