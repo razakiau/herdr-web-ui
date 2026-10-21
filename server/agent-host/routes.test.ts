@@ -1438,6 +1438,33 @@ describe("host chat image and tool-output routes", () => {
     expect(served.bytes.equals(PNG_BYTES)).toBe(true);
   });
 
+  it("an answer's uploaded picture is served from the chat's .herdr-web-ui, and nothing else is", async () => {
+    const folder = realpathSync(temp());
+    mkdirSync(join(folder, ".herdr-web-ui"));
+    writeFileSync(join(folder, ".herdr-web-ui", "paste-1.png"), PNG_BYTES);
+    writeFileSync(join(folder, ".herdr-web-ui", "paste-2.png"), PNG_BYTES);
+    writeFileSync(join(folder, "secret.png"), PNG_BYTES);
+    symlinkSync(join(folder, "secret.png"), join(folder, ".herdr-web-ui", "link.png"));
+    const answered = (out: string): ChatState => reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: user("FICTIONAL ask") } as StateAction,
+      ...toolCallActions("turn-1", { toolCallId: "a1", toolName: "ask_user", displayName: "ask_user", invocationMessage: "ask_user", toolInput: JSON.stringify({ message: "FICTIONAL look?" }) },
+        { success: true, pastTenseMessage: "Ask User", content: [{ type: "text", text: out }] } as ToolCallResult),
+      { type: "chat/turnComplete", turnId: "turn-1", duration: 1000 } as StateAction,
+    ], chatState(1));
+    const r = await rig({
+      sessions: [{ ...summary(1), workingDirectories: [`file://${folder}`] }, summary(2)],
+      chats: { [chatUri(1)]: answered(`User responded:\nnotes: @${folder}/.herdr-web-ui/paste-1.png @${folder}/.herdr-web-ui/link.png`), [chatUri(2)]: chatState(2) },
+    });
+    const read = (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+    expect(read.turns[1]!.parts[0]).toMatchObject({ kind: "question", custom: null, images: [{ ref: "answer:paste-1.png" }, { ref: "answer:link.png" }] });
+    const shown = await fetchRaw(r, imagePath("answer:paste-1.png"));
+    expect({ status: shown.status, type: shown.type, same: shown.bytes.equals(PNG_BYTES) }).toEqual({ status: 200, type: "image/png", same: true });
+    // in the folder but named by no answer; a link out of it; a path; the folder's own file
+    for (const ref of ["answer:paste-2.png", "answer:link.png", "answer:../secret.png", "answer:secret.png"]) {
+      expect({ ref, status: (await fetchRaw(r, imagePath(ref))).status }).toEqual({ ref, status: 404 });
+    }
+  });
+
   it("image_route_unknown_ref_404", async () => {
     const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
     for (const ref of ["c1:1", "c9:0", "c1", "c2:0", "c1:-1", "c1:", "c1:0x0", "c1:00", "c1: 0"]) {

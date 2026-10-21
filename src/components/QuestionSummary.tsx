@@ -29,7 +29,8 @@ export function reportHeadline(report: string): string {
 }
 
 /** `memoryKey`: where the chat's row memory keeps it opened (one per question of a turn). */
-export function QuestionSummary({ part, memoryKey = "question" }: { part: QuestionPart; memoryKey?: string }) {
+/** `attached`: the answer's pictures, drawn by the chat (ChatView's gallery) under its answer. */
+export function QuestionSummary({ part, memoryKey = "question", attached = null }: { part: QuestionPart; memoryKey?: string; attached?: React.ReactNode }) {
   const t = useT();
   const [chosen, setOpen] = useChatRowToggle(memoryKey, false);
   // the report the question came with (a Copilot ask_user message), folded as VS Code folds work
@@ -39,7 +40,8 @@ export function QuestionSummary({ part, memoryKey = "question" }: { part: Questi
   const open = canOpen && chosen === true;
   // VS Code drops the question's trailing colon and spaces
   const question = part.text.replace(/[:\s]+$/, "");
-  const answer = answerText(part);
+  const pictures = part.images?.length ?? 0;
+  const answer = answerText(part) || (pictures > 0 ? t(pictures === 1 ? "1 image" : "{n} images", { n: pictures }) : "");
   const Icon = part.skipped ? X : MessageSquare;
   const label = <>
     <Icon className="question-summary-answer-icon" aria-hidden="true" />
@@ -85,5 +87,6 @@ export function QuestionSummary({ part, memoryKey = "question" }: { part: Questi
         </ul>
       </div>}
     </div>
+    {attached}
   </div>;
 }

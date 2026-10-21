@@ -1208,6 +1208,8 @@ export const ZH: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "这是 {workspace} 的最后一个标签页：工作区会随之关闭，其中的代理和 shell 会停止。",
   "Tabs of {workspace}": "{workspace} 的标签页",
   "{n} panes": "{n} 个窗格",
+  "1 image": "1 张图片",
+  "{n} images": "{n} 张图片",
   "herdr web ui sends anonymous usage counts.": "herdr web ui 会匿名发送使用统计。",
   "What is sent": "发送的内容",
   "Anonymous usage counts": "匿名使用统计",

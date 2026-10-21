@@ -1373,6 +1373,14 @@
   margin-bottom: var(--space-2);
 }
 
+/* the pictures a typed answer carried: under its "Answered:" line, at its indent */
+.question-summary-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-left: var(--space-5);
+}
+
 .chat-user-image {
   display: block;
   padding: 0;

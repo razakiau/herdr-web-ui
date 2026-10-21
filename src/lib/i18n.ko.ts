@@ -1204,6 +1204,8 @@ export const KO: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "{workspace}의 마지막 탭입니다. 워크스페이스도 함께 닫히고, 그 안의 에이전트와 셸이 멈춥니다.",
   "Tabs of {workspace}": "{workspace}의 탭",
   "{n} panes": "패널 {n}개",
+  "1 image": "이미지 1개",
+  "{n} images": "이미지 {n}개",
   "herdr web ui sends anonymous usage counts.": "herdr web ui는 사용 현황을 익명으로 집계합니다.",
   "What is sent": "보내는 내용",
   "Anonymous usage counts": "익명 사용 집계",

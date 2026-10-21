@@ -335,7 +335,27 @@ function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<Con
   const out = content.flatMap((item) => (item.type === ToolResultContentType.Text ? [item.text] : [])).join("\n").trim();
   const base = { kind: "question" as const, text, ...(lines.length > 1 ? { report: message } : {}), options: [], chosen: [] };
   const answer = tool.success === false || /^User (?:cancelled|declined|dismissed)\b/.test(out) ? null : answerOf(out);
-  return answer === null ? { ...base, custom: null, skipped: true } : { ...base, custom: answer, skipped: false };
+  return answer === null ? { ...base, custom: null, skipped: true } : withUploads({ ...base, custom: answer, skipped: false });
+}
+
+/** A picture this app uploaded for an answer: `@<folder>/.herdr-web-ui/<name>` (lib/promptAnswer.ts). */
+const ANSWER_UPLOAD = /(?:^|\s)@(\S*\/\.herdr-web-ui\/([^\s/]+\.(png|jpe?g|gif|webp)))(?=\s|,|$)/gi;
+const UPLOAD_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+/** The ref an answer's uploaded picture is read by: `answer:<its file name>` (routes.ts readImage). */
+export const ANSWER_REF = "answer:";
+
+/**
+ * A typed answer's uploaded pictures as images, and the answer without their paths: the path is
+ * how the agent finds the file, not words for the user to read (VS Code shows its attachments).
+ */
+function withUploads<T extends Extract<ConversationPart, { kind: "question" }>>(part: T): T {
+  if (part.custom === null) return part;
+  const images = [...part.custom.matchAll(ANSWER_UPLOAD)].map((match) => ({ media_type: UPLOAD_TYPES[match[3]!.toLowerCase()]!, ref: `${ANSWER_REF}${match[2]}` }));
+  if (images.length === 0) return part;
+  // a form field the pictures were its whole answer to ("notes:") says nothing left alone
+  const words = part.custom.replace(ANSWER_UPLOAD, "").replace(/\s{2,}/g, " ").split(/,\s*/).map((each) => each.trim())
+    .filter((each) => each !== "" && !/^[^:]+:$/.test(each)).join(", ");
+  return { ...part, custom: words === "" ? null : words, images };
 }
 
 /** The user's words in an ask tool's result: VS Code's "User responded:" field lines, or TaskSync's JSON. */
@@ -440,7 +460,7 @@ function questionParts(part: InputRequestResponsePart, running: boolean): Conver
   }
   // the message a form came with (an ask_user report) leads the first question, once for the form
   const report = request.message !== undefined && request.message.trim() !== "" ? { report: request.message } : {};
-  return questions.map((question, index) => ({ ...questionPart(question, request.answers?.[question.id], accepted), ...(index === 0 ? report : {}) }) as ConversationPart);
+  return questions.map((question, index) => withUploads({ ...questionPart(question, request.answers?.[question.id], accepted), ...(index === 0 ? report : {}) } as Extract<ConversationPart, { kind: "question" }>));
 }
 
 /**
