@@ -39,9 +39,12 @@ function readEntry(file: string, alive: (pid: number) => boolean): HostEntry | n
   }
 }
 
-/** The newest (by mtime) live standalone TCP entry across `dirs`; a malformed file is skipped. */
-export function liveStandalone(dirs: string[], alive: (pid: number) => boolean): HostEntry | null {
-  let best: { entry: HostEntry; mtime: number } | null = null;
+/**
+ * Every live standalone TCP entry across `dirs`, newest (by mtime) first; a malformed file is
+ * skipped. Several can be live at once: each `agent host` start that raced another registers its own.
+ */
+export function liveStandalones(dirs: string[], alive: (pid: number) => boolean): HostEntry[] {
+  const found: Array<{ entry: HostEntry; mtime: number }> = [];
   for (const dir of dirs) {
     let names: string[];
     try { names = readdirSync(dir); } catch { continue; }
@@ -50,10 +53,14 @@ export function liveStandalone(dirs: string[], alive: (pid: number) => boolean):
       const file = join(dir, name);
       let mtime: number;
       try { mtime = statSync(file).mtimeMs; } catch { continue; }
-      if (best && mtime <= best.mtime) continue;
       const entry = readEntry(file, alive);
-      if (entry) best = { entry, mtime };
+      if (entry) found.push({ entry, mtime });
     }
   }
-  return best?.entry ?? null;
+  return found.sort((a, b) => b.mtime - a.mtime).map((each) => each.entry);
+}
+
+/** The newest live standalone TCP entry across `dirs`, or null. */
+export function liveStandalone(dirs: string[], alive: (pid: number) => boolean): HostEntry | null {
+  return liveStandalones(dirs, alive)[0] ?? null;
 }

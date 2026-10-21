@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { liveStandalone, registryDirs } from "./registry.ts";
+import { liveStandalone, liveStandalones, registryDirs } from "./registry.ts";
 
 const dirs: string[] = [];
 const tempDir = (): string => {
@@ -40,6 +40,16 @@ describe("registry", () => {
     const found = liveStandalone([dir], alive);
     expect(found?.port).toBe(41012);
     expect(found?.protocol).toBeNull();
+  });
+
+  it("liveStandalones lists every live standalone entry, newest first", () => {
+    const dir = tempDir();
+    entry(dir, "a.json", { schemaVersion: 1, type: "standalone", pid: process.pid, endpoint: { type: "tcp", host: "127.0.0.1", port: 41031 }, connectionToken: "fictional-a" }, 1000);
+    entry(dir, "c.json", { schemaVersion: 1, type: "standalone", pid: process.pid, endpoint: { type: "tcp", host: "127.0.0.1", port: 41033 }, connectionToken: "fictional-c" }, 3000);
+    entry(dir, "dead.json", { schemaVersion: 1, type: "standalone", pid: 999999, endpoint: { type: "tcp", host: "127.0.0.1", port: 41034 }, connectionToken: "fictional-d" }, 4000);
+    entry(dir, "b.json", { schemaVersion: 1, type: "standalone", pid: process.pid, endpoint: { type: "tcp", host: "127.0.0.1", port: 41032 }, connectionToken: "fictional-b" }, 2000);
+    expect(liveStandalones([dir], alive).map((found) => found.port)).toEqual([41033, 41032, 41031]);
+    expect(liveStandalones([join(dir, "missing")], alive)).toEqual([]);
   });
 
   it("a malformed entry is skipped, not thrown", () => {

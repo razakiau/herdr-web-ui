@@ -76,14 +76,26 @@ function pathOf(uri: string | undefined): string | null {
 }
 
 /**
- * The chat list: Copilot CLI sessions only, newest first. A session's other chats a user made (VS
+ * A chat VS Code opened and nobody sent to: an idle, unarchived session whose default chat has no
+ * title yet (the host names a chat from its first message). VS Code makes one per window it opens
+ * ("backing stays deferred until the first send") and lists none of them; there is nothing to read.
+ */
+function neverSent(summary: SessionSummary): boolean {
+  const own = summary.chats?.find((chat) => chat.resource === summary.defaultChat);
+  if (!own || own.title !== "") return false;
+  const status = own.status ?? summary.status;
+  return (status & ~(SessionStatus.IsRead | SessionStatus.IsArchived)) === SessionStatus.Idle && (status & SessionStatus.IsArchived) === 0;
+}
+
+/**
+ * The chat list: Copilot CLI sessions only, newest first, without the drafts VS Code never sent. A session's other chats a user made (VS
  * Code's Fork Conversation: SessionSummary.chats, origin fork or user) are rows of their own, by
  * their chat URI, beside it: their own title and status, the session's folder and time (a catalog
  * entry has none). Hidden chats and a tool's are not listed, as VS Code lists none of them.
  */
 export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
   return summaries
-    .filter((summary) => summary.provider === PROVIDER)
+    .filter((summary) => summary.provider === PROVIDER && !neverSent(summary))
     .flatMap((summary) => {
       const meta = (summary as { _meta?: Record<string, unknown> })._meta;
       const folder = pathOf(summary.workingDirectories?.[0] ?? summary.project?.uri);

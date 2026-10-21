@@ -371,6 +371,25 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("rowsFrom_hides_a_draft_vs_code_opened_and_never_sent", () => {
+    // live on a PC (2026-10-21): opening a VS Code window made "Session", an idle chat with an
+    // untitled default chat and no history on disk ("backing stays deferred until the first send");
+    // VS Code lists it nowhere, and reading it answers host_chat_missing
+    const draft = (n: number, status: number, chatTitle: string): SessionSummary => ({
+      resource: `copilotcli:/${n}`, provider: "copilotcli", title: "Session", status, createdAt: AT, modifiedAt: AT,
+      workingDirectories: ["file:///tmp/fictional"], defaultChat: `ahp-chat://default/${n}`,
+      chats: [{ resource: `ahp-chat://default/${n}`, title: chatTitle, interactivity: "full", status }],
+    } as SessionSummary);
+    const rows = rowsFrom([
+      draft(1, 1, ""),
+      draft(2, 8, ""),
+      draft(3, 1 | 32, "FICTIONAL sent"),
+      draft(4, 1 | 64, ""),
+      { resource: "copilotcli:/5", provider: "copilotcli", title: "FICTIONAL_5", status: 1, createdAt: AT, modifiedAt: AT } as SessionSummary,
+    ]);
+    expect(rows.map((row) => row.session).sort()).toEqual(["copilotcli:/2", "copilotcli:/3", "copilotcli:/4", "copilotcli:/5"]);
+  });
+
   it("rowsFrom_gives_a_forked_session_its_own_chat_status_not_the_roll_up", () => {
     // live on a PC (2026-10-20): the fork asks (24), its source chat failed (2); AHP's session
     // status promotes the fork's InputNeeded (24 | IsRead 32 = 56), so the source row said asks

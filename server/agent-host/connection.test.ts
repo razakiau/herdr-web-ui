@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction } from "@microsoft/agent-host-protocol";
@@ -68,6 +68,12 @@ async function host(entries: string, overrides: Partial<FakeAgentHostSeed> = {})
   const fake = await fakeAgentHost(seed({ entryDir: entries, ...overrides }));
   cleanups.push(() => fake.stop());
   return fake;
+}
+
+/** Backdates every entry registered so far, so the next one is the newest by mtime. */
+function ageEntries(entries: string): void {
+  const past = new Date(Date.now() - 60_000);
+  for (const name of readdirSync(entries)) utimesSync(join(entries, name), past, past);
 }
 
 function connection(options: Partial<AgentHostConnectionOptions> & { home: string; env: Record<string, string> }) {
@@ -223,6 +229,59 @@ describe("agent host connection", () => {
     await until("the event loop to run timers", () => ticks.count >= 2, 2_000);
     clearInterval(timer);
     expect(took).toBeLessThan(1_000);
+  });
+
+  it("of two live hosts it stays on the one that lists models, though the empty one registered last", async () => {
+    // live on two PCs (2026-10-21): 5 and 6 hosts registered within a second while VS Code's
+    // server downloaded; only one was signed in, and the newest entry was one with no models
+    const { home, env, entries } = tempHome();
+    const signed = await host(entries);
+    ageEntries(entries);
+    const empty = await host(entries, { models: [], sessions: [summary(9)] });
+    const { conn } = connection({ home, env });
+    conn.start();
+    await until("connected", () => conn.state().state === "connected");
+    expect(conn.state()).toEqual({ state: "connected", signed_in: true, protocol: "1.0.0" });
+    expect(conn.summaries().map((s) => s.resource)).toContain(sessionUri(1));
+    expect(signed.peers()).toBe(1);
+    await until("the empty host let go", () => empty.peers() === 0);
+  });
+
+  it("with every live host listing no models it still connects, to the newest", async () => {
+    const { home, env, entries } = tempHome();
+    await host(entries, { models: [], sessions: [summary(8)] });
+    ageEntries(entries);
+    const newest = await host(entries, { models: [], sessions: [summary(9)] });
+    const { conn } = connection({ home, env });
+    conn.start();
+    await until("connected", () => conn.state().state === "connected");
+    expect(conn.state()).toEqual({ state: "connected", signed_in: false, protocol: "1.0.0" });
+    expect(conn.summaries().map((s) => s.resource)).toEqual([sessionUri(9)]);
+    expect(newest.peers()).toBe(1);
+  });
+
+  it("a host that is slow to register is started once, not again at each deadline", async () => {
+    // VS Code's first `agent host` downloads its server (222 MB, minutes) before it registers: a
+    // start per 30 s deadline left 5 hosts on one PC (2026-10-21)
+    const { home, env } = tempHome();
+    const cli = join(home, ".vscode-server", `code-${"f".repeat(40)}`);
+    mkdirSync(join(home, ".vscode-server"), { recursive: true });
+    await Bun.write(cli, "#!/bin/sh\nexit 0\n");
+    (await import("node:fs")).chmodSync(cli, 0o755);
+    let clock = 0;
+    const spawned: string[][] = [];
+    const { conn } = connection({
+      home, env,
+      deps: {
+        spawn: (argv) => { spawned.push(argv); return 4242; },
+        alive: (pid) => pid === 4242,
+        now: () => clock, sleep: async (ms) => { clock += ms; await new Promise((resolve) => setImmediate(resolve)); },
+      },
+    });
+    conn.start();
+    await until("several start deadlines", () => clock > 5 * 60_000);
+    expect(spawned).toHaveLength(1);
+    expect(conn.state().state).toBe("starting");
   });
 
   it("no models listed means signed_in false", async () => {
