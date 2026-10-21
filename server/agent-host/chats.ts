@@ -85,6 +85,9 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
     .filter((summary) => summary.provider === PROVIDER)
     .flatMap((summary) => {
       const cwd = pathOf(summary.workingDirectories?.[0] ?? summary.project?.uri);
+      // the host names a worktree's main checkout as its project: the folder it nests under
+      const project = pathOf(summary.project?.uri);
+      const repo = project !== null && cwd !== null && project !== cwd ? { repo: project } : {};
       // a session's status promotes any chat's InputNeeded and Error (AHP's aggregation rule): its
       // row is its default chat, so it reads that chat's own activity, as each fork's row reads its own
       const own = summary.chats?.find((chat) => chat.resource === summary.defaultChat)?.status;
@@ -97,6 +100,7 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
         // the flags beside the activity bits (VS Code's isSessionStatusRead / isSessionStatusArchived)
         unread: (summary.status & SessionStatus.IsRead) === 0,
         archived: (summary.status & SessionStatus.IsArchived) !== 0,
+        ...repo,
       };
       const forks = (summary.chats ?? []).filter((chat) => chat.resource !== summary.defaultChat
         && chat.interactivity !== ChatInteractivity.Hidden && (chat.origin === undefined || chat.origin.kind === ChatOriginKind.Fork || chat.origin.kind === ChatOriginKind.User));
@@ -106,7 +110,7 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
         return {
           session: chat.resource, title: chat.title, status: statusOf(status), modified_at: summary.modifiedAt, cwd,
           unread: (status & SessionStatus.IsRead) === 0, archived: (status & SessionStatus.IsArchived) !== 0,
-          fork_of: summary.resource,
+          fork_of: summary.resource, ...repo,
         };
       })];
     })

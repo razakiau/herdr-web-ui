@@ -220,6 +220,52 @@ export function moveInMerged(keys: readonly string[], item: string, target: stri
   return next.every((key, index) => key === keys[index]) ? keys : next;
 }
 
+export type TreeRow = { kind: "workspace"; id: string } | { kind: "folder" | "repo"; cwd: string; worktrees: string[] };
+
+/**
+ * herdr's tree for agent host folders: a linked worktree's folder sits under its repository's
+ * (`repoOf`, the host's project). A repository whose own folder is not open gets a header row,
+ * where its first worktree stood, as herdr shows a group when only its worktrees are open.
+ */
+export function folderTree(rows: readonly MergedRow[], repoOf: (cwd: string) => string | undefined): TreeRow[] {
+  const open = new Set(rows.flatMap((row) => row.kind === "folder" ? [samePath(row.cwd)] : []));
+  const under = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.kind !== "folder") continue;
+    const repo = repoOf(row.cwd);
+    if (repo !== undefined && samePath(repo) !== samePath(row.cwd)) under.set(samePath(repo), [...under.get(samePath(repo)) ?? [], row.cwd]);
+  }
+  const tree: TreeRow[] = [];
+  const headed = new Set<string>();
+  for (const row of rows) {
+    if (row.kind === "workspace") { tree.push(row); continue; }
+    const repo = repoOf(row.cwd);
+    const key = repo !== undefined && samePath(repo) !== samePath(row.cwd) ? samePath(repo) : null;
+    if (key === null) { tree.push({ kind: "folder", cwd: row.cwd, worktrees: under.get(samePath(row.cwd)) ?? [] }); continue; }
+    if (open.has(key) || headed.has(key)) continue;
+    headed.add(key);
+    tree.push({ kind: "repo", cwd: repo!, worktrees: under.get(key)! });
+  }
+  return tree;
+}
+
+/**
+ * `block` (a row and the worktrees under it) put before or after `target` in the saved keys; a
+ * target with worktrees under it (`targetBlock`) is passed whole, so a row dropped after it lands
+ * after them. The same keys when nothing moves.
+ */
+export function moveBlock(keys: readonly string[], block: readonly string[], target: string, side: "before" | "after", targetBlock: readonly string[] = [target]): readonly string[] {
+  if (block.includes(target)) return keys;
+  const moving = new Set(block);
+  const rest = keys.filter((key) => !moving.has(key));
+  const edge = side === "after" ? targetBlock.filter((key) => rest.includes(key)).at(-1) ?? target : target;
+  const at = rest.indexOf(edge);
+  if (at < 0) return keys;
+  const placed = block.filter((key) => keys.includes(key));
+  const next = [...rest.slice(0, at + (side === "after" ? 1 : 0)), ...placed, ...rest.slice(at + (side === "after" ? 1 : 0))];
+  return next.length === keys.length && next.every((key, index) => key === keys[index]) ? keys : next;
+}
+
 /**
  * The PC's saved sidebar order set; the same state when it already is that, or when nothing is saved
  * for the PC yet (an order alone would stand for "seeded" and keep its first workspaces from opening).

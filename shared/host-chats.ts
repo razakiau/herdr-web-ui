@@ -21,6 +21,8 @@ export interface HostChatRow {
   archived: boolean;
   /** a fork (VS Code's Fork Conversation): the session it was forked in, whose folder and agent it shares */
   fork_of?: string;
+  /** a linked worktree's main checkout (the host's project, when it is a local folder other than `cwd`) */
+  repo?: string;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { fitHostWorkspaces, HOST_WORKSPACES_BUDGET, folderKey, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { fitHostWorkspaces, folderTree, HOST_WORKSPACES_BUDGET, folderKey, moveBlock, type MergedRow, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -222,5 +222,32 @@ describe("agent host workspaces", () => {
       if (original) Object.defineProperty(globalThis, "localStorage", original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;
     }
+  });
+});
+
+describe("agent host worktree folders (herdr's tree)", () => {
+  const repoOf = (cwd: string): string | undefined => ({ "/r.wt/a": "/r", "/r.wt/b": "/r", "/s.wt/x": "/s" } as Record<string, string>)[cwd];
+  it("a worktree folder sits under its repo's folder row, in the list's order", () => {
+    const rows: MergedRow[] = [{ kind: "folder", cwd: "/r.wt/b" }, { kind: "workspace", id: "w1" }, { kind: "folder", cwd: "/r" }, { kind: "folder", cwd: "/r.wt/a" }];
+    expect(folderTree(rows, repoOf)).toEqual([
+      { kind: "workspace", id: "w1" },
+      { kind: "folder", cwd: "/r", worktrees: ["/r.wt/b", "/r.wt/a"] },
+    ]);
+  });
+  it("a repo with no row of its own gets a header row, where its first worktree stood", () => {
+    const rows: MergedRow[] = [{ kind: "workspace", id: "w1" }, { kind: "folder", cwd: "/s.wt/x" }, { kind: "folder", cwd: "/plain" }];
+    expect(folderTree(rows, repoOf)).toEqual([
+      { kind: "workspace", id: "w1" },
+      { kind: "repo", cwd: "/s", worktrees: ["/s.wt/x"] },
+      { kind: "folder", cwd: "/plain", worktrees: [] },
+    ]);
+  });
+  it("moving a row moves its worktrees with it; a header row's key moves its worktrees", () => {
+    const keys = ["f:/r", "f:/r.wt/a", "w:w1", "f:/p"];
+    expect(moveBlock(keys, ["f:/r", "f:/r.wt/a"], "w:w1", "after")).toEqual(["w:w1", "f:/r", "f:/r.wt/a", "f:/p"]);
+    expect(moveBlock(keys, ["f:/p"], "f:/r", "before")).toEqual(["f:/p", "f:/r", "f:/r.wt/a", "w:w1"]);
+    // dropped after a row whose worktrees follow it: after the worktrees
+    expect(moveBlock(["w:w1", "f:/r", "f:/r.wt/a", "f:/p"], ["w:w1"], "f:/r", "after", ["f:/r", "f:/r.wt/a"])).toEqual(["f:/r", "f:/r.wt/a", "w:w1", "f:/p"]);
+    expect(moveBlock(keys, ["f:/r", "f:/r.wt/a"], "f:/r", "after")).toBe(keys);
   });
 });

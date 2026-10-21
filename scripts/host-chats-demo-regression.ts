@@ -172,6 +172,11 @@ const patch = `(() => {
         // 20 days old: only "All agents on Build PC…" lists it
         { session: "fictional-session-old", title: "FICTIONAL old release notes", status: "idle", modified_at: at(60 * 24 * 20), cwd: "/tmp/fictional-repo", unread: false, archived: false },
         { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
+        // worktree folders: the host names their main checkout as the project (row.repo)
+        ...(sessionStorage.getItem("fictional-worktrees") === "1" ? [
+          { session: "fictional-wt-a", title: "FICTIONAL worktree chat", status: "idle", modified_at: at(5), cwd: "/tmp/fictional-docs.wt/feat-a", unread: false, archived: false, repo: "/tmp/fictional-docs" },
+          { session: "fictional-wt-x", title: "FICTIONAL lone worktree chat", status: "idle", modified_at: at(6), cwd: "/tmp/fictional-lib.wt/fix-x", unread: false, archived: false, repo: "/tmp/fictional-lib" },
+        ] : []),
         ...state.created.filter((chat) => !chat.discarded).map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
       ]) });
       // an attached file, stored in the chat's folder on its PC (a failure on request)
@@ -361,7 +366,7 @@ try {
         assert.equal(await page.getByRole("heading", { name: "Copilot", exact: true }).count(), 0, "no Copilot heading");
         assert.equal(await page.locator(".host-chats").count(), 0, "no Copilot section");
         assert.equal((await folderRow.locator(".workspace-name").first().innerText()).trim().length > 0, true, "the folder row has a name");
-        assert.equal(await folderRow.locator('svg[aria-label="copilot"]').count(), 1, "the folder row wears Copilot's mark (its face's badge)");
+        assert.equal(await folderRow.locator('svg[aria-label="copilot"]').count(), 1, "the folder row wears Copilot's mark");
         assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no vscode mark");
         assert.equal(await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-repo"]').count(), 0, "a folder a workspace works in is no folder row");
         assert.equal(await page.locator('[data-machine="local"].host-chat-item').count(), 0, "a PC whose bridge has the feature off has no chats");
@@ -1337,11 +1342,11 @@ try {
         // the docs folder's ⋯: about the folder only
         await folderMenu();
         assert.deepEqual(await sheetItems(), ["New agent host chat…", "Chats in fictional-docs…", "Pin folder", "Close workspace", "Copy path"], "the folder's menu: new chat, its chats, pin, close, copy path");
-        // the row's face is its folder, badged with Copilot's mark; no second, full-size mark
+        // the row's face is its folder; Copilot's mark leads the name once, as an agent's leads herdr's rows
         assert.equal(await docsRow.locator('.host-folder-face .workspace-folder').count(), 1, "a folder row's face is a folder");
-        assert.equal(await docsRow.locator('.host-folder-face .host-folder-mark-badge svg[aria-label="copilot"]').count(), 1, "badged with Copilot's mark");
-        assert.equal(await docsRow.locator('svg[aria-label="copilot"]').count(), 1, "Copilot's mark once, as the badge");
-        if (shots) await docsRow.screenshot({ path: join(shots, "folder-row-badge.png") });
+        assert.equal(await docsRow.locator('.workspace-select > .sidebar-mark svg[aria-label="copilot"]').count(), 1, "Copilot's mark leads the name");
+        assert.equal(await docsRow.locator('svg[aria-label="copilot"]').count(), 1, "Copilot's mark once");
+        if (shots) await docsRow.screenshot({ path: join(shots, "folder-row-mark.png") });
         // New agent host chat… is a new chat in that folder: no folder list to open it as a workspace
         await page.locator(".row-sheet").getByRole("button", { name: "New agent host chat…", exact: true }).click();
         const chatIn = page.getByRole("dialog", { name: "New chat · fictional-docs", exact: true });
@@ -1413,6 +1418,58 @@ try {
         assert.deepEqual(await restOrder(otherPage), expected, "the order holds on another page");
         await otherPage.close();
         console.log("PASS an agent host workspace moves among herdr's workspaces (Alt+↑), and the order is saved");
+        {
+        // herdr's tree: a worktree's folder sits under its repository's folder row, whose face folds
+        // it; a repository whose folder is not open gets a header row holding its worktrees
+        await page.evaluate(() => {
+          sessionStorage.setItem("fictional-worktrees", "1");
+          const key = "herdr-web-ui:host-workspaces";
+          const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
+          // two worktrees' folders: one of the open docs folder's repository, one whose repository's folder is not open
+          saved.remote.open.push({ cwd: "/tmp/fictional-docs.wt/feat-a", tabs: ["fictional-wt-a"] }, { cwd: "/tmp/fictional-lib.wt/fix-x", tabs: ["fictional-wt-x"] });
+          localStorage.setItem(key, JSON.stringify(saved));
+        });
+        await page.reload();
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        const repoRow = remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]');
+        const childRow = remoteGroup.locator('.worktree-children .host-folder[data-host-folder="/tmp/fictional-docs.wt/feat-a"]');
+        await childRow.waitFor({ timeout: 20000 }).catch(() => assert.fail("the worktree's folder sits under its repository's row"));
+        assert.equal(await remoteGroup.locator('.sidebar-list > .workspace-list:not(.sidebar-pinned) > .host-folder[data-host-folder="/tmp/fictional-docs.wt/feat-a"]').count(), 0, "not a top-level row");
+        const repoRowWithChild = await repoRow.evaluate((row) => row.nextElementSibling?.querySelector('[data-host-folder="/tmp/fictional-docs.wt/feat-a"]') !== null);
+        assert.ok(repoRowWithChild, "right under the repository's row");
+        const header = remoteGroup.locator('.host-repo[data-host-repo="/tmp/fictional-lib"]');
+        await header.waitFor({ timeout: 3000 }).catch(() => assert.fail("a repository with only worktrees open has a header row"));
+        assert.equal(await header.evaluate((row) => row.nextElementSibling?.querySelector('[data-host-folder="/tmp/fictional-lib.wt/fix-x"]') !== null), true, "holding its worktree");
+        // the face folds: the worktree hides, the row counts it, and opening it again shows it
+        const fold = repoRow.getByRole("button", { name: "Collapse worktrees of fictional-docs", exact: true });
+        await fold.click();
+        await childRow.waitFor({ state: "hidden", timeout: 3000 }).catch(() => assert.fail("folding hides the worktree"));
+        assert.equal(await repoRow.locator(".workspace-fold-count").innerText(), "+1");
+        await repoRow.getByRole("button", { name: "Expand worktrees of fictional-docs", exact: true }).click();
+        await childRow.waitFor();
+        // the repository's row moves with its worktree under it
+        const top = async () => remoteGroup.locator(".sidebar-list > .workspace-list:not(.sidebar-pinned) > .workspace-group").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.workspace ?? ""));
+        const before = await top();
+        const at = before.indexOf("f:/tmp/fictional-docs");
+        assert.ok(at > 0, `the repository's row has a row above it (${before.join(", ")})`);
+        await repoRow.locator(".workspace-select").focus();
+        await page.keyboard.press("Alt+ArrowUp");
+        await page.waitForFunction((want) => [...document.querySelectorAll('[aria-label="PC Build PC"] .sidebar-list > .workspace-list:not(.sidebar-pinned) > .workspace-group')].map((row) => (row as HTMLElement).dataset.workspace).indexOf("f:/tmp/fictional-docs") === want, at - 1, { timeout: 3000 }).catch(async () => assert.fail(`Alt+↑ moves the repository's row up (${(await top()).join(", ")})`));
+        assert.equal(await repoRow.evaluate((row) => row.nextElementSibling?.querySelector('[data-host-folder="/tmp/fictional-docs.wt/feat-a"]') !== null), true, "its worktree moved with it");
+        const saved = (await savedTabs()).remote?.["order" as never] as unknown as string[];
+        assert.equal(saved.indexOf("f:/tmp/fictional-docs.wt/feat-a"), saved.indexOf("f:/tmp/fictional-docs") + 1, `the saved order keeps the worktree after its repository (${saved.join(", ")})`);
+        if (shots) await page.screenshot({ path: join(shots, "agent-host-worktree-tree-390.png") });
+        await page.evaluate(() => {
+          sessionStorage.removeItem("fictional-worktrees");
+          const key = "herdr-web-ui:host-workspaces";
+          const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
+          saved.remote.open = saved.remote.open.filter((folder: { cwd: string }) => !folder.cwd.includes(".wt/"));
+          localStorage.setItem(key, JSON.stringify(saved));
+        });
+        await page.reload();
+        console.log("PASS herdr's tree: a worktree's folder under its repository's row (folded by its face, moved with it), and a header row for a repository with only worktrees open");
+        }
+        await drawerOpen();
         await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();
         // typing another folder after a pick starts a chat again, as before
         listDialog = await openList();

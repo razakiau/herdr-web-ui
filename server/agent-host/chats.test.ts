@@ -314,6 +314,26 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("rowsFrom_names_a_worktree_folders_repo: the host's project, when it is a local folder other than the chat's own", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const summary = (n: number, cwd: string, project?: string): SessionSummary => ({
+      resource: `copilotcli:/${n}`, provider: "copilotcli", title: `FICTIONAL_${n}`, status: 1, createdAt: AT, modifiedAt: at,
+      workingDirectories: [cwd], ...(project ? { project: { uri: project, displayName: "fictional" } } : {}),
+    } as SessionSummary);
+    const rows = rowsFrom([
+      summary(1, "file:///tmp/fictional.wt/feat", "file:///tmp/fictional"),
+      summary(2, "file:///tmp/fictional", "file:///tmp/fictional"),
+      summary(3, "file:///tmp/fictional.wt/remote", "https://github.com/fictional/fictional"),
+      summary(4, "file:///tmp/plain"),
+    ]);
+    expect(rows.map((row) => [row.session, row.repo])).toEqual([
+      ["copilotcli:/1", "/tmp/fictional"],
+      ["copilotcli:/2", undefined],
+      ["copilotcli:/3", undefined],
+      ["copilotcli:/4", undefined],
+    ]);
+  });
+
   it("rowsFrom_gives_a_forked_session_its_own_chat_status_not_the_roll_up", () => {
     // live on a PC (2026-10-20): the fork asks (24), its source chat failed (2); AHP's session
     // status promotes the fork's InputNeeded (24 | IsRead 32 = 56), so the source row said asks
