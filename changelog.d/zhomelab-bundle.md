@@ -27,6 +27,7 @@
 - zhomelab bundle 1023: a forked Copilot chat no longer makes its source chat look like it asks (or alert in its name); Settings → Alerts has its own switch for this device.
 - zhomelab: Settings → Alerts grouped by channel (this device: push, in the app, sound; the server: ntfy, read-only); the ⋯ item is Push to this device.
 - zhomelab bundle 1024: an answered ask_user call reads as its question, with a folded Show report that opens the whole message as markdown.
+- zhomelab bundle 1029: agent host workspaces share herdr's workspace order (drag, hold or Alt+↑/↓ among herdr's workspaces, in Pinned too, kept per PC), and the "+" dialog names the source "Agent host".
 - zhomelab bundle 1028: agent host workspaces open and close as herdr's (only opened folders and tabs show; a listed chat is a look until Keep open; Close tab; New workspace → agent host folder list; the folder menu's Chats in <folder>… and Close workspace), synced like pins.
 - zhomelab bundle 1027: an ask_user form reads as its report once, then its questions (no extra entry); a new Copilot chat lists skills in "/" before its first message.
 - zhomelab bundle 1026: the usage panel's account header takes two lines, so a long account or plan stays inside the card; plans read as sold ("Max 20x").
