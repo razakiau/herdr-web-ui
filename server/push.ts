@@ -138,6 +138,8 @@ export interface PushServiceOptions {
   loopbackHttp?: boolean;
   /** an ntfy topic that gets the same alerts (server/ntfy.ts ntfyFromEnv) */
   ntfy?: NtfyConfig;
+  /** false while Settings hides agent host chats (the shared hostChatsShown): their changes are followed, never told */
+  hostChatsShown?: () => boolean;
 }
 
 /** Who one delay's alert goes to: these devices, and the ntfy topic or not. */
@@ -554,7 +556,7 @@ export function createPushService(options: PushServiceOptions): PushService {
         if (busy && previous !== undefined && previous !== "working" && previous !== "asks") turnStart.set(key, now());
         let worked: number | null = null;
         if (!busy) { const start = turnStart.get(key); worked = start === undefined ? null : now() - start; turnStart.delete(key); }
-        const alert = row.archived ? null : hostChatAlert(previous, row.status);
+        const alert = row.archived || options.hostChatsShown?.() === false ? null : hostChatAlert(previous, row.status);
         if (alert === null) continue;
         // a failure is told as a finish is: a device that wants no finishes hears none
         const as: AgentStatus = alert === "error" ? "done" : alert;

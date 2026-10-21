@@ -11,7 +11,10 @@ import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/s
 import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
 import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
 import { CLAUDE_LAUNCH_MODES, CODEX_LAUNCH_MODES, type ClaudeLaunchMode, type CodexLaunchMode } from "../lib/agentLaunchMode.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type HostAutoOpen, type VoiceButton } from "../lib/settings.ts";
+import { fetchHostModels } from "../lib/hostChats.ts";
+import { APPROVALS_LABEL } from "./ModelPicker.tsx";
+import type { HostModel } from "../../shared/host-chats.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -646,6 +649,7 @@ function IntegrationsPage() {
   return (
     <>
       <LaunchModesGroup />
+      <AgentHostGroup />
       <IntegrationsList />
     </>
   );
@@ -675,6 +679,68 @@ function LaunchModesGroup() {
           {CODEX_LAUNCH_MODES.map((mode) => <option key={mode} value={mode}>{codexModeName(mode, t)}</option>)}
         </select>
       </SettingsRow>
+    </SettingsGroup>
+  );
+}
+
+/**
+ * VS Code's agent host chats (an integration, like herdr's own): whether they show at all, which of
+ * their folders open by themselves, the archived ones, and what a new chat starts with. Every
+ * default is what the app did before these existed.
+ */
+function AgentHostGroup() {
+  const { settings, update } = useSettings();
+  const t = useT();
+  const machineId = useMachineId();
+  const [models, setModels] = useState<HostModel[] | null>(null);
+  useEffect(() => {
+    if (!settings.hostChatsShown) return;
+    let live = true;
+    void fetchHostModels(machineId).then((value) => { if (live) setModels(value.models); }, () => { if (live) setModels([]); });
+    return () => { live = false; };
+  }, [machineId, settings.hostChatsShown]);
+  const chosen = settings.hostNewModel;
+  // a model this PC's host does not list (another PC's, or gone) is kept, and shown by its id
+  const listed = models ?? [];
+  const entry = chosen ? listed.find((model) => model.id === chosen.id) : undefined;
+  const efforts = entry?.efforts?.values ?? [];
+  return (
+    <SettingsGroup title={t("Agent host")} section="agent-host" note={t("VS Code's Copilot chats on your PCs. Off, the app is herdr without them: no folders, tabs, agents or alerts of theirs.")}>
+      <SettingsRow label={t("Show agent host chats")}>
+        <Toggle label={t("Show agent host chats")} checked={settings.hostChatsShown} onChange={(hostChatsShown) => update({ hostChatsShown })} />
+      </SettingsRow>
+      {settings.hostChatsShown && <>
+        <SettingsRow label={t("Folders that open by themselves")} description={t("The first time a PC is seen. A chat you open always opens its folder.")} htmlFor="settings-host-auto-open" wide>
+          <select id="settings-host-auto-open" className="select settings-select" value={settings.hostAutoOpen} onChange={(event) => update({ hostAutoOpen: event.target.value as HostAutoOpen })}>
+            <option value="active">{t("Pinned and working")}</option>
+            <option value="pinned">{t("Pinned only")}</option>
+            <option value="none">{t("None")}</option>
+          </select>
+        </SettingsRow>
+        <SettingsRow label={t("Show archived chats")} description={t("In All agents and Chats in a folder, folded at the end.")}>
+          <Toggle label={t("Show archived chats")} checked={settings.hostShowArchived} onChange={(hostShowArchived) => update({ hostShowArchived })} />
+        </SettingsRow>
+        <SettingsRow label={t("New chat model")} description={models !== null && listed.length === 0 ? t("This PC's agent host lists no models: its own default is used.") : undefined} htmlFor="settings-host-new-model" wide>
+          <select id="settings-host-new-model" className="select settings-select" value={chosen?.id ?? ""} onChange={(event) => update({ hostNewModel: event.target.value === "" ? null : { id: event.target.value } })}>
+            <option value="">{t("Host default")}</option>
+            {chosen && !entry && <option value={chosen.id}>{chosen.id}</option>}
+            {listed.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </select>
+        </SettingsRow>
+        {chosen && efforts.length > 0 && <SettingsRow label={t("New chat effort")} htmlFor="settings-host-new-effort" wide>
+          <select id="settings-host-new-effort" className="select settings-select" value={chosen.effort ?? ""} onChange={(event) => update({ hostNewModel: event.target.value === "" ? { id: chosen.id } : { id: chosen.id, effort: event.target.value } })}>
+            <option value="">{t("Model default")}</option>
+            {efforts.map((effort) => <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>)}
+          </select>
+        </SettingsRow>}
+        <SettingsRow label={t("New chat permissions")} htmlFor="settings-host-new-approvals" wide>
+          <select id="settings-host-new-approvals" className="select settings-select" value={settings.hostNewApprovals ?? ""} onChange={(event) => update({ hostNewApprovals: event.target.value === "" ? null : event.target.value })}>
+            <option value="">{t("Host default")}</option>
+            {Object.entries(APPROVALS_LABEL).map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
+            {settings.hostNewApprovals && !(settings.hostNewApprovals in APPROVALS_LABEL) && <option value={settings.hostNewApprovals}>{settings.hostNewApprovals}</option>}
+          </select>
+        </SettingsRow>
+      </>}
     </SettingsGroup>
   );
 }

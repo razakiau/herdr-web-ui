@@ -8,6 +8,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { fitHostWorkspaces, sanitizeHostWorkspaces, type HostWorkspace, type HostWorkspaceState, type PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 import { hostChatLive, type HostPc } from "./hostChats.ts";
 import { isLive, samePath } from "./hostPlacement.ts";
+import type { HostAutoOpen } from "./settings.ts";
 
 export { fitHostWorkspaces, HOST_WORKSPACES_BUDGET, sanitizeHostWorkspaces } from "../../shared/host-workspaces.ts";
 export type { HostWorkspace, HostWorkspaceState, PcHostWorkspaces } from "../../shared/host-workspaces.ts";
@@ -110,14 +111,17 @@ export function prunePc(pc: PcHostWorkspaces, chats: readonly HostChatRow[], kee
 /**
  * A PC's first state, the first time the app sees it with nothing saved: its pinned folders, the
  * folders with a chat that works or asks, and the folder of the chat on screen, each with its first
- * tabs (the one on screen among them). Everything else starts closed.
+ * tabs (the one on screen among them). Everything else starts closed. `policy` (Settings, Agent
+ * host): "pinned" leaves the working ones closed, "none" the pinned ones too; the one on screen opens
+ * whatever it says, as it is already shown.
  */
-export function seedPc(chats: readonly HostChatRow[], pinnedFolders: ReadonlySet<string>, onScreen: string | null): PcHostWorkspaces {
+export function seedPc(chats: readonly HostChatRow[], pinnedFolders: ReadonlySet<string>, onScreen: string | null, policy: HostAutoOpen = "active"): PcHostWorkspaces {
   const pinned = new Set([...pinnedFolders].map(samePath));
   let pc: PcHostWorkspaces = { open: [] };
   for (const row of [...chats].filter(usable).sort((a, b) => modified(b) - modified(a))) {
     const folder = folderOf(row)!;
-    if (pinned.has(folder) || isLive(row) || row.session === onScreen) pc = openWorkspace(pc, folder, chats);
+    const wanted = (policy !== "none" && pinned.has(folder)) || (policy === "active" && isLive(row));
+    if (wanted || row.session === onScreen) pc = openWorkspace(pc, folder, chats);
   }
   const shown = chats.find((row) => row.session === onScreen && usable(row));
   return shown ? openTab(pc, shown) : pc;
@@ -162,10 +166,10 @@ export function shouldSeed(stored: HostWorkspaceState, machineId: string, read: 
  * first time (seedPc), else its gone and archived tabs dropped (prunePc). The same object when
  * nothing changed, so a caller writes only a change.
  */
-export function upkeepPc(stored: HostWorkspaceState, machineId: string, read: HostPc | undefined, pinnedFolders: ReadonlySet<string>, onScreen: string | null): HostWorkspaceState {
+export function upkeepPc(stored: HostWorkspaceState, machineId: string, read: HostPc | undefined, pinnedFolders: ReadonlySet<string>, onScreen: string | null, policy: HostAutoOpen = "active"): HostWorkspaceState {
   if (!hostChatLive(read)) return stored;
   const was = stored[machineId];
-  const next = was === undefined ? seedPc(read!.chats, pinnedFolders, onScreen) : prunePc(was, read!.chats, onScreen);
+  const next = was === undefined ? seedPc(read!.chats, pinnedFolders, onScreen, policy) : prunePc(was, read!.chats, onScreen);
   return next === was ? stored : { ...stored, [machineId]: next };
 }
 

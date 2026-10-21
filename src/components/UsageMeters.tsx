@@ -168,8 +168,8 @@ export function UsageMeters() {
   const listed = settings.usageSort === "closest" ? closestFirst(shown) : shown;
   if (!settings.showUsage || shown.length === 0) return null;
   const fits = room ?? { all: FALLBACK_CHIPS, folding: FALLBACK_CHIPS - 1 };
-  // one chip per provider: many accounts of one provider would be chips no one could tell apart
-  const groups = providerGroups(shown);
+  // one chip per provider (many accounts of one provider would be chips no one could tell apart), or per account if Settings says so
+  const groups = providerGroups(shown, settings.usageGroup);
   const chips = groups.length > fits.all ? groups.slice(0, fits.folding) : groups;
   const folded = groups.length - chips.length;
   const summary = groups.map((group) => {

@@ -1758,6 +1758,88 @@ try {
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS Fork Conversation is offered on later requests, says why when refused, and opens the fork as a tab");
 
+        // 7b. Settings → Integrations → Agent host: a new chat's defaults, then the switch that hides them all
+        // opened in the app, never by a navigation: this context's init script resets the settings on each load
+        const openAgentHostSettings = async () => {
+          await drawerOpen();
+          await page.getByRole("button", { name: "Settings", exact: true }).click();
+          await page.locator('[data-settings-page="integrations"]').click();
+          const group = page.locator('[data-section="agent-host"]');
+          await group.waitFor();
+          return group;
+        };
+        let hostGroup = await openAgentHostSettings();
+        await fits("the Agent host settings");
+        await hostGroup.locator("#settings-host-new-model option", { hasText: "FICTIONAL Model B" }).waitFor({ state: "attached" });
+        await hostGroup.locator("#settings-host-new-model").selectOption("fictional/model-b");
+        await hostGroup.locator("#settings-host-new-effort").selectOption("high");
+        await hostGroup.locator("#settings-host-new-approvals").selectOption("autoApprove");
+        if (shots) {
+          await hostGroup.scrollIntoViewIfNeeded();
+          await hostGroup.locator("#settings-host-new-approvals").scrollIntoViewIfNeeded();
+          await page.screenshot({ path: join(shots, "settings-agent-host-390.png") });
+        }
+        await page.keyboard.press("Escape");
+        const draftsBefore = (await posts("/api/machines/remote/host-chats/chat/draft")).length;
+        const configsBefore = (await posts("/api/machines/remote/host-chats/session/config")).length;
+        form = await openNewSheet();
+        await form.getByRole("textbox", { name: "Directory" }).fill("/tmp/fictional-repo");
+        await form.getByRole("button", { name: "Start", exact: true }).click();
+        await form.waitFor({ state: "detached" });
+        const newDrafts = (await posts("/api/machines/remote/host-chats/chat/draft")).slice(draftsBefore).map((post) => post.body["model"]);
+        assert.deepEqual(newDrafts, [{ id: "fictional/model-b", effort: "high" }], "the new chat's model is Settings' default, as a draft");
+        assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).slice(configsBefore).map((post) => post.body["approvals"]), ["autoApprove"], "the new chat's permissions are Settings' default");
+        console.log("PASS a new agent host chat starts on Settings' model, effort and permissions");
+
+        // what host chats put in the sidebar now: folder rows and host tabs, to be gone and then back
+        await page.keyboard.press("Escape");
+        await drawerOpen();
+        const hostMarks = '.host-folder, [data-host-session]';
+        await page.locator(hostMarks).first().waitFor({ state: "attached" });
+        const hostBefore = await page.locator(hostMarks).count();
+        hostGroup = await openAgentHostSettings();
+        await hostGroup.getByRole("switch", { name: "Show agent host chats" }).click();
+        await hostGroup.locator("#settings-host-new-model").waitFor({ state: "detached" });
+        assert.equal(await hostGroup.locator("#settings-host-new-model").count(), 0, "off, the host's own settings fold away");
+        await page.keyboard.press("Escape");
+        await drawerOpen();
+        await remoteGroup.waitFor();
+        assert.equal(await page.locator(hostMarks).count(), 0, "off, no agent host folder rows, tabs or chat on screen");
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click().catch(() => undefined);
+        await drawerOpen();
+        await remoteGroup.getByRole("button", { name: "New workspace on Build PC", exact: true }).click();
+        const plainForm = page.getByRole("dialog", { name: "New workspace · Build PC" });
+        await plainForm.waitFor();
+        await plainForm.locator(".agent-picker-trigger").click();
+        await page.getByRole("option").first().waitFor();
+        assert.equal(await page.getByRole("option", { name: "Agent host" }).count(), 0, "off, New offers no Agent host");
+        await page.keyboard.press("Escape");
+        await plainForm.getByRole("button", { name: "Cancel", exact: true }).click();
+        hostGroup = await openAgentHostSettings();
+        const showSwitch = hostGroup.getByRole("switch", { name: "Show agent host chats" });
+        await hostGroup.locator('[role="switch"][aria-checked="false"]').first().waitFor();
+        await showSwitch.click();
+        await hostGroup.locator("#settings-host-new-model").waitFor();
+        await page.keyboard.press("Escape");
+        await drawerOpen();
+        await page.locator(hostMarks).first().waitFor({ state: "attached", timeout: 20_000 });
+        // Show archived chats off: All agents has no Archived group (fictional-new-3 was archived above)
+        hostGroup = await openAgentHostSettings();
+        await hostGroup.getByRole("switch", { name: "Show archived chats" }).click();
+        await page.keyboard.press("Escape");
+        await agentsMenu();
+        await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        await all.waitFor();
+        assert.equal(await all.getByRole("button", { name: "Archived" }).count(), 0, "archived chats hidden: no Archived group");
+        await page.keyboard.press("Escape");
+        await all.waitFor({ state: "detached" });
+        hostGroup = await openAgentHostSettings();
+        await hostGroup.getByRole("switch", { name: "Show archived chats" }).click();
+        await page.keyboard.press("Escape");
+        assert.ok(await page.locator(hostMarks).count() > 0 && hostBefore > 0, `on again, host chats are back (${hostBefore} before)`);
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS Show agent host chats off is herdr without them (no folder rows, no Agent host in New), and on brings them back");
+
         // 8. six PCs: five fold under "Other PCs (5)"; the one whose chat asks stays open outside it
       } finally { await context.close(); }
       // a fresh device: the PC in use is the first, and the fold has never been opened

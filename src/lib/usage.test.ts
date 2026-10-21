@@ -153,6 +153,7 @@ describe("one chip per provider", () => {
   it("groups a provider's accounts in the order its first one is shown", () => {
     const a = provider("codex", [window(10)], "a@x"), b = provider("claude", [window(20)], "b@x"), c = provider("codex", [window(30)], "c@x");
     expect(providerGroups([a, b, c])).toEqual([[a, c], [b]]);
+    expect(providerGroups([a, b, c], "account")).toEqual([[a], [b], [c]]);
   });
   it("weighs each account by its plan's size: a Max 20x counts four times a Max 5x", () => {
     const big = plan(provider("claude", [window(10)], "a"), "default_claude_max_20x");

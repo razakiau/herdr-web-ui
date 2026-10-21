@@ -27,7 +27,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems, type AllAgentsOn } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
-import { basename, errorText, hostChatLive, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs } from "./lib/hostChats.ts";
+import { basename, errorText, hostChatLive, hostChatRoster, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement, samePath } from "./lib/hostPlacement.ts";
@@ -1026,7 +1026,8 @@ export function App() {
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
   // each PC's host chats (lib/hostChats.ts), read once for the sidebar and the tab strip
-  const { pcs: hostChats, tracker: hostTracker } = useHostChatPcs(machines);
+  // none while Settings hides agent host chats (Agent host): herdr as it is without them
+  const { pcs: hostChats, tracker: hostTracker } = useHostChatPcs(hostChatRoster(machines, settings.hostChatsShown));
   const hostPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   // the agent host workspaces open per PC, and their tabs (lib/hostWorkspaces.ts)
   const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
@@ -1122,10 +1123,12 @@ export function App() {
     let next = currentHostWorkspaces();
     for (const [machineId, pc] of hostChats) {
       const onScreen = selectedHostChat?.machineId === machineId ? selectedHostChat.session : null;
-      next = upkeepPc(next, machineId, pc, new Set(pinnedHostFolders(hostPins, machineId)), onScreen);
+      next = upkeepPc(next, machineId, pc, new Set(pinnedHostFolders(hostPins, machineId)), onScreen, settings.hostAutoOpen);
     }
     setHostWorkspaces(next);
-  }, [hostChats, hostPins, selectedHostChat]);
+  }, [hostChats, hostPins, selectedHostChat, settings.hostAutoOpen]);
+  // a host chat on screen goes when Settings hides them
+  useEffect(() => { if (!settings.hostChatsShown) setSelectedHostChat(null); }, [settings.hostChatsShown]);
   // where the selected PC's host chats stand (lib/hostPlacement.ts): the open tabs, and the one on screen
   const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [], hostWorkspaces[selectedMachineId],
     selectedHostChat?.machineId === selectedMachineId ? selectedHostChat.session : null), [snapshot, hostChats, hostWorkspaces, selectedMachineId, selectedHostChat]);
