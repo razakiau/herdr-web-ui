@@ -46,3 +46,42 @@ export function sanitizeHostWorkspaces(raw: unknown): HostWorkspaceState | null 
   }
   return out;
 }
+
+/**
+ * What of the shared preferences (MAX_PREFERENCES_BYTES, 64 KB) the open workspaces may take: half,
+ * so settings and pins always fit beside them.
+ */
+export const HOST_WORKSPACES_BUDGET = 32 * 1024;
+const encoder = new TextEncoder();
+const bytes = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;
+
+/**
+ * A state cut to what the server takes, before it is saved or sent: a state over the limits is
+ * refused whole (400, or 413 past the size), and the refused change would hold back settings and
+ * pins with it until the next edit. Each cut drops what matters least: a workspace's oldest tabs,
+ * a PC's earliest opened workspaces, the order's tail. The same object when it already fits.
+ */
+export function fitHostWorkspaces(state: HostWorkspaceState): HostWorkspaceState {
+  let out: HostWorkspaceState = state;
+  let cut = false;
+  const pcs = Object.entries(state).map(([machine, pc]) => {
+    const open = pc.open.slice(-MAX_HOST_WORKSPACES).map((each) => each.tabs.length > MAX_HOST_TABS ? { ...each, tabs: each.tabs.slice(-MAX_HOST_TABS) } : each);
+    const order = pc.order && pc.order.length > MAX_ORDER ? pc.order.slice(0, MAX_ORDER) : pc.order;
+    const changed = open.length !== pc.open.length || open.some((each, index) => each !== pc.open[pc.open.length - open.length + index]) || order !== pc.order;
+    if (!changed) return [machine, pc] as const;
+    cut = true;
+    return [machine, order === undefined ? { open } : { open, order }] as const;
+  });
+  if (cut) out = Object.fromEntries(pcs);
+  if (bytes(out) <= HOST_WORKSPACES_BUDGET) return out;
+  const next: HostWorkspaceState = structuredClone(out);
+  // the PC that takes the most gives first: its earliest opened workspace, else its order, else itself
+  while (bytes(next) > HOST_WORKSPACES_BUDGET) {
+    const [machine, pc] = Object.entries(next).sort((a, b) => bytes(b[1]) - bytes(a[1]))[0]!;
+    if (pc.open.length > 1) pc.open.shift();
+    else if (pc.order !== undefined) delete pc.order;
+    else if (pc.open.length === 1) pc.open.shift();
+    else delete next[machine];
+  }
+  return next;
+}
