@@ -5,11 +5,11 @@
  * caller writes only a change.
  */
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import { sanitizeHostWorkspaces, type HostWorkspace, type HostWorkspaceState, type PcHostWorkspaces } from "../../shared/host-workspaces.ts";
+import { fitHostWorkspaces, sanitizeHostWorkspaces, type HostWorkspace, type HostWorkspaceState, type PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 import { hostChatLive, type HostPc } from "./hostChats.ts";
 import { isLive, samePath } from "./hostPlacement.ts";
 
-export { sanitizeHostWorkspaces };
+export { fitHostWorkspaces, HOST_WORKSPACES_BUDGET, sanitizeHostWorkspaces } from "../../shared/host-workspaces.ts";
 export type { HostWorkspace, HostWorkspaceState, PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 
 const modified = (row: HostChatRow): number => {
@@ -257,7 +257,9 @@ export function currentHostWorkspaces(): HostWorkspaceState {
   return state;
 }
 
-export function setHostWorkspaces(next: HostWorkspaceState): void {
+export function setHostWorkspaces(wanted: HostWorkspaceState): void {
+  // kept to what the server takes, so a long day of opened tabs never blocks the preferences' sync
+  const next = fitHostWorkspaces(wanted);
   if (JSON.stringify(next) === JSON.stringify(currentHostWorkspaces())) return;
   state = next;
   try { storage()?.setItem(STORAGE_KEY, JSON.stringify(next)); }

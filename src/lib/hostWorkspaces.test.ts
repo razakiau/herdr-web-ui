@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { folderKey, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { fitHostWorkspaces, HOST_WORKSPACES_BUDGET, folderKey, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -186,5 +186,41 @@ describe("agent host workspaces", () => {
       expect(withOrder(none, "m", ["w:w1"])).toBe(none);
       expect(withOrder(next, "m", ["f:/a"])).toBe(next);
     });
+  });
+
+  it("fit_keeps_a_state_the_server_takes", () => {
+    const tabs = Array.from({ length: 51 }, (_, i) => `s${i}`);
+    const open = Array.from({ length: 201 }, (_, i) => ({ cwd: `/f${i}`, tabs: ["x"] }));
+    const order = Array.from({ length: 501 }, (_, i) => `w:${i}`);
+    const fitted = fitHostWorkspaces({ m: { open: [{ cwd: "/a", tabs }], order }, n: { open } });
+    // the newest tabs, the last opened workspaces and the order's head stay
+    expect(fitted.m!.open[0]!.tabs).toEqual(tabs.slice(1));
+    expect(fitted.m!.order).toEqual(order.slice(0, 500));
+    expect(fitted.n!.open.map((each) => each.cwd)).toEqual(open.slice(1).map((each) => each.cwd));
+    expect(sanitizeHostWorkspaces(fitted)).toEqual(fitted);
+    const fine = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    expect(fitHostWorkspaces(fine)).toBe(fine);
+  });
+
+  it("fit_stays_inside_its_share_of_the_preferences", () => {
+    const long = (i: number, j: number) => `vscode-chat-session://local/${"x".repeat(200)}-${i}-${j}`;
+    const open = Array.from({ length: 40 }, (_, i) => ({ cwd: `/dossier-é/${i}`, tabs: Array.from({ length: 10 }, (_, j) => long(i, j)) }));
+    const fitted = fitHostWorkspaces({ m: { open } });
+    expect(new TextEncoder().encode(JSON.stringify(fitted)).length).toBeLessThanOrEqual(HOST_WORKSPACES_BUDGET);
+    // the oldest opened go first: the newest workspace stays whole
+    expect(fitted.m!.open.at(-1)).toEqual(open.at(-1));
+  });
+
+  it("the_store_writes_only_what_fits", () => {
+    const stored = new Map<string, string>();
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } } });
+    try {
+      setHostWorkspaces({ m: { open: [{ cwd: "/a", tabs: Array.from({ length: 60 }, (_, i) => `s${i}`) }] } });
+      expect(currentHostWorkspaces().m!.open[0]!.tabs.length).toBe(50);
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
 });
