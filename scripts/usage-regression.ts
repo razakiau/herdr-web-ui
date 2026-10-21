@@ -74,11 +74,12 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     // limit near its end that the chip does not show. As many chips as the row holds, the rest in "+N"
     const chipCount = await page.locator(".usage-chip").count();
     const more = await page.locator(".usage-more").count() === 0 ? 0 : Number((await page.locator(".usage-more").textContent())!.slice(1));
-    assert.equal(chipCount + more, 7, "every account is a chip or counted in +N");
+    assert.equal(chipCount + more, 6, "every provider is a chip or counted in +N: two Codex accounts share one");
     assert.ok(chipCount >= 4, `the row beside the Settings gear holds at least four chips (${chipCount})`);
     assert.equal(await strip.getAttribute("aria-label"),
-      "Subscription usage: Claude · me@example.com 58% left, Codex · me@work.example 88% left (Weekly 9% left), Codex · me@example.com 70% left, Cursor 80% left, GitHub Copilot · me 100% left, Grok 100% left, Antigravity —");
-    assert.deepEqual((await page.locator(".usage-chip-value").allTextContents()).slice(0, 4), ["58%", "88%", "70%", "80%"]);
+      "Subscription usage: Claude · me@example.com 58% left, Codex, 2 accounts 88% left (near a limit: Codex · me@work.example), Cursor 80% left, GitHub Copilot · me 100% left, Grok 100% left, Antigravity —");
+    assert.deepEqual((await page.locator(".usage-chip-value").allTextContents()).slice(0, 4), ["58%", "88%", "80%", "100%"]);
+    assert.deepEqual(await page.locator(".usage-chip-count").allTextContents(), ["2"], "the Codex chip says it stands for two accounts");
     assert.equal(await page.locator(".usage-chip.is-high").count(), 0, "no session is near its end");
     assert.equal(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth), true, "the chips fit beside Settings");
     const [settings, meters] = await Promise.all([page.locator(".sidebar-footer-row .sidebar-footer-action").boundingBox(), strip.boundingBox()]);
@@ -103,7 +104,8 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await popover.waitFor({ state: "hidden" });
     assert.equal(await strip.evaluate((el) => el === document.activeElement), true, "Escape hands focus back to the strip");
 
-    // Settings: the week instead, where one near its limit is red; then the share used, an account
+    // Settings: the week instead, where one near its limit is red (Codex: Pro at 91% and Plus at 30%,
+    // weighted 10 to 1 by plan size, 85.5% used); then the share used, an account
     // hidden from the strip, another moved up
     const names = () => page.locator(".usage-popover .usage-provider").evaluateAll((sections) => sections.map((section) => section.getAttribute("aria-label")));
     await settingsButton.click();
@@ -113,7 +115,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     }
     await page.locator('.segmented[aria-label="Limit shown"]').getByRole("button", { name: "Weekly", exact: true }).click();
     await page.keyboard.press("Escape");
-    assert.match(await strip.getAttribute("aria-label") ?? "", /^Subscription usage: Claude · me@example\.com 37% left, Codex · me@work\.example 9% left, Codex · me@example\.com 70% left,/);
+    assert.match(await strip.getAttribute("aria-label") ?? "", /^Subscription usage: Claude · me@example\.com 37% left, Codex, 2 accounts 15% left \(near a limit: Codex · me@work\.example\), Cursor/);
     assert.equal(await page.locator(".usage-chip").nth(1).evaluate((chip) => chip.classList.contains("is-high")), true);
     await settingsButton.click();
     await openSettingsPage(page, "Subscription usage");

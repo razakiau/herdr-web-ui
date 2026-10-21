@@ -212,3 +212,49 @@ export function closestFirst(providers: readonly ProviderUsage[]): ProviderUsage
   const used = (usage: ProviderUsage): number => tightestWindow(usage)?.used_percent ?? -1;
   return [...providers].sort((a, b) => used(b) - used(a));
 }
+
+/** A provider's accounts together, providers in the order their first account is shown. */
+export function providerGroups(providers: readonly ProviderUsage[]): ProviderUsage[][] {
+  const groups = new Map<string, ProviderUsage[]>();
+  for (const usage of providers) {
+    const group = groups.get(usage.id);
+    if (group) group.push(usage);
+    else groups.set(usage.id, [usage]);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * How big an account's plan is next to its provider's others, for a chip that averages them: a
+ * percentage alone does not say how much it is of. Claude's Max states its multiple of Pro (5x,
+ * 20x); Copilot's plans are their monthly premium requests (Free 50, Pro 300, Pro+ 1500, Business
+ * 300, Enterprise 1000); Codex's Pro is about 10 Plus. Anything else counts as 1, so accounts on
+ * plans not known here average plainly.
+ */
+export function planWeight(usage: Pick<ProviderUsage, "id" | "plan">): number {
+  const plan = (usage.plan ?? "").toLowerCase();
+  if (usage.id === "claude") return /max[\s_-]*20x/.test(plan) ? 20 : /max/.test(plan) ? 5 : 1;
+  if (usage.id === "copilot") {
+    return /pro\s*\+|pro[\s_-]*plus/.test(plan) ? 1500 : /enterprise/.test(plan) ? 1000 : /pro|business/.test(plan) ? 300 : /free/.test(plan) ? 50 : 1;
+  }
+  if (usage.id === "codex") return /\bpro\b/.test(plan) ? 10 : 1;
+  return 1;
+}
+
+/**
+ * The limit a provider's chip shows for all its accounts: the same limit of each (the kind and scope
+ * the first account shows), averaged by plan size, its reset the soonest. One account is its own.
+ */
+export function groupWindow(group: readonly ProviderUsage[], glance: UsageGlance): UsageWindow | null {
+  const lead = group.map((usage) => glanceWindow(usage, glance)).find((window) => window !== null) ?? null;
+  if (lead === null) return null;
+  const same = group.flatMap((usage) => {
+    const window = usage.windows.find((candidate) => candidate.kind === lead.kind && candidate.scope === lead.scope);
+    return window ? [{ window, weight: planWeight(usage) }] : [];
+  });
+  if (same.length === 1) return same[0]!.window;
+  const total = same.reduce((sum, { weight }) => sum + weight, 0);
+  const used = same.reduce((sum, { window, weight }) => sum + window.used_percent * weight, 0) / total;
+  const resets = same.map(({ window }) => window.resets_at).filter((at): at is string => at !== null).sort((a, b) => Date.parse(a) - Date.parse(b));
+  return { ...lead, used_percent: Math.round(used * 10) / 10, resets_at: resets[0] ?? null };
+}

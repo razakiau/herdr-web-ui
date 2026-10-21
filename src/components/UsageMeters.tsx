@@ -6,7 +6,7 @@ import "./UsageMeters.css";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useSettings, type UsageCount, type UsageGlance } from "../lib/settings.ts";
-import { formatPercent, formatResetIn, glanceWindow, HIGH_PERCENT, closestFirst, meterPercent, meterText, planLabel, providerMark, providerName, shownUsages, usageName, viaOmniRoute, useUsage, windowLabel } from "../lib/usage.ts";
+import { formatPercent, formatResetIn, glanceWindow, groupWindow, HIGH_PERCENT, providerGroups, closestFirst, meterPercent, meterText, planLabel, providerMark, providerName, shownUsages, usageName, viaOmniRoute, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 
 /** chips the strip holds when its width cannot be measured (before layout, or a test without one) */
@@ -36,11 +36,16 @@ function otherHigh(usage: ProviderUsage, shown: UsageWindow | null): UsageWindow
   return usage.windows.find((window) => window !== shown && window.used_percent >= HIGH_PERCENT) ?? null;
 }
 
-function Chip({ usage, count, glance }: { usage: ProviderUsage; count: UsageCount; glance: UsageGlance }) {
-  const window = glanceWindow(usage, glance);
+/** One provider: its accounts' limit averaged by plan size (lib/usage.ts groupWindow); the popover lists each. */
+function Chip({ group, count, glance }: { group: readonly ProviderUsage[]; count: UsageCount; glance: UsageGlance }) {
+  const window = groupWindow(group, glance);
+  const usage = group[0]!;
   return (
-    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`}>
-      <AgentMark agent={providerMark(usage.id)} size={14} />
+    <span className={`usage-chip${level(window)}${group.some((one) => one.problem) ? " has-problem" : ""}`}>
+      <span className="usage-chip-mark">
+        <AgentMark agent={providerMark(usage.id)} size={14} />
+        {group.length > 1 && <span className="usage-chip-count">{group.length}</span>}
+      </span>
       <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : "—"}</span>
       <span className="usage-chip-bar" style={{ "--fill": `${window ? meterPercent(window, count) : 0}%` } as CSSProperties} />
     </span>
@@ -163,9 +168,17 @@ export function UsageMeters() {
   const listed = settings.usageSort === "closest" ? closestFirst(shown) : shown;
   if (!settings.showUsage || shown.length === 0) return null;
   const fits = room ?? { all: FALLBACK_CHIPS, folding: FALLBACK_CHIPS - 1 };
-  const chips = shown.length > fits.all ? shown.slice(0, fits.folding) : shown;
-  const folded = shown.length - chips.length;
-  const summary = shown.map((usage) => {
+  // one chip per provider: many accounts of one provider would be chips no one could tell apart
+  const groups = providerGroups(shown);
+  const chips = groups.length > fits.all ? groups.slice(0, fits.folding) : groups;
+  const folded = groups.length - chips.length;
+  const summary = groups.map((group) => {
+    if (group.length > 1) {
+      const window = groupWindow(group, settings.usageGlance);
+      const high = group.filter((usage) => usage.windows.some((one) => one.used_percent >= HIGH_PERCENT)).map(usageName);
+      return `${t("{name}, {n} accounts", { name: providerName(group[0]!.id), n: group.length })} ${window ? meterText(window, count) : "—"}${high.length ? ` (${t("near a limit: {names}", { names: high.join(", ") })})` : ""}`;
+    }
+    const usage = group[0]!;
     const window = glanceWindow(usage, settings.usageGlance);
     const high = otherHigh(usage, window);
     return `${usageName(usage)} ${window ? meterText(window, count) : "—"}${high ? ` (${windowLabel(high)} ${meterText(high, count)})` : ""}`;
@@ -182,7 +195,7 @@ export function UsageMeters() {
         title={summary}
         onClick={() => setOpen(!open)}
       >
-        {chips.map((usage) => <Chip key={usage.key} usage={usage} count={count} glance={settings.usageGlance} />)}
+        {chips.map((group) => <Chip key={group[0]!.id} group={group} count={count} glance={settings.usageGlance} />)}
         {folded > 0 && <span className="usage-more">+{folded}</span>}
       </button>
       {open && (

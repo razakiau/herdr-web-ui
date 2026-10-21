@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
-import { closestFirst, composerUsage, planLabel, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, newOmniRouteProviders, orderProviders, providerForAgent, providerMark, providerName, shownUsages, statusWindows, tightestWindow, usageName, viaOmniRoute, windowLabel } from "./usage.ts";
+import { closestFirst, composerUsage, groupWindow, planLabel, planWeight, providerGroups, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, newOmniRouteProviders, orderProviders, providerForAgent, providerMark, providerName, shownUsages, statusWindows, tightestWindow, usageName, viaOmniRoute, windowLabel } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const window = (used_percent: number, kind: UsageWindow["kind"] = "week", scope: string | null = null): UsageWindow => ({ kind, scope, used_percent, resets_at: null, starts_at: null });
@@ -145,5 +145,36 @@ describe("planLabel", () => {
     expect(planLabel("  ", "claude")).toBeNull();
     expect(planLabel("OpenCode", "opencode")).toBeNull();
     expect(planLabel("default", "claude")).toBeNull();
+  });
+});
+
+describe("one chip per provider", () => {
+  const plan = (usage: ProviderUsage, name: string): ProviderUsage => ({ ...usage, plan: name });
+  it("groups a provider's accounts in the order its first one is shown", () => {
+    const a = provider("codex", [window(10)], "a@x"), b = provider("claude", [window(20)], "b@x"), c = provider("codex", [window(30)], "c@x");
+    expect(providerGroups([a, b, c])).toEqual([[a, c], [b]]);
+  });
+  it("weighs each account by its plan's size: a Max 20x counts four times a Max 5x", () => {
+    const big = plan(provider("claude", [window(10)], "a"), "default_claude_max_20x");
+    const small = plan(provider("claude", [window(90)], "b"), "default_claude_max_5x");
+    expect(planWeight(big)).toBe(20);
+    expect(planWeight(small)).toBe(5);
+    expect(groupWindow([big, small], "week")?.used_percent).toBe(26);
+  });
+  it("weighs Copilot by its monthly premium requests, and an unknown plan as 1", () => {
+    expect(planWeight(plan(provider("copilot", []), "Copilot Pro"))).toBe(300);
+    expect(planWeight(plan(provider("copilot", []), "Copilot Pro+"))).toBe(1500);
+    expect(planWeight(plan(provider("copilot", []), "free"))).toBe(50);
+    expect(planWeight(plan(provider("opencode", []), "OpenCode Go"))).toBe(1);
+    expect(planWeight(provider("codex", []))).toBe(1);
+  });
+  it("same-plan accounts average plainly; an account without the limit is left out", () => {
+    expect(groupWindow([provider("codex", [window(20)], "a"), provider("codex", [window(60)], "b")], "week")?.used_percent).toBe(40);
+    expect(groupWindow([provider("codex", [window(20)], "a"), provider("codex", [], "b")], "week")?.used_percent).toBe(20);
+    expect(groupWindow([provider("codex", [], "a")], "week")).toBeNull();
+  });
+  it("a single account is its own window", () => {
+    const one = provider("claude", [window(22, "session"), window(84)], "a");
+    expect(groupWindow([one], "session")).toEqual(window(22, "session"));
   });
 });
