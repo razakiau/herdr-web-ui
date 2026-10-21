@@ -260,6 +260,32 @@ describe("agent host connection", () => {
     expect(newest.peers()).toBe(1);
   });
 
+  it("on a host with no models it moves to another host once that one lists models", async () => {
+    // every host empty at connect time (none signed in yet); ah-byok-signin signs one in later
+    const { home, env, entries } = tempHome();
+    const empty = await host(entries, { models: [], sessions: [summary(9)] });
+    const { conn } = connection({ home, env, deps: { sleep: quick } });
+    conn.start();
+    await until("connected", () => conn.state().state === "connected");
+    expect(conn.state()).toEqual({ state: "connected", signed_in: false, protocol: "1.0.0" });
+    const signed = await host(entries);
+    await until("signed in on the other host", () => conn.state().state === "connected" && (conn.state() as { signed_in: boolean }).signed_in);
+    expect(signed.peers()).toBe(1);
+    await until("the empty host let go", () => empty.peers() === 0);
+  });
+
+  it("on a signed-in host it stays put", async () => {
+    const { home, env, entries } = tempHome();
+    const first = await host(entries);
+    const { conn } = connection({ home, env, deps: { sleep: quick } });
+    conn.start();
+    await until("connected", () => conn.state().state === "connected");
+    const other = await host(entries);
+    const deadline = Date.now() + 300; // fixed wait: proving the bridge does not move
+    while (Date.now() < deadline) { expect(first.peers()).toBe(1); await Bun.sleep(10); }
+    expect(other.peers()).toBe(0);
+  });
+
   it("a host that is slow to register is started once, not again at each deadline", async () => {
     // VS Code's first `agent host` downloads its server (222 MB, minutes) before it registers: a
     // start per 30 s deadline left 5 hosts on one PC (2026-10-21)
