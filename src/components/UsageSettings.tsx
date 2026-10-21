@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, Network, Plus, Route } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, Network, Plus } from "lucide-react";
 import type { CLIProxyStatus, OmniRouteStatus, ProviderUsage, UsageProviderName } from "../../shared/protocol.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
@@ -33,7 +33,7 @@ function ProviderAccounts({ id, providers }: { readonly id: UsageProviderName; r
         <div className="usage-account-identity">
           <span className="usage-accounts-account" title={usage.account ?? undefined}>{usage.account ?? providerName(id)}</span>
           <span className="usage-account-meta">
-            <span>{usage.key.startsWith(`${id}:cliproxy:`) ? t("Hub") : viaOmniRoute(usage) ? "OmniRoute" : t("This PC")}{usage.plan ? ` · ${usage.plan}` : ""}</span>
+            <span className="usage-account-source">{usage.key.startsWith(`${id}:cliproxy:`) ? t("Hub") : viaOmniRoute(usage) ? <><AgentMark agent="omniroute" size={12} />OmniRoute</> : t("This PC")}{usage.plan ? ` · ${usage.plan}` : ""}</span>
             <span className={`usage-account-status${usage.problem ? " has-problem" : ""}`}>{status}</span>
           </span>
         </div>
@@ -164,7 +164,8 @@ function OmniRouteProviders({ status, providers }: { readonly status: OmniRouteS
   const state = status.ok ? t("Connected") : status.problem ?? t("Not read yet");
   return <SettingsGroup className="usage-gateway" section="usage-omniroute">
     <div className="settings-item usage-connection">
-      <Route size={20} aria-hidden="true" />
+      {/* the gateway's own mark, as each provider below wears its own */}
+      <AgentMark agent="omniroute" size={20} />
       <div className="usage-connection-info">
         <span className="settings-label">OmniRoute</span>
         <span className="settings-hint" role="status">{status.url} · {state}</span>

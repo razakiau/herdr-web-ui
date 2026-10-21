@@ -25,4 +25,13 @@ describe("agent marks", () => {
     // one currentColor path: Mono has nothing to grey
     expect(hasBrandColors("vscode")).toBe(false);
   });
+
+  it("AgentMark draws OmniRoute's own mark, its red tile and the white router graph", () => {
+    const html = renderToStaticMarkup(createElement(AgentMark, { agent: "omniroute" }));
+    expect(html).toContain('viewBox="0 0 32 32"');
+    expect(html).toContain("#E54D5E");
+    expect(hasAgentMark("omniroute")).toBe(true);
+    expect(hasBrandColors("omniroute")).toBe(true);
+  });
 });
+
