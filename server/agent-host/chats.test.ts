@@ -390,6 +390,19 @@ describe("host chat mappers", () => {
     expect(rows.map((row) => row.session).sort()).toEqual(["copilotcli:/2", "copilotcli:/3", "copilotcli:/4", "copilotcli:/5"]);
   });
 
+  it("rowsFrom_keeps_a_sent_chat_whose_default_chat_has_no_title", () => {
+    // live on the Mac's host (2026-10-21): "MCP integration with Sentry" and "Netbird installation
+    // issues" had a blank default chat title, read (33) and hours of turns; they went missing
+    const LATER = "2026-01-01T02:23:40.000Z";
+    const sent = (n: number, status: number, modifiedAt: string): SessionSummary => ({
+      resource: `copilotcli:/${n}`, provider: "copilotcli", title: `FICTIONAL_${n}`, status, createdAt: AT, modifiedAt,
+      workingDirectories: ["file:///tmp/fictional"], defaultChat: `ahp-chat://default/${n}`,
+      chats: [{ resource: `ahp-chat://default/${n}`, title: "", interactivity: "full", status }],
+    } as SessionSummary);
+    const rows = rowsFrom([sent(1, 1 | 32, LATER), sent(2, 1, LATER), sent(3, 1 | 32, AT)]);
+    expect(rows.map((row) => row.session).sort()).toEqual(["copilotcli:/1", "copilotcli:/2", "copilotcli:/3"]);
+  });
+
   it("rowsFrom_gives_a_forked_session_its_own_chat_status_not_the_roll_up", () => {
     // live on a PC (2026-10-20): the fork asks (24), its source chat failed (2); AHP's session
     // status promotes the fork's InputNeeded (24 | IsRead 32 = 56), so the source row said asks

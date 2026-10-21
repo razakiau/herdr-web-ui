@@ -76,15 +76,20 @@ function pathOf(uri: string | undefined): string | null {
 }
 
 /**
- * A chat VS Code opened and nobody sent to: an idle, unarchived session whose default chat has no
- * title yet (the host names a chat from its first message). VS Code makes one per window it opens
- * ("backing stays deferred until the first send") and lists none of them; there is nothing to read.
+ * A chat VS Code opened and nobody sent to: VS Code makes one per window it opens ("backing stays
+ * deferred until the first send") and lists none of them; there is nothing to read. Its default
+ * chat has no title, it is idle and never read, and it has not changed since it was made. A blank
+ * default chat title alone is not one: real chats on the Mac's host had it, read and hours old
+ * (2026-10-21: "MCP integration with Sentry", status 33, 8620 s; the draft: status 1, 0 s).
  */
+const DRAFT_AGE_MS = 1_000;
 function neverSent(summary: SessionSummary): boolean {
   const own = summary.chats?.find((chat) => chat.resource === summary.defaultChat);
   if (!own || own.title !== "") return false;
   const status = own.status ?? summary.status;
-  return (status & ~(SessionStatus.IsRead | SessionStatus.IsArchived)) === SessionStatus.Idle && (status & SessionStatus.IsArchived) === 0;
+  if (status !== SessionStatus.Idle || summary.status !== SessionStatus.Idle) return false;
+  const age = Date.parse(String(summary.modifiedAt)) - Date.parse(String(summary.createdAt));
+  return Number.isFinite(age) && age < DRAFT_AGE_MS;
 }
 
 /**
