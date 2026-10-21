@@ -84,6 +84,28 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("an answer's uploaded pictures are its images, and their paths leave its words", () => {
+    // live 2026-10-19: an ask card's attached screenshots went as "@<folder>/.herdr-web-ui/paste-….jpg",
+    // and the answered card showed the paths and no picture
+    const ask = (toolCallId: string, out: string) => ({ kind: "toolCall", toolCall: {
+      status: "completed", toolCallId, toolName: "ask_user", displayName: "ask_user", invocationMessage: "ask_user", toolInput: JSON.stringify({ message: "FICTIONAL look?" }),
+      confirmed: "not-needed", success: true, pastTenseMessage: "Ask User", content: [{ type: "text", text: out }],
+    } });
+    const state = chat({ turns: [{
+      id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL go"),
+      responseParts: [
+        ask("a1", "User responded:\nnotes: @/tmp/fictional/.herdr-web-ui/paste-1.jpg @/tmp/fictional/.herdr-web-ui/shot-2.PNG FICTIONAL see these"),
+        ask("a2", "User responded:\nnotes: @/tmp/fictional/.herdr-web-ui/paste-3.webp"),
+        ask("a3", "User responded:\nnotes: @/tmp/fictional/src/logo.png and @/tmp/fictional/.herdr-web-ui/notes.txt"),
+      ],
+    }] });
+    const parts = turnsFrom(state)[1]!.parts;
+    expect(parts[0]).toMatchObject({ custom: "notes: FICTIONAL see these", images: [{ media_type: "image/jpeg", ref: "answer:paste-1.jpg" }, { media_type: "image/png", ref: "answer:shot-2.PNG" }] });
+    expect(parts[1]).toMatchObject({ custom: null, images: [{ media_type: "image/webp", ref: "answer:paste-3.webp" }] });
+    // a file of the folder itself, and an upload that is no picture, stay words
+    expect(parts[2]).toEqual({ kind: "question", text: "FICTIONAL look?", options: [], chosen: [], custom: "notes: @/tmp/fictional/src/logo.png and @/tmp/fictional/.herdr-web-ui/notes.txt", skipped: false });
+  });
+
   it("an ask_user form is its report once, then one question per field: the tool call adds no entry", () => {
     const report = "FICTIONAL **Shipped** the fix.\n\n- one";
     const state = chat({ turns: [{

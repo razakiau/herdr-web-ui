@@ -1206,6 +1206,8 @@ export const JA: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "{workspace} の最後のタブです。ワークスペースも一緒に閉じ、その中のエージェントとシェルが停止します。",
   "Tabs of {workspace}": "{workspace} のタブ",
   "{n} panes": "{n} 個のペイン",
+  "1 image": "画像 1 枚",
+  "{n} images": "画像 {n} 枚",
   "herdr web ui sends anonymous usage counts.": "herdr web ui は匿名の利用集計を送信します。",
   "What is sent": "送信内容",
   "Anonymous usage counts": "匿名の利用集計",

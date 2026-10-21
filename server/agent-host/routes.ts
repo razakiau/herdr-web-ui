@@ -14,7 +14,7 @@
  *   within LEASE_MS); the lease's expiry releases the watch.
  */
 import { randomUUID } from "node:crypto";
-import { basename, extname, isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ActionType,
@@ -47,11 +47,11 @@ import {
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState, HostCommand } from "../../shared/host-chats.ts";
 import { paneFiles } from "../files.ts";
-import { PasteImageError, saveAttachment } from "../paste.ts";
+import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, currentQuestion, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { agentsFrom, ANSWER_REF, currentQuestion, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -552,10 +552,34 @@ const noRef = (what: string): Response => jsonResponse({ error: { code: "not_fou
 /** An image a tool call returned, by the ref its part names (`<toolCallId>:<index>`), from the chat in the mirror. */
 async function readImage(call: Call): Promise<Response> {
   const { chat, ref } = await refRead(call);
+  if (ref.startsWith(ANSWER_REF)) return answerImage(call, chat, ref);
   const image = imageOf(chat, ref);
   if (!image) return noRef("image");
   // a running call's content can still change under the same ref
   return new Response(new Uint8Array(image.bytes), { headers: { "content-type": image.media_type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+}
+
+/**
+ * A picture an answer carried, by `answer:<file name>`: read from the chat's `.herdr-web-ui/`, the
+ * folder chat/upload writes, and only when one of the chat's answers names that file. Any other
+ * name, a path, or a file a link points out of the folder with, is not found.
+ */
+async function answerImage(call: Call, chat: ChatState, ref: string): Promise<Response> {
+  const name = ref.slice(ANSWER_REF.length);
+  const session = call.url.searchParams.get("session") ?? "";
+  const named = readFrom(session, "", chat).turns.some((turn) => turn.parts.some((part) => part.kind === "question" && part.images?.some((image) => image.ref === ref)));
+  const folder = named ? folderOf(call.host, session) : null;
+  if (folder === null) return noRef("image");
+  try {
+    const dir = realpathSync(pasteDirectory(folder));
+    const path = realpathSync(join(dir, name));
+    if (dirname(path) !== dir) return noRef("image");
+    const type = IMAGE_BY_EXTENSION[extname(path).toLowerCase()];
+    if (!type || statSync(path).size > MAX_ATTACHMENT_BYTES) return noRef("image");
+    return new Response(new Uint8Array(readFileSync(path)), { headers: { "content-type": type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+  } catch {
+    return noRef("image");
+  }
 }
 
 /** A tool call's whole output, by its `output_ref` (the call's id). */

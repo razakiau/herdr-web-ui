@@ -525,7 +525,7 @@ export type ConversationPart =
    * `options`: the choices it offered, by label; `chosen`: the labels picked; `custom`: the text the
    * user typed instead, null when none.
    */
-  | { kind: "question"; text: string; /** the whole message the question came with (a Copilot ask_user report), markdown */ report?: string; options: string[]; chosen: string[]; custom: string | null; skipped: boolean; /** several could be picked */ multi?: true }
+  | { kind: "question"; text: string; /** the whole message the question came with (a Copilot ask_user report), markdown */ report?: string; options: string[]; chosen: string[]; custom: string | null; skipped: boolean; /** several could be picked */ multi?: true; /** pictures attached to the typed answer (a host chat's uploads), fetched by ref as a turn's images */ images?: { media_type: string; ref: string }[] }
   /** A native Claude/Codex user image, addressed by an opaque ref and fetched on demand: GET /api/pane/conversation/image?pane_id=…&ref=… */
   | { kind: "image"; media_type: string; ref: string }
   /** the summary a compaction left; the conversation before it is what it sums up */

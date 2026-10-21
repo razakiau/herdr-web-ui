@@ -743,7 +743,7 @@ function VscodeWork({ paneId, work, all, duration, live, waiting, defaultOpen, s
       // keyed by the turn's part index, as these rows always were: an opened row stays open
       ? segment.part.kind === "subagent" ? <TurnSubagent key={`subagent:${all.indexOf(segment.part)}`} part={segment.part} live={live} />
         : segment.part.kind === "notice" ? <SystemNotice key={`notice:${all.indexOf(segment.part)}`} notice={segment.part} memoryKey={`notice:${all.indexOf(segment.part)}`} />
-        : <QuestionSummary key={`question:${all.indexOf(segment.part)}`} part={segment.part} memoryKey={`question:${all.indexOf(segment.part)}`} />
+        : <QuestionSummary key={`question:${all.indexOf(segment.part)}`} part={segment.part} memoryKey={`question:${all.indexOf(segment.part)}`} attached={<AnswerImages paneId={paneId} part={segment.part} />} />
     : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
       duration={index === lastGroup ? duration : null} live={live && index === lastGroup} waiting={waiting && index === lastGroup}
       defaultOpen={index === lastGroup && defaultOpen} />)}</>;
@@ -787,6 +787,15 @@ function GoalActivity({ goal }: { goal: GoalState }) {
       {spent.length > 0 && <p className="chat-goal-spent">{t("Used so far: {spent}", { spent })}</p>}
     </div>
   </ChatDetails>;
+}
+
+/** The pictures attached to a typed answer (a host chat's question), as a message's are shown. */
+function AnswerImages({ paneId, part }: { paneId: string; part: Extract<ConversationPart, { kind: "question" }> }) {
+  const t = useT();
+  const imageUrl = useImageUrl(paneId);
+  if (!part.images || part.images.length === 0) return null;
+  const images = part.images.map((image, index): GalleryImage => ({ src: imageUrl(image.ref), name: t("Attached image"), file: attachmentFileName(image.media_type, index) }));
+  return <ImageGallery images={images} className="question-summary-images" />;
 }
 
 /** Image files a message mentions as `@path`, the way this app attaches them: shown as thumbnails. */
@@ -1082,7 +1091,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   const vscodeWork = style === "vscode" ? turn.parts.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question" || inWork(part)) : work;
   const ownRows = style !== "vscode" ? turn.parts.flatMap((part, index) =>
     part.kind === "subagent" ? [<TurnSubagent key={`subagent:${index}`} part={part} live={live} />]
-      : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} />]
+      : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} attached={<AnswerImages paneId={paneId} part={part} />} />]
         : []) : [];
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
