@@ -224,6 +224,9 @@ async function checkOmniRouteUsage(browser: Browser, origin: string): Promise<vo
     assert.equal(await gateway.getByRole("switch", { checked: true }).count(), 0, "none shown until chosen");
     assert.equal(await page.locator(".usage-accounts-row").count(), 1, "the accounts list holds only this PC's until a provider is chosen");
     assert.match(await gateway.locator(".usage-gateway-head").innerText(), /0 of 10 shown/);
+    // the integration wears OmniRoute's own mark, not a generic route icon
+    assert.equal(await gateway.locator('.usage-connection svg[aria-label="omniroute"]').count(), 1, "the gateway card wears OmniRoute's mark");
+    assert.ok(await gateway.locator(".usage-connection").evaluate((row) => { const mark = row.querySelector("svg")!.getBoundingClientRect(); const name = row.querySelector(".settings-label")!.getBoundingClientRect(); return mark.right <= name.left && mark.bottom > name.top; }), "its mark stands beside its name, as the Hub card's icon does");
     // past eight: search and Shown/All
     const search = gateway.getByRole("searchbox", { name: "Search providers" });
     await search.fill("glm");
@@ -237,6 +240,7 @@ async function checkOmniRouteUsage(browser: Browser, origin: string): Promise<vo
     if (process.env.UI_EVIDENCE_DIR) await page.getByRole("tabpanel", { name: "Subscription usage", exact: true }).screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-omniroute-phone.png") });
     assert.equal(await page.locator(".usage-accounts-row").count(), 3, "chosen providers' accounts join the list, marked OmniRoute");
     assert.equal(await page.locator(".usage-accounts-row .usage-account-meta", { hasText: "OmniRoute" }).count(), 2);
+    assert.equal(await page.locator('.usage-accounts-row .usage-account-meta svg[aria-label="omniroute"]').count(), 2, "an OmniRoute account says so with its mark");
 
     // leaving Settings, the New marks are spent
     await page.keyboard.press("Escape");

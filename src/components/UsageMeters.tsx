@@ -67,7 +67,7 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
         {(usage.account || via) && (
           <span className="usage-provider-meta">
             {usage.account && <span className="usage-account" title={usage.account}>{usage.account}</span>}
-            {via && <span className="usage-source">{t("via OmniRoute")}</span>}
+            {via && <span className="usage-source"><AgentMark agent="omniroute" size={12} />{t("via OmniRoute")}</span>}
           </span>
         )}
       </header>
