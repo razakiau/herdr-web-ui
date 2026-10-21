@@ -10,3 +10,10 @@
   what the chat waits on with its context window.
 - The PC groups fold from three PCs: the ones not in use go under "Other PCs", and one with a chat
   or agent that needs you stays open.
+
+### Fixed
+
+- On a PC with several agent hosts running, herdr connects to one that lists models, so the "+"
+  dialog offers **Agent host** again; it no longer starts another host while one is still starting
+  (VS Code downloading its server took longer than the 30 s deadline).
+- A chat VS Code opened and never sent no longer shows as a "Session" row that opens nothing.
