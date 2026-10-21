@@ -72,6 +72,8 @@ export interface TabStripProps {
  * small server glyph, drawn only where the workspace also runs Copilot in a pane, so the two never
  * look the same. Its menu (the ⋯ on a phone's open tab, a right-click, Shift+F10) is the chat's own
  * (HostChatActions.tsx); Rename… and F2 name it in place, as a pane's tab is named, and Delete asks.
+ * On a phone Rename… opens the sidebar's sheet instead: a field in a 390 px strip is a sliver, and
+ * an Android keyboard's Enter (keyCode 229) never reaches a bare field's key handler.
  */
 function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void }) {
   const t = useT();
@@ -146,7 +148,7 @@ function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; 
       <Ellipsis aria-hidden="true" />
     </button>}
     {menu && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={title} subtitle={chat.cwd ?? undefined}
-      items={hostChatItems(actions, target, t, beginRename)} align="start" onClose={() => setMenu(null)} />}
+      items={hostChatItems(actions, target, t, touchMenu ? undefined : beginRename)} align="start" onClose={() => setMenu(null)} />}
   </div>;
 }
 

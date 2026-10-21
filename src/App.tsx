@@ -1114,6 +1114,12 @@ export function App() {
     const was = openHostWas.current;
     openHostWas.current = { key: openHostKey, live: openHostLive };
     if (openHostKey === null || was.key !== openHostKey || !was.live || openHostLive) return;
+    // as Close tab: the tab beside it takes its place, so marking a chat done keeps its workspace on
+    // screen (the host's list says archived before the action's answer closes the tab)
+    const shown = selectedHostChatRef.current;
+    const pc = shown ? currentHostWorkspaces()[shown.machineId] : undefined;
+    const next = shown && pc ? tabAfterClose(pc, shown.session) : null;
+    if (shown && next !== null) { selectHostChat({ machineId: shown.machineId, session: next }, "tab"); return; }
     setSelectedHostChat(null);
     setAutoSelected(true);
   }, [openHostKey, openHostLive]);

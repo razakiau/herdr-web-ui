@@ -1634,14 +1634,21 @@ try {
         await fits("the chat tab's menu");
         await noVsCode("the chat tab's menu");
         if (shots) await page.screenshot({ path: join(shots, "task-7-tab-menu-390.png") });
+        // on a phone the tab's Rename… is the sidebar's sheet, not a field squeezed into the tab; its
+        // Enter submits the form, which an Android keyboard's Enter (keyCode 229) also does (owner, 2026-10-21)
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename…" }).click();
-        const nameField = keptTab.getByRole("textbox", { name: "Chat name" });
+        const renameSheet = page.getByRole("dialog", { name: "Rename chat" });
+        const nameField = renameSheet.getByRole("textbox", { name: "Chat name" });
         await nameField.waitFor();
+        assert.equal(await keptTab.locator("input").count(), 0, "no field in the tab on a phone");
+        const fieldBox = await nameField.boundingBox();
+        assert.ok(fieldBox && fieldBox.height >= 32 && fieldBox.width >= 200, `the name field is full size: ${JSON.stringify(fieldBox)}`);
         await nameField.fill("   ");
         await nameField.press("Enter");
-        await keptTab.locator(".tab-strip-error", { hasText: "A chat needs a name." }).waitFor();
+        await renameSheet.getByRole("alert").filter({ hasText: "A chat needs a name." }).waitFor();
         await nameField.fill("FICTIONAL renamed chat");
         await nameField.press("Enter");
+        await renameSheet.waitFor({ state: "detached" });
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL renamed chat" }).waitFor();
         // the chat is a tab of its workspace now: the header names the workspace, never the chat's new name
         assert.equal((await page.locator(".app-header .context-title-text").innerText()).trim(), "checkout-api", "the header names the chat's workspace, not its new name");
@@ -1657,6 +1664,7 @@ try {
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Rename…" }).click();
         await nameField.fill("FICTIONAL named in the header");
         await nameField.press("Enter");
+        await renameSheet.waitFor({ state: "detached" });
         await keptTab.locator(".tab-strip-label", { hasText: "FICTIONAL named in the header" }).waitFor();
         assert.equal((await actionPosts("rename")).length, 2, "the second rename went too");
         console.log("PASS rename from the tab's menu, twice: the new title on the tab, and the workspace keeps its own ⋯");
@@ -1679,6 +1687,8 @@ try {
         await page.locator(".row-sheet .row-sheet-item", { hasText: "Mark as done" }).click();
         await keptTab.waitFor({ state: "detached" });
         await kept3.waitFor({ state: "detached" });
+        // as Close tab: the tab beside it is on screen, never the PC's shell (owner, 2026-10-21)
+        await page.locator(".tab-strip .host-chat-tab.is-active").waitFor({ timeout: 3_000 });
         assert.deepEqual((await actionPosts("archive")).filter((post) => (post as { session?: string }).session !== "fictional-session-done"), [{ session: "fictional-new-3", archived: true }]);
         await agentsMenu();
         await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
