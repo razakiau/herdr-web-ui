@@ -29,7 +29,7 @@ import { WebSocketTransport } from "@microsoft/agent-host-protocol/ws";
 import type { AgentHostState } from "../../shared/host-chats.ts";
 import { findServerCli, startHost as startAgentHost, START_DEADLINE_MS } from "./host-start.ts";
 import { AgentHostMirror } from "./mirror.ts";
-import { liveStandalone, registryDirs, type HostEntry } from "./registry.ts";
+import { liveStandalone, liveStandalones, registryDirs, type HostEntry } from "./registry.ts";
 
 export interface AgentHostConnectionOptions {
   home: string; platform: NodeJS.Platform; env: Record<string, string | undefined>;
@@ -37,7 +37,7 @@ export interface AgentHostConnectionOptions {
   onChange: (event: AgentHostEvent) => void;      // state, chat list, or one chat changed
   clientId?: string;                           // default `herdr-web-<8 hex>`, stable for the process
   deps?: {                                     // tests only; defaults are the real ones
-    spawn?: (argv: string[]) => void;          // default: Bun.spawn(argv, {stdin/stdout/stderr: "ignore", detached: true}).unref()
+    spawn?: (argv: string[]) => number | void; // default: Bun.spawn(argv, {stdin/stdout/stderr: "ignore", detached: true}).unref(), its pid
     alive?: (pid: number) => boolean;          // default: process.kill(pid, 0)
     now?: () => number; sleep?: (ms: number) => Promise<void>;
   };
@@ -68,8 +68,10 @@ export const PUSH_WINDOW_MS = 300;
 
 // detached: its own session and process group (setsid), so a signal to the bridge's group never
 // reaches VS Code's shared agent host; unref: the bridge does not wait for it
-const defaultSpawn = (argv: string[]): void => {
-  Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true }).unref();
+const defaultSpawn = (argv: string[]): number => {
+  const child = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+  child.unref();
+  return child.pid;
 };
 const defaultAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
@@ -126,7 +128,9 @@ interface Live { client: AhpClient; closed: Promise<void> }
 export class AgentHostConnection {
   readonly clientId: string;
   private readonly options: AgentHostConnectionOptions;
-  private readonly spawn: (argv: string[]) => void;
+  private readonly spawn: (argv: string[]) => number | void;
+  /** The `agent host` this bridge last started, while it may still be downloading VS Code's server. */
+  private startedPid: number | null = null;
   private readonly alive: (pid: number) => boolean;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -321,43 +325,61 @@ export class AgentHostConnection {
     const dirs = registryDirs(this.options.home, this.options.platform, this.options.env);
     let backoff = BACKOFF_FIRST_MS;
     while (!this.stopped) {
-      const entry = await this.findHost(dirs);
+      const entries = await this.findHosts(dirs);
       if (this.stopped) return;
-      if (entry) {
-        const connected = await this.connect(entry);
-        if (connected) backoff = BACKOFF_FIRST_MS;
+      // several live hosts (starts that raced): the newest one that lists models, as a host no
+      // client signed in has none and answers every chat with an error; else the newest
+      let outcome: "never" | "closed" | "no_models" = "never";
+      for (const entry of entries) {
+        outcome = await this.connect(entry, entries.length > 1);
+        if (outcome !== "no_models" || this.stopped) break;
       }
+      if (outcome === "no_models" && !this.stopped) outcome = await this.connect(entries[0]!);
+      if (outcome === "closed") backoff = BACKOFF_FIRST_MS;
       if (this.stopped) return;
       await this.pause(backoff);
       backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
     }
   }
 
-  /** A live registry entry, or one from starting the host; null (with the state saying why) when there is none. */
-  private async findHost(dirs: string[]): Promise<HostEntry | null> {
-    const poll = () => liveStandalone(dirs, this.alive);
-    const entry = poll();
-    if (entry) return entry;
-    if (!this.options.startHost) { this.setState({ state: "waiting" }); return null; }
+  /**
+   * The live registry entries, newest first, or the one from starting the host; empty (with the state
+   * saying why) when there is none. A host this bridge started that is still alive is waited for, not
+   * started again: its first start downloads VS Code's server (minutes) before it registers.
+   */
+  private async findHosts(dirs: string[]): Promise<HostEntry[]> {
+    const found = liveStandalones(dirs, this.alive);
+    if (found.length > 0) return found;
+    if (!this.options.startHost) { this.setState({ state: "waiting" }); return []; }
     const cli = findServerCli(this.options.home);
-    if (!cli) { this.setState({ state: "no_server" }); return null; }
+    if (!cli) { this.setState({ state: "no_server" }); return []; }
     this.setState({ state: "starting" });
-    return startAgentHost(cli, { spawn: this.spawn, poll, deadlineMs: START_DEADLINE_MS, now: this.now, sleep: (ms) => this.pause(ms), aborted: () => this.stopped });
+    const starting = this.startedPid !== null && this.alive(this.startedPid);
+    const spawn = (argv: string[]): void => {
+      if (starting) return;
+      const pid = this.spawn(argv);
+      this.startedPid = typeof pid === "number" ? pid : null;
+    };
+    const entry = await startAgentHost(cli, { spawn, poll: () => liveStandalone(dirs, this.alive), deadlineMs: START_DEADLINE_MS, now: this.now, sleep: (ms) => this.pause(ms), aborted: () => this.stopped });
+    return entry ? [entry] : [];
   }
 
-  /** One connection's whole life: false when it never got connected, true once it was and has closed. */
-  private async connect(entry: HostEntry): Promise<boolean> {
+  /**
+   * One connection's whole life: `never` when it never got connected, `closed` once it was and has
+   * closed, `no_models` when `needModels` and the host lists no models (it was let go at once).
+   */
+  private async connect(entry: HostEntry, needModels = false): Promise<"never" | "closed" | "no_models"> {
     let transport: WebSocketTransport;
     try {
       transport = await WebSocketTransport.connect(`ws://${entry.host}:${entry.port}/?tkn=${encodeURIComponent(entry.token)}`);
     } catch {
-      return false;
+      return "never";
     }
     const client = new AhpClient(transport);
     client.connect();
     const events = client.events();
     const closed = this.pump(events);
-    if (this.stopped) { await client.shutdown(); return false; }
+    if (this.stopped) { await client.shutdown(); return "never"; }
     this.live = { client, closed };
     let connected = false;
     try {
@@ -369,6 +391,13 @@ export class AgentHostConnection {
       this.store.reset();
       this.fromSeq.clear();
       for (const snapshot of init.snapshots ?? []) this.applySnapshot(snapshot);
+      if (needModels && !this.store.root.agents.some((agent) => agent.models.length > 0)) {
+        this.store.reset();
+        this.live = null;
+        await client.shutdown();
+        await closed;
+        return "no_models";
+      }
       this.sessionList = await this.listAll(client);
       this.setState(this.connectedState(init.protocolVersion));
       connected = true;
@@ -383,13 +412,13 @@ export class AgentHostConnection {
         this.live = null;
         await client.shutdown();
         await closed;
-        return false;
+        return "never";
       }
     }
     await closed;
     this.live = null;
     if (!this.stopped) this.setState({ state: "starting" });
-    return true;
+    return "closed";
   }
 
   private async listAll(client: AhpClient): Promise<SessionSummary[]> {
