@@ -27,6 +27,7 @@
 - zhomelab bundle 1023: a forked Copilot chat no longer makes its source chat look like it asks (or alert in its name); Settings → Alerts has its own switch for this device.
 - zhomelab: Settings → Alerts grouped by channel (this device: push, in the app, sound; the server: ntfy, read-only); the ⋯ item is Push to this device.
 - zhomelab bundle 1024: an answered ask_user call reads as its question, with a folded Show report that opens the whole message as markdown.
+- zhomelab bundle 1033: agent host folder rows say their branch as herdr's rows do (a repository's on a second line, a worktree's beside its name); chats VS Code gave no folder (it lost them mid-reconnect) share one "No folder" row instead of a row named after their scratch folder's id.
 - zhomelab bundle 1032: the usage strip shows one chip per provider, weighting several OmniRoute accounts by plan; agent host worktree folders nest under their repository's folder row (or a header row when it is not open), folded by the folder's face, with Copilot's mark leading the name as herdr's rows do.
 - zhomelab bundle 1031: picking a folder in New workspace → Agent host offers New chat as well as Open workspace; a folder's New agent host chat… is "New chat · <folder>" without the folder list; folder rows wear their folder badged with Copilot's mark.
 - zhomelab bundle 1030: the open agent host workspaces are kept to what the server takes (oldest tabs and workspaces give way), so they can never stop settings and pins from syncing.
