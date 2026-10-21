@@ -56,12 +56,35 @@ rmSync(stage, { recursive: true, force: true });
 mkdirSync(join(stage, "bin"), { recursive: true });
 mkdirSync(downloads, { recursive: true });
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+// HERDR_BUNDLE_CACHE: a folder kept between builds, each download stored under its pinned sha256.
+// A cached file is used only if its bytes still hash to the pin, so the pins stay the authority;
+// a build then fetches only what changed. A slow link (2026-10-21: a 30 MB herdr binary at
+// ~1 MB/s, near the 120 s cap) gets three tries before the build fails.
+const cache = process.env["HERDR_BUNDLE_CACHE"] ? resolve(process.env["HERDR_BUNDLE_CACHE"]) : null;
+if (cache) mkdirSync(cache, { recursive: true });
 async function download(url: string, sha256: string): Promise<Uint8Array> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`Runtime download failed (${response.status}): ${url}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (digest(bytes) !== sha256) throw new Error(`Runtime checksum mismatch: ${url}`);
-  return bytes;
+  const kept = cache ? join(cache, sha256) : null;
+  if (kept && existsSync(kept)) {
+    const bytes = new Uint8Array(readFileSync(kept));
+    if (digest(bytes) === sha256) return bytes;
+    rmSync(kept, { force: true });
+  }
+  let failure: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(300_000) });
+      if (!response.ok) throw new Error(`Runtime download failed (${response.status}): ${url}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (digest(bytes) !== sha256) throw new Error(`Runtime checksum mismatch: ${url}`);
+      if (kept) writeFileSync(kept, bytes);
+      return bytes;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Runtime checksum mismatch")) throw error;
+      failure = error;
+      console.warn(`download ${attempt}/3 failed for ${url}: ${error instanceof Error ? error.name : String(error)}`);
+    }
+  }
+  throw failure;
 }
 function command(argv: string[], cwd = root): void {
   const result = Bun.spawnSync(argv, { cwd, timeout: 120_000 });
