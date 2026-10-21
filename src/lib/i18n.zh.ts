@@ -1131,6 +1131,8 @@ export const ZH: Record<string, string> = {
   "Move {name} up": "将 {name} 上移",
   "Move {name} down": "将 {name} 下移",
   "Cursor models": "Cursor 模型",
+  "{name}, {n} accounts": "{name}，{n} 个账户",
+  "near a limit: {names}": "接近上限：{names}",
   "Subscription usage": "订阅用量",
   "Show plan limits": "显示套餐限额",
   "Session": "会话",

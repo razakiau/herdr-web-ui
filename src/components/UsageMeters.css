@@ -66,6 +66,25 @@
 }
 
 
+/* how many accounts a chip stands for: a count on the logo's upper corner, so the chip keeps its width */
+.usage-chip-mark { position: relative; display: inline-flex; }
+.usage-chip-count {
+  position: absolute;
+  right: -6px;
+  top: -6px;
+  min-width: 11px;
+  height: 11px;
+  padding: 0 2px;
+  border-radius: 6px;
+  background: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 11px;
+  text-align: center;
+  color: var(--bg-panel);
+}
+
 .usage-chip.is-high .usage-chip-value {
   color: var(--status-blocked);
 }

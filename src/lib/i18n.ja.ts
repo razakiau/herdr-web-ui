@@ -1129,6 +1129,8 @@ export const JA: Record<string, string> = {
   "Move {name} up": "{name} を上へ移動",
   "Move {name} down": "{name} を下へ移動",
   "Cursor models": "Cursor のモデル",
+  "{name}, {n} accounts": "{name}、{n} アカウント",
+  "near a limit: {names}": "上限が近い: {names}",
   "Subscription usage": "サブスクリプション使用量",
   "Show plan limits": "プランの上限を表示",
   "Session": "セッション",
