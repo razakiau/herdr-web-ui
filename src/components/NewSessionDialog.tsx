@@ -47,9 +47,9 @@ export interface NewSessionDialogProps {
   onDraft?: (fields: DialogFields) => void;
   /** the PC's open linked worktree checkouts: no project to offer among the recent folders */
   worktrees?: readonly string[];
-  /** the PC's host chats (Copilot host): their folders join the recent ones, and their models the new chat's */
+  /** the PC's host chats (agent host): their folders join the recent ones, and their models the new chat's */
   hostChats?: readonly HostChatRow[];
-  /** a Copilot host chat was made: the app opens it */
+  /** an agent host chat was made: the app opens it */
   onHostChat?: (session: string, cwd: string) => void;
   /** the PC's open agent host workspaces: the folder list marks them */
   hostOpen?: PcHostWorkspaces;
@@ -95,7 +95,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   const hostChoice = agentKind === HOST_AGENT_KIND;
   const now = useMinuteClock();
   const hostFields = useRef<NewHostChatHandle>(null);
-  // a Copilot host chat also offers the folders its PC's chats work in, after the recent ones
+  // an agent host chat also offers the folders its PC's chats work in, after the recent ones
   // (where a chat already works is a folder of its own, wherever it is: the passing-folder rule is the recents')
   const shownFolders = [...new Set([...(hostChoice ? folderChoices([...hostChats]) : []), ...recentFolders.filter((path) => !passingFolder(path, worktrees))])].slice(0, RECENT_FOLDERS_SHOWN);
   // New workspace → Agent host: the folders its chats work in, to open one as a workspace
