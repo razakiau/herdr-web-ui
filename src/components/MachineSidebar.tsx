@@ -37,7 +37,7 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 interface Props {
   machines: Machine[]; selectedMachineId: string; selectedPaneId: string | null; actions: AppActions;
   onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void;
-  /** "New Copilot chat…": the "+" dialog with Copilot (host) picked, in the folder given */
+  /** "New agent host chat…": the "+" dialog with Agent host picked, in the folder given */
   onNewHostChat?(machineId: string, cwd: string | null): void; onSetup(machine: Machine, update?: boolean): void;
   /** the host chat the app shows instead of a pane, and the pick of one (App.tsx) */
   selectedHostChat?: HostChatTarget | null;

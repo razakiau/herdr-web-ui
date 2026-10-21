@@ -1,5 +1,5 @@
 /**
- * The "+" dialog's Copilot host choice (NewSessionDialog, kind `copilot-host`): VS Code's New Chat.
+ * The "+" dialog's agent host choice (NewSessionDialog, kind `copilot-host`): VS Code's New Chat.
  * The dialog asks only for the folder; Start makes the chat there with no message
  * (openEmptyHostChat) and opens it, so the first message is written in the chat's own composer,
  * with its model, agent, mode and permission pills, "/" skills, "@" files, attachments, dictation

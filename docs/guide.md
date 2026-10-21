@@ -201,21 +201,37 @@ Background tasks have a button by the message box, with a count while some run: 
 
 A pane's plan is the task list a Claude Code agent keeps (`TaskCreate` / `TaskUpdate`) or the checklist Codex keeps (`update_plan`), read back from the session's transcript. While there is one, the background-task button by the message box starts with **Plan** and how many of its steps are done (`2/5`); the same button opens one list with the plan's steps first and the background tasks below. Steps are listed so a step comes after the steps it waits on (Claude Code's `blockedBy`; a Codex step waits on the one before it). The running step says what it does now, and each step shows how long it took. The sidebar row carries the same count. Claude Code empties its task list once every task is done, and so does this: the first task after that starts a new plan. A teammate of an agent team that changes a task writes that in its own transcript, which is not read.
 
-## Copilot host chats
+## Agent host workspaces
 
 VS Code runs Copilot chats in an agent host on the PC, which the app can read and drive too.
 Turn it on with `HERDR_WEB_AGENT_HOST=on` (see [Configuration](#configuration)); the bridges this
-server starts on other PCs get the same switch. A host chat is a Copilot agent like any other:
+server starts on other PCs get the same switch. A host chat is a Copilot agent like any other, and
+the folders its chats work in open as workspaces, the way herdr's do:
 
-- **Where it shows.** A tab of the workspace that works in its folder, else a row for its folder
-  under the PC, and in Agents while it works or asks. Two or three PCs show in full; from three,
-  the ones not in use fold under "Other PCs", and a PC with a chat that needs you stays open.
-  "All agents on <PC>…" in the PC's menu lists every chat, done ones under Archived.
-- **Starting one.** "+" offers **Copilot (host)** where the PC's agent host is up and signed in
+- **Where it shows.** A chat is a tab of the workspace that works in its folder, else of its
+  folder's agent host workspace, a row under the PC. A workspace is open because you opened it,
+  and its tabs are the chats you opened there: at first, a PC opens its pinned folders and the
+  folders whose chats work or ask, each with those chats and its newest one. Chats also show in
+  Agents while they work or ask. Two or three PCs show in full; from three, the ones not in use
+  fold under "Other PCs", and a PC with a chat that needs you stays open.
+- **Opening and closing.** **New workspace** with **Agent host** picked lists the folders the
+  PC's chats work in, newest first, each with how many chats it has; **Open workspace** opens
+  one without making a chat. A chat opened from a list (All agents, Chats in <folder>…) is only
+  looked at until you **Keep open** it or send in it; a look leaves no tab behind. **Close tab**
+  (the tab's ⋯) and **Close workspace** (the row's ⋯) hide, never archive; closing the last tab
+  closes its workspace, and **Mark as done** closes the chat's tab too.
+- **The row's ⋯.** **New agent host chat…**, **Chats in <folder>…** (that folder's every chat,
+  done ones under Archived), **Pin folder**, **Close workspace** and **Copy path**. "All agents
+  on <PC>…" in the Agents menu lists the PC's every chat.
+- **Order.** Agent host workspaces move among herdr's workspaces (drag, a held finger, or
+  Alt+↑/↓), and each stays after the workspace it was put after when herdr's order changes. In
+  Pinned, a pinned folder moves among the pinned workspaces. Open workspaces, tabs and order are
+  kept per PC and shared with the server's other browsers.
+- **Starting one.** "+" offers **Agent host** where the PC's agent host is up and signed in
   ("Copilot (terminal)" is the `copilot` command in a pane). Pick a folder (the PC's chats' folders
-  are offered), write the first message, and pick the model, the agent and the mode. "New Copilot
-  chat…" in the PC's menu opens the same dialog. A chat whose first message did not go out opens
-  with the message waiting in its box: nothing is sent twice.
+  are offered), write the first message, and pick the model, the agent and the mode. "New agent
+  host chat…" in a row's menu opens the same dialog. A chat whose first message did not go out
+  opens with the message waiting in its box: nothing is sent twice.
 - **Reading.** The app's chat view, read from the host: tool calls fold into groups as VS Code
   folds them, subagents open to their own chats, a tool's images open full size, answered
   questions read "Question / Answered". The header shows Copilot's mark, the title and
@@ -536,7 +552,7 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_NTFY_DONE` | `long` | A finished turn: `off`, `long` (only after a turn that worked a minute or more) or `always` |
 | `HERDR_WEB_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |
 | `HERDR_WEB_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
-| `HERDR_WEB_AGENT_HOST` | unset (off) | `on` shows the Copilot chats each PC's agent host runs (host chats). The bridges this server starts on other PCs get the same switch |
+| `HERDR_WEB_AGENT_HOST` | unset (off) | `on` shows the Copilot chats each PC's agent host runs, as agent host workspaces. The bridges this server starts on other PCs get the same switch |
 | `HERDR_WEB_AGENT_HOST_START` | unset (on) | `off` on a PC whose agent host something else starts: the bridge then waits for that host instead of starting VS Code's own |
 | `HERDR_WEB_APP_NAME` | unset (`herdr`) | The name the installed app has on a phone or computer, for example the PC's name. Each PC installs as an app of its own, and without it they are all called `herdr`. An app already installed takes the new name when the browser next updates it, usually within a day or two, without a reinstall. Keep it short: a home screen cuts a long label |
 | `HERDR_WEB_PASTE_DIR` | `<pane cwd>/.herdr-web-ui` | Where pasted and attached files are saved: an absolute path or `~/…`. Set it to keep them out of your projects; an agent may then ask before reading one. It covers the panes of this server's PC; a remote PC keeps the default |

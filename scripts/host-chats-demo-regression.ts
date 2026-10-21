@@ -9,7 +9,7 @@ import { chromePath } from "./chrome-path.ts";
 // One fictional host chat on a remote demo PC, at 390 px: a Copilot tab in the workspace whose pane
 // works in its folder, a folder row for a chat no workspace holds, "All agents on Build PC…", the chat's rows,
 // the question card, the model · effort and agent pills with their sheet, a send that queues, and
-// "+ New Copilot chat" (made and sent, and made with its first message not sent).
+// "+ New agent host chat" (made and sent, and made with its first message not sent).
 // The roster's `remote` is the fixture's `local` cloned; this patched fetch answers that PC's
 // /api/host-chats routes itself and records what the app posts. No live session or agent host is read.
 // HOST_CHATS_SHOTS=<dir> also saves the chat, the open sheet and the new-chat sheet as screenshots.
@@ -268,7 +268,7 @@ const patch = `(() => {
     if (match && machine === "remote" && path === "/api/agents") return json({ agents: [
       { kind: "claude", label: "Claude Code", installed: true },
       { kind: "copilot", label: "Copilot (terminal)", installed: true },
-      { kind: "copilot-host", label: "Copilot (host)", installed: true },
+      { kind: "copilot-host", label: "Agent host", installed: true },
     ] });
     if (match && path === "/api/session") {
       const value = await (await fetchDemo("/api/machines")).json();
@@ -1335,9 +1335,9 @@ try {
           const dialog = page.getByRole("dialog", { name: "New workspace · Build PC" });
           await dialog.waitFor();
           const trigger = dialog.locator(".agent-picker-trigger");
-          if (!(await trigger.innerText()).includes("Copilot (host)")) {
+          if (!(await trigger.innerText()).includes("Agent host")) {
             await trigger.click();
-            await page.getByRole("option", { name: "Copilot (host)" }).click({ timeout: 10_000 });
+            await page.getByRole("option", { name: "Agent host" }).click({ timeout: 10_000 });
           }
           return dialog;
         };
@@ -1418,7 +1418,7 @@ try {
         await listDialog.waitFor({ state: "detached" });
         console.log("PASS agent host workspaces open from New workspace (no chat made), their ⋯ lists the folder's chats and closes them, and All agents stays on the Agents menu");
 
-        // 7. the PC's "+" with Copilot (host) picked: VS Code's New Chat. The dialog asks the folder
+        // 7. the PC's "+" with Agent host picked: VS Code's New Chat. The dialog asks the folder
         // only; Start makes the chat empty and opens it, and its first message is written in the
         // chat's own composer (the same one every chat has: pills, "/", attach, dictation, send menu)
         const newChats = () => posts("/api/machines/remote/host-chats/chat/new");
@@ -1429,15 +1429,15 @@ try {
           await form.waitFor();
           // the PC's agents come in a moment after the dialog opens; the picker remembers the last one
           const pick = form.locator(".agent-picker-trigger");
-          if (!(await pick.innerText()).includes("Copilot (host)")) {
+          if (!(await pick.innerText()).includes("Agent host")) {
             await pick.click();
-            await page.getByRole("option", { name: "Copilot (host)" }).click({ timeout: 10_000 });
+            await page.getByRole("option", { name: "Agent host" }).click({ timeout: 10_000 });
           }
           return form;
         };
         let form = await openNewSheet();
         const agentPick = form.locator(".agent-picker-trigger, [aria-labelledby=\"new-session-agent\"]").first();
-        await agentPick.filter({ hasText: "Copilot (host)" }).waitFor({ timeout: 10_000 }).catch(async () => assert.fail(`the dialog opens on Copilot (host), not ${await agentPick.innerText()}`));
+        await agentPick.filter({ hasText: "Agent host" }).waitFor({ timeout: 10_000 }).catch(async () => assert.fail(`the dialog opens on Agent host, not ${await agentPick.innerText()}`));
         assert.equal(await form.getByRole("textbox", { name: "Name" }).count(), 0, "a host chat has no name field");
         assert.equal(await form.getByRole("textbox", { name: "First message" }).count(), 0, "no second composer in the dialog: the chat's own takes the first message");
         const folder = form.getByRole("textbox", { name: "Directory" });
@@ -1483,7 +1483,7 @@ try {
         assert.equal(await page.locator(".host-chat-title").count(), 0, "the title is the header's alone: no second title bar over the chat");
         if (shots) await page.screenshot({ path: join(shots, "task-11-header-390.png") });
         assert.equal((await posts("/api/machines/remote/host-chats/chat/discard")).length, 0, "a chat with a message is never discarded");
-        console.log("PASS the PC's + on Copilot (host): the chat made empty, its first message from its own composer");
+        console.log("PASS the PC's + on Agent host: the chat made empty, its first message from its own composer");
 
         // 7b. a new chat left without a message goes: leaving it asks the bridge to discard it, once
         form = await openNewSheet();

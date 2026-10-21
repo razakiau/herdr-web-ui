@@ -6,9 +6,9 @@ import { withHostAgent } from "./agents.ts";
 const claude: AgentKind = { kind: "claude", label: "Claude Code", installed: true };
 const copilot: AgentKind = { kind: "copilot", label: "GitHub Copilot", installed: true };
 
-describe("the + dialog's Copilot host choice", () => {
+describe("the + dialog's agent host choice", () => {
   it("agents_lists_copilot_host_when_signed_in", () => {
-    expect(withHostAgent([claude], { state: "connected", signed_in: true, protocol: "1.0.0" })).toEqual([claude, { kind: "copilot-host", label: "Copilot", installed: true }]);
+    expect(withHostAgent([claude], { state: "connected", signed_in: true, protocol: "1.0.0" })).toEqual([claude, { kind: "copilot-host", label: "Agent host", installed: true }]);
   });
 
   it("not listed when the host is off, down, refused or not signed in, and the list is as before", () => {
@@ -17,10 +17,10 @@ describe("the + dialog's Copilot host choice", () => {
     }
   });
 
-  it("labels_split_when_both: the host is Copilot (host), the pane kind Copilot (terminal)", () => {
+  it("labels_split_when_both: the host is Agent host, the pane kind Copilot (terminal)", () => {
     const listed = withHostAgent([claude, copilot], { state: "connected", signed_in: true, protocol: "1.0.0" });
-    expect(listed.map((agent) => [agent.kind, agent.label])).toEqual([["claude", "Claude Code"], ["copilot", "Copilot (terminal)"], ["copilot-host", "Copilot (host)"]]);
-    // a copilot command that is not installed is no pane choice: the host keeps the plain name
-    expect(withHostAgent([claude, { ...copilot, installed: false }], { state: "connected", signed_in: true, protocol: "1.0.0" }).map((agent) => agent.label)).toEqual(["Claude Code", "GitHub Copilot", "Copilot"]);
+    expect(listed.map((agent) => [agent.kind, agent.label])).toEqual([["claude", "Claude Code"], ["copilot", "Copilot (terminal)"], ["copilot-host", "Agent host"]]);
+    // a copilot command that is not installed is no pane choice, and the pane kind keeps its own name
+    expect(withHostAgent([claude, { ...copilot, installed: false }], { state: "connected", signed_in: true, protocol: "1.0.0" }).map((agent) => agent.label)).toEqual(["Claude Code", "GitHub Copilot", "Agent host"]);
   });
 });
