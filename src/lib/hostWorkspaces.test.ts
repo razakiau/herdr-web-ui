@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { fitHostWorkspaces, folderTree, HOST_WORKSPACES_BUDGET, folderKey, moveBlock, type MergedRow, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { fitHostWorkspaces, folderFace, folderTree, HOST_WORKSPACES_BUDGET, folderKey, moveBlock, type MergedRow, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -143,6 +143,20 @@ describe("agent host workspaces", () => {
       { cwd: "/b", chats: 1, modified_at: chats[2]!.modified_at, open: false },
       { cwd: "/a", chats: 2, modified_at: chats[0]!.modified_at, open: true },
     ]);
+  });
+
+  it("hostFolders_never_offers_the_no_folder_row_to_start_a_chat_in", () => {
+    // a new chat started there would run in ~/.copilot/chats itself, not in a folder of its own
+    const chats = [row("lost", "/home/fictional/.copilot/chats", { no_folder: true }), row("b1", "/b")];
+    expect(hostFolders(chats, undefined).map((each) => each.cwd)).toEqual(["/b"]);
+  });
+
+  it("folderFace_names_the_no_folder_row_and_says_the_newest_chats_branch", () => {
+    expect(folderFace([row("lost", "/h/.copilot/chats", { no_folder: true })])).toEqual({ noFolder: true, branch: null });
+    // the newest chat's branch: the folder's checkout as VS Code saw it last
+    expect(folderFace([row("old", "/a", { branch: "old/branch", age: 90 * MIN }), row("new", "/a", { branch: "main", age: 5 * MIN })])).toEqual({ noFolder: false, branch: "main" });
+    expect(folderFace([row("new", "/a", { detached: true, age: 5 * MIN }), row("old", "/a", { branch: "main", age: 90 * MIN })])).toEqual({ noFolder: false, branch: null });
+    expect(folderFace([])).toEqual({ noFolder: false, branch: null });
   });
 
   describe("merged order", () => {

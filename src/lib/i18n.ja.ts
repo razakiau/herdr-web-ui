@@ -1596,6 +1596,7 @@ export const JA: Record<string, string> = {
   "{n} chats": "チャット {n} 件",
   "Chats in {folder}": "{folder} のチャット",
   "Chats in {folder}…": "{folder} のチャット…",
+  "VS Code gave these chats no folder": "VS Code がこれらのチャットにフォルダーを渡しませんでした",
   "Folders with chats": "チャットのあるフォルダー",
   "Keep open": "開いたままにする",
   "New agent host chat…": "新しいエージェントホストのチャット…",

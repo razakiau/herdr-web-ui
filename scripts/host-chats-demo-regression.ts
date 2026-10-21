@@ -168,14 +168,16 @@ const patch = `(() => {
       if (path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
       if (path === "/api/host-chats/chats") return json({ chats: edited([
         { session: SESSION, title: "FICTIONAL build chat", status: SIX || state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo", unread: false, archived: false },
-        { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs", unread: false, archived: false },
+        { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs", unread: false, archived: false, ...(sessionStorage.getItem("fictional-worktrees") === "1" ? { branch: "main" } : {}) },
         // 20 days old: only "All agents on Build PC…" lists it
         { session: "fictional-session-old", title: "FICTIONAL old release notes", status: "idle", modified_at: at(60 * 24 * 20), cwd: "/tmp/fictional-repo", unread: false, archived: false },
         { session: "fictional-session-done", title: "FICTIONAL archived chat", status: "idle", modified_at: at(60 * 24 * 2), cwd: "/tmp/fictional-repo", unread: false, archived: true },
         // worktree folders: the host names their main checkout as the project (row.repo)
         ...(sessionStorage.getItem("fictional-worktrees") === "1" ? [
-          { session: "fictional-wt-a", title: "FICTIONAL worktree chat", status: "idle", modified_at: at(5), cwd: "/tmp/fictional-docs.wt/feat-a", unread: false, archived: false, repo: "/tmp/fictional-docs" },
-          { session: "fictional-wt-x", title: "FICTIONAL lone worktree chat", status: "idle", modified_at: at(6), cwd: "/tmp/fictional-lib.wt/fix-x", unread: false, archived: false, repo: "/tmp/fictional-lib" },
+          { session: "fictional-wt-a", title: "FICTIONAL worktree chat", status: "idle", modified_at: at(5), cwd: "/tmp/fictional-docs.wt/feat-a", unread: false, archived: false, repo: "/tmp/fictional-docs", branch: "feat/fictional-a" },
+          { session: "fictional-wt-x", title: "FICTIONAL lone worktree chat", status: "idle", modified_at: at(6), cwd: "/tmp/fictional-lib.wt/fix-x", unread: false, archived: false, repo: "/tmp/fictional-lib", branch: "fix/fictional-x" },
+          // VS Code gave the host no folder: it ran in a scratch folder, filed under ~/.copilot/chats
+          { session: "fictional-lost", title: "FICTIONAL lost chat", status: "idle", modified_at: at(7), cwd: "/home/fictional/.copilot/chats", unread: false, archived: false, no_folder: true },
         ] : []),
         ...state.created.filter((chat) => !chat.discarded).map((chat) => ({ session: chat.session, title: "FICTIONAL new chat", status: "idle", modified_at: at(0), cwd: chat.cwd, unread: false, archived: false })),
       ]) });
@@ -1426,7 +1428,7 @@ try {
           const key = "herdr-web-ui:host-workspaces";
           const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
           // two worktrees' folders: one of the open docs folder's repository, one whose repository's folder is not open
-          saved.remote.open.push({ cwd: "/tmp/fictional-docs.wt/feat-a", tabs: ["fictional-wt-a"] }, { cwd: "/tmp/fictional-lib.wt/fix-x", tabs: ["fictional-wt-x"] });
+          saved.remote.open.push({ cwd: "/tmp/fictional-docs.wt/feat-a", tabs: ["fictional-wt-a"] }, { cwd: "/tmp/fictional-lib.wt/fix-x", tabs: ["fictional-wt-x"] }, { cwd: "/home/fictional/.copilot/chats", tabs: ["fictional-lost"] });
           localStorage.setItem(key, JSON.stringify(saved));
         });
         await page.reload();
@@ -1440,6 +1442,19 @@ try {
         const header = remoteGroup.locator('.host-repo[data-host-repo="/tmp/fictional-lib"]');
         await header.waitFor({ timeout: 3000 }).catch(() => assert.fail("a repository with only worktrees open has a header row"));
         assert.equal(await header.evaluate((row) => row.nextElementSibling?.querySelector('[data-host-folder="/tmp/fictional-lib.wt/fix-x"]') !== null), true, "holding its worktree");
+        // branches as herdr's rows say them: the repository's under its name, a worktree's beside it
+        assert.equal(await repoRow.locator(".workspace-branch").innerText(), "main", "the repository's row says its branch on a second line");
+        assert.equal(await childRow.locator(".worktree-workspace-label").innerText(), "feat/fictional-a", "a worktree's row says its branch beside its name");
+        // a chat VS Code gave no folder: one "No folder" row, not its scratch folder's id
+        const lost = remoteGroup.locator('.host-folder[data-host-folder="/home/fictional/.copilot/chats"]');
+        await lost.waitFor({ timeout: 3000 }).catch(() => assert.fail("a chat with no folder has a row"));
+        assert.equal(await lost.locator(".workspace-name").innerText(), "No folder", "named No folder");
+        await lost.getByRole("button", { name: "More for No folder", exact: true }).click();
+        await page.locator(".row-sheet").waitFor();
+        assert.deepEqual(await sheetItems(), ["Chats in No folder…", "Pin folder", "Close workspace"], "no new chat there, no path to copy");
+        assert.match(await page.locator(".row-sheet").innerText(), /VS Code gave these chats no folder/, "the menu says why");
+        await page.keyboard.press("Escape");
+        await page.locator(".row-sheet").waitFor({ state: "hidden" });
         // the face folds: the worktree hides, the row counts it, and opening it again shows it
         const fold = repoRow.getByRole("button", { name: "Collapse worktrees of fictional-docs", exact: true });
         await fold.click();
@@ -1463,11 +1478,11 @@ try {
           sessionStorage.removeItem("fictional-worktrees");
           const key = "herdr-web-ui:host-workspaces";
           const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
-          saved.remote.open = saved.remote.open.filter((folder: { cwd: string }) => !folder.cwd.includes(".wt/"));
+          saved.remote.open = saved.remote.open.filter((folder: { cwd: string }) => !folder.cwd.includes(".wt/") && !folder.cwd.includes(".copilot/chats"));
           localStorage.setItem(key, JSON.stringify(saved));
         });
         await page.reload();
-        console.log("PASS herdr's tree: a worktree's folder under its repository's row (folded by its face, moved with it), and a header row for a repository with only worktrees open");
+        console.log("PASS herdr's tree: a worktree's folder under its repository's row (folded by its face, moved with it, branches said as herdr's), a header row for a repository with only worktrees open, and one No folder row");
         }
         await drawerOpen();
         await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();

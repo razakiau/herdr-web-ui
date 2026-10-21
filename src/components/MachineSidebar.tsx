@@ -73,17 +73,18 @@ function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarA
  * whole list stays on the PC's and Agents' menus. A herdr workspace keeps its own menu, whatever
  * chats are tabs of it.
  */
-export function hostFolderItems({ canStart, cwd, pin, onNewHostChat, onFolderChats, onClose, onCopyPath }: {
-  canStart: boolean; cwd: string; pin?: { pinned: boolean; toggle(): void }; onNewHostChat(): void; onFolderChats(): void; onClose(): void; onCopyPath?(cwd: string): void;
+export function hostFolderItems({ canStart, cwd, noFolder = false, pin, onNewHostChat, onFolderChats, onClose, onCopyPath }: {
+  canStart: boolean; cwd: string; noFolder?: boolean; pin?: { pinned: boolean; toggle(): void }; onNewHostChat(): void; onFolderChats(): void; onClose(): void; onCopyPath?(cwd: string): void;
 }, t: Translate): RowMenuItem[] {
+  // the No folder row's folder is the host's scratch parent: no chat to start there, no path worth copying
   return [
-    ...(canStart ? [{ id: "new-host-chat", label: t("New agent host chat…"), icon: MessageSquarePlus, run: onNewHostChat }] : []),
-    { id: "folder-chats", label: t("Chats in {folder}…", { folder: basename(cwd) }), icon: ListTree, run: onFolderChats },
+    ...(canStart && !noFolder ? [{ id: "new-host-chat", label: t("New agent host chat…"), icon: MessageSquarePlus, run: onNewHostChat }] : []),
+    { id: "folder-chats", label: t("Chats in {folder}…", { folder: noFolder ? t("No folder") : basename(cwd) }), icon: ListTree, run: onFolderChats },
     ...(pin ? [pin.pinned
       ? { id: "unpin-folder", label: t("Unpin folder"), icon: PinOff, run: pin.toggle }
       : { id: "pin-folder", label: t("Pin folder"), icon: Pin, run: pin.toggle }] : []),
     { id: "close-workspace", label: t("Close workspace"), icon: X, run: () => { if (pin?.pinned) pin.toggle(); onClose(); } },
-    { id: "copy-path", label: t("Copy path"), icon: Copy, divider: true, run: () => (onCopyPath ?? copyPath)(cwd) },
+    ...(noFolder ? [] : [{ id: "copy-path", label: t("Copy path"), icon: Copy, divider: true, run: () => (onCopyPath ?? copyPath)(cwd) }]),
   ];
 }
 const copyPath = (cwd: string): void => { void copyText(cwd); };
@@ -151,8 +152,8 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, ...pro
   const placement = hostChats ? pcPlacement(machine.snapshot, hostChats.chats, hostWorkspaces[machine.id], openSession) : null;
   // a host that is not up cannot make a chat: the sheet's list says what it needs
   const canStart = hostChats?.host?.state === "connected";
-  const hostItems = (cwd: string): RowMenuItem[] => hostFolderItems({
-    canStart, cwd, onNewHostChat: () => onNewHostChat(cwd), onFolderChats: () => onFolderChats(cwd),
+  const hostItems = (cwd: string, noFolder = false): RowMenuItem[] => hostFolderItems({
+    canStart, cwd, noFolder, onNewHostChat: () => onNewHostChat(cwd), onFolderChats: () => onFolderChats(cwd),
     onClose: () => props.onCloseHostWorkspace?.(machine.id, cwd),
     pin: hostChats ? { pinned: pinnedFolders.includes(samePath(cwd)), toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), machine.id, cwd, hostChatFolders(hostChats.chats))) } : undefined,
   }, t);
@@ -230,7 +231,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, ...pro
     {error && <p className="machine-error" role="alert">{error}</p>}
     {!collapsed && <div className={online ? "" : "machine-offline"} inert={!online}>
       {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions}
-        hostChats={placement ? { placement, selected: openSession, onSelect: (session) => props.onSelectHostChat?.({ machineId: machine.id, session }), folderMenu: (cwd) => hostItems(cwd), pinnedFolders } : undefined} /></MachineContext.Provider>}
+        hostChats={placement ? { placement, selected: openSession, onSelect: (session) => props.onSelectHostChat?.({ machineId: machine.id, session }), folderMenu: (cwd, noFolder) => hostItems(cwd, noFolder), pinnedFolders } : undefined} /></MachineContext.Provider>}
     </div>}
   </section>;
 }

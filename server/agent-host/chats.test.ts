@@ -334,6 +334,43 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("rowsFrom_says_each_chats_branch: the host's _meta.git, detached when it has no branch", () => {
+    const summary = (n: number, git?: Record<string, unknown>): SessionSummary => ({
+      resource: `copilotcli:/${n}`, provider: "copilotcli", title: `FICTIONAL_${n}`, status: 1, createdAt: AT, modifiedAt: AT,
+      workingDirectories: ["file:///tmp/fictional"], ...(git ? { _meta: { git } } : {}),
+    } as SessionSummary);
+    const rows = rowsFrom([
+      summary(1, { branchName: "feat/fictional", baseBranchName: "main" }),
+      summary(2, { isDetachedHead: true, baseBranchName: "develop" }),
+      summary(3),
+      summary(4, { branchName: 7 }),
+    ]);
+    expect(rows.map((row) => [row.session, row.branch, row.detached])).toEqual([
+      ["copilotcli:/1", "feat/fictional", undefined],
+      ["copilotcli:/2", undefined, true],
+      ["copilotcli:/3", undefined, undefined],
+      ["copilotcli:/4", undefined, undefined],
+    ]);
+  });
+
+  it("rowsFrom_files_a_chat_the_host_gave_no_folder_under_one_no_folder_row", () => {
+    // VS Code lost its folders while making the chat (2026-10-21: a reconnect dropped both): the host
+    // ran it in a scratch folder of its own, ~/.copilot/chats/<id>, and marks it workspaceless
+    const rows = rowsFrom([
+      { resource: "copilotcli:/1", provider: "copilotcli", title: "FICTIONAL_1", status: 1, createdAt: AT, modifiedAt: AT,
+        workingDirectories: ["file:///home/fictional/.copilot/chats/aaaa-1"], _meta: { workspaceless: true } } as SessionSummary,
+      { resource: "copilotcli:/2", provider: "copilotcli", title: "FICTIONAL_2", status: 1, createdAt: AT, modifiedAt: AT,
+        workingDirectories: ["file:///home/fictional/.copilot/chats/bbbb-2"], _meta: { workspaceless: true } } as SessionSummary,
+      { resource: "copilotcli:/3", provider: "copilotcli", title: "FICTIONAL_3", status: 1, createdAt: AT, modifiedAt: AT,
+        workingDirectories: ["file:///tmp/fictional"] } as SessionSummary,
+    ]);
+    expect(rows.map((row) => [row.session, row.cwd, row.no_folder])).toEqual([
+      ["copilotcli:/1", "/home/fictional/.copilot/chats", true],
+      ["copilotcli:/2", "/home/fictional/.copilot/chats", true],
+      ["copilotcli:/3", "/tmp/fictional", undefined],
+    ]);
+  });
+
   it("rowsFrom_gives_a_forked_session_its_own_chat_status_not_the_roll_up", () => {
     // live on a PC (2026-10-20): the fork asks (24), its source chat failed (2); AHP's session
     // status promotes the fork's InputNeeded (24 | IsRead 32 = 56), so the source row said asks

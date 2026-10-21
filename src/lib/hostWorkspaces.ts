@@ -130,13 +130,23 @@ export function seedPc(chats: readonly HostChatRow[], pinnedFolders: ReadonlySet
 export function hostFolders(chats: readonly HostChatRow[], pc: PcHostWorkspaces | undefined): { cwd: string; chats: number; modified_at: string; open: boolean }[] {
   const folders = new Map<string, { cwd: string; chats: number; modified_at: string; open: boolean }>();
   for (const row of chats) {
-    if (!usable(row)) continue;
+    if (!usable(row) || row.no_folder) continue;
     const cwd = folderOf(row)!;
     const was = folders.get(cwd);
     if (!was) folders.set(cwd, { cwd, chats: 1, modified_at: row.modified_at, open: isOpenFolder(pc, cwd) });
     else folders.set(cwd, { ...was, chats: was.chats + 1, modified_at: modified(row) > Date.parse(was.modified_at) ? row.modified_at : was.modified_at });
   }
   return [...folders.values()].sort((a, b) => Date.parse(b.modified_at) - Date.parse(a.modified_at));
+}
+
+/**
+ * What a folder row says beyond its name: whether it is the No folder row (chats the host was given
+ * no folder for), and its branch, the newest chat's (VS Code reports the checkout per chat; a
+ * detached HEAD has none to say).
+ */
+export function folderFace(chats: readonly HostChatRow[]): { noFolder: boolean; branch: string | null } {
+  const newest = [...chats].sort((a, b) => modified(b) - modified(a))[0];
+  return { noFolder: chats.some((row) => row.no_folder === true), branch: newest?.branch ?? null };
 }
 
 /**
