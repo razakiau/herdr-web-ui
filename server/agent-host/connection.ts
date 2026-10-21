@@ -58,6 +58,12 @@ export const PROTOCOL_VERSIONS = ["1.0.0", "0.10.0"] as const;
 const UNSUPPORTED_PROTOCOL_VERSION = -32005;
 const BACKOFF_FIRST_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
+/**
+ * How often a bridge on a host that lists no models looks at the other live hosts: when every host
+ * was empty at connect time (none signed in yet), ah-byok-signin or a VS Code window may sign in
+ * another one later, and this host would answer every chat with an error until its socket closed.
+ */
+export const RECHECK_MS = 30_000;
 const PROCESS_CLIENT_ID = `herdr-web-${randomBytes(4).toString("hex")}`;
 /**
  * The shortest gap between two pushes of the same chat (or of the chat list): a streaming reply
@@ -131,6 +137,7 @@ export class AgentHostConnection {
   private readonly spawn: (argv: string[]) => number | void;
   /** The `agent host` this bridge last started, while it may still be downloading VS Code's server. */
   private startedPid: number | null = null;
+  private dirs: string[] = [];
   private readonly alive: (pid: number) => boolean;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -323,6 +330,7 @@ export class AgentHostConnection {
 
   private async run(): Promise<void> {
     const dirs = registryDirs(this.options.home, this.options.platform, this.options.env);
+    this.dirs = dirs;
     let backoff = BACKOFF_FIRST_MS;
     while (!this.stopped) {
       const entries = await this.findHosts(dirs);
@@ -402,6 +410,7 @@ export class AgentHostConnection {
       this.setState(this.connectedState(init.protocolVersion));
       connected = true;
       this.changed({ kind: "chats" });
+      void this.recheckWhileEmpty(entry, client);
       await this.resubscribe();
     } catch (error) {
       if (error instanceof RpcError && error.code === UNSUPPORTED_PROTOCOL_VERSION) {
@@ -419,6 +428,46 @@ export class AgentHostConnection {
     this.live = null;
     if (!this.stopped) this.setState({ state: "starting" });
     return "closed";
+  }
+
+  /**
+   * While `client` is the live one and its host lists no models: every RECHECK_MS, when another live
+   * host lists models, closes `client`, so run() connects again and keeps that one.
+   */
+  private async recheckWhileEmpty(entry: HostEntry, client: AhpClient): Promise<void> {
+    const current = () => !this.stopped && this.live?.client === client;
+    while (current()) {
+      await this.pause(RECHECK_MS);
+      if (!current() || this.current.state !== "connected" || this.current.signed_in) continue;
+      for (const other of liveStandalones(this.dirs, this.alive)) {
+        if (other.pid === entry.pid && other.port === entry.port) continue;
+        if (!current()) return;
+        if (await this.listsModels(other)) { await client.shutdown(); return; }
+      }
+    }
+  }
+
+  /** Whether the host at `entry` lists models now; false when it can't be reached. */
+  private async listsModels(entry: HostEntry): Promise<boolean> {
+    let transport: WebSocketTransport;
+    try {
+      transport = await WebSocketTransport.connect(`ws://${entry.host}:${entry.port}/?tkn=${encodeURIComponent(entry.token)}`);
+    } catch {
+      return false;
+    }
+    const probe = new AhpClient(transport);
+    probe.connect();
+    try {
+      const init = await probe.initialize({ clientId: this.clientId, protocolVersions: PROTOCOL_VERSIONS, initialSubscriptions: [ROOT] });
+      return (init.snapshots ?? []).some((snapshot) => {
+        const state = snapshot.state as { agents?: Array<{ models?: unknown[] }> } | undefined;
+        return snapshot.resource === ROOT && (state?.agents ?? []).some((agent) => (agent.models?.length ?? 0) > 0);
+      });
+    } catch {
+      return false;
+    } finally {
+      await probe.shutdown();
+    }
   }
 
   private async listAll(client: AhpClient): Promise<SessionSummary[]> {
