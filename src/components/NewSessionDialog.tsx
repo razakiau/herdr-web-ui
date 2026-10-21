@@ -55,6 +55,8 @@ export interface NewSessionDialogProps {
   hostOpen?: PcHostWorkspaces;
   /** a folder picked from the agent host list: the app opens its workspace, and makes no chat */
   onOpenHostWorkspace?: (cwd: string) => void;
+  /** New agent host chat… from a folder's ⋯: a new chat in that folder, not a workspace to open */
+  chatIn?: string | null;
 }
 
 export interface DialogFields {
@@ -74,7 +76,7 @@ function directoryBasename(value: string): string {
   return trimmed.split("/").pop() || value;
 }
 
-export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], hostChats = [], onHostChat, hostOpen, onOpenHostWorkspace }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], hostChats = [], onHostChat, hostOpen, onOpenHostWorkspace, chatIn = null }: NewSessionDialogProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -99,7 +101,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   // (where a chat already works is a folder of its own, wherever it is: the passing-folder rule is the recents')
   const shownFolders = [...new Set([...(hostChoice ? folderChoices([...hostChats]) : []), ...recentFolders.filter((path) => !passingFolder(path, worktrees))])].slice(0, RECENT_FOLDERS_SHOWN);
   // New workspace → Agent host: the folders its chats work in, to open one as a workspace
-  const hostFolderList = hostChoice && !tab && onOpenHostWorkspace ? hostFolders(hostChats, hostOpen) : [];
+  const hostFolderList = hostChoice && !tab && chatIn === null && onOpenHostWorkspace ? hostFolders(hostChats, hostOpen) : [];
   const folderWords = folderQuery.trim().toLowerCase();
   const listedFolders = folderWords === "" ? hostFolderList : hostFolderList.filter((folder) => folder.cwd.toLowerCase().includes(folderWords));
   const opensWorkspace = hostFolderList.length > 0 && pickedFolder !== null && pickedFolder === cwd;
@@ -193,7 +195,6 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
 
   const startWorkspace = async (directory: string): Promise<void> => {
     if (pending) return;
-    if (opensWorkspace) { onOpenHostWorkspace?.(directory); return; }
     if (hostChoice) { await startHostChat(tab?.cwd ?? directory); return; }
     if (createdPaneId !== null) { onCreated(createdPaneId, false); return; }
     setPending(true);
@@ -234,7 +235,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     <div className="modal-scrim new-session-scrim" onMouseDown={closeFromScrim}>
       <form ref={surface} className="modal new-session-modal" role="dialog" aria-modal="true" aria-labelledby="new-session-title" tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void startWorkspace(cwd); }}>
         <header className="modal-header">
-          <h2 className="modal-title" id="new-session-title">{tab ? `${t("New tab")} · ${tab.workspaceLabel}` : `${t("New workspace")} · ${machineName ?? machineId}`}</h2>
+          <h2 className="modal-title" id="new-session-title">{tab ? `${t("New tab")} · ${tab.workspaceLabel}` : chatIn !== null ? `${t("New chat")} · ${directoryBasename(chatIn)}` : `${t("New workspace")} · ${machineName ?? machineId}`}</h2>
           <button type="button" className="icon-button" aria-label={t("Close dialog")} disabled={pending} onClick={onClose}>
             <X aria-hidden="true" />
           </button>
@@ -294,14 +295,14 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
               })}
               {listedFolders.length === 0 && <li className="field-hint">{t("No folder matches")}</li>}
             </ul>
-            <span className="field-hint">{t("Pick one to open it, or type a folder above to start a chat there.")}</span>
+            <span className="field-hint">{t("Pick one to open it as a workspace or start a new chat there.")}</span>
           </div>}
-          {!tab && shownFolders.length > 0 && hostFolderList.length === 0 && <div className="field new-session-recents">
+          {!tab && chatIn === null && shownFolders.length > 0 && hostFolderList.length === 0 && <div className="field new-session-recents">
             <span className="field-label" id="new-session-recents">{t("Recent folders")}</span>
             <RecentFolderChips folders={shownFolders} disabled={fieldsDisabled} labelledBy="new-session-recents" basename={directoryBasename}
               onPick={(path) => { setCwd(path); setBrowsing(false); }} />
           </div>}
-          {hostChoice ? opensWorkspace ? null : <NewHostChatFields ref={hostFields} machineId={machineId} /> : <label className="field">
+          {hostChoice ? <NewHostChatFields ref={hostFields} machineId={machineId} /> : <label className="field">
             <span className="field-label">{t("Name")}</span>
             <input
               className="input"
@@ -319,7 +320,9 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending || (hostChoice && ((tab?.cwd ?? cwd).trim() === "" || (!opensWorkspace && !hostFields.current?.ready())))}>{t(pending ? "Starting…" : opensWorkspace ? "Open workspace" : createdPaneId !== null ? "Open" : "Start")}</button>
+          {/* a listed folder picked: open it as a workspace (its chats as tabs), or still make a new chat there */}
+          {opensWorkspace && <button type="button" className="btn" disabled={pending} onClick={() => onOpenHostWorkspace?.(cwd)}>{t("Open workspace")}</button>}
+          <button type="submit" className="btn btn-primary" disabled={pending || (hostChoice && ((tab?.cwd ?? cwd).trim() === "" || !hostFields.current?.ready()))}>{t(pending ? "Starting…" : opensWorkspace ? "New chat" : createdPaneId !== null ? "Open" : "Start")}</button>
         </footer>
       </form>
     </div>

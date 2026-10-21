@@ -361,7 +361,7 @@ try {
         assert.equal(await page.getByRole("heading", { name: "Copilot", exact: true }).count(), 0, "no Copilot heading");
         assert.equal(await page.locator(".host-chats").count(), 0, "no Copilot section");
         assert.equal((await folderRow.locator(".workspace-name").first().innerText()).trim().length > 0, true, "the folder row has a name");
-        assert.equal(await folderRow.locator('svg[aria-label="copilot"]').count(), 1, "the folder row leads with Copilot's mark");
+        assert.equal(await folderRow.locator('svg[aria-label="copilot"]').count(), 1, "the folder row wears Copilot's mark (its face's badge)");
         assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no vscode mark");
         assert.equal(await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-repo"]').count(), 0, "a folder a workspace works in is no folder row");
         assert.equal(await page.locator('[data-machine="local"].host-chat-item').count(), 0, "a PC whose bridge has the feature off has no chats");
@@ -1350,6 +1350,23 @@ try {
         // the docs folder's ⋯: about the folder only
         await folderMenu();
         assert.deepEqual(await sheetItems(), ["New agent host chat…", "Chats in fictional-docs…", "Pin folder", "Close workspace", "Copy path"], "the folder's menu: new chat, its chats, pin, close, copy path");
+        // the row's face is its folder, badged with Copilot's mark; no second, full-size mark
+        assert.equal(await docsRow.locator('.host-folder-face .workspace-folder').count(), 1, "a folder row's face is a folder");
+        assert.equal(await docsRow.locator('.host-folder-face .host-folder-mark-badge svg[aria-label="copilot"]').count(), 1, "badged with Copilot's mark");
+        assert.equal(await docsRow.locator('svg[aria-label="copilot"]').count(), 1, "Copilot's mark once, as the badge");
+        if (shots) await docsRow.screenshot({ path: join(shots, "folder-row-badge.png") });
+        // New agent host chat… is a new chat in that folder: no folder list to open it as a workspace
+        await page.locator(".row-sheet").getByRole("button", { name: "New agent host chat…", exact: true }).click();
+        const chatIn = page.getByRole("dialog", { name: "New chat · fictional-docs", exact: true });
+        await chatIn.waitFor({ timeout: 5000 }).catch(() => assert.fail("the folder's New agent host chat… is titled New chat · <folder>"));
+        assert.equal(await chatIn.getByRole("radiogroup", { name: "Folders with chats" }).count(), 0, "no folder list: the folder is given");
+        assert.equal(await chatIn.getByRole("textbox", { name: "Directory" }).inputValue(), "/tmp/fictional-docs");
+        assert.equal(await chatIn.getByRole("button", { name: "Start", exact: true }).count(), 1, "Start makes the chat");
+        assert.equal(await chatIn.getByRole("button", { name: "Open workspace", exact: true }).count(), 0);
+        if (shots) await page.screenshot({ path: join(shots, "new-chat-in-folder-390.png") });
+        await chatIn.getByRole("button", { name: "Cancel", exact: true }).click();
+        await chatIn.waitFor({ state: "detached" });
+        await folderMenu();
         await page.locator(".row-sheet").getByRole("button", { name: "Chats in fictional-docs…", exact: true }).click();
         const folderChats = page.getByRole("dialog", { name: "Chats in fictional-docs", exact: true });
         await folderChats.waitFor();
@@ -1380,7 +1397,8 @@ try {
         assert.equal(folderTexts.length, 2, "one row per folder");
         await fits("the agent host folder list");
         await folderRows.filter({ hasText: "fictional-docs" }).click();
-        assert.equal(await listDialog.getByRole("button", { name: "Open workspace", exact: true }).count(), 1, "a picked folder opens a workspace");
+        assert.equal(await listDialog.getByRole("button", { name: "Open workspace", exact: true }).count(), 1, "a picked folder can open as a workspace");
+        assert.equal(await listDialog.getByRole("button", { name: "New chat", exact: true }).getAttribute("type"), "submit", "and a new chat there stays the dialog's action (Enter)");
         if (shots) await page.screenshot({ path: join(shots, "agent-host-folders-390.png") });
         await listDialog.getByRole("button", { name: "Open workspace", exact: true }).click();
         await listDialog.waitFor({ state: "detached" });

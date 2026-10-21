@@ -1600,6 +1600,7 @@ export const JA: Record<string, string> = {
   "No folder matches": "一致するフォルダーはありません",
   "Not open in its workspace": "ワークスペースで開かれていません",
   "Open workspace": "ワークスペースを開く",
-  "Pick one to open it, or type a folder above to start a chat there.": "選んで開くか、上にフォルダーを入力してそこでチャットを始めます。",
+  "Pick one to open it as a workspace or start a new chat there.": "選んでワークスペースとして開くか、そこで新しいチャットを始めます。",
+  "New chat": "新しいチャット",
   "Search folders": "フォルダーを検索",
 };

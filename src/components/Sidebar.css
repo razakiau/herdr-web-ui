@@ -70,6 +70,25 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   border-radius: var(--radius-sm);
 }
 
+/* an agent host workspace's face, badged at its lower corner with Copilot's mark on a disc cut
+   out of the face by the row's own background */
+.host-folder-face { position: relative; display: inline-flex; flex: 0 0 var(--side-box); }
+.host-folder-mark-badge {
+  position: absolute;
+  left: calc(50% + var(--icon-size) / 2 - 8px);
+  top: calc(50% + var(--icon-size) / 2 - 8px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  /* the row's own surface, so the cut follows hover and selection */
+  background: var(--host-badge-tint, var(--bg-panel));
+  color: var(--text);
+}
+.host-folder-mark-badge svg { width: 11px; height: 11px; }
+
 /* the marks that ride currentColor (codex, cursor, pi) read as the title does */
 .sidebar-mark .agent-mark {
   display: inline-flex;
@@ -279,11 +298,13 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 @media (hover: hover) {
   .workspace-header:hover {
     background: var(--side-hover);
+    --host-badge-tint: var(--side-hover);
   }
 }
 
 .workspace-group.is-selected > .workspace-header {
   background: var(--side-selected);
+  --host-badge-tint: var(--side-selected);
 }
 
 /* keyboard focus draws the ring on the whole row and no fill */

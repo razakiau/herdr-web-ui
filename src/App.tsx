@@ -538,6 +538,8 @@ export function App() {
   // the New workspace dialog in the address (lib/deepLink.ts): the fields a link filled for this
   // opening, and what the fields say now
   const [newPrefill, setNewPrefill] = useState<Omit<CreateDraft, "kind"> | null>(null);
+  // New agent host chat… from a folder: the dialog makes a chat in that folder (no folder list)
+  const [newChatIn, setNewChatIn] = useState<string | null>(null);
   const [newFields, setNewFields] = useState<Omit<CreateDraft, "kind"> | null>(null);
   // a link to the dialog, opened once the PCs are in (a tab, once its workspace is found)
   const pendingCreate = useRef<CreateDraft | null>(initialLink?.create ?? null);
@@ -1645,7 +1647,7 @@ export function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewFields(null); }, []);
+  const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewChatIn(null); setNewFields(null); }, []);
 
   // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
   const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
@@ -1659,7 +1661,7 @@ export function App() {
       pinned: pinnedHostFolders(hostPins, selectedHostChat.machineId).includes(hostFolder.cwd),
       toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), selectedHostChat.machineId, hostFolder.cwd, hostChatFolders(hostChats.get(selectedHostChat.machineId)?.chats ?? []))),
     },
-    onNewHostChat: () => { setNewPrefill({ cwd: hostFolder.cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(selectedHostChat.machineId); setNewTab(null); setNewSessionOpen(true); },
+    onNewHostChat: () => { setNewPrefill({ cwd: hostFolder.cwd, name: null, agent: HOST_AGENT_KIND }); setNewChatIn(hostFolder.cwd); setNewSessionMachineId(selectedHostChat.machineId); setNewTab(null); setNewSessionOpen(true); },
     onFolderChats: () => setAllAgentsOn({ machineId: selectedHostChat.machineId, folder: hostFolder.cwd }),
     onClose: () => closeHostWorkspace(selectedHostChat.machineId, hostFolder.cwd),
     onCopyPath: (cwd) => void copyText(cwd).then((ok) => { if (ok) setHeaderNote("copied"); }),
@@ -1846,7 +1848,7 @@ export function App() {
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
             <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} allAgentsOn={allAgentsOn} onAllAgents={setAllAgentsOn} onCloseHostWorkspace={closeHostWorkspace} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
-              onNewHostChat={(id, cwd) => { setNewPrefill({ cwd, name: null, agent: HOST_AGENT_KIND }); setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+              onNewHostChat={(id, cwd) => { setNewPrefill({ cwd, name: null, agent: HOST_AGENT_KIND }); setNewChatIn(cwd); setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -2032,6 +2034,7 @@ export function App() {
         prefill={newPrefill}
         hostChats={hostChats.get(newSessionMachineId)?.chats}
         hostOpen={hostWorkspaces[newSessionMachineId]}
+        chatIn={newChatIn}
         // a folder picked from the agent host list: its workspace opens (its live, unread and newest
         // chats as tabs), no chat is made, and the first of them is shown
         onOpenHostWorkspace={(cwd) => {

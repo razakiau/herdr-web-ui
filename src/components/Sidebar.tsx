@@ -844,7 +844,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
       <div className="workspace-header"
         onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
         onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
-        <WorkspaceFavicon root={cwd} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true"><Folder /></span>} />
+        {/* the workspace's face (its project's icon, else a folder), badged with Copilot's mark: whose chats it holds */}
+        <span className="host-folder-face"><WorkspaceFavicon root={cwd} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true"><Folder /></span>} /><span className="host-folder-mark-badge" aria-hidden="true"><AgentMark agent="copilot" size={11} /></span></span>
         <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={open ? "true" : undefined} title={[cwd, ...chats.map((chat) => chat.title)].join(" — ")}
           draggable={!coarsePointer}
           onDragStart={(event) => onDragStart(event, id, null)}
@@ -856,7 +857,6 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); hostChats.onSelect(lead.session); return; }
             onRowKeyDown(event, id);
           }}>
-          <span className="sidebar-mark" aria-hidden="true"><AgentMark agent="copilot" size={18} /></span>
           {lines ? <span className="workspace-copy is-two-line">
             <span className="workspace-line"><span className="workspace-name">{lines.title}</span></span>
             <span className="workspace-place">{lines.place}</span>
