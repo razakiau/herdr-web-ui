@@ -23,6 +23,12 @@ export interface HostChatRow {
   fork_of?: string;
   /** a linked worktree's main checkout (the host's project, when it is a local folder other than `cwd`) */
   repo?: string;
+  /** the folder's branch, as VS Code reported it to the host (`_meta.git.branchName`) */
+  branch?: string;
+  /** the folder is on a detached HEAD (no branch to say) */
+  detached?: boolean;
+  /** the host was given no folder: `cwd` is the parent of its scratch folders, one row for all of them */
+  no_folder?: boolean;
 }
 
 /**

@@ -1594,6 +1594,7 @@ export const KO: Record<string, string> = {
   "{n} chats": "채팅 {n}개",
   "Chats in {folder}": "{folder}의 채팅",
   "Chats in {folder}…": "{folder}의 채팅…",
+  "VS Code gave these chats no folder": "VS Code가 이 채팅에 폴더를 주지 않았습니다",
   "Folders with chats": "채팅이 있는 폴더",
   "Keep open": "열어 두기",
   "New agent host chat…": "새 에이전트 호스트 채팅…",

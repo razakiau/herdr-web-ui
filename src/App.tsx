@@ -1484,7 +1484,9 @@ export function App() {
   const connWord = t(live ? "live" : !hostShown && outputStopped ? "disconnected" : hostShown || connectedBefore ? "reconnecting" : "connecting");
   const hostTitle = hostShown ? (openHostRow?.title ?? hostReadTitle)?.trim() || t("Copilot chat") : null;
   // the header names where a host chat works (its tab names the chat), as a pane's names its workspace
-  const hostName = hostTitle === null ? null : hostHeaderName({ workspace: hostWorkspace?.label ?? null, cwd: openHostRow?.cwd ?? hostMadeIn, title: hostTitle });
+  // a chat the host was given no folder for is in the No folder row, not its scratch folder's
+  const hostNoFolder = openHostRow?.no_folder === true;
+  const hostName = hostTitle === null ? null : hostHeaderName({ workspace: hostWorkspace?.label ?? (hostNoFolder ? t("No folder") : null), cwd: openHostRow?.cwd ?? hostMadeIn, title: hostTitle });
   const crumb = selectedPane && selectedTitle !== null
     ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
     : hostShown && hostTitle !== null
@@ -1657,6 +1659,7 @@ export function App() {
   // open chat's own actions stay on its tab. A herdr workspace keeps its menu, chats tabs of it or not.
   const hostFolderMenu = hostFolder !== null && selectedHostChat !== null ? hostFolderItems({
     canStart: hostChats.get(selectedHostChat.machineId)?.host?.state === "connected", cwd: hostFolder.cwd,
+    noFolder: hostFolder.chats.some((row) => row.no_folder === true),
     pin: {
       pinned: pinnedHostFolders(hostPins, selectedHostChat.machineId).includes(hostFolder.cwd),
       toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), selectedHostChat.machineId, hostFolder.cwd, hostChatFolders(hostChats.get(selectedHostChat.machineId)?.chats ?? []))),

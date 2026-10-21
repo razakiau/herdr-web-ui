@@ -19,4 +19,11 @@ describe("an agent host workspace's menu", () => {
     items.find((item) => item.id === "close-workspace")!.run();
     expect(calls).toEqual(["unpin", "close"]);
   });
+
+  it("no_folder_row_offers_no_new_chat_and_no_path", () => {
+    // its folder is the host's scratch parent (~/.copilot/chats): a chat started there would land in it
+    const items = hostFolderItems({ canStart: true, cwd: "/home/fictional/.copilot/chats", noFolder: true, pin: { pinned: false, toggle: nothing }, onNewHostChat: nothing, onFolderChats: nothing, onClose: nothing }, t);
+    expect(items.map((item) => item.id)).toEqual(["folder-chats", "pin-folder", "close-workspace"]);
+    expect(items[0]!.label).toBe("Chats in No folder…");
+  });
 });

@@ -1598,6 +1598,7 @@ export const ZH: Record<string, string> = {
   "{n} chats": "{n} 个聊天",
   "Chats in {folder}": "{folder} 中的聊天",
   "Chats in {folder}…": "{folder} 中的聊天…",
+  "VS Code gave these chats no folder": "VS Code 没有为这些聊天提供文件夹",
   "Folders with chats": "有聊天的文件夹",
   "Keep open": "保持打开",
   "New agent host chat…": "新建代理主机聊天…",

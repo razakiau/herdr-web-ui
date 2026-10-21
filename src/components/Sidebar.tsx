@@ -31,7 +31,7 @@ import { worktreeLabel } from "../lib/worktreeName.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
 import { hostChatStatus, samePath, type HostPlacement } from "../lib/hostPlacement.ts";
-import { currentHostWorkspaces, folderKey, folderTree, mergedKeys, mergedOrder, moveBlock, moveInMerged, setHostWorkspaces, subscribeHostWorkspaces, withOrder, workspaceKey, type TreeRow } from "../lib/hostWorkspaces.ts";
+import { currentHostWorkspaces, folderFace, folderKey, folderTree, mergedKeys, mergedOrder, moveBlock, moveInMerged, setHostWorkspaces, subscribeHostWorkspaces, withOrder, workspaceKey, type TreeRow } from "../lib/hostWorkspaces.ts";
 import { basename } from "../lib/hostChats.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
@@ -194,7 +194,7 @@ export interface HostChatRows {
   selected: string | null;
   onSelect(session: string): void;
   /** the folder row's menu: a new chat there (the new-chat sheet), and the PC's every chat */
-  folderMenu(cwd: string): RowMenuItem[];
+  folderMenu(cwd: string, noFolder?: boolean): RowMenuItem[];
   /** the folders pinned on this PC, in pin order: their rows stand in Pinned, with the pinned workspaces */
   pinnedFolders?: readonly string[];
 }
@@ -868,7 +868,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
   };
 
   // a folder no workspace works in: a row as a workspace's, whose tabs are its host chats
-  const [folderMenu, setFolderMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; cwd: string; title: string } | null>(null);
+  const [folderMenu, setFolderMenu] = useState<{ anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; cwd: string; title: string; noFolder?: boolean } | null>(null);
   /** a folder's worktree folders, under it as herdr's are under their repository; folded by its face */
   const folderFold = (cwd: string): string => folderKey(cwd);
   const foldToggle = (cwd: string, name: string, worktrees: readonly string[], face: ReactNode) => {
@@ -931,8 +931,14 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
   const renderFolderRow = ({ cwd, chats }: { cwd: string; chats: HostChatRow[] }, drop?: "before" | "after", nested = false, worktrees: readonly string[] = []) => {
     if (!hostChats) return null;
     const id = folderKey(cwd);
-    const name = basename(cwd);
+    // the chats the host was given no folder for share one row, named for what they lack, not their scratch folder
+    const { noFolder, branch } = folderFace(chats);
+    const name = noFolder ? t("No folder") : basename(cwd);
     const folded = worktrees.length > 0 && collapsedWorktrees.has(folderFold(cwd));
+    // as herdr's rows say a branch: a top-level folder on a second line, a worktree's beside its name
+    // (unless its folder is already named after it)
+    const branchLine = !twoLine && !nested && branch !== null ? branch : null;
+    const branchBeside = !twoLine && nested && branch !== null && name !== branch && name !== worktreeLabel(branch) ? branch : null;
     // a folded folder stands for its worktrees too, as herdr's folded repository does
     const statusChats = folded ? [...chats, ...worktrees.flatMap((child) => folderById.get(folderKey(child))?.chats ?? [])] : chats;
     const open = chats.find((chat) => chat.session === hostChats.selected);
@@ -940,7 +946,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
     const lead = open ?? chats[0]!;
     const lines = twoLine ? { title: lead.title.trim() || t("Copilot chat"), place: name } : null;
     const menuOpen = folderMenu?.cwd === cwd;
-    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setFolderMenu(menuOpen ? null : { anchor, point, previousFocus, cwd, title: name });
+    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setFolderMenu(menuOpen ? null : { anchor, point, previousFocus, cwd, title: name, noFolder });
     const face = <span className="host-folder-face"><WorkspaceFavicon root={cwd} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true">{worktrees.length > 0 && !folded ? <FolderOpen /> : <Folder />}</span>} /></span>;
     const row = <li className={`workspace workspace-group pane-item host-folder${open ? " is-selected" : ""}${folded ? " is-collapsed" : ""}${dragWorkspaceId === id ? " is-dragging" : ""}${touchDrag?.source === id ? " is-lifted" : ""}`} key={id} data-host-folder={cwd} data-workspace={id} data-drop={drop}
       onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
@@ -951,7 +957,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
         {/* the workspace's face (its project's icon, else a folder); with worktrees under it, the face is
             also their fold, as herdr's is */}
         {nested ? null : worktrees.length > 0 ? foldToggle(cwd, name, worktrees, face) : face}
-        <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={open ? "true" : undefined} title={[cwd, ...chats.map((chat) => chat.title)].join(" — ")}
+        <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={open ? "true" : undefined} title={[noFolder ? t("VS Code gave these chats no folder") : cwd, branch, ...chats.map((chat) => chat.title)].filter(Boolean).join(" — ")}
           draggable={!coarsePointer}
           onDragStart={(event) => onDragStart(event, id, null)}
           onDragEnd={() => setDragWorkspaceId(null)}
@@ -967,7 +973,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
           {lines ? <span className="workspace-copy is-two-line">
             <span className="workspace-line"><span className="workspace-name">{lines.title}</span></span>
             <span className="workspace-place">{lines.place}</span>
-          </span> : <span className="workspace-copy"><span className="workspace-line"><span className="workspace-name">{name}</span>{folded && <span className="workspace-fold-count" aria-hidden="true">+{worktrees.length}</span>}</span></span>}
+          </span> : branchLine ? <span className="workspace-copy is-branch-line">
+            <span className="workspace-line"><span className="workspace-name">{name}</span>{folded && <span className="workspace-fold-count" aria-hidden="true">+{worktrees.length}</span>}</span>
+            <span className="workspace-place workspace-branch">{branchLine}</span>
+          </span> : <span className="workspace-copy"><span className="workspace-line"><span className="workspace-name">{name}</span>{branchBeside && <span className="worktree-workspace-label">{branchBeside}</span>}{folded && <span className="workspace-fold-count" aria-hidden="true">+{worktrees.length}</span>}</span></span>}
           <span className="sidebar-pane-meta">
             <span className="visually-hidden">Copilot</span>
             <StatusBadge compact status={online ? rollupStatus(statusChats.map(hostChatStatus)) : undefined} />
@@ -1011,7 +1020,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, hostChats }
         </>
       </nav>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} items={menuItems(menu)} onClose={closeMenu} />}
-      {folderMenu && hostChats && <RowMenu anchor={folderMenu.anchor} point={folderMenu.point} restoreFocusTo={folderMenu.previousFocus} title={folderMenu.title} subtitle={folderMenu.cwd} items={hostChats.folderMenu(folderMenu.cwd)} onClose={() => setFolderMenu(null)} />}
+      {folderMenu && hostChats && <RowMenu anchor={folderMenu.anchor} point={folderMenu.point} restoreFocusTo={folderMenu.previousFocus} title={folderMenu.title} subtitle={folderMenu.noFolder ? t("VS Code gave these chats no folder") : folderMenu.cwd} items={hostChats.folderMenu(folderMenu.cwd, folderMenu.noFolder === true)} onClose={() => setFolderMenu(null)} />}
       {confirm && <ConfirmDialog title={confirm.title} body={confirm.body} confirmLabel={confirm.action ?? t("Close")} onConfirm={confirm.run} escalation={confirm.escalation} onClose={() => setConfirm(null)} />}
       {worktreeDialog && <WorktreeDialog mode={worktreeDialog.mode} workspace={worktreeDialog.workspace} onClose={() => setWorktreeDialog(null)} onOpened={(opened) => {
         rememberOpened(opened);
