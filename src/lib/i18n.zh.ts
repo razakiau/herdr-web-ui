@@ -1655,6 +1655,7 @@ export const ZH: Record<string, string> = {
   "Subagent": "子代理",
   "Running in the background": "正在后台运行",
   "Couldn't stop it": "无法停止",
+  "Its turn isn't loaded: scroll up to it": "该轮次尚未加载：请向上滚动",
   "Copy the commit's hash": "复制提交哈希",
   "Binary or too large to show": "二进制文件或过大，无法显示",
   "Couldn't load the diff": "无法加载差异",

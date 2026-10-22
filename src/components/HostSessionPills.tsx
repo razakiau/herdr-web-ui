@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
-  Bot, CircleCheck, CircleDot, CircleSlash, Copy, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
+  Bot, ChevronRight, CircleCheck, CircleDot, CircleSlash, Copy, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
   GitPullRequestDraft, Globe, Link, Package, SquareTerminal, X, type LucideProps,
 } from "lucide-react";
 
@@ -50,11 +50,13 @@ export interface HostSessionPillsProps {
   /** opens a file of the chat's PC in herdr's viewer */
   onOpenFile(path: string): void;
   onStop(id: string): Promise<void>;
+  /** takes the reader to a running subagent's row in the transcript; false when no loaded turn holds it */
+  onRevealSubagent?(chat: string): boolean;
   /** where PR and issue states are asked; absent: every one shows its kind's neutral icon */
   machineId?: string;
 }
 
-export function HostSessionPills({ artifacts, work, onOpenFile, onStop, machineId }: HostSessionPillsProps) {
+export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId }: HostSessionPillsProps) {
   const t = useT();
   const pills = useMemo(() => sessionPills(artifacts), [artifacts]);
   const [sheet, setSheet] = useState<"artifacts" | "work" | null>(null);
@@ -91,7 +93,11 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, machineI
       {pills.references.length > 0 && <ArtifactList title={t("References")} items={pills.references} states={states} onOpen={open} />}
     </PillSheet>}
     {sheet === "work" && <PillSheet title={t("Running in the background")} onClose={() => setSheet(null)}>
-      <WorkList work={work} onStop={onStop} />
+      <WorkList work={work} onStop={onStop} {...(onRevealSubagent ? { onReveal: (chat: string) => {
+        const shown = onRevealSubagent(chat);
+        if (shown) setSheet(null);
+        return shown;
+      } } : {})} />
     </PillSheet>}
   </div>;
 }
@@ -123,10 +129,11 @@ function hostOf(link: string | undefined): string | undefined {
   try { return new URL(link).host; } catch { return undefined; }
 }
 
-function WorkList({ work, onStop }: { work: readonly HostBackgroundWork[]; onStop(id: string): Promise<void> }) {
+function WorkList({ work, onStop, onReveal }: { work: readonly HostBackgroundWork[]; onStop(id: string): Promise<void>; onReveal?(chat: string): boolean }) {
   const t = useT();
   const [stopping, setStopping] = useState<Set<string>>(new Set());
   const [failed, setFailed] = useState<string | null>(null);
+  const [unseen, setUnseen] = useState<string | null>(null);
   const stop = (id: string): void => {
     setStopping((current) => new Set(current).add(id));
     setFailed(null);
@@ -134,18 +141,29 @@ function WorkList({ work, onStop }: { work: readonly HostBackgroundWork[]; onSto
   };
   return <ul className="session-sheet-list">{work.map((each) => {
     const Icon = each.kind === "shell" ? SquareTerminal : Bot;
+    const label = each.label || (each.kind === "shell" ? t("Background command") : t("Subagent"));
+    const text = <span className="session-sheet-text">
+      <span className="session-sheet-label">{label}</span>
+      {each.kind === "shell" && each.command && each.command !== each.label && <code className="session-sheet-detail">{each.command}</code>}
+      {failed === each.id && <span className="session-sheet-error" role="alert">{t("Couldn't stop it")}</span>}
+      {unseen === each.id && <span className="session-sheet-error" role="alert">{t("Its turn isn't loaded: scroll up to it")}</span>}
+    </span>;
+    // a subagent goes to its row in the transcript, opened, as VS Code's running list does
+    const chat = each.kind === "subagent" && onReveal ? each.chat : undefined;
     return <li key={each.id} className="session-sheet-item">
-      <div className="session-sheet-row is-static">
-        <Icon className="session-pill-icon" aria-hidden="true" />
-        <span className="session-sheet-text">
-          <span className="session-sheet-label">{each.label || (each.kind === "shell" ? t("Background command") : t("Subagent"))}</span>
-          {each.kind === "shell" && each.command && each.command !== each.label && <code className="session-sheet-detail">{each.command}</code>}
-          {failed === each.id && <span className="session-sheet-error" role="alert">{t("Couldn't stop it")}</span>}
-        </span>
-        {each.stoppable && <button type="button" className="btn btn-ghost session-sheet-stop" disabled={stopping.has(each.id)} onClick={() => stop(each.id)}>
-          {stopping.has(each.id) ? t("Stopping…") : t("Stop")}
-        </button>}
-      </div>
+      {chat !== undefined
+        ? <button type="button" className="session-sheet-row" onClick={() => { setUnseen(onReveal!(chat) ? null : each.id); }}>
+          <Icon className="session-pill-icon" aria-hidden="true" />
+          {text}
+          <ChevronRight className="session-sheet-go" aria-hidden="true" />
+        </button>
+        : <div className="session-sheet-row is-static">
+          <Icon className="session-pill-icon" aria-hidden="true" />
+          {text}
+          {each.stoppable && <button type="button" className="btn btn-ghost session-sheet-stop" disabled={stopping.has(each.id)} onClick={() => stop(each.id)}>
+            {stopping.has(each.id) ? t("Stopping…") : t("Stop")}
+          </button>}
+        </div>}
     </li>;
   })}</ul>;
 }

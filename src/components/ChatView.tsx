@@ -69,7 +69,7 @@ import { hostSource, paneSource, type ChatSource } from "../lib/chatSource.ts";
 import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
 import { toolIcon } from "../lib/toolIcons.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
-import { SubagentRow } from "./SubagentRow.tsx";
+import { RevealedSubagentContext, SubagentRow } from "./SubagentRow.tsx";
 import { QuestionSummary } from "./QuestionSummary.tsx";
 
 /** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
@@ -154,6 +154,8 @@ export interface ChatViewProps {
   /** false while the pane sits off-tab (a cached or retained pane): no reads, no conversation-watch */
   visible?: boolean;
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
+  /** set by the view: takes the reader to a subagent's row by its chat and opens it (a host chat's "N running" sheet); false when no loaded turn holds it */
+  revealSubagent?: { current: ((chat: string) => boolean) | null };
   refreshKey: number;
   /** bumped by a conversation push; coalesced to at most one read a second */
   invalidationKey?: number;
@@ -1238,7 +1240,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, revealSubagent, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -1933,6 +1935,27 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     pagingAway.current = true; stickToBottom.current = false; setAway(true);
     void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
   }, []);
+  // a running subagent tapped in the pills' sheet: its turn brought to the top, and its row (read
+  // through RevealedSubagentContext) opens itself and is marked a moment, mounted now or later
+  const [revealed, setRevealed] = useState<{ chat: string; at: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!revealSubagent) return;
+    const reveal = (chat: string): boolean => {
+      const index = timelineRows.findIndex((row) => row.turn.parts.some((part) => part.kind === "subagent" && part.chat === chat));
+      if (index < 0) return false;
+      setRevealed({ chat, at: Date.now() });
+      pagingAway.current = true; stickToBottom.current = false; setAway(true);
+      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+      return true;
+    };
+    revealSubagent.current = reveal;
+    return () => { if (revealSubagent.current === reveal) revealSubagent.current = null; };
+  });
+  useEffect(() => {
+    if (revealed === null) return;
+    const done = setTimeout(() => setRevealed(null), 2000);
+    return () => clearTimeout(done);
+  }, [revealed]);
   const renderTurn = useCallback((row: { key: string; turn: ConversationTurn }, index: number) => {
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
@@ -1997,7 +2020,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
-  return <ChatSourceContext.Provider value={chat}><SubagentChatContext.Provider value={subagentTurns}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
+  return <ChatSourceContext.Provider value={chat}><RevealedSubagentContext.Provider value={revealed}><SubagentChatContext.Provider value={subagentTurns}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
     <div className="chat-frame">
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
@@ -2050,5 +2073,5 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ImageViewerContext.Provider></ChatHistoryContext.Provider></SubagentChatContext.Provider></ChatSourceContext.Provider>;
+  </ImageViewerContext.Provider></ChatHistoryContext.Provider></SubagentChatContext.Provider></RevealedSubagentContext.Provider></ChatSourceContext.Provider>;
 });

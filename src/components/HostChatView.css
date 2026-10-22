@@ -594,6 +594,7 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
 .session-sheet-row:disabled { cursor: default; opacity: 0.7; }
 .session-sheet-row.is-static { cursor: default; }
 .session-sheet-row .session-pill-icon { width: 1.1em; height: 1.1em; }
+.session-sheet-go { flex: none; width: 1em; height: 1em; margin-inline-start: auto; color: var(--text-dim); }
 .session-sheet-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
 .session-sheet-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-strong); }
 .session-sheet-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: var(--fs-xs); }

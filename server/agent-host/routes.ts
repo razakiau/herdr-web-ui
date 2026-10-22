@@ -558,8 +558,17 @@ async function readImage(call: Call): Promise<Response> {
   if (ref.startsWith(ANSWER_REF)) return answerImage(call, chat, ref);
   const image = imageOf(chat, ref);
   if (!image) return noRef("image");
+  let bytes: Buffer;
+  if ("uri" in image) {
+    // a picture VS Code keeps as a file: gone from the host (a cleaned session), it is not found
+    try {
+      const read = await contentAt(call.host, image.uri);
+      bytes = Buffer.from(read.data, read.encoding === "base64" ? "base64" : "utf8");
+    } catch { return noRef("image"); }
+    if (bytes.length > MAX_ATTACHMENT_BYTES) return noRef("image");
+  } else bytes = image.bytes;
   // a running call's content can still change under the same ref
-  return new Response(new Uint8Array(image.bytes), { headers: { "content-type": image.media_type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+  return new Response(new Uint8Array(bytes), { headers: { "content-type": image.media_type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
 }
 
 /**
@@ -881,8 +890,12 @@ async function resumeTurn(call: Call): Promise<Response> {
 // ─── Checkpoints (VS Code's Restore Checkpoint, Start Over and Redo) ─────────
 
 /** The file a side of an edit names, its content read through the host (session-db: refs). */
+/**
+ * A resource's bytes through the host, asked for as base64: unasked, VS Code's host sends a file as
+ * UTF-8 text, which turns a picture's (or a binary edit side's) bytes into replacement characters.
+ */
 async function contentAt(host: AgentHost, uri: string): Promise<{ data: string; encoding: string }> {
-  const read = await host.request("resourceRead", { channel: "ahp-root://", uri } as never) as { data: string; encoding: string };
+  const read = await host.request("resourceRead", { channel: "ahp-root://", uri, encoding: "base64" } as never) as { data: string; encoding: string };
   return { data: read.data, encoding: read.encoding };
 }
 

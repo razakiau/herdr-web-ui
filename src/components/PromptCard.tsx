@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, Maximize2, Minimize2, Plus, Send, X } from "lucide-react";
 
@@ -203,7 +203,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       return each.id !== id;
     }));
   };
-  const customRef = useRef<HTMLInputElement | null>(null);
+  const customRef = useRef<HTMLTextAreaElement | null>(null);
   const customValue = useRef(custom);
   customValue.current = custom;
   const { settings } = useSettings();
@@ -224,6 +224,23 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     },
     onNote: (note) => setError(note === null ? null : { message: note, detail: null }),
   });
+  // the answer grows with its lines (CSS field-sizing; measured here where a browser lacks it), up
+  // to the CSS cap, past which it scrolls. Once it wraps, it takes the card's width on a line of its
+  // own and its buttons go under it (a narrow field by three buttons read a few words a line); it
+  // stays so until it is emptied, so the row does not flip back and forth as the text rewraps
+  const [wide, setWide] = useState(false);
+  useLayoutEffect(() => {
+    const box = customRef.current;
+    if (!box) return;
+    if (!CSS.supports("field-sizing", "content")) {
+      box.style.height = "auto";
+      box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+    }
+    if (custom === "") { setWide(false); return; }
+    const style = getComputedStyle(box);
+    const text = box.scrollHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    if (!wide && text > parseFloat(style.lineHeight) * 1.5) setWide(true);
+  }, [custom, wide]);
   const attaching = onUploadFile !== undefined;
   const canSend = custom.trim().length > 0 || (attaching && files.length > 0);
 
@@ -413,11 +430,14 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       {q.custom_option_index !== null && (
         <div className="prompt-card-custom">
           {hasChoices && <span className="prompt-card-custom-label" id={customLabelId}>{t("Or type your own answer")}</span>}
-          <div className="prompt-card-custom-row">
-            <input className="input" value={custom} disabled={pending} placeholder={markdown ? copilotSlot(q.options[q.custom_option_index]?.label, t) : q.options[q.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
-              // an IME's Enter commits the candidate; WebKit can send it after compositionend, as key code 229
-              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && canSend) { if (form === null) void answerCustom(); else if (lastPage) void submitForm(); else goTo(page + 1); }
-            }} {...(attaching ? { ref: customRef, onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => {
+          <div className={`prompt-card-custom-row${attaching && wide ? " is-stacked" : ""}`}>
+            <textarea ref={customRef} className="input prompt-card-answer" rows={1} value={custom} disabled={pending} placeholder={markdown ? copilotSlot(q.options[q.custom_option_index]?.label, t) : q.options[q.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
+              // an IME's Enter commits the candidate; WebKit can send it after compositionend, as key code 229.
+              // Shift+Enter is a new line in the answer, as in the composer
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+              event.preventDefault();
+              if (canSend) { if (form === null) void answerCustom(); else if (lastPage) void submitForm(); else goTo(page + 1); }
+            }} {...(attaching ? { onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
               const pasted = Array.from(event.clipboardData.files);
               if (pasted.length === 0) return;
               event.preventDefault();
