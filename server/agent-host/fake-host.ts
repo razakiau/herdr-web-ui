@@ -68,7 +68,7 @@ export interface FakeAgentHostSeed {
   /** Per channel: the items a `completions` request answers (none: an empty list). */
   completions?: Record<string, unknown[]>;
   /** Files and content refs by URI, as `resourceRead` / `resourceWrite` / `resourceDelete` see them. */
-  files?: Record<string, string>;
+  files?: Record<string, string | Uint8Array>;
   /** The agent's `capabilities` (default: forks and side chats, as VS Code 1.142's copilotcli). */
   capabilities?: Record<string, unknown>;
 }
@@ -79,7 +79,7 @@ export interface FakeAgentHost {
   dispatched: Array<{ channel: string; action: StateAction }>;
   requests: Array<{ method: string; params: unknown }>;
   /** what `resource*` sees now, by URI */
-  files: Map<string, string>;
+  files: Map<string, string | Uint8Array>;
   push(channel: string, action: StateAction | FakeRootNotice): void;
   /** How many clients are connected now. */
   peers(): number;
@@ -99,7 +99,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
   const states: Record<string, SessionState> = { ...seed.states };
   const chats: Record<string, ChatState> = { ...seed.chats };
   const failSubscribes: Record<string, number> = { ...seed.failSubscribes };
-  const files = new Map(Object.entries(seed.files ?? {}));
+  const files = new Map<string, string | Uint8Array>(Object.entries(seed.files ?? {}));
   // sessions made and not yet listed, by their default chat: they have had no message
   const unlisted = new Map<string, SessionSummary>();
   const dispatched: FakeAgentHost["dispatched"] = [];
@@ -283,7 +283,9 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         const uri = String(params["uri"]);
         const data = files.get(uri);
         if (data === undefined) { fail(-32008, `not found: ${uri}`); return; }
-        ok({ data: Buffer.from(data).toString("base64"), encoding: "base64", contentType: "text/plain" });
+        // as VS Code's host: base64 only when asked, else the bytes read as UTF-8 (lossy for a binary file)
+        const bytes = Buffer.from(data);
+        ok(params["encoding"] === "base64" ? { data: bytes.toString("base64"), encoding: "base64" } : { data: bytes.toString("utf8"), encoding: "utf-8" });
         return;
       }
       case "resourceWrite": {

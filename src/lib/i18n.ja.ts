@@ -1653,6 +1653,7 @@ export const JA: Record<string, string> = {
   "Subagent": "サブエージェント",
   "Running in the background": "バックグラウンドで実行中",
   "Couldn't stop it": "停止できませんでした",
+  "Its turn isn't loaded: scroll up to it": "そのターンは読み込まれていません。上にスクロールしてください",
   "Copy the commit's hash": "コミットのハッシュをコピー",
   "Binary or too large to show": "バイナリか、大きすぎて表示できません",
   "Couldn't load the diff": "差分を読み込めませんでした",

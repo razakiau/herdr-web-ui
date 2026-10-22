@@ -121,6 +121,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const [forkError, setForkError] = useState<string | null>(null);
   const [putBack, setPutBack] = useState<string | null>(null);
   const mounted = useRef(true);
+  // the transcript's handle: the "N running" sheet takes the reader to a subagent's row
+  const revealSubagent = useRef<((chat: string) => boolean) | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   // VS Code's New Chat opened empty: left with no message, it goes (the bridge refuses any other chat)
   const unused = useRef(true);
@@ -304,7 +306,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     <div className="terminal-surface">
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
       <OpenFileContext.Provider value={onOpenFile ?? null}>
-        <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}
+        <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent} revealSubagent={revealSubagent}
           connected ended={false} agent="copilot" agentStatus={status} checkpoints={checkpoints} />
       </OpenFileContext.Provider>
     </div>
@@ -331,7 +333,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     }} />}
     {/* a question or approval takes the input's place, as in VS Code: the pills wait until it is answered */}
     {!chat?.prompt && <HostSessionPills machineId={machineId} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
-      onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }} />}
+      onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
+      onRevealSubagent={(chat) => revealSubagent.current?.(chat) ?? false} />}
     <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}

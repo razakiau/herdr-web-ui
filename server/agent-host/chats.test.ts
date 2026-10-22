@@ -613,6 +613,27 @@ describe("host chat turns, whole", () => {
     for (const ref of ["turn:turn-1:1", "turn:turn-9:0", "turn:turn-1:00", "turn:turn-1"]) expect({ ref, image: imageOf(state, ref) }).toEqual({ ref, image: null });
   });
 
+  it("an image the host keeps as a file (a snapshot, a VS Code paste) shows in the user turn by ref, read from its uri", () => {
+    const message = { ...user("FICTIONAL see"), attachments: [
+      { type: "resource", label: "shot.jpg", displayKind: "image", uri: "file:///fictional/attachments/a/shot.jpg", _meta: { "vscode.agentHost.snapshotAttachment": { isSnapshot: true, contentType: "image/jpg" } } },
+      { type: "resource", label: "Pasted Image", displayKind: "image", uri: "file:///fictional/attachments/b/Pasted%20Image.png" },
+      { type: "resource", label: "notes.txt", displayKind: "document", uri: "file:///fictional/notes.txt" },
+      { type: "embeddedResource", label: "inline.png", displayKind: "image", data: PNG, contentType: "image/png" },
+      { type: "resource", label: "odd", displayKind: "image", uri: "file:///fictional/attachments/c/odd.bmp" },
+    ] };
+    const state = reducedChat([{ type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message } as StateAction, finished()]);
+    expect(turnsFrom(state)[0]!.parts).toEqual([
+      { kind: "text", text: "FICTIONAL see" },
+      { kind: "image", media_type: "image/jpeg", ref: "turn:turn-1:0" },
+      { kind: "image", media_type: "image/png", ref: "turn:turn-1:1" },
+      { kind: "image", media_type: "image/png", ref: "turn:turn-1:2" },
+    ]);
+    expect(imageOf(state, "turn:turn-1:0")).toEqual({ media_type: "image/jpeg", uri: "file:///fictional/attachments/a/shot.jpg" });
+    expect(imageOf(state, "turn:turn-1:1")).toEqual({ media_type: "image/png", uri: "file:///fictional/attachments/b/Pasted%20Image.png" });
+    expect(imageOf(state, "turn:turn-1:2")).toEqual({ media_type: "image/png", bytes: Buffer.from(PNG, "base64") });
+    expect(imageOf(state, "turn:turn-1:3")).toBeNull();
+  });
+
   it("file_edit_gives_edit_counts", () => {
     const side = (path: string) => ({ uri: `file://${path}`, content: { uri: `ahp-content://fictional${path}` } });
     const edits = [

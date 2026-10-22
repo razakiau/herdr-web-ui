@@ -1478,6 +1478,20 @@ describe("host chat image and tool-output routes", () => {
     }
   });
 
+  it("a user image VS Code keeps as a file is read through the host, whole bytes, and one it lost is not found", async () => {
+    const pasted = reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: { ...user("FICTIONAL see"), attachments: [
+        { type: "resource", label: "Pasted Image", displayKind: "image", uri: "file:///fictional/attachments/a/Pasted%20Image.png" },
+        { type: "resource", label: "gone.png", displayKind: "image", uri: "file:///fictional/attachments/b/gone.png" },
+      ] } } as StateAction,
+      { type: "chat/turnComplete", turnId: "turn-1", duration: 1000 } as StateAction,
+    ], chatState(1));
+    const r = await rig({ chats: { [chatUri(1)]: pasted, [chatUri(2)]: chatState(2) }, files: { "file:///fictional/attachments/a/Pasted%20Image.png": PNG_BYTES } });
+    const shown = await fetchRaw(r, imagePath("turn:turn-1:0"));
+    expect({ status: shown.status, type: shown.type, same: shown.bytes.equals(PNG_BYTES) }).toEqual({ status: 200, type: "image/png", same: true });
+    expect((await fetchRaw(r, imagePath("turn:turn-1:1"))).status).toBe(404);
+  });
+
   it("image_route_unknown_ref_404", async () => {
     const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
     for (const ref of ["c1:1", "c9:0", "c1", "c2:0", "c1:-1", "c1:", "c1:0x0", "c1:00", "c1: 0"]) {

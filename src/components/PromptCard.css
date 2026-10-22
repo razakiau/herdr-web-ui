@@ -510,11 +510,39 @@
   gap: var(--space-2);
 }
 
-/* the field grows to the Send button's height, which is the touch target on a phone */
+/* the field grows to the Send button's height, which is the touch target on a phone, and with a
+   long answer (ZAC-207: a one-line field hid most of what was typed) up to six lines, then
+   scrolls in itself. The row's buttons stay at its foot, by the last line, as in the composer */
+.prompt-card-custom-row {
+  align-items: flex-end;
+}
+
+/* a Copilot card's field has three controls by it (attach, mic, Send): on its own line at the
+   card's width, they in a row under it, Send at the end, as VS Code's input lays them out */
+.prompt-card-custom-row.is-stacked {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.prompt-card-custom-row.is-stacked > .input {
+  flex-basis: 100%;
+}
+
+.prompt-card-custom-row.is-stacked > .btn {
+  margin-inline-start: auto;
+}
+
 .prompt-card-custom .input {
   flex: 1 1 auto;
   min-width: 0;
   height: auto;
+  min-height: var(--control-h);
+  max-height: calc(6lh + 2 * var(--space-2));
+  padding-block: var(--space-2);
+  field-sizing: content;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
 }
 
 .prompt-card-custom .btn svg {

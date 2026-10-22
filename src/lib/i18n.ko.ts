@@ -1651,6 +1651,7 @@ export const KO: Record<string, string> = {
   "Subagent": "하위 에이전트",
   "Running in the background": "백그라운드에서 실행 중",
   "Couldn't stop it": "중지하지 못했습니다",
+  "Its turn isn't loaded: scroll up to it": "해당 턴이 로드되지 않았습니다. 위로 스크롤하세요",
   "Copy the commit's hash": "커밋 해시 복사",
   "Binary or too large to show": "바이너리이거나 너무 커서 표시할 수 없습니다",
   "Couldn't load the diff": "차이를 불러오지 못했습니다",

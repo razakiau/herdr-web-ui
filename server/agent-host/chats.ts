@@ -30,7 +30,6 @@ import {
   type Customization,
   type InputRequestResponsePart,
   type Message,
-  type MessageEmbeddedResourceAttachment,
   type ModelSelection,
   type ResponsePart,
   type RootState,
@@ -552,7 +551,7 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
       : part !== stoppedAt ? []
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
     return [
-      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.contentType, ref: `${USER_REF}${turn.id}:${index}` }))] },
+      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts },
     ];
   });
@@ -561,9 +560,34 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
 /** A user image's ref is `turn:<turnId>:<index>`; a tool's is `<toolCallId>:<index>`. */
 const USER_REF = "turn:";
 
-/** The images a user message carried (pasted or attached), in order: the index in its ref counts these alone. */
-function userImagesOf(message: Message): MessageEmbeddedResourceAttachment[] {
-  return (message.attachments ?? []).flatMap((each) => (each.type === MessageAttachmentKind.EmbeddedResource && IMAGE_TYPES.has(each.contentType) ? [each] : []));
+/**
+ * The images a user message carried, in order: the index in its ref counts these alone. One the
+ * phone sent is embedded; one VS Code pasted or snapshotted is a file the host keeps (a resource
+ * with displayKind image), read through the host when shown. Its type: the snapshot's own, else
+ * the file's extension; an image of a type a browser may not draw is left out.
+ */
+type UserImage = { media_type: string; data: string } | { media_type: string; uri: string };
+function userImagesOf(message: Message): UserImage[] {
+  return (message.attachments ?? []).flatMap((each): UserImage[] => {
+    if (each.type === MessageAttachmentKind.EmbeddedResource) return IMAGE_TYPES.has(each.contentType) ? [{ media_type: each.contentType, data: each.data }] : [];
+    if (each.type !== MessageAttachmentKind.Resource || each.displayKind !== "image") return [];
+    const snapshot = (each._meta as Record<string, { contentType?: unknown } | undefined> | undefined)?.[SNAPSHOT_META]?.contentType;
+    const type = normalImageType(typeof snapshot === "string" ? snapshot : each.contentType) ?? imageTypeOfPath(each.uri);
+    return type ? [{ media_type: type, uri: each.uri }] : [];
+  });
+}
+
+const SNAPSHOT_META = "vscode.agentHost.snapshotAttachment";
+const IMAGE_EXTENSIONS: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+/** `image/jpg` (VS Code's snapshot says so) is `image/jpeg`; any type not drawn here is none. */
+function normalImageType(type: string | undefined): string | null {
+  const lower = type?.toLowerCase();
+  const normal = lower === "image/jpg" ? "image/jpeg" : lower;
+  return normal && IMAGE_TYPES.has(normal) ? normal : null;
+}
+function imageTypeOfPath(uri: string): string | null {
+  const match = /\.([a-z0-9]+)(?:[?#].*)?$/i.exec(uri);
+  return match ? IMAGE_EXTENSIONS[match[1]!.toLowerCase()] ?? null : null;
 }
 
 /** A tool call of the chat by its id, in any turn it holds. */
@@ -581,7 +605,7 @@ function toolCallOf(chat: ChatState, toolCallId: string): ToolCallState | undefi
  * The image a part's ref (`<toolCallId>:<index>`) names, its bytes decoded from the mirror's copy;
  * null for a ref the chat has no image under.
  */
-export function imageOf(chat: ChatState, ref: string): { media_type: string; bytes: Buffer } | null {
+export function imageOf(chat: ChatState, ref: string): { media_type: string; bytes: Buffer } | { media_type: string; uri: string } | null {
   const at = ref.lastIndexOf(":");
   const digits = at < 0 ? "" : ref.slice(at + 1);
   // one spelling per image: `c1:0`, never `c1:`, `c1:00` or `c1:0x0`
@@ -591,7 +615,8 @@ export function imageOf(chat: ChatState, ref: string): { media_type: string; byt
     const id = ref.slice(USER_REF.length, at);
     const turn = (chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns).find((each) => each.id === id);
     const attached = turn ? userImagesOf(turn.message)[index] : undefined;
-    return attached ? { media_type: attached.contentType, bytes: Buffer.from(attached.data, "base64") } : null;
+    if (!attached) return null;
+    return "uri" in attached ? attached : { media_type: attached.media_type, bytes: Buffer.from(attached.data, "base64") };
   }
   const tool = toolCallOf(chat, ref.slice(0, at));
   const image = tool ? imagesOf(tool)[index] : undefined;

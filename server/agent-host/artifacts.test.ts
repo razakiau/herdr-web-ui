@@ -43,7 +43,7 @@ describe("workOf (AHP backgroundWork)", () => {
     expect(workOf(work)).toEqual([
       { id: "shell:1", kind: "shell", label: "FICTIONAL dev server", command: "npm run dev", started: AT, stoppable: true },
       { id: "shell:2", kind: "shell", label: "tsc -w", command: "tsc -w", started: AT, stoppable: false },
-      { id: "subagent:3", kind: "subagent", label: "explore", started: AT, stoppable: false },
+      { id: "subagent:3", kind: "subagent", label: "explore", started: AT, stoppable: false, chat: "ahp-chat://x" },
     ]);
     expect(workOf(undefined)).toEqual([]);
   });

@@ -483,6 +483,9 @@ try {
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
         // a question is up: the session's pills give the chat its row back, as VS Code's input does
         assert.equal(await view.locator(".session-pills").count(), 0, "no pills while the question card stands");
+        // the card (its answer field on a line of its own) and the jump button stand over the
+        // transcript's foot: the head is brought to the top, clear of them
+        await head.evaluate((node) => node.scrollIntoView({ block: "center" }));
         await head.click();
         const command = block.locator(".work-row", { hasText: "make test" });
         await command.waitFor();
@@ -791,9 +794,24 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "r6-card-dictation-390.png") });
         await cardMic.click();
         await cardPill.waitFor({ state: "detached" }).catch(() => undefined);
-        await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".prompt-card-custom .input")?.value.includes("wing"), null, { timeout: 5000 });
+        await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".prompt-card-custom .input")?.value.includes("wing"), null, { timeout: 5000 });
         assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL typed FICTIONAL west wing", "the words land once, after the typed ones");
         await card.getByRole("textbox").fill("");
+        // ZAC-207: a long typed answer is read whole as it is written: the field grows with its
+        // lines, up to a cap, then scrolls in itself; Shift+Enter is a new line, not a send
+        const field = card.getByRole("textbox");
+        const oneLine = await field.evaluate((node) => node.getBoundingClientRect().height);
+        await field.fill("FICTIONAL a long answer that runs on and on, past the width of the field on a phone, so it has to wrap onto more lines to be read whole");
+        await field.press("Shift+Enter");
+        await field.pressSequentially("FICTIONAL second line");
+        const grown = await field.evaluate((node) => ({ height: node.getBoundingClientRect().height, scroll: node.scrollHeight, client: node.clientHeight, value: (node as HTMLTextAreaElement).value }));
+        assert.ok(grown.height > oneLine * 2, `the field grows with a long answer (${oneLine} -> ${JSON.stringify(grown)})`);
+        assert.ok(grown.scroll <= grown.client + 1, `all of it shows (${JSON.stringify(grown)})`);
+        if (shots) await card.screenshot({ path: join(shots, "zac207-long-answer-390.png") });
+        assert.ok(grown.value.endsWith("on a phone, so it has to wrap onto more lines to be read whole\nFICTIONAL second line"), "Shift+Enter put a new line in, and sent nothing");
+        await field.fill("");
+        assert.ok(Math.abs(await field.evaluate((node) => node.getBoundingClientRect().height) - oneLine) <= 1, "emptied, it is one line again");
+        console.log("PASS a long typed answer grows its field and shows whole");
         // a typed answer with an image: the upload fails first (nothing posted, text and chip kept),
         // then the answer goes as "@<path> " + the text
         await card.getByRole("textbox").fill("FICTIONAL west");
@@ -1080,14 +1098,14 @@ try {
         if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-artifacts-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         await artifactSheet.getByRole("button", { name: "Close" }).click();
         await artifactSheet.waitFor({ state: "detached" });
-        await page.evaluate(() => {
+        await page.evaluate((SUB) => {
           const host = window as unknown as { hostState: { work: unknown[] }; pushHostTurn(text: string): void };
           host.hostState.work = [
             { id: "shell:1", kind: "shell", label: "FICTIONAL dev server", command: "bun run dev", started: "2026-10-22T10:00:00.000Z", stoppable: true },
-            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false },
+            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false, chat: SUB },
           ];
           host.pushHostTurn("FICTIONAL work started");
-        });
+        }, SUB);
         const running = sessionPillRow.getByRole("button", { name: "2 running" });
         await running.waitFor();
         await running.click();
@@ -1099,9 +1117,20 @@ try {
         await workSheet.getByRole("button", { name: "Stop" }).click();
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string; body: { id?: string } }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/chat/background/stop") && post.body.id === "shell:1"));
         await workSheet.locator(".session-sheet-label", { hasText: "FICTIONAL dev server" }).waitFor({ state: "detached" });
-        await workSheet.getByRole("button", { name: "Close" }).click();
+        // ZAC-207: a running subagent goes to its row in the transcript, opened, and the sheet closes
+        const subagentEntry = workSheet.getByRole("button", { name: /explore/ });
+        assert.equal(await subagentEntry.count(), 1, "a subagent with a chat is a row to tap");
+        await subagentEntry.click();
+        await workSheet.waitFor({ state: "detached" });
+        const revealed = view.locator(`.subagent-row[data-subagent-chat="${SUB}"]`);
+        await revealed.waitFor();
+        assert.equal(await revealed.locator(".subagent-row-head").getAttribute("aria-expanded"), "true", "its row is opened");
+        const inView = await revealed.evaluate((node) => { const box = node.getBoundingClientRect(); const list = node.closest(".chat-view")!.getBoundingClientRect(); return box.top >= list.top - 1 && box.top < list.bottom; });
+        assert.ok(inView, "and in view");
+        assert.match(await revealed.getAttribute("class") ?? "", /is-revealed/, "and marked");
+        if (shots) { await page.waitForTimeout(200); await page.screenshot({ path: join(shots, "zac207-reveal-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         await page.evaluate(() => { (window as unknown as { hostState: { work: unknown[] } }).hostState.work = []; });
-        console.log("PASS the session's pills: a merged PR in purple, the artifacts sheet by kind with references last, and Stop on a running shell");
+        console.log("PASS the session's pills: a merged PR in purple, the artifacts sheet by kind with references last, Stop on a running shell, and a running subagent taken to its row");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
         const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;

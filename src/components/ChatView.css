@@ -2193,3 +2193,20 @@ button.question-summary-answer { cursor: pointer; }
 .edit-diff-lines .chat-diff-add { background: color-mix(in srgb, var(--status-done) 12%, transparent); }
 .edit-diff-lines .chat-diff-del { background: color-mix(in srgb, var(--status-blocked) 12%, transparent); }
 .chat-diff-fold { color: var(--text-dim); font-style: italic; background: var(--bg-hover); }
+
+/* a subagent row the "N running" sheet took the reader to: marked a moment, as VS Code's reveal */
+.subagent-row.is-revealed {
+  /* clear of the sticky request bar over the transcript's top */
+  scroll-margin-top: calc(var(--control-h) + var(--space-3));
+  border-radius: var(--radius-md);
+  animation: subagent-revealed 1.6s ease-out;
+}
+
+@keyframes subagent-revealed {
+  0%, 40% { box-shadow: 0 0 0 var(--hairline) var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  100% { box-shadow: 0 0 0 var(--hairline) transparent; background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-row.is-revealed { animation: none; outline: var(--hairline) solid var(--accent); }
+}
