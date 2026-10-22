@@ -1100,6 +1100,19 @@ try {
         const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
         await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");
         assert.match(await prIcon.getAttribute("class") ?? "", /lucide-git-merge/, "a merged PR wears the merge glyph");
+        // GitHub's merged purple in every palette: the palette's own "number" colour was amber in
+        // several (codex light: #8a5300), and a merged PR read orange (owner, 2026-10-22)
+        const mergedColour = async (theme: string | null, palette: string | null) => page.evaluate(([th, pa]) => {
+          const root = document.documentElement;
+          const was = [root.getAttribute("data-theme"), root.getAttribute("data-palette")];
+          if (th) root.setAttribute("data-theme", th); if (pa) root.setAttribute("data-palette", pa);
+          const colour = getComputedStyle(document.querySelectorAll(".session-pill")[1]!.querySelector("svg")!).color;
+          if (was[0] === null) root.removeAttribute("data-theme"); else root.setAttribute("data-theme", was[0]);
+          if (was[1] === null) root.removeAttribute("data-palette"); else root.setAttribute("data-palette", was[1]);
+          return colour;
+        }, [theme, palette] as const);
+        assert.equal(await mergedColour("dark", null), "rgb(171, 125, 248)", "GitHub's dark merged purple");
+        assert.equal(await mergedColour("light", "codex"), "rgb(130, 80, 223)", "GitHub's light merged purple, whatever the palette");
         assert.equal(await sessionPillRow.getByRole("button", { name: "Branch Changes: 2 files, 30 added, 3 removed" }).count(), 1, "the changes pill reads as VS Code's");
         await fits("the session pills");
         if (shots) { await page.waitForTimeout(400); await page.screenshot({ path: join(shots, "zac207-pills-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
