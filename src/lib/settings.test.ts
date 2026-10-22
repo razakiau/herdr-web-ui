@@ -120,6 +120,10 @@ describe("saved theme migration", () => {
   });
 });
 
+it("shares the voice settings with the account, so a new install of the app keeps them (2026-10-22)", () => {
+  for (const key of ["voiceInput", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+});
+
 it("steps endless animations until this account turns smooth motion on", () => {
   expect(DEFAULT_SETTINGS.smoothMotion).toBe(false);
   expect(sanitizeSettings({ smoothMotion: "yes" }).smoothMotion).toBe(false);
