@@ -1002,6 +1002,7 @@ export const JA: Record<string, string> = {
   "Sound": "サウンド",
   "While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.": "アプリのタブを開いている間は、これらの通知ごとに音を鳴らします。集中モードやおやすみモードで通知が消音されていても聞こえます。",
   "Open pane": "ペインを開く",
+  "Open chat": "チャットを開く",
   "Quick replies": "クイック返信",
   "One-tap messages above the message box, on this device. Each is sent as if typed: queued while the agent works, an answer when a question is open.": "メッセージ入力欄の上に表示されるワンタップのメッセージで、このデバイスに適用されます。入力したときと同じように送信され、エージェントの作業中はキューに入り、質問が開いているときは回答になります。",
   "Quick reply {number}": "クイック返信 {number}",

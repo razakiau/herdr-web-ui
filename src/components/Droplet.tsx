@@ -30,7 +30,7 @@ function reducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
-export function Droplet({ onOpen }: { onOpen: (machineId: string, paneId: string) => void }) {
+export function Droplet({ onOpen }: { onOpen: (machineId: string, paneId: string, session?: string) => void }) {
   const t = useT();
   const [current, setCurrent] = useState<QueuedDroplet | null>(null);
   const [phase, setPhase] = useState<Phase>("in");
@@ -159,7 +159,7 @@ export function Droplet({ onOpen }: { onOpen: (machineId: string, paneId: string
   };
 
   if (!current) return <div ref={probe} className="droplet-probe" aria-hidden="true" />;
-  const what = t(current.kind === "blocked" ? "Needs input" : current.kind === "done" ? "Finished" : "terminal ended");
+  const what = t(current.kind === "blocked" ? "Needs input" : current.kind === "done" ? "Finished" : current.kind === "error" ? "Error" : "terminal ended");
   const detail = current.machine ? `${current.machine} · ${what}` : what;
   return (
     <div className="droplet" role="status" aria-live="polite" data-phase={phase} data-kind={current.kind} data-dragging={drag !== 0 ? "" : undefined} style={{ "--droplet-drag": `${drag}px`, "--droplet-top": `${top ?? 12}px`, ...(fit === null ? {} : { "--droplet-fit": `${fit}px` }), visibility: top === null ? "hidden" : "visible" } as CSSProperties} key={current.id}>
@@ -178,14 +178,14 @@ export function Droplet({ onOpen }: { onOpen: (machineId: string, paneId: string
         type="button"
         ref={card}
         className="droplet-card"
-        aria-label={`${current.title}, ${detail}. ${t("Open pane")}`}
+        aria-label={`${current.title}, ${detail}. ${t(current.session !== undefined ? "Open chat" : "Open pane")}`}
         onClick={() => {
           if (dragged.current) {
             dragged.current = false;
             return;
           }
           if (phaseRef.current === "out") return;
-          onOpen(current.machineId, current.paneId);
+          onOpen(current.machineId, current.paneId, current.session);
           leave();
         }}
         onPointerDown={onPointerDown}

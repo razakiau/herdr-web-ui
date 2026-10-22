@@ -1000,6 +1000,7 @@ export const KO: Record<string, string> = {
   "Sound": "소리",
   "While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.": "앱 탭을 열어 둔 동안에는 이 알림마다 소리를 냅니다. 집중 모드나 방해 금지 모드로 알림이 꺼져 있어도 들립니다.",
   "Open pane": "패널 열기",
+  "Open chat": "채팅 열기",
   "Quick replies": "빠른 답장",
   "One-tap messages above the message box, on this device. Each is sent as if typed: queued while the agent works, an answer when a question is open.": "메시지 입력창 위에 놓이는 한 번 탭 메시지로, 이 기기에 적용됩니다. 직접 입력한 것처럼 보내므로 에이전트가 작업 중이면 대기열에 들어가고, 질문이 열려 있으면 답으로 쓰입니다.",
   "Quick reply {number}": "빠른 답장 {number}",
