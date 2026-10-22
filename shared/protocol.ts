@@ -481,6 +481,14 @@ export interface SkillActivity {
   path?: string;
 }
 
+/** What an edit did to its file: changed it, made it, removed it, or moved it (`from` names where it was). */
+export type FileEditKind = "edit" | "create" | "delete" | "rename";
+/**
+ * One file a tool call changed. A host chat's carries its `kind`, a rename's `from`, and `ref`
+ * (`<toolCallId>:<index>`) for GET /api/host-chats/edit-diff; a pane's has the counts alone.
+ */
+export interface ToolEdit { path: string; added: number; removed: number; kind?: FileEditKind; from?: string; ref?: string }
+
 export type ConversationPart =
   | { kind: "text"; text: string; phase?: "commentary" | "final_answer" }
   /** the agent's reasoning block; the client folds it and shows it only on request */
@@ -503,7 +511,7 @@ export type ConversationPart =
     /** a terminal call: the command it ran, and its exit code once it exited (non-zero sets `error`) */
     command?: string; exit_code?: number;
     /** the files the call changed, with the lines it added and removed in each */
-    edits?: { path: string; added: number; removed: number }[];
+    edits?: ToolEdit[];
     /** a host chat's: why the agent makes the call (AHP `intention`), shown before a command */
     intention?: string;
     /**

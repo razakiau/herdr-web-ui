@@ -2166,3 +2166,30 @@ button.question-summary-answer { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .chat-turn.is-checkpoint-faded { transition: none; }
 }
+
+/* a host call's changed files (VS Code's file chips under an edit): each opens its diff under it */
+.edit-chips { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-1) 0 0 calc(1em + var(--space-2)); min-width: 0; }
+.edit-chip-wrap { min-width: 0; }
+.edit-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  max-width: 100%; min-height: 1.75rem; padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border); border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-strong); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+}
+.edit-chip:hover, .edit-chip[aria-expanded="true"] { border-color: var(--text-dim); background: var(--bg-hover); }
+.edit-chip > svg:first-child { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.edit-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.edit-chip.is-delete .edit-chip-name { text-decoration: line-through; color: var(--text-dim); }
+.edit-chip-tag { flex: none; color: var(--text-dim); }
+.edit-chip-lines { flex: none; display: inline-flex; gap: 0.35em; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.edit-chip-caret { flex: none; width: 0.9em; height: 0.9em; color: var(--text-dim); transition: transform var(--dur-fast, 120ms) ease; }
+.edit-chip[aria-expanded="true"] .edit-chip-caret { transform: rotate(180deg); }
+.edit-diff { margin-top: var(--space-1); border: var(--hairline) solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.edit-diff-open { display: inline-flex; align-items: center; gap: var(--space-1); margin: var(--space-1); font-size: var(--fs-xs); }
+.edit-diff-open svg { width: 0.9em; height: 0.9em; }
+.edit-diff-note { margin: var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); }
+.edit-diff-lines { margin: 0; padding: var(--space-1) 0; font-size: var(--fs-xs); max-height: 24rem; overflow: auto; }
+.edit-diff-lines > span { display: block; padding: 0 var(--space-2); min-width: max-content; }
+.edit-diff-lines .chat-diff-add { background: color-mix(in srgb, var(--status-done) 12%, transparent); }
+.edit-diff-lines .chat-diff-del { background: color-mix(in srgb, var(--status-blocked) 12%, transparent); }
+.chat-diff-fold { color: var(--text-dim); font-style: italic; background: var(--bg-hover); }

@@ -23,11 +23,13 @@ import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
   agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
-  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, type HostChoice,
+  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
 import { Composer, type SentAttachment } from "./Composer.tsx";
 import { HostChatStatus } from "./HostChatStatus.tsx";
+import { HostSessionPills } from "./HostSessionPills.tsx";
+import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
@@ -43,6 +45,8 @@ export interface HostChatViewProps {
   onOpenChat?(session: string): void;
   /** set while the chat is a look (opened from Agents, All agents or an alert, not a tab): keeps it open as a tab */
   look?(): void;
+  /** opens a file of this PC in herdr's viewer: an edit's file, a session's file artifact */
+  onOpenFile?(path: string): void;
 }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
@@ -93,7 +97,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
-export function HostChatView({ machineId, session, onTitle, onOpenChat, look }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle, onOpenChat, look, onOpenFile }: HostChatViewProps) {
   const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
@@ -299,8 +303,10 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look }: 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
     <div className="terminal-surface">
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
-      <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}
-        connected ended={false} agent="copilot" agentStatus={status} checkpoints={checkpoints} />
+      <OpenFileContext.Provider value={onOpenFile ?? null}>
+        <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent}
+          connected ended={false} agent="copilot" agentStatus={status} checkpoints={checkpoints} />
+      </OpenFileContext.Provider>
     </div>
     <div className="prompt-dock" aria-live="polite">
       {chat?.prompt && <HostPromptCard key={chat.prompt.id} machineId={machineId} session={session} prompt={chat.prompt} onPromptChanged={reread} onAnswered={() => {
@@ -323,6 +329,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look }: 
       await redoHostCheckpoint(machineId, session);
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
+    {/* a question or approval takes the input's place, as in VS Code: the pills wait until it is answered */}
+    {!chat?.prompt && <HostSessionPills machineId={machineId} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
+      onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }} />}
     <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}

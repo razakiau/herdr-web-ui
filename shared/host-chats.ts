@@ -2,7 +2,7 @@
  * The host chats contract between a bridge and the browser: types only, so the client can
  * import it without pulling in the server's AHP client.
  */
-import type { ConversationTurn, InteractivePrompt } from "./protocol.ts";
+import type { ConversationTurn, InteractivePrompt, FileEditKind } from "./protocol.ts";
 
 /** Where a bridge stands with its PC's agent host. */
 export type AgentHostState =
@@ -81,6 +81,10 @@ export interface HostChatRead {
   commands: HostCommand[];
   /** work still running for the chat (AHP backgroundWork): subagents and shell commands */
   background: { subagents: number; commands: number };
+  /** that work, each shell and subagent, for its list (absent from a bridge before ZAC-207) */
+  work?: HostBackgroundWork[];
+  /** what the session produced and referred to, newest first, as VS Code's pills read it (absent from a bridge before ZAC-207) */
+  artifacts?: HostArtifact[];
   /** the running turn's tool calls waiting for a yes or no */
   confirmations: number;
   /** the context window as Copilot reports it (copilot.usageInfo); null when it says nothing usable */
@@ -148,3 +152,17 @@ export interface HostCheckpoint {
   turn: string;
   files: { path: string; added: number; removed: number }[];
 }
+
+/**
+ * GET /api/host-chats/edit-diff?session&ref: one edit's file as it was before the call and after
+ * it (null: no such side, a created or deleted file). `unavailable`: the host no longer holds a
+ * side; `binary`: a side is not text, or too big to draw. Either way both sides are null.
+ */
+export interface HostEditDiff { path: string; kind: FileEditKind; before: string | null; after: string | null; unavailable?: true; binary?: true }
+
+/** What VS Code's agent host records a session produced (`agentHost/sessionArtifacts`), by kind. */
+export type HostArtifactType = "pullRequest" | "issue" | "commit" | "website" | "file" | "resource";
+/** One artifact (`isArtifact`) or reference of a session, as the host recorded it. */
+export interface HostArtifact { id: string; type: HostArtifactType; label: string; isArtifact: boolean; link?: string; uri?: string; commitHash?: string; isGitHub?: boolean }
+/** One piece of work still running for a chat (AHP backgroundWork): a shell or a subagent; `stoppable`: the host takes vscode/stopBackgroundWork for it. */
+export interface HostBackgroundWork { id: string; kind: "shell" | "subagent"; label: string; command?: string; started: string; stoppable: boolean }

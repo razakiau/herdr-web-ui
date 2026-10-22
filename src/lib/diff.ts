@@ -36,3 +36,30 @@ export function lineDiff(before: string, after: string): DiffLine[] {
   while (j < b.length) lines.push({ kind: "add", text: b[j++]! });
   return lines;
 }
+
+/** A diff to read on a phone: its lines, with runs of unchanged ones folded into a count. */
+export type FoldedLine = DiffLine | { kind: "fold"; count: number };
+
+/**
+ * The changes and `context` unchanged lines each side of them, as VS Code's inline diff shows a
+ * hunk; a longer run of unchanged lines is one fold. A fold never hides a single line: it would
+ * take the room of the line it hides.
+ */
+export function foldContext(lines: DiffLine[], context: number): FoldedLine[] {
+  const keep = new Uint8Array(lines.length);
+  lines.forEach((line, at) => {
+    if (line.kind === "same") return;
+    for (let near = Math.max(0, at - context); near <= Math.min(lines.length - 1, at + context); near++) keep[near] = 1;
+  });
+  const out: FoldedLine[] = [];
+  let at = 0;
+  while (at < lines.length) {
+    if (keep[at]) { out.push(lines[at]!); at++; continue; }
+    let end = at;
+    while (end < lines.length && !keep[end]) end++;
+    if (end - at === 1) out.push(lines[at]!);
+    else out.push({ kind: "fold", count: end - at });
+    at = end;
+  }
+  return out;
+}

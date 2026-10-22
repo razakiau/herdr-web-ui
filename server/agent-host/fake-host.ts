@@ -299,6 +299,11 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         ok({});
         return;
       }
+      // VS Code's own extension request (agentHostMain _handleStopBackgroundWorkRequest): a shell stops
+      case "vscode/stopBackgroundWork": {
+        ok({ stopped: true });
+        return;
+      }
       default:
         fail(-32601, `method not found: ${method}`);
     }

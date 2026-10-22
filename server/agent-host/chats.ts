@@ -45,7 +45,8 @@ import {
   type ToolResultTerminalContent,
   type Turn,
 } from "@microsoft/agent-host-protocol";
-import type { ConversationPart, ConversationTurn, InteractivePromptOption } from "../../shared/protocol.ts";
+import { artifactsOf, workOf } from "./artifacts.ts";
+import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
@@ -70,7 +71,7 @@ export function statusOf(status: number): Status {
   return "idle";
 }
 
-function pathOf(uri: string | undefined): string | null {
+export function pathOf(uri: string | undefined): string | null {
   if (!uri?.startsWith("file:")) return null;
   try { return fileURLToPath(uri); } catch { return null; }
 }
@@ -170,6 +171,30 @@ function imagesOf(tool: ToolCallState): ToolResultEmbeddedResourceContent[] {
 function editOf(edit: ToolResultFileEditContent): { path: string; added: number; removed: number } {
   const uri = edit.after?.uri ?? edit.before?.uri ?? "";
   return { path: pathOf(uri) ?? uri, added: edit.diff?.added ?? 0, removed: edit.diff?.removed ?? 0 };
+}
+
+/** What an edit did to its file, as VS Code's snapshot controller reads the two sides. */
+export function editKind(edit: ToolResultFileEditContent): FileEditKind {
+  if (edit.before === undefined) return "create";
+  if (edit.after === undefined) return "delete";
+  return edit.before.uri === edit.after.uri ? "edit" : "rename";
+}
+
+/** One edit as a tool part lists it: its file, lines, kind, where a rename came from, and the ref its diff is read by. */
+function shownEdit(edit: ToolResultFileEditContent, ref: string): ToolEdit {
+  const kind = editKind(edit);
+  const from = kind === "rename" ? pathOf(edit.before!.uri) ?? edit.before!.uri : null;
+  return { ...editOf(edit), kind, ...(from !== null ? { from } : {}), ref };
+}
+
+/** The edit a part's ref (`<toolCallId>:<index>`, the index among the call's edits) names; null when the chat holds none. */
+export function fileEditOf(chat: ChatState, ref: string): ToolResultFileEditContent | null {
+  const at = ref.lastIndexOf(":");
+  const digits = at < 0 ? "" : ref.slice(at + 1);
+  if (!/^(?:0|[1-9]\d*)$/.test(digits)) return null;
+  const tool = toolCallOf(chat, ref.slice(0, at));
+  const edits = tool ? contentOf(tool).filter((item): item is ToolResultFileEditContent => item.type === ToolResultContentType.FileEdit) : [];
+  return edits[Number(digits)] ?? null;
 }
 
 /** A turn's file edits in the order its calls made them (VS Code's checkpoint is these). */
@@ -382,7 +407,8 @@ function toolPart(tool: ToolCallState, turn: TurnRead): ConversationPart {
   const terminal = content.find((item): item is ToolResultTerminalContent => item.type === ToolResultContentType.Terminal);
   const exitCode = terminal?.result?.exitCode;
   const images = imagesOf(tool).map((image, index) => ({ media_type: image.contentType, ref: `${tool.toolCallId}:${index}` }));
-  const edits = content.flatMap((item) => (item.type === ToolResultContentType.FileEdit ? [editOf(item)] : []));
+  const edits = content.filter((item): item is ToolResultFileEditContent => item.type === ToolResultContentType.FileEdit)
+    .map((item, index) => shownEdit(item, `${tool.toolCallId}:${index}`));
   const part: Extract<ConversationPart, { kind: "tool" }> = {
     kind: "tool",
     name: tool.displayName,
@@ -917,6 +943,8 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     busy: chat.activeTurn !== undefined,
     commands: withSkills(commandsFrom(context?.session?.()), context?.skills?.() ?? []),
     background: backgroundOf(chat),
+    work: workOf((chat as { backgroundWork?: readonly unknown[] }).backgroundWork),
+    artifacts: artifactsOf((context?.session?.() as { _meta?: Record<string, unknown> } | undefined)?._meta),
     confirmations: pendingToolCalls(chat).length,
     // the running turn may have no usage yet: the newest turn that reported one
     context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null), context?.modelWindow),
@@ -936,7 +964,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
-    read.background, read.confirmations, read.context, read.restored,
+    read.background, read.work, read.artifacts, read.confirmations, read.context, read.restored,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];
