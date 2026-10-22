@@ -45,6 +45,19 @@ export function tabAfterClose(pc: PcHostWorkspaces, session: string): string | n
   return at < 0 ? null : tabs[at + 1] ?? tabs[at - 1] ?? null;
 }
 
+/**
+ * What a PC with no herdr pane opens on its own: the first tab of its first agent host workspace
+ * that has one, in the sidebar's order (the order they were opened when none is saved); null when
+ * no workspace has a tab.
+ */
+export function firstHostTab(pc: PcHostWorkspaces | undefined): string | null {
+  if (!pc) return null;
+  const rank = new Map((pc.order ?? []).map((key, at) => [key, at] as const));
+  const place = (each: HostWorkspace): number => rank.get(folderKey(each.cwd)) ?? Number.MAX_SAFE_INTEGER;
+  const sorted = pc.open.map((each, at) => ({ each, at })).sort((a, b) => place(a.each) - place(b.each) || a.at - b.at);
+  return sorted.find(({ each }) => each.tabs.length > 0)?.each.tabs[0] ?? null;
+}
+
 const withOpen = (pc: PcHostWorkspaces, open: HostWorkspace[]): PcHostWorkspaces => ({ ...pc, open });
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { HostPc } from "./hostChats.ts";
-import { fitHostWorkspaces, folderFace, folderTree, HOST_WORKSPACES_BUDGET, folderKey, moveBlock, type MergedRow, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
+import { fitHostWorkspaces, folderFace, folderTree, HOST_WORKSPACES_BUDGET, folderKey, moveBlock, type MergedRow, mergedKeys, mergedOrder, moveInMerged, withOrder, workspaceKey, hostFolders, isTabOpen, firstHostTab, tabAfterClose, upkeepPc, shouldSeed, currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces, closeTab, closeWorkspace, isOpenFolder, openTab, openWorkspace, prunePc, sanitizeHostWorkspaces, seedPc, tabsOf, type PcHostWorkspaces } from "./hostWorkspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const MIN = 60_000;
@@ -131,6 +131,16 @@ describe("agent host workspaces", () => {
     expect(isTabOpen(pc, "y")).toBe(true);
     expect(isTabOpen(pc, "q")).toBe(false);
     expect(isTabOpen(undefined, "y")).toBe(false);
+  });
+
+  it("a PC with no panes opens its first agent host workspace's first tab, in sidebar order", () => {
+    const pc: PcHostWorkspaces = { open: [{ cwd: "/a", tabs: ["x", "y"] }, { cwd: "/b", tabs: ["q"] }], order: ["f:/b", "f:/a"] };
+    expect(firstHostTab(pc)).toBe("q");
+    expect(firstHostTab({ open: [{ cwd: "/a", tabs: ["x"] }, { cwd: "/b", tabs: ["q"] }] })).toBe("x");
+    // a workspace with no tabs is passed over; none at all opens nothing
+    expect(firstHostTab({ open: [{ cwd: "/a", tabs: [] }, { cwd: "/b", tabs: ["q"] }] })).toBe("q");
+    expect(firstHostTab({ open: [] })).toBeNull();
+    expect(firstHostTab(undefined)).toBeNull();
   });
 
   it("closing_the_tab_on_screen_moves_to_its_neighbour", () => {
