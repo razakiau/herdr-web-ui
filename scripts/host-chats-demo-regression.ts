@@ -1141,7 +1141,7 @@ try {
           const host = window as unknown as { hostState: { work: unknown[] }; pushHostTurn(text: string): void };
           host.hostState.work = [
             { id: "shell:1", kind: "shell", label: "FICTIONAL dev server", command: "bun run dev", started: "2026-10-22T10:00:00.000Z", stoppable: true },
-            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false, chat: SUB },
+            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false, chat: "ahp-chat://subagent/FICTIONALsession/c-sub", toolCall: "c-sub" },
           ];
           host.pushHostTurn("FICTIONAL work started");
         }, SUB);

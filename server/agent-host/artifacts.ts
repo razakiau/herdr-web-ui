@@ -37,6 +37,18 @@ export function artifactsOf(meta: Record<string, unknown> | undefined): HostArti
   return list.flatMap((each) => { const artifact = artifactOf(each); return artifact ? [artifact] : []; }).reverse();
 }
 
+/**
+ * The tool call a running subagent's work names. VS Code 1.142's host gives the work entry
+ * `ahp-chat://subagent/<session, base64url>/<toolCallId, encoded>` (its `br`), while the transcript's
+ * subagent content names the same chat `<session>/subagent/<toolCallId>` (its `kp`): the URIs never
+ * match, the tool call id is what both share. Null for any other shape.
+ */
+function toolCallOfWork(chat: string): string | null {
+  const match = /^ahp-chat:\/\/subagent\/[^/]+\/([^/]+)$/.exec(chat);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]!); } catch { return null; }
+}
+
 /** The chat's background work still running: each shell (a blank label is its command) and subagent. */
 export function workOf(work: readonly unknown[] | undefined): HostBackgroundWork[] {
   return (work ?? []).flatMap((each): HostBackgroundWork[] => {
@@ -47,8 +59,12 @@ export function workOf(work: readonly unknown[] | undefined): HostBackgroundWork
       const stoppable = isRecord(each["_meta"]) && each["_meta"][STOPPABLE_META] === true;
       return [{ id: each["id"], kind: "shell", label: label.trim() || command, command, started: each["startedAt"], stoppable }];
     }
-    // its chat: the subagent row of the parent's transcript a tap on it goes to
-    if (each["kind"] === "subagent") return [{ id: each["id"], kind: "subagent", label, started: each["startedAt"], stoppable: false, ...(typeof each["chat"] === "string" ? { chat: each["chat"] } : {}) }];
+    // its chat, and the tool call that started it: the subagent row of the parent's transcript a tap goes to
+    if (each["kind"] === "subagent") {
+      const chat = typeof each["chat"] === "string" ? each["chat"] : undefined;
+      const toolCall = chat === undefined ? null : toolCallOfWork(chat);
+      return [{ id: each["id"], kind: "subagent", label, started: each["startedAt"], stoppable: false, ...(chat !== undefined ? { chat } : {}), ...(toolCall !== null ? { toolCall } : {}) }];
+    }
     return [];
   });
 }
