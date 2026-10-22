@@ -67,11 +67,13 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
     return () => controller.abort();
   }, [t]);
   const [gateway, setGateway] = useState<OmniRouteStatus | null>(null);
+  // with plan limits off nothing shows the gateway, and nothing about usage is asked for
   useEffect(() => {
+    if (!settings.showUsage) return;
     const controller = new AbortController();
     void fetchOmniRouteStatus(controller.signal).then(setGateway).catch(() => { /* an older server has no gateway */ });
     return () => controller.abort();
-  }, [usage.report]);
+  }, [usage.report, settings.showUsage]);
   const reported = usage.report?.providers ?? [];
   // an OmniRoute provider not chosen below stays out of the accounts: the gateway may report dozens
   const providers = reported.filter((usage) => !viaOmniRoute(usage) || settings.usageShown.includes(usage.id));
