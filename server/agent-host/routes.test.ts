@@ -1516,6 +1516,61 @@ describe("host chat image and tool-output routes", () => {
   });
 });
 
+describe("host chat changes: VS Code's Changes pill (the chat's changeset)", () => {
+  const CS = "ahp-folder-changeset://FICTIONAL/changeset/branch";
+  const A = "file:///tmp/fictional-repo/a.ts", B = "file:///tmp/fictional-repo/b.ts";
+  const blob = (name: string) => `git-blob:/tmp/fictional-repo/${name}?FICTIONAL`;
+  const catalogue = [
+    { label: "This Turn", uriTemplate: "ahp-chat://FICTIONAL/changeset/turn/{turnId}", changeKind: "turn" },
+    { label: "Branch Changes", uriTemplate: CS, changeKind: "branch" },
+    { label: "Uncommitted Changes", uriTemplate: "ahp-chat://FICTIONAL/changeset/uncommitted", changeKind: "uncommitted" },
+  ];
+  const branch = { status: "ready", files: [
+    { id: "f-a", edit: { before: { uri: A, content: { uri: blob("a") } }, after: { uri: A, content: { uri: A } }, diff: { added: 4, removed: 1 } } },
+    { id: "f-b", edit: { after: { uri: B, content: { uri: B } }, diff: { added: 2 } } },
+  ] };
+  const changing = (state: unknown = branch, changesets: unknown = catalogue) => rig({
+    chats: { [chatUri(1)]: chatState(1, { changesets }), [chatUri(2)]: chatState(2) },
+    changesets: { [CS]: state as never },
+    files: { [blob("a")]: "old", [A]: "new", [B]: "made" },
+  });
+  const changes = (r: Rig, n = 1) => call(r, `/api/host-chats/changes?session=${encodeURIComponent(sessionUri(n))}`);
+
+  it("sums the first changeset without a template, as VS Code picks it, and lets go of its channel", async () => {
+    const r = await changing();
+    expect(await changes(r)).toEqual({ status: 200, json: { changes: {
+      label: "Branch Changes", status: "ready", added: 6, removed: 1,
+      files: [{ id: "f-a", path: "/tmp/fictional-repo/a.ts", kind: "edit", added: 4, removed: 1 }, { id: "f-b", path: "/tmp/fictional-repo/b.ts", kind: "create", added: 2, removed: 0 }],
+    } } });
+    expect(r.fake.requests.filter((each) => each.method === "subscribe" && (each.params as { channel: string }).channel === CS).length).toBe(1);
+    await until("the unsubscribe", () => r.fake.requests.some((each) => each.method === "unsubscribe" && (each.params as { channel: string }).channel === CS));
+  });
+
+  it("a session-kind changeset wins over the first one, as VS Code's default", async () => {
+    const SESSION = "ahp-chat://FICTIONAL/changeset/session";
+    const r = await rig({
+      chats: { [chatUri(1)]: chatState(1, { changesets: [...catalogue, { label: "Session Changes", uriTemplate: SESSION, changeKind: "session" }] }), [chatUri(2)]: chatState(2) },
+      changesets: { [SESSION]: { status: "ready", files: [] } as never, [CS]: branch as never },
+    });
+    expect((await changes(r)).json.changes).toMatchObject({ label: "Session Changes", added: 0, removed: 0, files: [] });
+  });
+
+  it("no changeset is no changes; a changeset the host cannot give is none either", async () => {
+    const none = await changing(branch, []);
+    expect(await changes(none)).toEqual({ status: 200, json: { changes: null } });
+    const lost = await rig({ chats: { [chatUri(1)]: chatState(1, { changesets: catalogue }), [chatUri(2)]: chatState(2) } });
+    expect(await changes(lost)).toEqual({ status: 200, json: { changes: null } });
+  });
+
+  it("a changed file's diff is its two sides, by the file's id", async () => {
+    const r = await changing();
+    const diff = (id: string) => call(r, `/api/host-chats/changes/diff?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(id)}`);
+    expect(await diff("f-a")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: "old", after: "new" } });
+    expect(await diff("f-b")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/b.ts", kind: "create", before: null, after: "made" } });
+    expect((await diff("f-z")).status).toBe(404);
+  });
+});
+
 describe("host chat checkpoints: Restore Checkpoint, Start Over and Redo (VS Code's)", () => {
   const A = "file:///tmp/fictional-repo/a.ts", B = "file:///tmp/fictional-repo/b.ts";
   const ref = (name: string) => `session-db:/tmp/fictional-repo/${name}?FICTIONAL`;

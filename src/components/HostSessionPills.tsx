@@ -1,25 +1,28 @@
 /**
- * A host chat's session pills, above its composer as VS Code puts them (agentHostSessionInputPills):
- * each GitHub PR and issue the session produced, in its state's colour; "N artifacts", whose sheet
- * lists the rest by kind and the references after them; and "N running" for the chat's background
- * shells and subagents, a shell stoppable where the host allows it. Read-only otherwise.
+ * A host chat's session pills, above its composer as VS Code puts them (agentHostSessionInputPills,
+ * 1.142): one pill per kind, in VS Code's order: the chat's Changes ("N files +A −R", its files and
+ * their diffs), Pull Requests, Issues, Artifacts, References, Subagents and Shells. A kind with one
+ * entry shows it inline (a PR as `#12` in its state's colour, a file by its name) and a tap opens
+ * it; with several, the count, in the group's most pressing state, and a tap opens their sheet.
+ * A shell is stoppable where the host allows it, a subagent taken to its row. Read-only otherwise.
  */
-import { useEffect, useMemo, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
-  Bot, ChevronRight, CircleCheck, CircleDot, CircleSlash, Copy, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
+  Bot, ChevronRight, CircleCheck, CircleDot, CircleSlash, Copy, FileDiff, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
   GitPullRequestDraft, Globe, Link, Package, SquareTerminal, X, type LucideProps,
 } from "lucide-react";
 
-import type { HostArtifact, HostArtifactType, HostBackgroundWork } from "../../shared/host-chats.ts";
-import { artifactLook, pathOfFileUri, sessionPills, shortLabel, type ArtifactIcon, type ReferenceState } from "../lib/artifacts.ts";
+import type { HostArtifact, HostArtifactType, HostBackgroundWork, HostChangedFile, HostChanges, HostEditDiff } from "../../shared/host-chats.ts";
+import { artifactLook, groupState, pathOfFileUri, sessionPills, shortLabel, type ArtifactIcon, type ReferenceState } from "../lib/artifacts.ts";
 import { copyText } from "../lib/clipboard.ts";
 
 import { useT } from "../lib/i18n.ts";
-import { fetchReferenceStates } from "../lib/hostChats.ts";
+import { fetchHostChangeDiff, fetchHostChanges, fetchReferenceStates } from "../lib/hostChats.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
+import { DiffBody } from "./ChatView.tsx";
 import { FileGlyph } from "./FileGlyph.tsx";
 
 const ICONS: Record<ArtifactIcon, ComponentType<LucideProps>> = {
@@ -52,15 +55,23 @@ export interface HostSessionPillsProps {
   onStop(id: string): Promise<void>;
   /** takes the reader to a running subagent's row in the transcript; false when no loaded turn holds it */
   onRevealSubagent?(chat: string): boolean;
-  /** where PR and issue states are asked; absent: every one shows its kind's neutral icon */
+  /** where PR and issue states and the chat's changes are asked; absent: neither */
   machineId?: string;
+  /** the chat whose changeset the Changes pill counts */
+  session?: string;
+  /** changes when the changes may have: a turn ended, another began (the count is read again) */
+  changesKey?: string;
 }
 
-export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId }: HostSessionPillsProps) {
+type Sheet = "changes" | "pullRequests" | "issues" | "artifacts" | "references" | "subagents" | "shells";
+
+export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId, session, changesKey }: HostSessionPillsProps) {
   const t = useT();
   const pills = useMemo(() => sessionPills(artifacts), [artifacts]);
-  const [sheet, setSheet] = useState<"artifacts" | "work" | null>(null);
+  const [sheet, setSheet] = useState<Sheet | null>(null);
   const states = useReferenceStates(machineId, [...pills.pullRequests, ...pills.issues, ...pills.sections.flatMap((section) => section.items)]);
+  const changes = useHostChanges(machineId, session, changesKey);
+  const close = useCallback(() => setSheet(null), []);
   const open = (artifact: HostArtifact): void => {
     if (artifact.type === "file" && artifact.uri) {
       const path = pathOfFileUri(artifact.uri);
@@ -70,30 +81,65 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onReveal
     if (isWeb(link)) { window.open(link, "_blank", "noopener,noreferrer"); return; }
     if (artifact.commitHash) void copyText(artifact.commitHash);
   };
-  if (pills.pullRequests.length + pills.issues.length + pills.count + pills.references.length + work.length === 0) return null;
-  const shells = work.filter((each) => each.kind === "shell").length;
-  const RunIcon = shells > 0 ? SquareTerminal : Bot;
+  const others = pills.sections.flatMap((section) => section.items);
+  const subagents = work.filter((each) => each.kind === "subagent");
+  const shells = work.filter((each) => each.kind === "shell");
+  const shownChanges = changes !== null && changes.files.length > 0 ? changes : null;
+  // a sheet whose last entry went (the shell stopped, the subagent ended) closes with its pill
+  const emptied = (sheet === "shells" && shells.length === 0) || (sheet === "subagents" && subagents.length === 0) || (sheet === "changes" && shownChanges === null);
+  useEffect(() => { if (emptied) setSheet(null); }, [emptied]);
+  if (shownChanges === null && pills.pullRequests.length + pills.issues.length + others.length + pills.references.length + work.length === 0) return null;
+  const sheetPill = (kind: Sheet, icon: React.ReactNode, label: string, extra: { running?: boolean; aria?: string; title?: string; children?: React.ReactNode } = {}) =>
+    <button key={kind} type="button" className={`session-pill${extra.running ? " is-running" : ""}`} aria-haspopup="dialog" aria-expanded={sheet === kind}
+      {...(extra.aria ? { "aria-label": extra.aria } : {})} title={extra.title ?? label} onClick={() => setSheet(kind)}>
+      {icon}
+      <span className="session-pill-label">{label}</span>
+      {extra.children}
+    </button>;
+  // one entry of a kind is the pill itself: a tap opens it, as VS Code's single-entry pill does
+  const group = (kind: "pullRequests" | "issues" | "artifacts" | "references", items: HostArtifact[], many: string) => {
+    if (items.length === 0) return null;
+    if (items.length === 1) {
+      const artifact = items[0]!;
+      const short = kind === "pullRequests" || kind === "issues" ? shortLabel(artifact) : artifact.label;
+      return <button key={kind} type="button" className="session-pill" title={artifact.label} onClick={() => open(artifact)}>
+        <ArtifactGlyph artifact={artifact} state={artifact.link ? states[artifact.link] : undefined} />
+        <span className="session-pill-label">{short}</span>
+      </button>;
+    }
+    const first = items[0]!;
+    const state = kind === "pullRequests" || kind === "issues" ? groupState(items.map((each) => states[each.link!] ?? "unknown")) : undefined;
+    const icon = kind === "artifacts" ? <Package className="session-pill-icon" aria-hidden="true" />
+      : kind === "references" ? <Link className="session-pill-icon" aria-hidden="true" />
+        : <ArtifactGlyph artifact={first} state={state} />;
+    return sheetPill(kind, icon, many);
+  };
   return <div className="session-pills" role="toolbar" aria-label={t("Session")}>
-    {[...pills.pullRequests, ...pills.issues].map((artifact) => <button key={artifact.id} type="button" className="session-pill" title={artifact.label} onClick={() => open(artifact)}>
-      <ArtifactGlyph artifact={artifact} state={states[artifact.link!]} />
-      <span className="session-pill-label">{shortLabel(artifact)}</span>
-    </button>)}
-    {(pills.count > 0 || pills.references.length > 0) && <button type="button" className="session-pill" aria-haspopup="dialog" aria-expanded={sheet === "artifacts"} onClick={() => setSheet("artifacts")}>
-      <Package className="session-pill-icon" aria-hidden="true" />
-      <span className="session-pill-label">{pills.count > 0
-        ? t(pills.count === 1 ? "1 artifact" : "{n} artifacts", { n: pills.count })
-        : t(pills.references.length === 1 ? "1 reference" : "{n} references", { n: pills.references.length })}</span>
-    </button>}
-    {work.length > 0 && <button type="button" className="session-pill is-running" aria-haspopup="dialog" aria-expanded={sheet === "work"} onClick={() => setSheet("work")}>
-      <RunIcon className="session-pill-icon" aria-hidden="true" />
-      <span className="session-pill-label">{t("{n} running", { n: work.length })}</span>
-    </button>}
-    {sheet === "artifacts" && <PillSheet title={t("Artifacts")} onClose={() => setSheet(null)}>
-      {pills.sections.map((section) => <ArtifactList key={section.type} title={t(SECTION_TITLE[section.type])} items={section.items} states={states} onOpen={open} />)}
-      {pills.references.length > 0 && <ArtifactList title={t("References")} items={pills.references} states={states} onOpen={open} />}
+    {shownChanges !== null && sheetPill("changes", <FileDiff className="session-pill-icon" aria-hidden="true" />,
+      t(shownChanges.files.length === 1 ? "1 file" : "{n} files", { n: shownChanges.files.length }), {
+        aria: t("{label}: {n} files, {added} added, {removed} removed", { label: shownChanges.label, n: shownChanges.files.length, added: shownChanges.added, removed: shownChanges.removed }),
+        title: shownChanges.label,
+        children: <Stat added={shownChanges.added} removed={shownChanges.removed} />,
+      })}
+    {group("pullRequests", pills.pullRequests, t("{n} pull requests", { n: pills.pullRequests.length }))}
+    {group("issues", pills.issues, t("{n} issues", { n: pills.issues.length }))}
+    {group("artifacts", others, t("{n} artifacts", { n: others.length }))}
+    {group("references", pills.references, t("{n} references", { n: pills.references.length }))}
+    {subagents.length > 0 && sheetPill("subagents", <Bot className="session-pill-icon" aria-hidden="true" />,
+      t(subagents.length === 1 ? "1 subagent" : "{n} subagents", { n: subagents.length }), { running: true })}
+    {shells.length > 0 && sheetPill("shells", <SquareTerminal className="session-pill-icon" aria-hidden="true" />,
+      t(shells.length === 1 ? "1 shell" : "{n} shells", { n: shells.length }), { running: true })}
+    {sheet === "changes" && shownChanges !== null && machineId !== undefined && session !== undefined && <PillSheet title={shownChanges.label} onClose={close}>
+      <ChangesList changes={shownChanges} load={(id, signal) => fetchHostChangeDiff(machineId, session, id, signal)} onOpenFile={onOpenFile} />
     </PillSheet>}
-    {sheet === "work" && <PillSheet title={t("Running in the background")} onClose={() => setSheet(null)}>
-      <WorkList work={work} onStop={onStop} {...(onRevealSubagent ? { onReveal: (chat: string) => {
+    {sheet === "pullRequests" && <PillSheet title={t("Pull requests")} onClose={close}><ArtifactList items={pills.pullRequests} states={states} onOpen={open} /></PillSheet>}
+    {sheet === "issues" && <PillSheet title={t("Issues")} onClose={close}><ArtifactList items={pills.issues} states={states} onOpen={open} /></PillSheet>}
+    {sheet === "artifacts" && <PillSheet title={t("Artifacts")} onClose={close}>
+      {pills.sections.map((section) => <ArtifactList key={section.type} title={t(SECTION_TITLE[section.type])} items={section.items} states={states} onOpen={open} />)}
+    </PillSheet>}
+    {sheet === "references" && <PillSheet title={t("References")} onClose={close}><ArtifactList items={pills.references} states={states} onOpen={open} /></PillSheet>}
+    {(sheet === "subagents" || sheet === "shells") && <PillSheet title={t(sheet === "subagents" ? "Subagents" : "Shells")} onClose={close}>
+      <WorkList work={sheet === "subagents" ? subagents : shells} onStop={onStop} {...(onRevealSubagent ? { onReveal: (chat: string) => {
         const shown = onRevealSubagent(chat);
         if (shown) setSheet(null);
         return shown;
@@ -102,10 +148,60 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onReveal
   </div>;
 }
 
-function ArtifactList({ title, items, states, onOpen }: { title: string; items: HostArtifact[]; states: Record<string, ReferenceState>; onOpen(artifact: HostArtifact): void }) {
+function Stat({ added, removed }: { added: number; removed: number }) {
+  return <span className="session-pill-stat" aria-hidden="true">
+    <span className="session-pill-added">+{added}</span>
+    <span className="session-pill-removed">−{removed}</span>
+  </span>;
+}
+
+/** The changeset's files, VS Code's Changes list: each one's name, folder and lines; a tap opens its diff under it. */
+function ChangesList({ changes, load, onOpenFile }: { changes: HostChanges; load(id: string, signal: AbortSignal): Promise<HostEditDiff>; onOpenFile(path: string): void }) {
+  const t = useT();
+  const [opened, setOpened] = useState<string | null>(null);
+  return <>
+    <p className="session-sheet-summary">{t(changes.files.length === 1 ? "1 file" : "{n} files", { n: changes.files.length })} <Stat added={changes.added} removed={changes.removed} /></p>
+    <ul className="session-sheet-list">{changes.files.map((file) => <ChangedFile key={file.id} file={file} open={opened === file.id}
+      onToggle={() => setOpened((current) => current === file.id ? null : file.id)} load={load} onOpenFile={onOpenFile} />)}</ul>
+  </>;
+}
+
+function ChangedFile({ file, open, onToggle, load, onOpenFile }: { file: HostChangedFile; open: boolean; onToggle(): void; load(id: string, signal: AbortSignal): Promise<HostEditDiff>; onOpenFile(path: string): void }) {
+  const t = useT();
+  const name = file.path.split("/").pop() ?? file.path;
+  const folder = file.path.slice(0, Math.max(0, file.path.length - name.length - 1));
+  const loader = useCallback((signal: AbortSignal) => load(file.id, signal), [load, file.id]);
+  const note = file.kind === "create" ? t("Created") : file.kind === "delete" ? t("Deleted") : file.kind === "rename" ? t("Renamed") : null;
+  return <li className="session-sheet-item">
+    <button type="button" className="session-sheet-row" aria-expanded={open} onClick={onToggle}>
+      <FileGlyph name={name} className="session-pill-icon" />
+      <span className="session-sheet-text">
+        <span className="session-sheet-label">{name}{note && <span className="session-sheet-kind"> · {note}</span>}</span>
+        {folder && <span className="session-sheet-detail">{folder}</span>}
+      </span>
+      <Stat added={file.added} removed={file.removed} />
+      <ChevronRight className="session-sheet-go session-sheet-chevron" aria-hidden="true" />
+    </button>
+    {open && <DiffBody load={loader} onOpen={file.kind === "delete" ? null : () => onOpenFile(file.path)} />}
+  </li>;
+}
+
+/** The chat's changes, read on mount and again whenever `key` moves (a turn ends); null until then or without any. */
+function useHostChanges(machineId: string | undefined, session: string | undefined, key: string | undefined): HostChanges | null {
+  const [changes, setChanges] = useState<HostChanges | null>(null);
+  useEffect(() => {
+    if (machineId === undefined || session === undefined) return;
+    const abort = new AbortController();
+    fetchHostChanges(machineId, session, abort.signal).then((answer) => { if (!abort.signal.aborted) setChanges(answer); }, () => undefined);
+    return () => abort.abort();
+  }, [machineId, session, key]);
+  return changes;
+}
+
+function ArtifactList({ title, items, states, onOpen }: { title?: string; items: HostArtifact[]; states: Record<string, ReferenceState>; onOpen(artifact: HostArtifact): void }) {
   const t = useT();
   return <section className="session-sheet-section">
-    <h3 className="session-sheet-heading">{title}</h3>
+    {title !== undefined && <h3 className="session-sheet-heading">{title}</h3>}
     <ul className="session-sheet-list">{items.map((artifact) => {
       const openable = artifact.type === "file" ? artifact.uri !== undefined : isWeb(artifact.link ?? artifact.uri) || artifact.commitHash !== undefined;
       const detail = artifact.type === "commit" ? artifact.commitHash?.slice(0, 7) : artifact.type === "file" && artifact.uri ? pathOfFileUri(artifact.uri) ?? undefined : hostOf(artifact.link ?? artifact.uri);

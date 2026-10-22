@@ -13,7 +13,7 @@ import { machinePath } from "../../shared/machines.ts";
 import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
-import type { HostAgent, HostAnswer, HostFormAnswer, HostChatRead, HostChatRow, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HostAgent, HostAnswer, HostFormAnswer, HostChanges, HostChatRead, HostChatRow, HostEditDiff, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 import { daysBack } from "./hostChatGroups.ts";
@@ -335,6 +335,16 @@ export async function stopHost(machineId: string, session: string): Promise<void
 /** VS Code's Stop on a background shell the host marks stoppable. */
 export async function stopHostBackground(machineId: string, session: string, id: string): Promise<void> {
   await post(machineId, "host-chats/chat/background/stop", { session, id });
+}
+
+/** The chat's changeset as VS Code's Changes pill counts it; null when the host offers none. */
+export async function fetchHostChanges(machineId: string, session: string, signal?: AbortSignal): Promise<HostChanges | null> {
+  return (await getJson<{ changes: HostChanges | null }>(machinePath(machineId, `host-chats/changes?${new URLSearchParams({ session })}`), { signal })).changes;
+}
+
+/** One changed file's two sides, by its id in the changeset. */
+export function fetchHostChangeDiff(machineId: string, session: string, id: string, signal?: AbortSignal): Promise<HostEditDiff> {
+  return getJson<HostEditDiff>(machinePath(machineId, `host-chats/changes/diff?${new URLSearchParams({ session, ref: id })}`), { signal });
 }
 
 /** Each PR and issue link's state, as this server reads it (GET /api/references/state). */

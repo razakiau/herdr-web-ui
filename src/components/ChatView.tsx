@@ -587,23 +587,29 @@ const EDIT_CONTEXT = 3;
 
 /** One edit's diff, read from the host when its chip opens: the changes and a little around them. */
 function EditDiffBody({ edit }: { edit: ToolEdit }) {
-  const t = useT();
   const source = useContext(ChatSourceContext);
   const openFile = useContext(OpenFileContext);
+  const load = useMemo(() => source?.editDiff === undefined || edit.ref === undefined ? null
+    : (signal: AbortSignal) => source.editDiff!(edit.ref!, signal), [source, edit.ref]);
+  return <DiffBody load={load} onOpen={openFile !== null && edit.kind !== "delete" ? () => openFile(edit.path) : null} />;
+}
+
+/** A file change's diff, read when shown: its lines with unchanged runs folded, or why there are none. */
+export function DiffBody({ load, onOpen }: { load: ((signal: AbortSignal) => Promise<HostEditDiff>) | null; onOpen: (() => void) | null }) {
+  const t = useT();
   const [diff, setDiff] = useState<HostEditDiff | "loading" | "failed">("loading");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (source?.editDiff === undefined || edit.ref === undefined) { setDiff("failed"); return; }
+    if (load === null) { setDiff("failed"); return; }
     const abort = new AbortController();
     setDiff("loading");
-    source.editDiff(edit.ref, abort.signal).then(setDiff, () => { if (!abort.signal.aborted) setDiff("failed"); });
+    load(abort.signal).then(setDiff, () => { if (!abort.signal.aborted) setDiff("failed"); });
     return () => abort.abort();
-  }, [source, edit.ref, attempt]);
+  }, [load, attempt]);
   const lines = useMemo(() => typeof diff === "object" && (diff.before !== null || diff.after !== null)
     ? foldContext(lineDiff(diff.before ?? "", diff.after ?? ""), EDIT_CONTEXT) : null, [diff]);
-  const gone = edit.kind === "delete";
   return <div className="edit-diff">
-    {openFile !== null && !gone && <button type="button" className="btn btn-ghost edit-diff-open" onClick={() => openFile(edit.path)}>{t("Open file")}<ArrowRight aria-hidden="true" /></button>}
+    {onOpen !== null && <button type="button" className="btn btn-ghost edit-diff-open" onClick={onOpen}>{t("Open file")}<ArrowRight aria-hidden="true" /></button>}
     {diff === "loading" ? <p className="edit-diff-note">{t("Loading the diff…")}</p>
       : diff === "failed" ? <p className="edit-diff-note">{t("Couldn't load the diff")} <button type="button" className="btn btn-ghost" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>
         : diff.binary ? <p className="edit-diff-note">{t("Binary or too large to show")}</p>

@@ -298,6 +298,25 @@ export class AgentHostConnection {
     };
   }
 
+  /**
+   * A channel's state once, without keeping it (a changeset: VS Code's Changes pill reads one):
+   * subscribed, its snapshot taken, unsubscribed at once. Its later actions go nowhere.
+   */
+  async snapshotOf(uri: string): Promise<unknown> {
+    const live = this.live;
+    if (!live) throw new AgentHostError("not_connected");
+    try {
+      const { result, subscription } = await live.client.subscribe(uri);
+      void subscription.close();
+      return result.snapshot?.state;
+    } catch (error) {
+      throw coded(error);
+    } finally {
+      // a channel this connection watches for a chat is not let go of
+      if (!this.watchersOf(uri).length) void live.client.unsubscribe(uri).catch(() => {});
+    }
+  }
+
   async request<M extends keyof CommandMap>(method: M, params: CommandMap[M]["params"]): Promise<CommandMap[M]["result"]> {
     const live = this.live;
     if (!live) throw new AgentHostError("not_connected");

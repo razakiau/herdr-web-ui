@@ -255,6 +255,16 @@ const patch = `(() => {
         if (ref === "c-edit:1") return json({ path: "/tmp/fictional-repo/src/fresh.ts", kind: "create", before: null, after: "FICTIONAL a\\nFICTIONAL b" });
         return json({ error: { code: "not_found", message: "no such edit" } }, 404);
       }
+      // ZAC-207: the chat's changeset, as VS Code's Changes pill counts it, and a file's two sides
+      if (path === "/api/host-chats/changes") return json({ changes: { label: "Branch Changes", status: "ready", added: 30, removed: 3, files: [
+        { id: "cs-build", path: "/tmp/fictional-repo/src/build.ts", kind: "edit", added: 28, removed: 3 },
+        { id: "cs-fresh", path: "/tmp/fictional-repo/src/fresh.ts", kind: "create", added: 2, removed: 0 },
+      ] } });
+      if (path === "/api/host-chats/changes/diff") {
+        const ref = url.searchParams.get("ref");
+        if (ref === "cs-build") return json({ path: "/tmp/fictional-repo/src/build.ts", kind: "edit", before: "FICTIONAL old line\\nconst keep = 1;", after: "FICTIONAL new line\\nconst keep = 1;" });
+        return json({ error: { code: "not_found", message: "no such file" } }, 404);
+      }
       if (path === "/api/host-chats/chat/background/stop") { state.work = (state.work ?? []).filter((each) => each.id !== body.id); return json({ stopped: true }); }
       if (path === "/api/host-chats/files") return json({ files: ["src/fictional-build.ts", "README.md"].filter((file) => file.includes(url.searchParams.get("q") ?? "")) });
       // the session's mode and permissions, as the live host shapes them
@@ -1080,19 +1090,35 @@ try {
         }
         console.log("PASS background work reads as VS Code says it, and the meter opens the context breakdown");
 
-        // 5a. ZAC-207: the session's sessionPillRow above the composer, as VS Code's: the GitHub PR alone in its
-        // state's colour, "N artifacts" with the rest by kind and the references, and "N running"
+        // 5a. ZAC-207: the session's pills above the composer, one per kind as VS Code's: the chat's
+        // Changes with its lines, the one GitHub PR inline in its state's colour, "N artifacts" by kind,
+        // the one reference inline
         const sessionPillRow = view.locator(".session-pills");
         await sessionPillRow.waitFor();
-        assert.deepEqual((await sessionPillRow.locator(".session-pill").allInnerTexts()).map((text) => text.trim()), ["#12", "3 artifacts"], "the PR, then the artifacts");
-        const prIcon = sessionPillRow.locator(".session-pill").first().locator("svg");
-        await page.waitForFunction(() => document.querySelector(".session-pill svg")?.getAttribute("data-tone") === "purple");
+        await sessionPillRow.locator(".session-pill-stat").waitFor();
+        assert.deepEqual((await sessionPillRow.locator(".session-pill").allInnerTexts()).map((text) => text.trim().replace(/\s+/g, " ")), ["2 files +30 −3", "#12", "3 artifacts", "FICTIONAL docs"], "changes, the PR, the artifacts, the reference");
+        const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
+        await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");
         assert.match(await prIcon.getAttribute("class") ?? "", /lucide-git-merge/, "a merged PR wears the merge glyph");
+        assert.equal(await sessionPillRow.getByRole("button", { name: "Branch Changes: 2 files, 30 added, 3 removed" }).count(), 1, "the changes pill reads as VS Code's");
+        await fits("the session pills");
+        if (shots) { await page.waitForTimeout(400); await page.screenshot({ path: join(shots, "zac207-pills-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await sessionPillRow.locator(".session-pill").first().click();
+        const changesSheet = page.getByRole("dialog", { name: "Branch Changes" });
+        await changesSheet.waitFor();
+        assert.deepEqual((await changesSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["build.ts", "fresh.ts · Created"]);
+        await changesSheet.getByRole("button", { name: /build\.ts/ }).click();
+        await changesSheet.locator(".edit-diff-lines").waitFor();
+        assert.match(await changesSheet.locator(".edit-diff-lines").innerText(), /- FICTIONAL old line[\s\S]*\+ FICTIONAL new line/, "a changed file opens its diff");
+        await fits("the changes sheet");
+        if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-changes-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await changesSheet.getByRole("button", { name: "Close" }).click();
+        await changesSheet.waitFor({ state: "detached" });
         await sessionPillRow.getByRole("button", { name: "3 artifacts" }).click();
         const artifactSheet = page.getByRole("dialog", { name: "Artifacts" });
         await artifactSheet.waitFor();
-        assert.deepEqual((await artifactSheet.locator(".session-sheet-heading").allInnerTexts()).map((text) => text.trim().toLowerCase()), ["issues", "commits", "files", "references"], "VS Code's order, references last");
-        assert.deepEqual((await artifactSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["FIC-3 FICTIONAL ticket", "FICTIONAL fix the build", "FICTIONAL design", "FICTIONAL docs"]);
+        assert.deepEqual((await artifactSheet.locator(".session-sheet-heading").allInnerTexts()).map((text) => text.trim().toLowerCase()), ["issues", "commits", "files"], "VS Code's order");
+        assert.deepEqual((await artifactSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["FIC-3 FICTIONAL ticket", "FICTIONAL fix the build", "FICTIONAL design"]);
         assert.equal(await artifactSheet.locator(".session-sheet-row", { hasText: "FICTIONAL fix the build" }).locator(".session-sheet-detail").innerText(), "0123abc", "a commit shows its short hash");
         await fits("the artifacts sheet");
         if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-artifacts-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
@@ -1106,22 +1132,26 @@ try {
           ];
           host.pushHostTurn("FICTIONAL work started");
         }, SUB);
-        const running = sessionPillRow.getByRole("button", { name: "2 running" });
-        await running.waitFor();
-        await running.click();
-        const workSheet = page.getByRole("dialog", { name: "Running in the background" });
+        // a subagent and a shell are their own pills, as VS Code's Subagents and Background Shells
+        await sessionPillRow.getByRole("button", { name: "1 shell" }).waitFor();
+        assert.equal(await sessionPillRow.getByRole("button", { name: "1 subagent" }).count(), 1, "the subagent has its own pill");
+        await sessionPillRow.getByRole("button", { name: "1 shell" }).click();
+        const workSheet = page.getByRole("dialog", { name: "Shells" });
         await workSheet.waitFor();
-        assert.deepEqual((await workSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["FICTIONAL dev server", "explore"]);
-        assert.equal(await workSheet.getByRole("button", { name: "Stop" }).count(), 1, "only the shell the host lets stop has Stop");
+        assert.deepEqual((await workSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["FICTIONAL dev server"]);
+        assert.equal(await workSheet.getByRole("button", { name: "Stop" }).count(), 1, "the shell the host lets stop has Stop");
         if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-running-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         await workSheet.getByRole("button", { name: "Stop" }).click();
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string; body: { id?: string } }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/chat/background/stop") && post.body.id === "shell:1"));
-        await workSheet.locator(".session-sheet-label", { hasText: "FICTIONAL dev server" }).waitFor({ state: "detached" });
+        await workSheet.waitFor({ state: "detached" });
+        await sessionPillRow.getByRole("button", { name: "1 subagent" }).click();
+        const subagentSheet = page.getByRole("dialog", { name: "Subagents" });
+        await subagentSheet.waitFor();
         // ZAC-207: a running subagent goes to its row in the transcript, opened, and the sheet closes
-        const subagentEntry = workSheet.getByRole("button", { name: /explore/ });
+        const subagentEntry = subagentSheet.getByRole("button", { name: /explore/ });
         assert.equal(await subagentEntry.count(), 1, "a subagent with a chat is a row to tap");
         await subagentEntry.click();
-        await workSheet.waitFor({ state: "detached" });
+        await subagentSheet.waitFor({ state: "detached" });
         const revealed = view.locator(`.subagent-row[data-subagent-chat="${SUB}"]`);
         await revealed.waitFor();
         assert.equal(await revealed.locator(".subagent-row-head").getAttribute("aria-expanded"), "true", "its row is opened");
@@ -1130,7 +1160,7 @@ try {
         assert.match(await revealed.getAttribute("class") ?? "", /is-revealed/, "and marked");
         if (shots) { await page.waitForTimeout(200); await page.screenshot({ path: join(shots, "zac207-reveal-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         await page.evaluate(() => { (window as unknown as { hostState: { work: unknown[] } }).hostState.work = []; });
-        console.log("PASS the session's pills: a merged PR in purple, the artifacts sheet by kind with references last, Stop on a running shell, and a running subagent taken to its row");
+        console.log("PASS the session's pills, one per kind as VS Code's: Changes with its lines and diffs, a merged PR in purple, the artifacts by kind, the reference inline, Stop on a shell, and a subagent taken to its row");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
         const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;

@@ -69,6 +69,8 @@ export interface FakeAgentHostSeed {
   completions?: Record<string, unknown[]>;
   /** Files and content refs by URI, as `resourceRead` / `resourceWrite` / `resourceDelete` see them. */
   files?: Record<string, string | Uint8Array>;
+  /** Changeset channels' states by URI (a chat's `changesets` names them), as `subscribe` answers them. */
+  changesets?: Record<string, unknown>;
   /** The agent's `capabilities` (default: forks and side chats, as VS Code 1.142's copilotcli). */
   capabilities?: Record<string, unknown>;
 }
@@ -200,7 +202,7 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         const channel = String(params["channel"]);
         const failing = failSubscribes[channel] ?? 0;
         if (failing > 0) { failSubscribes[channel] = failing - 1; fail(-32603, `FICTIONAL subscribe failure on ${channel}`); return; }
-        const state = states[channel] ?? chats[channel];
+        const state = states[channel] ?? chats[channel] ?? seed.changesets?.[channel];
         if (!state) { fail(-32008, `no such channel ${channel}`); return; }
         ok({ snapshot: { resource: channel, fromSeq: serverSeq, state } });
         return;
