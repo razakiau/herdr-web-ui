@@ -302,7 +302,7 @@ export const ZH: Record<string, string> = {
   "Workspaces": "工作区顺序",
   "Activity": "按活动",
   "Agent logos": "代理标志",
-  "Draw each agent's logo in its brand colors, or without color": "用品牌颜色或无色显示每个代理的标志",
+  "Draw agent logos and file icons in their colors, or without color": "用原有颜色或无色显示代理标志和文件图标",
   "Color": "彩色",
   "Mono": "单色",
   "Status indicators": "状态指示",

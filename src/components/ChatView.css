@@ -1780,7 +1780,9 @@
 .work-file-pill { flex: 0 1 auto; min-width: 0; }
 .work-file-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-file-pill svg,
-.markdown-file.is-pill svg { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.work-file-pill .file-glyph,
+.markdown-file.is-pill svg,
+.markdown-file.is-pill .file-glyph { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
 .markdown-file.is-pill code { text-decoration: none; }
 .markdown-file-line { color: var(--text-dim); }
 .work-file-pill:hover,
@@ -2177,7 +2179,8 @@ button.question-summary-answer { cursor: pointer; }
   background: transparent; color: var(--text-strong); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .edit-chip:hover, .edit-chip[aria-expanded="true"] { border-color: var(--text-dim); background: var(--bg-hover); }
-.edit-chip > svg:first-child { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.edit-chip > svg:first-child,
+.edit-chip > .file-glyph:first-child { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
 .edit-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .edit-chip.is-delete .edit-chip-name { text-decoration: line-through; color: var(--text-dim); }
 .edit-chip-tag { flex: none; color: var(--text-dim); }

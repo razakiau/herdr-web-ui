@@ -298,7 +298,7 @@ export const KO: Record<string, string> = {
   "Workspaces": "워크스페이스순",
   "Activity": "활동순",
   "Agent logos": "에이전트 로고",
-  "Draw each agent's logo in its brand colors, or without color": "각 에이전트의 로고를 브랜드 색상 또는 색 없이 표시합니다",
+  "Draw agent logos and file icons in their colors, or without color": "에이전트 로고와 파일 아이콘을 원래 색상 또는 색 없이 표시합니다",
   "Color": "색상",
   "Mono": "단색",
   "Status indicators": "상태 표시",

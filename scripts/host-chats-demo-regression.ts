@@ -518,7 +518,17 @@ try {
         assert.equal(await editRow.locator(".work-file-pill").count(), 0, "the chips name the files: no pill as well");
         const editChips = editRow.locator(".edit-chip");
         assert.deepEqual((await editChips.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()), ["build.ts +28 −3", "fresh.ts new +2 −0"], "a chip per file, with its lines");
-        assert.equal(await editChips.first().locator("svg").count() >= 1, true, "and its icon");
+        // the file's VS Code Material icon, its own SVG loaded and square at the chip's text size;
+        // Mono greys it as it does the agent marks
+        const chipIcon = editChips.first().locator("img.file-glyph");
+        assert.equal(await chipIcon.getAttribute("data-icon"), "typescript", "and its language's icon");
+        await page.waitForFunction((node) => (node as HTMLImageElement).complete && (node as HTMLImageElement).naturalWidth > 0, await chipIcon.elementHandle(), { timeout: 5_000 });
+        const iconBox = await chipIcon.boundingBox();
+        assert.ok(iconBox !== null && iconBox.width > 8 && Math.abs(iconBox.width - iconBox.height) < 0.5, `the icon is drawn square (${JSON.stringify(iconBox)})`);
+        assert.equal(await chipIcon.evaluate((node) => getComputedStyle(node).filter), "none", "in its colors");
+        await page.evaluate(() => { document.documentElement.dataset["marks"] = "mono"; });
+        assert.equal(await chipIcon.evaluate((node) => getComputedStyle(node).filter), "grayscale(1)", "Mono greys it");
+        await page.evaluate(() => { document.documentElement.dataset["marks"] = "color"; });
         await editChips.first().click();
         const diff = editRow.locator(".edit-diff-lines");
         await diff.waitFor();

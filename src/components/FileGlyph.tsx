@@ -1,41 +1,52 @@
-import {
-  File, FileArchive, FileAudio, FileCode, FileCog, FileDiff, FileDigit, FileImage, FileJson, FileKey, FileLock,
-  FileSpreadsheet, FileTerminal, FileText, FileType, FileVideo, Folder, FolderGit, type LucideIcon,
-} from "lucide-react";
+import { useSyncExternalStore } from "react";
 
-import { fileIconKind, folderIconKind, type FileIconKind, type FolderIconKind } from "../lib/fileIcons.ts";
-
-const FILE_GLYPHS: Record<FileIconKind, LucideIcon> = {
-  file: File, code: FileCode, json: FileJson, config: FileCog, text: FileText, image: FileImage, video: FileVideo,
-  audio: FileAudio, archive: FileArchive, shell: FileTerminal, lock: FileLock, diff: FileDiff, font: FileType,
-  key: FileKey, binary: FileDigit, spreadsheet: FileSpreadsheet,
-};
-
-const FOLDER_GLYPHS: Record<FolderIconKind, LucideIcon> = { folder: Folder, git: FolderGit };
+import { ICON_URLS } from "../lib/fileIconUrls.generated.ts";
+import { fileIcon, folderIcon } from "../lib/fileIcons.ts";
+import "./FileGlyph.css";
 
 export interface FileGlyphProps {
   /** the entry's name, or a path, whose last part names it */
   name: string;
   kind?: "file" | "directory";
+  /** a directory drawn open, as a tree shows an expanded folder */
+  open?: boolean;
   className?: string;
 }
 
 /**
- * The glyph a list draws before an entry's name (lib/fileIcons.ts decides which), hidden from
- * assistive tech since the name beside it says the same. The row's CSS sizes and colors it, as it
- * does any other lucide glyph; `data-kind` names the kind for a style or a script that reads it.
+ * The icon a list draws before an entry's name: VS Code's Material Icon Theme icon for it
+ * (lib/fileIcons.ts decides which), each its own small SVG the page fetches once and the service
+ * worker keeps. Hidden from assistive tech since the name beside it says the same. The row's CSS
+ * sizes it; Settings → Appearance → Agent logos → Mono greys it (FileGlyph.css). `data-icon`
+ * names the icon for a style or a script that reads it.
  */
-export function FileGlyph({ name, kind = "file", className }: FileGlyphProps) {
-  const [Glyph, glyphKind] = kind === "directory" ? folderGlyph(name) : fileGlyph(name);
-  return <Glyph aria-hidden="true" className={className} data-kind={glyphKind} />;
+export function FileGlyph({ name, kind = "file", open = false, className }: FileGlyphProps) {
+  const light = useSyncExternalStore(subscribeTheme, lightTheme, darkOnServer);
+  const icon = kind === "directory" ? folderIcon(name, open) : fileIcon(name, light);
+  const src = ICON_URLS[icon] ?? ICON_URLS["file"];
+  return <img src={src} alt="" aria-hidden="true" draggable={false} decoding="async" className={className === undefined ? "file-glyph" : `file-glyph ${className}`} data-icon={icon} />;
 }
 
-function fileGlyph(name: string): [LucideIcon, FileIconKind] {
-  const glyphKind = fileIconKind(name);
-  return [FILE_GLYPHS[glyphKind], glyphKind];
+// one observer for every glyph on the page, on <html>'s data-theme (Settings keeps it current)
+const listeners = new Set<() => void>();
+let observer: MutationObserver | null = null;
+
+function subscribeTheme(listener: () => void): () => void {
+  listeners.add(listener);
+  if (observer === null && typeof MutationObserver !== "undefined") {
+    observer = new MutationObserver(() => { for (const notify of listeners) notify(); });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) { observer?.disconnect(); observer = null; }
+  };
 }
 
-function folderGlyph(name: string): [LucideIcon, FolderIconKind] {
-  const glyphKind = folderIconKind(name);
-  return [FOLDER_GLYPHS[glyphKind], glyphKind];
+function lightTheme(): boolean {
+  return typeof document !== "undefined" && document.documentElement.dataset["theme"] === "light";
+}
+
+function darkOnServer(): boolean {
+  return false;
 }
