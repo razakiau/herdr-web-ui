@@ -1035,6 +1035,16 @@ try {
         assert.equal(await steering.locator(".host-pending-row").count(), 1, "one steering row");
         assert.match(await steering.locator(".host-pending-text").textContent() ?? "", /FICTIONAL steer one\s+FICTIONAL steer two/, "holding both texts in order");
         console.log("PASS a second steer says it was added to your steer, one row holding both");
+        // the row is one line; a tap shows the whole message, wrapped, and another folds it back
+        const steerText = steering.locator(".host-pending-text");
+        const lines = () => steerText.evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight || "20")));
+        assert.equal(await lines(), 1, "a waiting row is one line");
+        await steerText.click();
+        assert.equal(await steerText.getAttribute("aria-expanded"), "true", "a tap opens it");
+        assert.ok(await lines() >= 2, "open, it shows both steers, one per line");
+        await steerText.click();
+        assert.equal(await lines(), 1, "a second tap folds it back");
+        console.log("PASS a tap on a waiting row shows its whole message");
         await box.fill("FICTIONAL later");
         await view.locator(".composer-send-menu").click();
         // at 390 px the menu is the app's bottom sheet (RowMenu)
@@ -1100,6 +1110,19 @@ try {
         const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
         await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");
         assert.match(await prIcon.getAttribute("class") ?? "", /lucide-git-merge/, "a merged PR wears the merge glyph");
+        // GitHub's merged purple in every palette: the palette's own "number" colour was amber in
+        // several (codex light: #8a5300), and a merged PR read orange (owner, 2026-10-22)
+        const mergedColour = async (theme: string | null, palette: string | null) => page.evaluate(([th, pa]) => {
+          const root = document.documentElement;
+          const was = [root.getAttribute("data-theme"), root.getAttribute("data-palette")];
+          if (th) root.setAttribute("data-theme", th); if (pa) root.setAttribute("data-palette", pa);
+          const colour = getComputedStyle(document.querySelectorAll(".session-pill")[1]!.querySelector("svg")!).color;
+          if (was[0] === null) root.removeAttribute("data-theme"); else root.setAttribute("data-theme", was[0]);
+          if (was[1] === null) root.removeAttribute("data-palette"); else root.setAttribute("data-palette", was[1]);
+          return colour;
+        }, [theme, palette] as const);
+        assert.equal(await mergedColour("dark", null), "rgb(171, 125, 248)", "GitHub's dark merged purple");
+        assert.equal(await mergedColour("light", "codex"), "rgb(130, 80, 223)", "GitHub's light merged purple, whatever the palette");
         assert.equal(await sessionPillRow.getByRole("button", { name: "Branch Changes: 2 files, 30 added, 3 removed" }).count(), 1, "the changes pill reads as VS Code's");
         await fits("the session pills");
         if (shots) { await page.waitForTimeout(400); await page.screenshot({ path: join(shots, "zac207-pills-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
@@ -1128,7 +1151,7 @@ try {
           const host = window as unknown as { hostState: { work: unknown[] }; pushHostTurn(text: string): void };
           host.hostState.work = [
             { id: "shell:1", kind: "shell", label: "FICTIONAL dev server", command: "bun run dev", started: "2026-10-22T10:00:00.000Z", stoppable: true },
-            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false, chat: SUB },
+            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false, chat: "ahp-chat://subagent/FICTIONALsession/c-sub", toolCall: "c-sub" },
           ];
           host.pushHostTurn("FICTIONAL work started");
         }, SUB);

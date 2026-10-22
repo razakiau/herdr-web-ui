@@ -55,7 +55,13 @@ export interface SubagentRowProps {
 }
 
 /** The subagent the reader was just taken to (a host chat's "N running" sheet), by its chat: its row opens and is marked. */
-export const RevealedSubagentContext = createContext<{ chat: string; at: number } | null>(null);
+/** A subagent to reveal: by its tool call (the row's id) or its chat; `at` makes each tap a new reveal. */
+export interface SubagentTarget { chat?: string; toolCall?: string }
+export const RevealedSubagentContext = createContext<(SubagentTarget & { at: number }) | null>(null);
+/** Whether a transcript subagent part is the target: the host names a running subagent's work chat apart from the row's resource, the tool call is what both share. */
+export function isSubagentTarget(part: { id: string; chat: string | null }, target: SubagentTarget): boolean {
+  return (target.toolCall !== undefined && part.id === target.toolCall) || (target.chat !== undefined && part.chat === target.chat);
+}
 
 export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }: SubagentRowProps) {
   const t = useT();
@@ -64,7 +70,7 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
   const [chosen, setOpen] = useChatRowToggle(`subagent:${part.id}`, false);
   const open = chosen === true;
   const revealed = useContext(RevealedSubagentContext);
-  const isRevealed = revealed !== null && part.chat !== null && revealed.chat === part.chat;
+  const isRevealed = revealed !== null && isSubagentTarget(part, revealed);
   const sectionRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!isRevealed) return;

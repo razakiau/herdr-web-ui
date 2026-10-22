@@ -572,10 +572,11 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
 .session-pill-icon { flex: none; width: 1.05em; height: 1.05em; color: var(--text-dim); }
 .session-pill.is-running .session-pill-icon { color: var(--status-working); }
 /* VS Code's charts.green / purple / red / orange and descriptionForeground, in this theme's tokens */
-.session-pill-icon[data-tone="green"] { color: var(--status-done); }
-.session-pill-icon[data-tone="purple"] { color: var(--syntax-number); }
-.session-pill-icon[data-tone="red"] { color: var(--status-blocked); }
-.session-pill-icon[data-tone="orange"] { color: var(--syntax-keyword); }
+/* PR and issue states in GitHub's own colours (tokens in styles.css: --gh-*) */
+.session-pill-icon[data-tone="green"] { color: var(--gh-open); }
+.session-pill-icon[data-tone="purple"] { color: var(--gh-done); }
+.session-pill-icon[data-tone="red"] { color: var(--gh-closed); }
+.session-pill-icon[data-tone="orange"] { color: var(--gh-attention); }
 .session-pill-icon[data-tone="muted"] { color: var(--text-dim); opacity: 0.75; }
 
 .session-sheet { width: min(100%, 28rem); }

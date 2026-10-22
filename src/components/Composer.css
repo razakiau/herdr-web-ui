@@ -1559,9 +1559,28 @@
 .host-pending-text {
   flex: 1;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.host-pending-row[data-open] {
+  align-items: flex-start;
+}
+
+/* the whole message, wrapped as typed; a long one scrolls inside the row, not the page */
+.host-pending-row[data-open] .host-pending-text {
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .host-pending-remove {

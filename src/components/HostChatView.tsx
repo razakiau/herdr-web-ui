@@ -29,6 +29,7 @@ import type { HostSendPick } from "../lib/compose.ts";
 import { Composer, type SentAttachment } from "./Composer.tsx";
 import { HostChatStatus } from "./HostChatStatus.tsx";
 import { HostSessionPills } from "./HostSessionPills.tsx";
+import type { SubagentTarget } from "./SubagentRow.tsx";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
 import { ChatView } from "./ChatView.tsx";
@@ -122,7 +123,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const [putBack, setPutBack] = useState<string | null>(null);
   const mounted = useRef(true);
   // the transcript's handle: the "N running" sheet takes the reader to a subagent's row
-  const revealSubagent = useRef<((chat: string) => boolean) | null>(null);
+  const revealSubagent = useRef<((target: SubagentTarget) => boolean) | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   // VS Code's New Chat opened empty: left with no message, it goes (the bridge refuses any other chat)
   const unused = useRef(true);
@@ -334,7 +335,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     {/* a question or approval takes the input's place, as in VS Code: the pills wait until it is answered */}
     {!chat?.prompt && <HostSessionPills machineId={machineId} session={session} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
-      onRevealSubagent={(chat) => revealSubagent.current?.(chat) ?? false} />}
+      onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />}
     <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}

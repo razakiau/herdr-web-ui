@@ -170,4 +170,4 @@ export type HostArtifactType = "pullRequest" | "issue" | "commit" | "website" | 
 /** One artifact (`isArtifact`) or reference of a session, as the host recorded it. */
 export interface HostArtifact { id: string; type: HostArtifactType; label: string; isArtifact: boolean; link?: string; uri?: string; commitHash?: string; isGitHub?: boolean }
 /** One piece of work still running for a chat (AHP backgroundWork): a shell or a subagent; `stoppable`: the host takes vscode/stopBackgroundWork for it. */
-export interface HostBackgroundWork { id: string; kind: "shell" | "subagent"; label: string; command?: string; started: string; stoppable: boolean; /** a subagent's own chat (its row's `chat` in the transcript) */ chat?: string }
+export interface HostBackgroundWork { id: string; kind: "shell" | "subagent"; label: string; command?: string; started: string; stoppable: boolean; /** a subagent's own chat, as the host names its work */ chat?: string; /** the tool call that started the subagent: its transcript row's id */ toolCall?: string }

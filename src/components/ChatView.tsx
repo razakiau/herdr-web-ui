@@ -69,7 +69,7 @@ import { hostSource, paneSource, type ChatSource } from "../lib/chatSource.ts";
 import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
 import { toolIcon } from "../lib/toolIcons.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
-import { RevealedSubagentContext, SubagentRow } from "./SubagentRow.tsx";
+import { isSubagentTarget, RevealedSubagentContext, SubagentRow, type SubagentTarget } from "./SubagentRow.tsx";
 import { QuestionSummary } from "./QuestionSummary.tsx";
 
 /** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
@@ -155,7 +155,7 @@ export interface ChatViewProps {
   visible?: boolean;
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
   /** set by the view: takes the reader to a subagent's row by its chat and opens it (a host chat's "N running" sheet); false when no loaded turn holds it */
-  revealSubagent?: { current: ((chat: string) => boolean) | null };
+  revealSubagent?: { current: ((target: SubagentTarget) => boolean) | null };
   refreshKey: number;
   /** bumped by a conversation push; coalesced to at most one read a second */
   invalidationKey?: number;
@@ -1943,15 +1943,20 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   }, []);
   // a running subagent tapped in the pills' sheet: its turn brought to the top, and its row (read
   // through RevealedSubagentContext) opens itself and is marked a moment, mounted now or later
-  const [revealed, setRevealed] = useState<{ chat: string; at: number } | null>(null);
+  const [revealed, setRevealed] = useState<(SubagentTarget & { at: number }) | null>(null);
   useLayoutEffect(() => {
     if (!revealSubagent) return;
-    const reveal = (chat: string): boolean => {
-      const index = timelineRows.findIndex((row) => row.turn.parts.some((part) => part.kind === "subagent" && part.chat === chat));
+    const reveal = (target: SubagentTarget): boolean => {
+      const index = timelineRows.findIndex((row) => row.turn.parts.some((part) => part.kind === "subagent" && isSubagentTarget(part, target)));
       if (index < 0) return false;
-      setRevealed({ chat, at: Date.now() });
+      const at = Date.now();
+      setRevealed({ ...target, at });
       pagingAway.current = true; stickToBottom.current = false; setAway(true);
-      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+      // the list's index scroll can land after the row has scrolled itself (a tall last turn, live):
+      // the turn's top then sits over the row, a screen or more above it. Once it lands, the row
+      // scrolls itself again (a new `at` for the same reveal)
+      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 })
+        .then(() => setRevealed((now) => now !== null && now.at === at ? { ...now, at: at + 1 } : now));
       return true;
     };
     revealSubagent.current = reveal;

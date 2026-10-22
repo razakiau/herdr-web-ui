@@ -20,6 +20,12 @@
 
 :root {
   color-scheme: dark;
+  /*
+   * GitHub's PR and issue state colours (Primer fg: open, done, closed, attention), kept apart
+   * from the palettes: a palette's "number" colour is amber in several themes and a merged PR
+   * then read orange (owner, 2026-10-22, ZAC-207).
+   */
+  --gh-open: #3fb950; --gh-done: #ab7df8; --gh-closed: #f85149; --gh-attention: #d29922;
 
   /* surfaces (tonal steps, darkest to lightest): lamp-lit graphite, warm not tinted */
   --bg: #12100e;
@@ -252,6 +258,7 @@
 
 [data-theme="light"] {
   color-scheme: light;
+  --gh-open: #1a7f37; --gh-done: #8250df; --gh-closed: #cf222e; --gh-attention: #9a6700;
   --bg: #eeeae2;
   --bg-panel: #faf8f3;
   --bg-elevated: #f2eee6;

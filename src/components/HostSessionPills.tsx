@@ -24,6 +24,7 @@ import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { DiffBody } from "./ChatView.tsx";
 import { FileGlyph } from "./FileGlyph.tsx";
+import type { SubagentTarget } from "./SubagentRow.tsx";
 
 const ICONS: Record<ArtifactIcon, ComponentType<LucideProps>> = {
   "pr-open": GitPullRequest, "pr-attention": GitPullRequest, "pr-draft": GitPullRequestDraft, "pr-merged": GitMerge, "pr-closed": GitPullRequestClosed,
@@ -54,7 +55,7 @@ export interface HostSessionPillsProps {
   onOpenFile(path: string): void;
   onStop(id: string): Promise<void>;
   /** takes the reader to a running subagent's row in the transcript; false when no loaded turn holds it */
-  onRevealSubagent?(chat: string): boolean;
+  onRevealSubagent?(target: SubagentTarget): boolean;
   /** where PR and issue states and the chat's changes are asked; absent: neither */
   machineId?: string;
   /** the chat whose changeset the Changes pill counts */
@@ -139,8 +140,8 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onReveal
     </PillSheet>}
     {sheet === "references" && <PillSheet title={t("References")} onClose={close}><ArtifactList items={pills.references} states={states} onOpen={open} /></PillSheet>}
     {(sheet === "subagents" || sheet === "shells") && <PillSheet title={t(sheet === "subagents" ? "Subagents" : "Shells")} onClose={close}>
-      <WorkList work={sheet === "subagents" ? subagents : shells} onStop={onStop} {...(onRevealSubagent ? { onReveal: (chat: string) => {
-        const shown = onRevealSubagent(chat);
+      <WorkList work={sheet === "subagents" ? subagents : shells} onStop={onStop} {...(onRevealSubagent ? { onReveal: (target: SubagentTarget) => {
+        const shown = onRevealSubagent(target);
         if (shown) setSheet(null);
         return shown;
       } } : {})} />
@@ -225,7 +226,7 @@ function hostOf(link: string | undefined): string | undefined {
   try { return new URL(link).host; } catch { return undefined; }
 }
 
-function WorkList({ work, onStop, onReveal }: { work: readonly HostBackgroundWork[]; onStop(id: string): Promise<void>; onReveal?(chat: string): boolean }) {
+function WorkList({ work, onStop, onReveal }: { work: readonly HostBackgroundWork[]; onStop(id: string): Promise<void>; onReveal?(target: SubagentTarget): boolean }) {
   const t = useT();
   const [stopping, setStopping] = useState<Set<string>>(new Set());
   const [failed, setFailed] = useState<string | null>(null);
@@ -245,10 +246,11 @@ function WorkList({ work, onStop, onReveal }: { work: readonly HostBackgroundWor
       {unseen === each.id && <span className="session-sheet-error" role="alert">{t("Its turn isn't loaded: scroll up to it")}</span>}
     </span>;
     // a subagent goes to its row in the transcript, opened, as VS Code's running list does
-    const chat = each.kind === "subagent" && onReveal ? each.chat : undefined;
+    const target: SubagentTarget | undefined = each.kind === "subagent" && onReveal && (each.chat !== undefined || each.toolCall !== undefined)
+      ? { ...(each.chat !== undefined ? { chat: each.chat } : {}), ...(each.toolCall !== undefined ? { toolCall: each.toolCall } : {}) } : undefined;
     return <li key={each.id} className="session-sheet-item">
-      {chat !== undefined
-        ? <button type="button" className="session-sheet-row" onClick={() => { setUnseen(onReveal!(chat) ? null : each.id); }}>
+      {target !== undefined
+        ? <button type="button" className="session-sheet-row" onClick={() => { setUnseen(onReveal!(target) ? null : each.id); }}>
           <Icon className="session-pill-icon" aria-hidden="true" />
           {text}
           <ChevronRight className="session-sheet-go" aria-hidden="true" />
