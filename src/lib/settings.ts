@@ -193,6 +193,8 @@ export interface Settings {
   hostNewApprovals: string | null;
   /** archived chats in All agents and Chats in <folder> (folded at the end); off leaves them out */
   hostShowArchived: boolean;
+  /** endless animations draw every frame instead of stepping (src/styles.css [data-motion="smooth"]) */
+  smoothMotion: boolean;
 }
 
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
@@ -202,11 +204,11 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks, the launch modes, the OmniRoute choices and the agent host ones are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
+ * fileOpen, webLinks, the launch modes, the OmniRoute choices, smoothMotion and the agent host ones are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
-  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived">;
+  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -292,6 +294,7 @@ export const SETTING_SCOPE = {
   // a new agent starts the same way whichever device opened it
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
   usageGroup: "shared", hostChatsShown: "shared", hostAutoOpen: "shared", hostNewModel: "shared", hostNewApprovals: "shared", hostShowArchived: "shared",
+  smoothMotion: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -363,6 +366,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hostNewModel: null,
   hostNewApprovals: null,
   hostShowArchived: true,
+  smoothMotion: false,
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -560,6 +564,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     hostNewModel: hostModelChoice(record["hostNewModel"]),
     hostNewApprovals: typeof record["hostNewApprovals"] === "string" && record["hostNewApprovals"] !== "" && record["hostNewApprovals"].length <= 64 ? record["hostNewApprovals"] : DEFAULT_SETTINGS.hostNewApprovals,
     hostShowArchived: typeof record["hostShowArchived"] === "boolean" ? record["hostShowArchived"] : DEFAULT_SETTINGS.hostShowArchived,
+    smoothMotion: typeof record["smoothMotion"] === "boolean" ? record["smoothMotion"] : DEFAULT_SETTINGS.smoothMotion,
   };
 }
 
@@ -636,6 +641,7 @@ export function applyToDocument(settings: Settings, entry: ThemeEntry, language:
   root.dataset["density"] = settings.density;
   root.dataset["palette"] = entry.id;
   root.dataset["chatWidth"] = settings.chatWidth;
+  root.dataset["motion"] = settings.smoothMotion ? "smooth" : "stepped";
   // src/components/AgentMark.css keys the mono logos on it
   root.dataset["marks"] = settings.agentMarks;
   // src/styles.css multiplies every --fs-* token but --fs-input by this: the interface's body size over the density's

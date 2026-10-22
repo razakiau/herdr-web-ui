@@ -1993,6 +1993,9 @@ The values are the ones in `src/styles.css`.
 | Breathe | `--dur-breathe` | `2000ms` | The sidebar's working dot: full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
 | Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
+| Spin easing | `--ease-spin` | `steps(8)` | Every endless spinner (palette, Send, usage refresh, subagent row) |
+| Breathe easing | `--ease-breathe` | `steps(6)` | The sidebar's working dot |
+| Shimmer easing | `--ease-shimmer` | `steps(10, jump-none)` | The chat's "Working" shimmer |
 | Spring easing | `--ease-spring` | `cubic-bezier(0.32, 0.72, 0, 1)` | Voice recording pill enter (180ms, scale 0.96->1 + opacity, from the mic button) and exit (120ms); a phone's sheet rising and springing back |
 | Sheet in | `--dur-sheet` | `360ms` | A phone's sheet rising, and springing back after a short drag |
 | Sheet out | `--dur-sheet-out` | `240ms` | A phone's sheet dropping, however it closed |
@@ -2006,6 +2009,11 @@ The values are the ones in `src/styles.css`.
 - The voice recording waveform is the one surface allowed to draw every frame: only while
   recording, driven by the live microphone level, transform-only (`scaleY` on 7 bars). The pill is
   a state change, not a dialog, so the snap rule above does not apply to it.
+- Every endless animation takes one of the four endless easings above, stepped by default so the
+  app does not draw every display refresh while an agent works. **Settings > Appearance > Smooth
+  animations** (an account setting, off by default) sets `data-motion="smooth"` on the root, which
+  swaps them for `ease-in-out` (pulse, breath) and `linear` (spin, shimmer). `src/motion.test.ts`
+  holds both halves.
 - `prefers-reduced-motion: reduce` removes pulses, drawer/control transitions, sheet rise and drop,
   smooth chat scrolling and settings toggle motion; a drag still follows the finger. State remains legible without animation.
   One exception: the sidebar's RUN dot keeps its stepped breath, opacity only and nothing moving,

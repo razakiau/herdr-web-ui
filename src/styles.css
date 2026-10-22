@@ -208,6 +208,12 @@
      every display refresh for as long as an agent works (60+ a second), which stutters a
      video playing beside the app; two steps draw about one frame a second */
   --ease-pulse: steps(2, jump-none);
+  /* the other endless easings, stepped for the same reason: a spinner's eight steps per turn
+     are its frame rate, the sidebar's breath has six, the "Working" shimmer ten. Every endless
+     animation takes one of these four, so Smooth animations (below) reaches all of them */
+  --ease-spin: steps(8);
+  --ease-breathe: steps(6);
+  --ease-shimmer: steps(10, jump-none);
   /* a phone's sheet rises on the spring and drops faster than it rose */
   --dur-sheet: 360ms;
   --dur-sheet-out: 240ms;
@@ -231,6 +237,17 @@
   --droplet-mark-bg: rgba(255, 255, 255, 0.1);
   --droplet-ring: rgba(255, 255, 255, 0.1);
   --droplet-shadow: rgba(0, 0, 0, 0.35);
+}
+
+/* Settings > Appearance > Smooth animations (an account setting, off by default): the endless
+   animations draw every display refresh instead of jumping between steps. Smoother on a phone,
+   at the cost the stepped default avoids: a video playing beside the app may stutter while an
+   agent works. Reduced motion still turns them off. */
+[data-motion="smooth"] {
+  --ease-pulse: ease-in-out;
+  --ease-spin: linear;
+  --ease-breathe: ease-in-out;
+  --ease-shimmer: linear;
 }
 
 [data-theme="light"] {

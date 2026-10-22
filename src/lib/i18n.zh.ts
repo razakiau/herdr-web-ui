@@ -963,6 +963,8 @@ export const ZH: Record<string, string> = {
   "Alerts": "提醒",
   "Needs you": "需要你回应",
   "Keep screen on": "保持屏幕常亮",
+  "Smooth animations": "流畅动画",
+  "Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.": "加载图标和工作中的圆点逐帧绘制。代理工作时，旁边播放的视频可能会卡顿。",
   "While a terminal or chat pane is open.": "打开终端或聊天窗格时保持屏幕常亮。",
   "Needs HTTPS or localhost.": "需要 HTTPS 或 localhost。",
   "This browser can't keep the screen on.": "此浏览器无法保持屏幕常亮。",
