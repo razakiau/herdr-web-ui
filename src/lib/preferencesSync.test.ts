@@ -20,6 +20,21 @@ describe("preferences sync", () => {
     expect(preferencesChange(unknown, { settings: light, pins: ["local:w1:p1"] })).toEqual({ settings: { theme: "light" }, pins: ["local:w1:p1"] });
   });
 
+  it("shares a setting the server has never held when this browser set it, so a new install gets it (voice, 2026-10-22)", () => {
+    const voice: Settings = { ...DEFAULT_SETTINGS, voiceInput: "on", voiceLanguage: "fr-FR", voicePolishTerminal: true };
+    // the server holds none of them: this browser's own choices go out with its first sync
+    const known = takePreferences(base(voice, []), { settings: voice, pins: [] }, { revision: 3, settings: { theme: "dark" }, pins: [] }, null).base;
+    expect(preferencesChange(known, { settings: voice, pins: [] })).toEqual({ settings: { voiceInput: "on", voiceLanguage: "fr-FR", voicePolishTerminal: true } });
+    // a fresh install, still on the defaults, sends nothing and takes them once they are shared
+    const fresh = takePreferences(base(DEFAULT_SETTINGS, []), { settings: DEFAULT_SETTINGS, pins: [] }, { revision: 3, settings: {}, pins: [] }, null);
+    expect(preferencesChange(fresh.base, { settings: DEFAULT_SETTINGS, pins: [] })).toBeNull();
+    const shared = takePreferences(fresh.base, { settings: DEFAULT_SETTINGS, pins: [] }, { revision: 4, settings: { voiceInput: "on", voiceLanguage: "fr-FR" }, pins: [] }, null);
+    expect(shared.patch).toEqual({ voiceInput: "on", voiceLanguage: "fr-FR" });
+    // once the server holds a value, a browser's differing one is not sent back over it
+    const held = takePreferences(base(voice, []), { settings: voice, pins: [] }, { revision: 5, settings: { voiceLanguage: "en-US" }, pins: [] }, null);
+    expect(held.patch).toEqual({ voiceLanguage: "en-US" });
+  });
+
   it("takes the shared settings the server holds and leaves the device's own", () => {
     const mine: Settings = { ...light, terminalFontSize: 20, alertsOn: false, wrapCode: true, markdownWidth: "full" };
     const taken = takePreferences(base(mine, null), { settings: mine, pins: [] }, { revision: 3, settings: { theme: "dark", palette: "catppuccin" } }, null);
