@@ -17,6 +17,7 @@ import { sameSshSession, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { validateTarget } from "./machine-security.ts";
 import { detectHost, HERDR_INSTALL_CMD } from "./remote-host.ts";
 import { SshConnection } from "./ssh.ts";
+import type { HostChatRow } from "../shared/host-chats.ts";
 
 interface StoredMachine { id: string; name: string; target: SshTarget; enabled: boolean; snapshot?: SessionSnapshot | null }
 interface Runtime {
@@ -35,6 +36,8 @@ interface Runtime {
   terminals: Set<() => void>;
   /** the user cancelled this PC's bridge update: it is not started again on its own until the PC connects */
   updateCancelled?: boolean;
+  /** its host chats' list is being read for the alerts; `again`: it changed meanwhile, read once more */
+  hostChatsRead?: { again: boolean };
 }
 interface JobState {
   update: boolean;
@@ -165,7 +168,8 @@ export class MachineManager {
   private autoQueued = new Set<string>();
   private emitTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes)) {
+  /** `agentHost`: the bridges this manager starts show their PC's host chats (HERDR_WEB_AGENT_HOST=on) */
+  constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes), private readonly agentHost = false) {
     this.profileState = new HerdrProfileState(stateDir);
     this.statePath = join(stateDir, "machines.json");
     this.sshDir = join(stateDir, "ssh");
@@ -173,7 +177,9 @@ export class MachineManager {
     try {
       const saved: unknown = JSON.parse(readFileSync(this.settingsPath, "utf8"));
       if (saved && typeof saved === "object" && typeof (saved as MachineSettings).auto_update_bridges === "boolean") this.preferences.auto_update_bridges = (saved as MachineSettings).auto_update_bridges;
-    } catch { /* absent or unreadable: the defaults */ }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.settingsPath}; remote PC settings start empty`);
+    }
     if (existsSync(this.statePath)) {
       const saved: unknown = JSON.parse(readFileSync(this.statePath, "utf8"));
       if (!Array.isArray(saved)) throw new Error("Invalid machines.json; registrations were preserved");
@@ -656,7 +662,7 @@ export class MachineManager {
     if (!descriptor) {
       if (job?.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
       if (job) this.stage(job, "starting", "Starting the remote bridge…");
-      await host.start(ssh, { session, herdrPath, inspection });
+      await host.start(ssh, { session, herdrPath, inspection, agentHost: this.agentHost });
       for (let i = 0; i < 40; i++) {
         if (job?.abort.signal.aborted || this.stopped) throw new Error("Setup cancelled");
         descriptor = (await host.descriptors(ssh)).find((d) => d.socket_path === expectedSocket && d.pid !== stalePid);
@@ -744,6 +750,8 @@ export class MachineManager {
     const ws = authenticatedWebSocket(endpoint.url.replace("http:", "ws:") + "/ws", endpoint.token);
     runtime.observer = ws;
     ws.onopen = () => ws.send(JSON.stringify({ type: "role", mode: "observe" }));
+    // the chats as they are now are the alerts' baseline: a change before this read is no news
+    this.readHostChats(runtime, generation);
     ws.onmessage = (event) => {
       if (generation !== runtime.generation || this.stopped) return;
       let message: ServerMessage;
@@ -756,6 +764,7 @@ export class MachineManager {
         void this.push.onStatus(message.pane_id, alertStatus(message.agent_status, message.background_wait), runtime.machine.id).catch(() => {});
       }
       if (message.type === "pane-exited") void this.push.onEnded(message.pane_id, runtime.machine.id).catch(() => {});
+      if (message.type === "host-chat-changed" && message.session === null) this.readHostChats(runtime, generation);
       this.emit({ type: "machine-message", machine_id: runtime.machine.id, message });
       if (["pane-status", "pane-exited", "session-changed"].includes(message.type)) void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e));
     };
@@ -764,6 +773,34 @@ export class MachineManager {
     runtime.ssh!.onExit = () => this.lost(runtime, generation, new Error("SSH connection ended"));
     runtime.poll = setInterval(() => void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e)), 5000);
     runtime.poll.unref();
+  }
+  /**
+   * The PC's host chats as its bridge lists them, handed to the alerts (server/push.ts
+   * onHostChats). One read at a time: a burst of list changes (a turn streaming) costs one more.
+   */
+  private readHostChats(runtime: Runtime, generation: number): void {
+    if (!this.agentHost) return;
+    if (runtime.hostChatsRead) { runtime.hostChatsRead.again = true; return; }
+    const read = runtime.hostChatsRead = { again: false };
+    void (async () => {
+      try {
+        do {
+          read.again = false;
+          const endpoint = runtime.endpoint;
+          if (!endpoint || generation !== runtime.generation || this.stopped) return;
+          const response = await fetch(`${endpoint.url}/api/host-chats/chats`, { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(15_000) });
+          // no agent host there (503), or an older bridge: no chats to alert about
+          if (!response.ok) return;
+          const { chats } = await response.json() as { chats: HostChatRow[] };
+          if (generation !== runtime.generation || this.stopped || !Array.isArray(chats)) return;
+          this.push.onHostChats(chats, runtime.machine.id, runtime.machine.name);
+        } while (read.again);
+      } catch {
+        /* the bridge went away: its reconnect reads the list again */
+      } finally {
+        if (runtime.hostChatsRead === read) runtime.hostChatsRead = undefined;
+      }
+    })();
   }
   private lost(runtime: Runtime, generation: number, error: unknown): void {
     if (generation !== runtime.generation || !runtime.machine.enabled || this.stopped) return;

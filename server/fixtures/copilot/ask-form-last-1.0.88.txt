@@ -1,0 +1,40 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.88 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔
+
+ ● Tip: /app
+   └ Prefer a visual workspace? Try out the GitHub Copilot desktop app
+      https://github.com/features/ai/github-app
+
+ ! Model "fixture-model" is not in the built-in catalog. Using defaults for: prompt tokens
+   (COPILOT_PROVIDER_MAX_PROMPT_TOKENS), output tokens (COPILOT_PROVIDER_MAX_OUTPUT_TOKENS). Run  copilot help
+   providers  for configuration details.
+
+ ● MCP Servers reloaded: 0 servers connected
+
+ ❯ FICTIONAL_FORM_PROMPT                                                                                        05:15
+
+ ● FICTIONAL_FORM_ASKING
+
+ ○ Asking user Waiting for response                                                                               22s
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Copilot needs information.
+ FICTIONAL_FORM_QUESTION?
+
+  Colour  [Proceed]
+
+ Proceed:
+ ❯ Yes
+   No
+   Other (type your answer)
+
+ ↑/↓ select · enter accept · shift+tab prev · ctrl+d decline · esc cancel
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

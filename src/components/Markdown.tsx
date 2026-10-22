@@ -1,10 +1,13 @@
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { BookOpen, Check, Copy, ImageOff, Maximize2 } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
-import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
+import { codeIsFilePath, fileLineTarget, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
 import { FilePathLink } from "./FilePathLink.tsx";
+import { FileGlyph } from "./FileGlyph.tsx";
 import { fileUriPath } from "../lib/terminalFileLinks.ts";
+import { WebPanelContext } from "../lib/webPanel.ts";
+import { MachineContext } from "../lib/machineContext.tsx";
 import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "../lib/highlight.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { useT } from "../lib/i18n.ts";
@@ -19,6 +22,20 @@ import { previewChunks } from "../lib/textPreview.ts";
 
 /** The pane's skill names: a name in an answer's plain text, in its trigger form, reads as a chip. */
 const SkillMatcherContext = createContext<SkillMatcher | null>(null);
+/**
+ * Whether the text reads as VS Code shows a Copilot answer (lib/toolGroupSummary.ts `turnStyle`): a
+ * bare address as its host name, a file as a pill with its icon and line. Only a `style="vscode"`
+ * Markdown provides it; everywhere else links read as they always have.
+ */
+const VscodeLinksContext = createContext(false);
+
+/** The host name a bare address shows in the vscode style, or null when it is no address to shorten. */
+export function bareUrlHost(href: string, children: InlineNode[]): string | null {
+  if (children.length !== 1 || children[0]!.type !== "text") return null;
+  const label = children[0]!.value;
+  if (label !== href && `https://${label}` !== href) return null;
+  try { return new URL(href).hostname || null; } catch { return null; }
+}
 
 type Katex = typeof import("katex").default;
 /** KaTeX is a fifth of the app's script: the first expression loads it (lib/katex.ts), and every later one has it at once. */
@@ -175,6 +192,14 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const t = useT();
   const imageResolver = useContext(MarkdownImageContext);
   const skillMatcher = useContext(SkillMatcherContext);
+  const openWebPage = useContext(WebPanelContext);
+  const machineId = useContext(MachineContext);
+  // a plain or Shift click may open the address beside the pane; Ctrl, Cmd and Alt keep the browser's own meaning
+  const webClick = (href: string) => (event: MouseEvent<HTMLAnchorElement>): void => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (openWebPage?.(href, event.shiftKey, machineId)) event.preventDefault();
+  };
+  const vscode = useContext(VscodeLinksContext);
   return <>{nodes.map((node, index) => {
     const key = `${node.type}-${index}`;
     switch (node.type) {
@@ -183,14 +208,14 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
         return <span key={key}>{(interactive && skillMatcher !== null ? skillMatcher(node.value) : [node.value]).map((piece, p) => {
           if (typeof piece !== "string") return <span key={p} className="markdown-skill"><BookOpen aria-hidden="true" />{piece.raw}</span>;
           if (open === null) return piece;
-          return <Fragment key={p}>{splitFilePaths(piece).map((part, n) => typeof part === "string" ? part : <FilePathLink key={n} path={part.path} code={false} open={open} />)}</Fragment>;
+          return <Fragment key={p}>{splitFilePaths(piece).map((part, n) => typeof part === "string" ? part : <FilePathLink key={n} path={part.path} code={false} open={open} pill={vscode} />)}</Fragment>;
         })}</span>;
       case "code": {
         const file = fileUriPath(node.value);
-        if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
+        if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} pill={vscode} />;
         // agents often put an address in backticks: it stays code to the eye, and opens
-        if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer"><code>{node.value}</code></a>;
-        return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
+        if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer" onClick={webClick(node.value)}><code>{node.value}</code></a>;
+        return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} pill={vscode} /> : <code key={key}>{node.value}</code>;
       }
       case "math": return <MathExpression key={key} value={node.value} />;
       case "image": {
@@ -201,10 +226,19 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
       case "strong": return <strong key={key}><Inline nodes={node.children} interactive={interactive} /></strong>;
       case "em": return <em key={key}><Inline nodes={node.children} interactive={interactive} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} interactive={interactive} /></del>;
-      case "link": return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
+      case "link": {
+        // the vscode style: a bare address reads as its host, the whole address its title
+        const host = vscode ? bareUrlHost(node.href, node.children) : null;
+        if (host !== null) return <a key={key} className="markdown-host-link" href={node.href} title={node.href} target="_blank" rel="noopener noreferrer" onClick={webClick(node.href)}>{host}</a>;
+        return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" onClick={webClick(node.href)}><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
+      }
       // the label opens the file; where nothing can open one, the path shows after it, as Codex's terminal does
       case "file": {
         const label = <Inline nodes={node.children} interactive={false} />;
+        if (open !== null && vscode) {
+          const { path, line } = fileLineTarget(node.path);
+          return <button key={key} type="button" className="markdown-file is-pill" title={t("Open {path}", { path: node.path })} onClick={() => open(node.path)}><FileGlyph name={path} className="markdown-file-icon" />{label}{line !== null && <span className="markdown-file-line">:{line}</span>}</button>;
+        }
         return open !== null
           ? <button key={key} type="button" className="markdown-file" title={t("Open {path}", { path: node.path })} onClick={() => open(node.path)}>{label}</button>
           : <span key={key}>{label} (<code>{node.path}</code>)</span>;
@@ -323,10 +357,12 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
  * Markdown rendered. Its props are primitive values, so `memo` skips a parent's re-render: a long plan in
  * the file viewer is not rendered again every time the app polls.
  */
-export const Markdown = memo(function Markdown({ children, className, html = false, skills = null }: { children: string; className?: string; html?: boolean; skills?: SkillMatcher | null }) {
+export const Markdown = memo(function Markdown({ children, className, html = false, skills = null, style }: { children: string; className?: string; html?: boolean; skills?: SkillMatcher | null; style?: "vscode" }) {
   const blocks = useMemo(() => parseMarkdown(children, 0, html), [children, html]);
   const parsed = <ParsedMarkdown blocks={blocks} className={className} />;
-  return skills === null ? parsed : <SkillMatcherContext.Provider value={skills}>{parsed}</SkillMatcherContext.Provider>;
+  // without a style the tree is the one it always was: no provider, links as before
+  const styled = style === "vscode" ? <VscodeLinksContext.Provider value>{parsed}</VscodeLinksContext.Provider> : parsed;
+  return skills === null ? styled : <SkillMatcherContext.Provider value={skills}>{styled}</SkillMatcherContext.Provider>;
 });
 
 /**

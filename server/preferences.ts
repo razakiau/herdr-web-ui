@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { MAX_PREFERENCES_BYTES, sharedPreferencesBody, type PreferencesChange, type SharedPreferences } from "../shared/preferences.ts";
+import { MAX_PREFERENCES_BYTES, normalizeThemeChange, sharedPreferencesBody, type PreferencesChange, type SharedPreferences } from "../shared/preferences.ts";
 import { badRequest, isJsonObject, jsonResponse } from "./http.ts";
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
@@ -27,7 +27,7 @@ export class PreferenceStore {
       const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
       const body = sharedPreferencesBody(parsed);
       const revision = isJsonObject(parsed) && Number.isSafeInteger(parsed["revision"]) ? parsed["revision"] as number : 0;
-      if (body !== null) this.current = { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }) };
+      if (body !== null) this.current = { revision: Math.max(0, revision), ...body };
     } catch (error) {
       // a missing file is a server that has shared nothing yet; a damaged one is replaced by the next write
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.path}; shared preferences start empty`);
@@ -37,8 +37,13 @@ export class PreferenceStore {
   get(): SharedPreferences { return this.current; }
 
   set(change: PreferencesChange): SharedPreferences {
+    change = normalizeThemeChange(this.current.settings, change);
     const pins = change.pins ?? this.current.pins;
-    const next: SharedPreferences = { revision: this.current.revision + 1, settings: { ...this.current.settings, ...change.settings }, ...(pins === undefined ? {} : { pins }) };
+    const hostWorkspaces = change.hostWorkspaces ?? this.current.hostWorkspaces;
+    const next: SharedPreferences = {
+      revision: this.current.revision + 1, settings: { ...this.current.settings, ...change.settings },
+      ...(pins === undefined ? {} : { pins }), ...(hostWorkspaces === undefined ? {} : { hostWorkspaces }),
+    };
     const text = `${JSON.stringify(next, null, 2)}\n`;
     if (byteLength(JSON.stringify(next)) > MAX_PREFERENCES_BYTES) throw new PreferencesTooLarge();
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
@@ -70,7 +75,7 @@ export async function handlePreferencesRequest(request: Request, store: Preferen
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { return badRequest("invalid_json", "The body is not JSON"); }
   const body = sharedPreferencesBody(raw);
-  if (body === null) return badRequest("invalid_body", "Send { settings: object, pins?: string[] }");
+  if (body === null) return badRequest("invalid_body", "Send { settings: object, pins?: string[], hostWorkspaces?: object }");
   try { return reply(store.set(body)); }
   catch (error) {
     if (error instanceof PreferencesTooLarge) return tooLarge();

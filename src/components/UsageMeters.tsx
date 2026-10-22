@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
 import { RefreshCw } from "lucide-react";
 
 import "./UsageMeters.css";
@@ -6,11 +6,11 @@ import "./UsageMeters.css";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useSettings, type UsageCount, type UsageGlance } from "../lib/settings.ts";
-import { formatPercent, formatResetIn, glanceWindow, HIGH_PERCENT, meterPercent, meterText, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage, windowLabel } from "../lib/usage.ts";
+import { formatPercent, formatResetIn, glanceWindow, groupWindow, HIGH_PERCENT, providerGroups, closestFirst, meterPercent, meterText, planLabel, providerMark, providerName, shownUsages, usageName, viaOmniRoute, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 
-/** chips the strip beside Settings holds before the rest fold into "+N" */
-const MAX_CHIPS = 4;
+/** chips the strip holds when its width cannot be measured (before layout, or a test without one) */
+const FALLBACK_CHIPS = 4;
 
 function level(window: UsageWindow | null): string {
   return window !== null && window.used_percent >= HIGH_PERCENT ? " is-high" : "";
@@ -18,7 +18,7 @@ function level(window: UsageWindow | null): string {
 
 /** Why the numbers shown are old or missing; null while they are fresh. */
 function problemText(t: Translate, usage: ProviderUsage): string | null {
-  const name = PROVIDER_NAME[usage.id];
+  const name = providerName(usage.id);
   return usage.problem === "expired" ? t("Sign-in expired. Open {name} to renew it.", { name })
     : usage.problem === "rate_limited" ? t("{name} asked to slow down. These are the last numbers.", { name })
     : usage.problem === "failed" ? t("{name} could not be reached.", { name })
@@ -31,11 +31,21 @@ function isError(usage: ProviderUsage): boolean {
   return usage.problem === "expired" || usage.problem === "failed";
 }
 
-function Chip({ usage, count, glance }: { usage: ProviderUsage; count: UsageCount; glance: UsageGlance }) {
-  const window = glanceWindow(usage, glance);
+/** Another limit of the plan, not the one shown, that is near running out: the strip's tooltip names it. */
+function otherHigh(usage: ProviderUsage, shown: UsageWindow | null): UsageWindow | null {
+  return usage.windows.find((window) => window !== shown && window.used_percent >= HIGH_PERCENT) ?? null;
+}
+
+/** One provider: its accounts' limit averaged by plan size (lib/usage.ts groupWindow); the popover lists each. */
+function Chip({ group, count, glance }: { group: readonly ProviderUsage[]; count: UsageCount; glance: UsageGlance }) {
+  const window = groupWindow(group, glance);
+  const usage = group[0]!;
   return (
-    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`}>
-      <AgentMark agent={PROVIDER_MARK[usage.id]} size={14} />
+    <span className={`usage-chip${level(window)}${group.some((one) => one.problem) ? " has-problem" : ""}`}>
+      <span className="usage-chip-mark">
+        <AgentMark agent={providerMark(usage.id)} size={14} />
+        {group.length > 1 && <span className="usage-chip-count">{group.length}</span>}
+      </span>
       <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : "—"}</span>
       <span className="usage-chip-bar" style={{ "--fill": `${window ? meterPercent(window, count) : 0}%` } as CSSProperties} />
     </span>
@@ -44,15 +54,22 @@ function Chip({ usage, count, glance }: { usage: ProviderUsage; count: UsageCoun
 
 function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; count: UsageCount }) {
   const t = useT();
-  const name = PROVIDER_NAME[usage.id];
+  const name = providerName(usage.id);
   const problem = problemText(t, usage);
+  const plan = planLabel(usage.plan, usage.id);
+  const via = viaOmniRoute(usage);
   return (
     <section className="usage-provider" aria-label={usageName(usage)}>
       <header className="usage-provider-head">
-        <AgentMark agent={PROVIDER_MARK[usage.id]} size={16} />
+        <AgentMark agent={providerMark(usage.id)} size={16} />
         <span className="usage-provider-name">{name}</span>
-        {usage.plan && <span className="usage-plan">{usage.plan}</span>}
-        {usage.account && <span className="usage-account" title={usage.account}>{usage.account}</span>}
+        {plan && <span className="usage-plan" title={usage.plan ?? undefined}>{plan}</span>}
+        {(usage.account || via) && (
+          <span className="usage-provider-meta">
+            {usage.account && <span className="usage-account" title={usage.account}>{usage.account}</span>}
+            {via && <span className="usage-source"><AgentMark agent="omniroute" size={12} />{t("via OmniRoute")}</span>}
+          </span>
+        )}
       </header>
       {problem && <p className={`usage-note${isError(usage) ? " is-problem" : ""}`}>{problem}</p>}
       {usage.windows.map((window, index) => {
@@ -82,12 +99,13 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
  */
 export function UsageMeters() {
   const t = useT();
-  const { settings } = useSettings();
+  const { settings, update } = useSettings();
   const { report, loading, refresh } = useUsage(settings.showUsage);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLButtonElement>(null);
+  const [room, setRoom] = useState<{ all: number; folding: number } | null>(null);
 
   // turned off in Settings, the popover closes: its listener and the clock go with it
   useEffect(() => { if (!settings.showUsage) setOpen(false); }, [settings.showUsage]);
@@ -118,15 +136,52 @@ export function UsageMeters() {
     if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   };
 
+  // as many chips as the row has room for, judged by the widest chip drawn so far: it only grows,
+  // so the count only shrinks and settles, where an average of whichever chips show would swing
+  const widestChip = useRef(0);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const measure = (): void => {
+      const strip = stripRef.current;
+      if (!strip) return;
+      for (const chip of strip.querySelectorAll<HTMLElement>(".usage-chip")) widestChip.current = Math.max(widestChip.current, chip.offsetWidth);
+      if (widestChip.current === 0) return;
+      const style = getComputedStyle(strip);
+      const gap = parseFloat(style.columnGap) || 0;
+      const chip = widestChip.current + gap;
+      const available = root.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0) + gap;
+      // "+N" in the 2xs mono face, with its gap
+      const more = 3 * parseFloat(getComputedStyle(root).fontSize) * 0.45 + gap;
+      const all = Math.floor(available / chip), folding = Math.max(1, Math.floor((available - more) / chip));
+      setRoom((last) => last?.all === all && last.folding === folding ? last : { all, folding });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  });
+
   const count = settings.usageCount;
-  // an account hidden in Settings is left out of the strip and the popover alike
-  const shown = report ? orderProviders(report.providers, settings.usageOrder).filter((usage) => !settings.usageHidden.includes(usage.key)) : [];
+  // an account hidden in Settings, or an OmniRoute provider not chosen there, is left out of the strip and the popover alike
+  const shown = report ? shownUsages(report.providers, { order: settings.usageOrder, hidden: settings.usageHidden, shown: settings.usageShown }) : [];
+  const listed = settings.usageSort === "closest" ? closestFirst(shown) : shown;
   if (!settings.showUsage || shown.length === 0) return null;
-  const folded = shown.length > MAX_CHIPS ? shown.length - (MAX_CHIPS - 1) : 0;
-  const chips = folded > 0 ? shown.slice(0, MAX_CHIPS - 1) : shown;
-  const summary = shown.map((usage) => {
+  const fits = room ?? { all: FALLBACK_CHIPS, folding: FALLBACK_CHIPS - 1 };
+  // one chip per provider (many accounts of one provider would be chips no one could tell apart), or per account if Settings says so
+  const groups = providerGroups(shown, settings.usageGroup);
+  const chips = groups.length > fits.all ? groups.slice(0, fits.folding) : groups;
+  const folded = groups.length - chips.length;
+  const summary = groups.map((group) => {
+    if (group.length > 1) {
+      const window = groupWindow(group, settings.usageGlance);
+      const high = group.filter((usage) => usage.windows.some((one) => one.used_percent >= HIGH_PERCENT)).map(usageName);
+      return `${t("{name}, {n} accounts", { name: providerName(group[0]!.id), n: group.length })} ${window ? meterText(window, count) : "—"}${high.length ? ` (${t("near a limit: {names}", { names: high.join(", ") })})` : ""}`;
+    }
+    const usage = group[0]!;
     const window = glanceWindow(usage, settings.usageGlance);
-    return `${usageName(usage)} ${window ? meterText(window, count) : "—"}`;
+    const high = otherHigh(usage, window);
+    return `${usageName(usage)} ${window ? meterText(window, count) : "—"}${high ? ` (${windowLabel(high)} ${meterText(high, count)})` : ""}`;
   }).join(", ");
 
   return (
@@ -140,19 +195,23 @@ export function UsageMeters() {
         title={summary}
         onClick={() => setOpen(!open)}
       >
-        {chips.map((usage) => <Chip key={usage.key} usage={usage} count={count} glance={settings.usageGlance} />)}
+        {chips.map((group) => <Chip key={group[0]!.id} group={group} count={count} glance={settings.usageGlance} />)}
         {folded > 0 && <span className="usage-more">+{folded}</span>}
       </button>
       {open && (
         <div className="usage-popover" role="dialog" aria-label={t("Subscription usage")}>
           <header className="usage-popover-head">
             <span>{t("Subscription usage")}</span>
+            {shown.length > 2 && <button type="button" className="btn btn-ghost usage-sort" aria-pressed={settings.usageSort === "closest"}
+              title={t("Closest to limit first")} onClick={() => update({ usageSort: settings.usageSort === "closest" ? "order" : "closest" })}>
+              {settings.usageSort === "closest" ? t("Closest first") : t("Your order")}
+            </button>}
             {/* busy, not disabled: a disabled button drops focus, and Escape with it */}
             <button type="button" className="icon-button" aria-label={t("Refresh")} title={t("Refresh")} aria-busy={loading} onClick={() => { if (!loading) refresh(); }}>
               <RefreshCw aria-hidden="true" className={loading ? "is-spinning" : undefined} />
             </button>
           </header>
-          {shown.map((usage) => <Provider key={usage.key} usage={usage} now={now} count={count} />)}
+          {listed.map((usage) => <Provider key={usage.key} usage={usage} now={now} count={count} />)}
         </div>
       )}
     </div>

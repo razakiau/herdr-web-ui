@@ -13,7 +13,7 @@ import type { RecognizedConversation } from "./conversation.ts";
  * its startup's: Codex reports `working` while it draws, Claude `blocked` at its folder question.
  */
 const SOURCES: Record<string, RecognizedConversation["source"]> = {
-  agy: "agy-transcript", claude: "claude-transcript", codex: "codex-transcript", devin: "devin-transcript",
+  agy: "agy-transcript", claude: "claude-transcript", codex: "codex-transcript", copilot: "copilot-transcript", devin: "devin-transcript",
   gjc: "gjc-transcript", grok: "grok-transcript", hermes: "hermes-transcript", omo: "omo-transcript",
   omp: "omp-transcript", opencode: "opencode-transcript", pi: "pi-transcript",
 };

@@ -3,21 +3,52 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { describeProgress } from "../src/lib/bridgeProgress.ts";
-import type { SetupJob } from "../shared/machines.ts";
+import type { Machine, SetupJob } from "../shared/machines.ts";
+import type { ServerMessage } from "../shared/protocol.ts";
 import { paneNotificationTag } from "../shared/notify-policy.ts";
 import { BRIDGE_PROTOCOL, machinePath, paneStorageId, REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import { canSendSecret, sameOrigin, shellQuote, validateTarget } from "./machine-security.ts";
 import { handleMachineRequest, MACHINE_PROXY_PATH } from "./machine-api.ts";
+import { HOST_CHAT_ROUTES } from "./agent-host/routes.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { createServer } from "./index.ts";
 import { MachineManager } from "./machines.ts";
-import { detectHost, psQuote, UNSUPPORTED_HOST, windowsBridgeFiles, windowsHost } from "./remote-host.ts";
+import { detectHost, posixHost, psQuote, UNSUPPORTED_HOST, windowsBridgeFiles, windowsHost, type HostInspection } from "./remote-host.ts";
 import { decodeClixml, SshConnection } from "./ssh.ts";
 import { terminalAttachSupported } from "./herdr/client.ts";
 import { attachableIdentity, isRealNode, sidecarAvailable } from "./pty/sidecar.ts";
 import { CompletionTracker } from "./completion.ts";
 import type { PushService } from "./push.ts";
 import { recentSshOutput } from "./ssh.ts";
+
+describe("machine settings recovery", () => {
+  it("logs damaged settings but stays quiet for valid or missing settings", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-machine-settings-"));
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    const createManager = () => new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
+    try {
+      const valid = createManager();
+      valid.stop();
+      expect(errors).toEqual([]);
+
+      writeFileSync(join(dir, "machine-settings.json"), "{");
+      const damaged = createManager();
+      damaged.stop();
+      expect(errors).toEqual([`Cannot read ${join(dir, "machine-settings.json")}; remote PC settings start empty`]);
+
+      errors.length = 0;
+      writeFileSync(join(dir, "machine-settings.json"), JSON.stringify({ auto_update_bridges: true }));
+      const repaired = createManager();
+      repaired.stop();
+      expect(errors).toEqual([]);
+    } finally {
+      console.error = originalError;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("independently managed bridge updates", () => {
   it("requires the owning app's update controls before installing a remote bundle", async () => {
@@ -76,6 +107,16 @@ describe("machine boundaries", () => {
     for (const path of ["auth", "push", "updates/install", "machines/setup", "bridge", "../auth", "pane/../../auth", "pane/prompt/answer/extra", "tab/move/extra", "tab/close/extra"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/split", "pane/zoom", "pane/swap", "pane/resize", "pane/clear", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+  });
+  it("MACHINE_PROXY_PATH passes every route a bridge answers (a missing one is \"Unknown PC endpoint\" on the phone)", () => {
+    expect(HOST_CHAT_ROUTES.filter((route) => !MACHINE_PROXY_PATH.test(`host-chats/${route}`))).toEqual([]);
+  });
+
+  it("MACHINE_PROXY_PATH proxies host-chats routes and nothing past them", () => {
+    for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models", "host-chats/image", "host-chats/tool-output",
+      "host-chats/chat/rename", "host-chats/chat/read", "host-chats/chat/archive", "host-chats/chat/delete", "host-chats/chat/stop", "host-chats/chat/pending/remove", "host-chats/chat/upload",
+      "host-chats/session/config", "host-chats/files"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["vscode/state", "vscode/chat/send", "host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth", "host-chats/image/extra", "host-chats/tool-output/x", "host-chats/chat/pending", "host-chats/chat/pending/remove/x", "host-chats/session", "host-chats/files/x", "host-chats/chat/upload/x"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
   });
 });
 
@@ -650,5 +691,114 @@ describe("bridge verification failures", () => {
     expect(await told(answering(500, JSON.stringify({ error: { code: "internal_error", message: "EACCES: permission denied, stat '/home/u/x'" } })))).toBe(GENERIC(500));
     expect(await told(answering(503, "<html>proxy</html>"))).toBe(GENERIC(503));
     expect(await told(answering(500, "null"))).toBe(GENERIC(500));
+  });
+});
+
+describe("host chats through a bridge", () => {
+  const dirs: string[] = [];
+  const stops: Array<() => void> = [];
+  afterEach(() => {
+    for (const stop of stops.splice(0).reverse()) stop();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  const temp = () => { const dir = mkdtempSync(join(tmpdir(), "herdr-bridge-agent-host-")); dirs.push(dir); return dir; };
+  const offline = async (): Promise<never> => { throw new Error("local offline"); };
+
+  /** The start script a manager built with `agentHost` sends to a POSIX PC that runs no bridge yet. */
+  async function posixStart(agentHost: boolean): Promise<string> {
+    const manager = new MachineManager(temp(), {} as PushService, {} as CompletionTracker, offline, agentHost);
+    stops.push(() => manager.stop());
+    const socket = "/home/u/.config/herdr/herdr.sock";
+    let started: string | undefined;
+    const ssh = { run: async (script: string) => {
+      if (script.includes("uname")) return "Linux\nx86_64\n/home/u\n/home/u/.config\n/usr/bin/herdr\nbundle-ready\n";
+      if (script.includes("socket=")) return socket;
+      if (script.includes("--version")) return "herdr 0.9.3";
+      if (script.includes("remote-entry.ts")) { started = script; return ""; }
+      // the bridge's descriptors, read after the start: the start line is all this test needs
+      throw new Error("stop after the start");
+    } } as unknown as SshConnection;
+    const prepare = (manager as unknown as { prepare(runtime: unknown): Promise<void> }).prepare.bind(manager);
+    await expect(prepare({ generation: 0, ssh, machine: { target: { destination: "pc" } } })).rejects.toThrow("stop after the start");
+    if (started === undefined) throw new Error("the bridge was not started");
+    return started;
+  }
+
+  it("a bridge started for an agent-host server carries HERDR_WEB_AGENT_HOST=on, and HERDR_WEB_AGENT_HOST_START is never set by the server", async () => {
+    const on = await posixStart(true);
+    expect(on).toContain(" HERDR_WEB_AGENT_HOST=on ");
+    expect(on).toMatch(/HERDR_WEB_AGENT_HOST=on .*nohup /);
+    expect(on).not.toContain("HERDR_WEB_AGENT_HOST_START");
+    const off = await posixStart(false);
+    expect(off).not.toContain("HERDR_WEB_AGENT_HOST");
+    expect(off).toContain("HERDR_REMOTE_SESSION=");
+
+    // the hosts themselves: POSIX on the env prefix, Windows a `set` line in the launcher
+    const inspection = (home: string): HostInspection => ({ platform: "linux-x64", home, herdrPath: "", expectedSocket: "", bundleReady: true, bundleOlder: false, descriptors: [], runtimeDir: "", registryDir: "" });
+    const posix: string[] = [];
+    const posixSsh = { run: async (script: string) => { posix.push(script); return ""; } } as unknown as SshConnection;
+    await posixHost.start(posixSsh, { herdrPath: "/usr/bin/herdr", inspection: inspection("/home/u"), agentHost: true });
+    await posixHost.start(posixSsh, { herdrPath: "/usr/bin/herdr", inspection: inspection("/home/u") });
+    expect(posix[0]).toContain(" HERDR_WEB_AGENT_HOST=on ");
+    expect(posix[1]).not.toContain("HERDR_WEB_AGENT_HOST");
+    const windows: string[] = [];
+    const windowsSsh = { runPowerShell: async (script: string) => { windows.push(script); return ""; } } as unknown as SshConnection;
+    const windowsInspection = { ...inspection("C:\\Users\\u"), platform: "win32-x64" as const, runtimeDir: "C:\\Users\\u\\AppData\\Local\\herdr-web-ui\\remote", registryDir: "C:\\Users\\u\\.config\\herdr-web-ui\\bridges" };
+    await windowsHost.start(windowsSsh, { herdrPath: "C:\\Programs\\herdr.exe", inspection: windowsInspection, agentHost: true });
+    await windowsHost.start(windowsSsh, { herdrPath: "C:\\Programs\\herdr.exe", inspection: windowsInspection });
+    expect(windows[0]).toContain(psQuote(`set "HERDR_WEB_AGENT_HOST=on"`));
+    // the set line comes before the line that runs the bridge
+    expect(windows[0]!.indexOf(psQuote(`set "HERDR_WEB_AGENT_HOST=on"`))).toBeLessThan(windows[0]!.indexOf("remote-entry.ts"));
+    expect(windows[1]).not.toContain("HERDR_WEB_AGENT_HOST");
+    for (const script of [...posix, ...windows]) expect(script).not.toContain("HERDR_WEB_AGENT_HOST_START");
+  });
+
+  it("a bridge's host-chat-changed reaches the phone as a machine-message", async () => {
+    const push = { seed() {}, onStatus: async () => {}, onEnded: async () => {} } as unknown as PushService;
+    const manager = new MachineManager(temp(), push, {} as CompletionTracker, offline, true);
+    stops.push(() => manager.stop());
+    const snapshot = { workspaces: [], tabs: [], panes: [], layouts: [], agents: [] };
+    let observer: { send(data: string): unknown } | undefined;
+    const observing = Promise.withResolvers<void>();
+    const bridge = Bun.serve({
+      port: 0, hostname: "127.0.0.1",
+      fetch(request, server) {
+        if (new URL(request.url).pathname === "/ws" && server.upgrade(request, { data: undefined })) return;
+        return Response.json({ snapshot });
+      },
+      websocket: {
+        open(ws) { observer = ws; },
+        message(_ws, data) { if (JSON.parse(String(data)).type === "role") observing.resolve(); },
+      },
+    });
+    stops.push(() => bridge.stop(true));
+    type TestRuntime = { machine: Machine; endpoint?: { url: string; token: string }; ssh?: { close(): void; onExit?: () => void } };
+    const drive = manager as unknown as { machines: Map<string, TestRuntime>; runtime(machine: Machine): TestRuntime; observe(runtime: TestRuntime): Promise<void> };
+    const runtime = drive.runtime({ id: "remote", name: "Fictional PC", kind: "ssh", enabled: true, state: "connected", error: null, snapshot: null });
+    runtime.endpoint = { url: `http://127.0.0.1:${bridge.port}`, token: "fixture" };
+    runtime.ssh = { close() {} };
+    drive.machines.set("remote", runtime);
+    await drive.observe(runtime);
+    await observing.promise;
+    const before = runtime.machine.snapshot;
+    const relayed: ServerMessage[] = [];
+    const heard = Promise.withResolvers<void>();
+    const unsubscribe = manager.subscribe((event) => {
+      if (event.type !== "machine-message" || event.machine_id !== "remote") return;
+      relayed.push(event.message);
+      if (relayed.length === 3) heard.resolve();
+    });
+    stops.push(unsubscribe);
+    if (!observer) throw new Error("remote observer missing");
+    const frames: ServerMessage[] = [
+      { type: "host-chat-changed", session: "copilotcli:/00000000-0000-4000-8000-000000000001" },
+      { type: "host-chat-changed", session: null },
+      { type: "host-chat-state", host: { state: "connected", signed_in: true, protocol: "1.0.0" } },
+    ];
+    for (const frame of frames) observer.send(JSON.stringify(frame));
+    await heard.promise;
+    expect(relayed).toEqual(frames);
+    // a host chat frame is relayed as it is and leaves the PC's herdr snapshot alone
+    expect(runtime.machine.snapshot).toBe(before);
   });
 });

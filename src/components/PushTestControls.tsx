@@ -14,7 +14,6 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
   const denied = globalThis.Notification?.permission === "denied";
   const busy = result === "sending";
   const enable = !settings.alertsOn || result === "missing" || result === "gone" || result === "permission";
-
   const send = async (repair: boolean) => {
     setResult("sending");
     try {
@@ -42,7 +41,7 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
               : result === "gone" ? t("The push service retired this device's subscription. Turn alerts on again to make a new one.")
               : result === "permission" ? t("Allow notifications to test alerts on this device.")
               : result === "failed" ? t("Could not send the test notification. Try again.")
-              : !settings.alertsOn ? t("Alerts off") : null}
+              : !settings.alertsOn ? t("Push is off on this device") : null}
           </span>
         </div>
         <button type="button" className="btn" disabled={busy || !settings.alertsOn || !supported || denied} onClick={() => void send(false)}>{busy ? t("Sending…") : t("Send test")}</button>

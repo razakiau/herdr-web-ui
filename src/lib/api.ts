@@ -35,6 +35,7 @@ import type {
   PaneFindRequest,
   PaneFindResponse,
   PlanStep,
+  ProjectFavicon,
   PromptAnswer,
   PushKey,
   PortalStatus,
@@ -51,6 +52,7 @@ import type {
   UsageReport,
   WorkspaceCreated,
   PluginActionRequest,
+  OmniRouteStatus,
   PluginActionResult,
   PluginActions,
   PluginActionsResponse,
@@ -68,6 +70,21 @@ import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
 import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
+import type { UsageLoginAccounts, UsageLoginProvider, UsageLoginRequest, UsageLoginStarted } from "../../shared/usage-login.ts";
+
+export function fetchUsageLoginProviders(signal: AbortSignal): Promise<{ providers: readonly UsageLoginProvider[] }> {
+  return getJson("/api/usage/login", { signal });
+}
+
+export function fetchUsageLoginAccounts(provider: string, signal: AbortSignal): Promise<UsageLoginAccounts> {
+  return getJson(`/api/usage/login?provider=${encodeURIComponent(provider)}`, { signal });
+}
+
+export function startUsageLogin(request: UsageLoginRequest): Promise<UsageLoginStarted> {
+  return getJson<UsageLoginStarted>("/api/usage/login", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request), signal: AbortSignal.timeout(30_000),
+  });
+}
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
@@ -77,6 +94,21 @@ export function fetchRemoteAccess(): Promise<RemoteAccess> {
 /** The sidebar's plan meters; `refresh` asks the providers again instead of the server's recent answer. */
 export function fetchUsage(refresh = false): Promise<UsageReport> {
   return getJson<UsageReport>(refresh ? "/api/usage?refresh=1" : "/api/usage");
+}
+
+/** Local server's CLIProxyAPI controls; secrets are only ever sent, never read back. */
+/** The OmniRoute gateway this server reads plan limits from, if any (its environment, else Settings). */
+export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteStatus> {
+  return getJson<OmniRouteStatus>("/api/usage/omniroute", { cache: "no-store", ...(signal ? { signal } : {}) });
+}
+
+/** Save (PUT `{url, token?}`) or forget (DELETE) the OmniRoute gateway this server reads; the server's environment refuses both. */
+export function omniRouteRequest(init: RequestInit): Promise<OmniRouteStatus> {
+  return getJson<OmniRouteStatus>("/api/usage/omniroute", { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(30_000) });
+}
+
+export function cliProxyRequest<T>(path = "", init: RequestInit = {}): Promise<T> {
+  return getJson<T>(`/api/cliproxy${path}`, { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(60_000) });
 }
 
 export function fetchUpdateStatus(): Promise<UpdateStatus> {
@@ -187,7 +219,7 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
-async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+export async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
@@ -373,7 +405,7 @@ export async function signOut(): Promise<void> {
 }
 
 /** Chunked btoa: the naive one-liner blows the stack on multi-MB screenshots. */
-function base64FromBytes(bytes: Uint8Array): string {
+export function base64FromBytes(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -586,6 +618,11 @@ export async function fetchFileInfo(path: string, paneId: string | null, machine
   return (await response.json()) as FileInfo;
 }
 
+/** GET /api/fs/favicon: the icon the project in folder `root` keeps, or null, in one request. */
+export async function fetchProjectFavicon(root: string, machineId = "local"): Promise<FileInfo | null> {
+  return (await getJson<ProjectFavicon>(machinePath(machineId, `fs/favicon?${new URLSearchParams({ root }).toString()}`))).icon;
+}
+
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
 export function fileUrl(path: string, paneId: string | null, machineId = "local", download = false): string {
   return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
@@ -746,6 +783,11 @@ export async function answerPanePrompt(answer: PromptAnswer, machineId = "local"
 /** GET /api/push: the server's VAPID key, the `applicationServerKey` this device subscribes with. */
 export async function fetchPushKey(): Promise<string> {
   return (await getJson<PushKey>("/api/push")).public_key;
+}
+
+/** The ntfy topic the server also posts alerts to, as GET /api/push says; null without one (or from an older server). */
+export async function fetchNtfyTopic(): Promise<NonNullable<PushKey["ntfy"]> | null> {
+  return (await getJson<PushKey>("/api/push")).ntfy ?? null;
 }
 
 /** `alerts`: what this device wants to hear about; the server applies it to every alert it sends here. */

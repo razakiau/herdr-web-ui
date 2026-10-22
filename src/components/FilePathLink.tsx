@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
-import { splitFilePaths } from "../lib/filePaths.ts";
+import { fileLineTarget, splitFilePaths } from "../lib/filePaths.ts";
 import { useT } from "../lib/i18n.ts";
+import { FileGlyph } from "./FileGlyph.tsx";
 
 /**
  * Text past this many characters stays plain: a whole tool output can be megabytes, and every
@@ -16,9 +17,19 @@ export function linksFilePaths(text: string): boolean {
   return text.length <= FILE_LINK_LIMIT && splitFilePaths(text).filter((part) => typeof part !== "string").length <= FILE_LINK_COUNT;
 }
 
-/** A file path the viewer opens: a button that reads as the text or code it replaced. */
-export function FilePathLink({ path, code, open }: { path: string; code: boolean; open: (path: string) => void }) {
+/**
+ * A file path the viewer opens: a button that reads as the text or code it replaced. `pill` (the
+ * vscode style only): VS Code's file pill instead, its icon, its name and its line (`a.ts:12`).
+ */
+export function FilePathLink({ path, code, open, pill = false }: { path: string; code: boolean; open: (path: string) => void; pill?: boolean }) {
   const t = useT();
+  if (pill) {
+    const target = fileLineTarget(path);
+    const name = target.path.replace(/\/+$/, "").split("/").at(-1) || target.path;
+    return <button type="button" className="markdown-file is-pill" title={t("Open {path}", { path })} onClick={() => open(path)}>
+      <FileGlyph name={name} className="markdown-file-icon" /><span>{name}</span>{target.line !== null && <span className="markdown-file-line">:{target.line}</span>}
+    </button>;
+  }
   const label = code ? <code>{path}</code> : path;
   return <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={t("Open {path}", { path })} onClick={() => open(path)}>{label}</button>;
 }

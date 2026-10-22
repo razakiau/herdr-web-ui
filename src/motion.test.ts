@@ -9,7 +9,15 @@ const stylesheets = (dir: string): string[] => readdirSync(dir, { withFileTypes:
 function smoothEndless(css: string): string[] {
   return css.replace(/\/\*[\s\S]*?\*\//g, "").split(/[;{}]/).map((declaration) => declaration.replace(/\s+/g, " ").trim())
     .filter((declaration) => /^animation\s*:/.test(declaration) && /\binfinite\b/.test(declaration)
-      && !/steps\(|var\(--ease-pulse\)/.test(declaration) && !/bridge-progress-slide/.test(declaration));
+      && !/var\(--ease-(pulse|spin|breathe|shimmer)\)/.test(declaration) && !/bridge-progress-slide/.test(declaration));
+}
+
+const ENDLESS_EASINGS = ["--ease-pulse", "--ease-spin", "--ease-breathe", "--ease-shimmer"];
+
+/** The value each endless easing token takes in the first rule whose selector is exactly `selector`. */
+function easings(css: string, selector: string): Record<string, string> {
+  const body = new RegExp(`(^|})\\s*${selector.replace(/[[\]"=]/g, "\\$&")}\\s*{([^}]*)}`).exec(css.replace(/\/\*[\s\S]*?\*\//g, ""))?.[2] ?? "";
+  return Object.fromEntries(ENDLESS_EASINGS.map((name) => [name, new RegExp(`${name}:\\s*([^;]+);`).exec(body)?.[1]?.trim() ?? ""]));
 }
 
 describe("motion", () => {
@@ -20,6 +28,19 @@ describe("motion", () => {
   it("runs no endless animation smoothly, apart from the bridge install's progress bar", () => {
     expect(stylesheets(import.meta.dir).flatMap((file) =>
       smoothEndless(readFileSync(file, "utf8")).map((declaration) => `${file.slice(import.meta.dir.length + 1)}: ${declaration}`))).toEqual([]);
+  });
+
+  // Settings > Appearance > Smooth animations (off by default) lets an account that runs no video
+  // beside the app trade that for motion drawn every frame: the root's data-motion="smooth" swaps
+  // each endless easing token for a smooth one, so every endless animation must use one.
+  it("steps every endless easing token by default and smooths each one under data-motion=smooth", () => {
+    const css = readFileSync(join(import.meta.dir, "styles.css"), "utf8");
+    const stepped = easings(css, ":root");
+    const smooth = easings(css, '[data-motion="smooth"]');
+    for (const name of ENDLESS_EASINGS) {
+      expect(`${name}: ${stepped[name]}`).toMatch(new RegExp(`^${name}: steps\\(`));
+      expect(`${name}: ${smooth[name]}`).toMatch(new RegExp(`^${name}: (linear|ease|ease-in-out|cubic-bezier\\()`));
+    }
   });
 
   it("reads a declaration whole, however it is split across lines", () => {

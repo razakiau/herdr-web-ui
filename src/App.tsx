@@ -2,7 +2,7 @@ import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEff
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
-import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
+import { ApiError, authenticate, createTab, fetchHealth, fetchNtfyTopic, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
@@ -15,29 +15,46 @@ import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
 import { passingFolder, recentDirectories } from "./lib/recent-directories.ts";
 import { usePreferencesSync } from "./lib/preferencesSync.ts";
-import { TabStrip } from "./components/TabStrip.tsx";
+import { HostChatTabStrip, TabStrip } from "./components/TabStrip.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { loadedOnSettingsEntry, onSettingsHistory, recordSettings, settingsEntry } from "./lib/settingsHistory.ts";
+import { sheetSteppedOff } from "./lib/sheetHistory.ts";
 import { fileFromLink, isNavigation, linkSearch, linksSomewhere, NAV_KEY, readLink, resolveLink, slugOf, type AppLink, type CreateDraft, type LinkNote } from "./lib/deepLink.ts";
 import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
-import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
+import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems, type AllAgentsOn } from "./components/MachineSidebar.tsx";
+import type { HostChatTarget } from "./components/AgentSidebar.tsx";
+import { HostChatView } from "./components/HostChatView.tsx";
+import { basename, errorText, hostChatLive, hostChatRoster, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs } from "./lib/hostChats.ts";
+import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
+import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
+import { hostChatHome, pcPlacement, samePath } from "./lib/hostPlacement.ts";
+import { closeTab, closeWorkspace, currentHostWorkspaces, openWorkspace, tabsOf, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./lib/hostWorkspaces.ts";
+import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleHostFolderPin, toggleSidebarPin } from "./lib/sidebarPins.ts";
+import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
+import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
+import { FILE_PANEL_DOCK_QUERY, storedFilePanelWidth } from "./lib/filePanelWidth.ts";
+import { openPresentation, type FilePresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
-import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
-import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
+import { headerCrumb, hostHeaderCrumb, hostHeaderName, showsChat } from "./lib/headerCrumb.ts";
+import { HOST_AGENT_KIND } from "../shared/supported-agents.ts";
+import type { HostChatRow } from "../shared/host-chats.ts";
+import { LOCAL_MACHINE, paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
+import { setAgentRowTokens } from "./lib/agentRowTokens.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
 import { SnapshotRequests } from "./lib/snapshotRequests.ts";
 import { alertPrefs, useSettings } from "./lib/settings.ts";
-import { useShortcuts } from "./lib/shortcuts.ts";
+import { formatKeys, shortcutDisplayKeys, useShortcuts } from "./lib/shortcuts.ts";
 import { useMediaQuery } from "./lib/useMediaQuery.ts";
+import { useAnnouncedText } from "./lib/useAnnouncedText.ts";
 import { PaneLenses } from "./lib/paneLens.ts";
 import { paneContextPress } from "./lib/paneCanvas.ts";
 import type { AppActions, PaneView, PaneControls } from "./lib/actions.ts";
@@ -52,7 +69,7 @@ import {
   type NotificationState,
 } from "./lib/notifications.ts";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
-import { machineGone, notificationLanding, notificationTargetFromSearch, sameLink, notificationViewForPane, onNotificationTarget, type NotificationTarget } from "./lib/notificationTarget.ts";
+import { hostChatFromSearch, isHostChatTarget, machineGone, notificationLanding, notificationTargetFromSearch, sameLink, notificationViewForPane, onNotificationTarget, type HostChatAlertTarget, type NotificationTarget } from "./lib/notificationTarget.ts";
 import { useUpdates } from "./lib/updates.ts";
 import { UpdateNotice } from "./components/UpdateControls.tsx";
 import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
@@ -60,9 +77,12 @@ import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
 import { folderQueryFor } from "./lib/paletteFolders.ts";
 import { FileViewer } from "./components/FileViewer.tsx";
+import { WebPanel } from "./components/WebPanel.tsx";
+import { panelUrl, WebPanelContext, wantsPanel } from "./lib/webPanel.ts";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { useFileViewer } from "./lib/useFileViewer.ts";
+import { useFocusReturn } from "./lib/useFocusTrap.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
 import { useT } from "./lib/i18n.ts";
 import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
@@ -148,6 +168,42 @@ function SlotSessions({ slot, machineIds, children }: { slot: SplitSlot; machine
   return slot === "b" ? <MachineSessionsProvider machineIds={machineIds}>{children}</MachineSessionsProvider> : <>{children}</>;
 }
 
+/** The header's note. Its status is in the header from the header's first render, clipped while empty
+    (never display: none, as the connection chip), and its words land a frame after the box, even the
+    ones a page opens with (lib/useAnnouncedText.ts). Its sentence is cut like the title it stands in
+    for, under its own class: only the pane title carries .context-title-text, which the browser
+    checks measure (scripts/mobile-tabs-regression.ts). */
+function HeaderNote({ note }: { note: string | null }) {
+  const shown = useAnnouncedText(note);
+  return (
+    <div className={shown === null ? "visually-hidden" : "context"}>
+      <span className={shown === null ? undefined : "pill header-note"} role="status" style={{ minWidth: 0 }}>
+        <span className="header-note-text">{shown}</span>
+      </span>
+    </div>
+  );
+}
+
+/** The connecting shell's one sidebar line: the same announced status as every other (lib/useAnnouncedText.ts). */
+function ConnectingNote() {
+  const t = useT();
+  const shown = useAnnouncedText(t("Connecting…"));
+  return <p className={shown === null ? "visually-hidden" : "tree-state"} role="status">{shown}</p>;
+}
+
+/** The header's connection chip. It speaks only while the bridge is not live; live, it stays in the document
+    for a screen reader (and the browser scripts that wait on it), drawn by nothing (styles.css). Its word lands
+    a frame after the chip (lib/useAnnouncedText.ts), as every status line's does. */
+function ConnectionChip({ connected, word, title }: { connected: boolean; word: string; title: string | undefined }) {
+  const shown = useAnnouncedText(word);
+  return (
+    <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status" title={title}>
+      <span className="conn-dot" aria-hidden="true" />
+      <span className="conn-text">{shown}</span>
+    </span>
+  );
+}
+
 function Brand() {
   return (
     <h1 className="brand">
@@ -162,7 +218,7 @@ function Brand() {
 export function App() {
   const t = useT();
   const apple = /Mac|iPhone|iPad/.test(navigator.platform);
-  const { settings, resolvedTheme, resolvedPalette, update: updateSettings } = useSettings();
+  const { settings, resolvedTheme, resolvedEntry, update: updateSettings } = useSettings();
   // this device's alert choices: sent with its push subscription, and applied to tab alerts here
   const alerts = useMemo(() => alertPrefs(settings), [settings.alertInput, settings.alertDone]);
   const alertsRef = useRef(alerts);
@@ -230,7 +286,8 @@ export function App() {
   /** the code a scanned QR brought along (`?pair=CODE`), taken off the address at once */
   const [pairCode] = useState(() => takePairCode());
   const [auth, setAuth] = useState<HealthAuth | null>(null);
-  const canSignOut = auth?.authenticated === true && (auth.via === "token" || auth.via === "device");
+  // a token a proxy sends with every request comes back right after signing out: signing out is the proxy's
+  const canSignOut = auth?.authenticated === true && (auth.via === "device" || (auth.via === "token" && auth.bearer !== true));
   // a device that is in only because nothing is paired yet still pairs from the QR code's address
   const pairedFromAddress = useRef(false);
   useEffect(() => {
@@ -245,6 +302,20 @@ export function App() {
     if (initialLink && (initialLink.workspace || fileFromLink(initialLink))) return null;
     return storedSelection()?.pane_id ?? null;
   });
+  // a host chat shown in the pane's place (lib/hostChats.ts): picking one clears the pane, and a pane picked clears it
+  const [selectedHostChat, setSelectedHostChat] = useState<HostChatTarget | null>(null);
+  const selectedHostChatRef = useRef(selectedHostChat); selectedHostChatRef.current = selectedHostChat;
+  // set where the PCs' chats are read (below): selectHostChat and the actions reach them through these
+  const keepHostTabRef = useRef<(target: HostChatTarget, cwd?: string | null) => void>(() => undefined);
+  const closeHostTabRef = useRef<(machineId: string, session: string) => void>(() => undefined);
+  // the open host chat's last read: went through (true), failed (false), not read yet (null)
+  // and its title as its reads give it (a chat just made is not on its PC's list yet)
+  const [hostReadTitle, setHostReadTitle] = useState<string | null>(null);
+  // the folder a chat just made from "+" was started in, until its PC's list has the chat
+  const [hostMadeIn, setHostMadeIn] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedPaneId !== null) setSelectedHostChat(null);
+  }, [selectedPaneId]);
   const [notificationViewTarget, setNotificationViewTarget] = useState<NotificationTarget | null>(
     () => notificationTargetFromSearch(window.location.search),
   );
@@ -283,6 +354,11 @@ export function App() {
     const timer = window.setTimeout(() => setHeaderNote(null), headerNote === "copied" ? 1600 : 8000);
     return () => window.clearTimeout(timer);
   }, [headerNote]);
+  // the note that stands where the title does: a link that could not open what it named or was
+  // copied, or a link waiting for its PC's roster before it can open what it named (HeaderNote)
+  const note = headerNote
+    ? t(headerNote === "copied" ? "Link copied" : headerNote === "pane-closed" ? "That agent has closed: its workspace is open" : headerNote === "machine-missing" ? "That link's PC is not set up here" : "That link's workspace is closed")
+    : !linkLanded ? t("Opening link…") : null;
   // App picked the selected pane itself because the one selected closed: it must not raise a
   // phone's keyboard (over the drawer the close was tapped in) until the user picks a pane or lens
   const [autoSelected, setAutoSelected] = useState(false);
@@ -319,6 +395,8 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => initialLink?.sidebar === "hidden");
   // the width the sidebar's edge was dragged to on this device; null is the density's own
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
+  const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
+  const [filePanelWidth, setFilePanelWidth] = useState(storedFilePanelWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
   // Explicit lens choices stay authoritative in this page even when storage cannot be written.
   const [viewPicks, setViewPicks] = useState<ReadonlyMap<string, PaneView>>(() => new Map());
@@ -374,12 +452,65 @@ export function App() {
   const paneActionsRef = useRef<((target: HerdrPane) => RowMenuItem[]) | null>(null);
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
-  const { viewing, openFile, closeFile } = useFileViewer();
-  const viewFile = useCallback((path: string) => {
-    openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
-  }, [openFile, selectedPaneId, selectedMachineId]);
+  // the PC whose "All agents on <PC>…" is open: the sidebar's ⋯ and a Copilot folder's header ⋯ open it
+  const [allAgentsOn, setAllAgentsOn] = useState<AllAgentsOn | null>(null);
+  const { viewing, openFile, closeFile, setPresentation, releaseFile } = useFileViewer();
   // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
-  const { viewing: diffViewing, openDiff, closeDiff } = useRepoDiffViewer();
+  const { viewing: diffViewing, openDiff, closeDiff, releaseDiff } = useRepoDiffViewer();
+  const presentation = viewing?.presentation ?? openPresentation(viewing?.path ?? "", settings.fileOpen);
+  const fileDocked = filePanelAvailable && presentation === "panel";
+  useEffect(() => {
+    if (viewing !== null && fileDocked) setFilesOpen(false);
+  }, [viewing, fileDocked]);
+  // a page this PC serves, beside the pane in the file panel's place: a file docked there replaces it
+  const [webPage, setWebPage] = useState<string | null>(null);
+  useEffect(() => {
+    if (viewing !== null && fileDocked) setWebPage(null);
+  }, [viewing, fileDocked]);
+  const openWebPage = useCallback((uri: string, shiftKey: boolean, machineId: string) => {
+    if (machineId !== LOCAL_MACHINE || !wantsPanel(settings.webLinks, shiftKey)) return false;
+    const url = panelUrl(uri, window.location);
+    if (url === null) return false;
+    if (viewing !== null && fileDocked) closeFile();
+    setWebPage(url);
+    return true;
+  }, [settings.webLinks, viewing, fileDocked, closeFile]);
+  // the panel is no dialog, so no trap gives the focus back when it closes: what opened the file
+  // (a link in the chat, a row of Files) gets it, as it does from the popup
+  useFocusReturn(viewing !== null && fileDocked);
+  // a collapse (below) whose two steps back have not landed: a second click on Show beside the
+  // pane, or the kind correction in the same moment, must not queue two steps more and the file twice
+  const collapsing = useRef(false);
+  // a collapse whose step back never lands must not lock the toggle once the file and diff are gone
+  useEffect(() => { if (viewing === null && diffViewing === null) collapsing.current = false; }, [viewing, diffViewing]);
+  const presentFile = useCallback((next: FilePresentation) => {
+    if (collapsing.current) return;
+    if (next === "panel" && filePanelAvailable && diffViewing !== null && viewing !== null) {
+      // Collapse the stacked diff and popup to one panel entry. Pushing from their opener
+      // also discards the old forward entries, so Forward cannot resurrect the popup or diff.
+      const preview = { ...viewing, presentation: next };
+      collapsing.current = true;
+      window.addEventListener("popstate", () => {
+        collapsing.current = false;
+        releaseDiff();
+        openFile(preview);
+      }, { once: true });
+      window.history.go(-2);
+    } else setPresentation(next);
+  }, [filePanelAvailable, diffViewing, viewing, releaseDiff, openFile, setPresentation]);
+  // the kind corrects a guess from the extension; with files set to open in the popup there is no guess to correct
+  const reportFileKind = useCallback((kind: FilePresentation) => {
+    const wanted = settings.fileOpen === "panel" ? kind : "popup";
+    if (viewing !== null && viewing.presentation === undefined && wanted !== openPresentation(viewing.path, settings.fileOpen)) presentFile(wanted);
+  }, [viewing, presentFile, settings.fileOpen]);
+  const toggleFilePresentation = filePanelAvailable && viewing !== null
+    ? () => presentFile(fileDocked ? "popup" : "panel")
+    : undefined;
+  const viewFile = useCallback((path: string) => {
+    // the Files dialog would cover the docked panel the file opens in
+    if (filePanelAvailable && openPresentation(path, settings.fileOpen) === "panel") setFilesOpen(false);
+    openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
+  }, [openFile, selectedPaneId, selectedMachineId, filePanelAvailable, settings.fileOpen]);
   // a link to Settings opens it on its page, for that first opening alone
   const [settingsOpen, setSettingsOpen] = useState(() => initialLink?.settings != null);
   const [settingsLinkPage, setSettingsLinkPage] = useState<string | null>(() => initialLink?.settings ?? null);
@@ -407,12 +538,17 @@ export function App() {
   // the New workspace dialog in the address (lib/deepLink.ts): the fields a link filled for this
   // opening, and what the fields say now
   const [newPrefill, setNewPrefill] = useState<Omit<CreateDraft, "kind"> | null>(null);
+  // New agent host chat… from a folder: the dialog makes a chat in that folder (no folder list)
+  const [newChatIn, setNewChatIn] = useState<string | null>(null);
   const [newFields, setNewFields] = useState<Omit<CreateDraft, "kind"> | null>(null);
   // a link to the dialog, opened once the PCs are in (a tab, once its workspace is found)
   const pendingCreate = useRef<CreateDraft | null>(initialLink?.create ?? null);
   // the dialog makes a tab in this workspace instead of a workspace, while set
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   const [connected, setConnected] = useState(false);
+  /** the active terminal's socket has been connected on this page before (PaneTerminal reports it): not
+   *  connected, the chip says reconnecting; before this page's first connection to the PC, connecting */
+  const [connectedBefore, setConnectedBefore] = useState(false);
   // the active slot's pane could not be drawn: no terminal is attached there to say so itself
   const paneLost = useCallback(() => setConnected(false), []);
   const [outputStopped, setOutputStopped] = useState(false);
@@ -422,7 +558,7 @@ export function App() {
   const pushOnRef = useRef(pushOn);
   pushOnRef.current = pushOn;
   // the shared settings and pins, the same in every browser of this server, once the app is in
-  const receivePreferences = usePreferencesSync(locked === false);
+  const { receive: receivePreferences, saveError: settingsSaveError } = usePreferencesSync(locked === false);
   const receivePreferencesRef = useRef(receivePreferences); receivePreferencesRef.current = receivePreferences;
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
@@ -508,7 +644,8 @@ export function App() {
   // In-app alerts (components/Droplet.tsx): only while the app is on screen - a hidden app has
   // its system notifications - and never for the pane already open in front of the user.
   const dropIn = useCallback((machine: Machine, pane: HerdrPane, kind: DropletKind) => {
-    if (!alertsOnRef.current || !alertInAppRef.current || document.visibilityState !== "visible") return;
+    // a channel of its own: push to this device (alertsOn) does not hold it
+    if (!alertInAppRef.current || document.visibilityState !== "visible") return;
     const open = selectionRef.current;
     if (open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
     if (splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
@@ -527,13 +664,13 @@ export function App() {
   const alertTurns = useRef<ReturnType<typeof createAlertTurnPlayer> | null>(null);
   useEffect(() => {
     const player = createAlertTurnPlayer({
-      play: (kind) => alertsOnRef.current && alertSoundRef.current && playAlertSound(kind),
+      play: (kind) => alertSoundRef.current && playAlertSound(kind),
     });
     alertTurns.current = player;
     return () => { player.dispose(); alertTurns.current = null; };
   }, []);
   const chime = useCallback((machine: Machine, pane: HerdrPane, kind: AlertSoundKind) => {
-    if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
+    if (!alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
     if (document.visibilityState === "visible" && splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
@@ -559,10 +696,16 @@ export function App() {
       snapshot: machine.snapshot && { panes: machine.snapshot.panes.map((pane) => ({ pane_id: pane.pane_id, agent_status: alertStatus(pane.agent_status, (pane as HerdrPane).background_wait) })) },
     }));
     const events = new EventSource("/api/machines/events");
+    // opened, or reopened after a drop: a host chat push may have been missed while it was down
+    events.onopen = () => noteHostChatStreamOpen();
     events.onmessage = (event) => {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
+      if (payload.type === "herdr-sidebar") { setAgentRowTokens(payload.agents); return; }
+      // a PC's agent host or host chats changed: its sidebar group and an open chat read them again;
+      // no pane snapshot is touched, so a streaming chat never voids the roster's polls
+      if (takeHostChatEvent(payload, (id) => machinesRef.current.some((m) => m.id === id))) return;
       // A poll started before this event can carry an older roster or pane status.
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
@@ -602,6 +745,7 @@ export function App() {
         });
       }
       if (message.type === "pane-exited") {
+        if (machine.id === "local") window.dispatchEvent(new Event("herdr-usage-changed"));
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
         const worked = endedTurn(turnStartRef.current, lastTurnRef.current, paneStorageId(machine.id, message.pane_id), Date.now());
         if (pane && dropletAllows(alertsRef.current, "done", worked)) {
@@ -667,6 +811,15 @@ export function App() {
     };
   }, [locked, notifications, alerts, alertsOn]);
 
+  // the server's ntfy topic, when it has one: with it, push off here is a choice, not a gap
+  const [ntfyTopic, setNtfyTopic] = useState<string | null>(null);
+  useEffect(() => {
+    if (locked !== false) return;
+    let live = true;
+    fetchNtfyTopic().then((ntfy) => { if (live) setNtfyTopic(ntfy?.topic ?? null); }, () => {});
+    return () => { live = false; };
+  }, [locked]);
+
   const unlock = useCallback(() => {
     setLocked(false);
     void loadHealth();
@@ -710,9 +863,10 @@ export function App() {
     // Only another PC mounts a new terminal (and socket), which reports its own state. A pane
     // on the same PC keeps the connected socket, which never reports again: resetting here
     // left the header on "reconnecting" after every pane switch.
-    if (machineId !== selectedMachineRef.current) setConnected(false);
+    if (machineId !== selectedMachineRef.current) { setConnected(false); setConnectedBefore(false); }
     // the active half alone takes the pick, whatever the other half shows (lib/split.ts)
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
+    setSelectedHostChat(null);
     setOutputStopped(false);
     setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
     // this browser's choice only: herdr's focus, its TUI and every other device stay where they are
@@ -724,6 +878,29 @@ export function App() {
     selectionSince.current = rosterSeq.current;
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
+  // a host chat takes the pane's place on its PC; the chat screen draws it (Task 5)
+  // `how`: "tab" makes it a tab of its agent host workspace for good (a new chat, a fork, a pick
+  // from a strip); "look" (Agents, All agents, an alert) shows it without saving anything, unless it
+  // is a tab already. A look's tab stands only while it is on screen (lib/hostWorkspaces.ts).
+  const selectHostChat = useCallback((target: HostChatTarget, how: "tab" | "look" = "look", cwd?: string | null) => {
+    selectTarget(target.machineId, null);
+    setSelectedHostChat(target);
+    setHostReadTitle(null);
+    setHostMadeIn(null);
+    if (how === "tab") keepHostTabRef.current(target, cwd);
+  }, [selectTarget]);
+  const selectHostChatRef = useRef(selectHostChat); selectHostChatRef.current = selectHostChat;
+  // an address naming a chat (an ntfy alert's link, a tapped alert's cold start) opens it once,
+  // then leaves the address: the chat is not a place the address keeps (lib/deepLink.ts)
+  useEffect(() => {
+    const linked = hostChatFromSearch(window.location.search);
+    if (!linked) return;
+    selectHostChat({ machineId: linked.machine_id, session: linked.session });
+    const query = new URLSearchParams(window.location.search);
+    query.delete("chat");
+    const rest = query.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
     // a closed pane (including one remembered across reloads) must release its selection.
@@ -771,6 +948,8 @@ export function App() {
       }
     }
     if (snapshot.panes.some((pane) => pane.pane_id === selectedPaneId)) return;
+    // a host chat in the pane's place is a choice, not an empty selection to fill
+    if (selectedPaneId === null && selectedHostChat !== null) return;
     if (selectedPaneId === null) { setSelectedPaneId(fallback(snapshot)); return; }
     // The combined roster is cached: a newly created pane can be selected before it
     // appears there. Confirm absence against this PC before discarding the selection.
@@ -792,7 +971,7 @@ export function App() {
       setAutoSelected(true);
     }).catch(() => { /* a failed read is not evidence that the pane disappeared */ });
     return () => { cancelled = true; };
-  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick]);
+  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick, selectedHostChat]);
   useEffect(() => {
     storeSelection(selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);
@@ -818,7 +997,10 @@ export function App() {
   // yet waits as a link does (this also keeps a cold start's link, which the worker names again
   // once the page is up), and so does one on a PC this roster lacks: a roster asked for now says
   // whether it was removed (the [machines] effect below) or set up since this one was read
-  const takeNotificationTarget = useCallback((target: NotificationTarget): void => {
+  const takeNotificationTarget = useCallback((tapped: NotificationTarget | HostChatAlertTarget): void => {
+    // a host chat's alert opens the chat in the pane's place (server/push.ts onHostChats)
+    if (isHostChatTarget(tapped)) { selectHostChatRef.current({ machineId: tapped.machine_id, session: tapped.session }); return; }
+    const target = tapped;
     const landing = notificationLanding(machinesRef.current, target);
     if (landing.kind === "select") {
       selectTargetRef.current(target.machine_id, target.pane_id, target.view);
@@ -843,6 +1025,130 @@ export function App() {
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
+  // each PC's host chats (lib/hostChats.ts), read once for the sidebar and the tab strip
+  // none while Settings hides agent host chats (Agent host): herdr as it is without them
+  const { pcs: hostChats, tracker: hostTracker } = useHostChatPcs(hostChatRoster(machines, settings.hostChatsShown));
+  const hostPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  // the agent host workspaces open per PC, and their tabs (lib/hostWorkspaces.ts)
+  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
+  // a chat made a tab for good: its row's folder, else the one it was made in
+  keepHostTabRef.current = (target, cwd) => {
+    const folder = hostChats.get(target.machineId)?.chats.find((chat) => chat.session === target.session)?.cwd ?? cwd ?? null;
+    if (folder === null) return;
+    const state = currentHostWorkspaces();
+    const next = openTab(state[target.machineId] ?? { open: [] }, { session: target.session, cwd: folder });
+    if (next !== state[target.machineId]) setHostWorkspaces({ ...state, [target.machineId]: next });
+  };
+  // a tab closed: hidden, never archived. The one on screen gives way to its neighbour, else to the
+  // PC's first pane, as a closed pane's tab does
+  closeHostTabRef.current = (machineId, session) => {
+    const state = currentHostWorkspaces();
+    const pc = state[machineId];
+    if (!pc) return;
+    const shown = selectedHostChatRef.current;
+    if (shown?.machineId === machineId && shown.session === session) {
+      const next = tabAfterClose(pc, session);
+      if (next !== null) selectHostChat({ machineId, session: next }, "tab");
+      else { setSelectedHostChat(null); setAutoSelected(true); }
+    }
+    setHostWorkspaces({ ...state, [machineId]: closeTab(pc, session) });
+  };
+  // an agent host workspace closed: its row and tabs go, its chats stay as they are. The chat on
+  // screen in it gives way to the PC's first pane, as a closed workspace's pane does
+  const closeHostWorkspace = (machineId: string, cwd: string): void => {
+    const state = currentHostWorkspaces();
+    const pc = state[machineId];
+    const shown = selectedHostChatRef.current;
+    const row = shown?.machineId === machineId ? hostChats.get(machineId)?.chats.find((chat) => chat.session === shown.session) : undefined;
+    if (row?.cwd && samePath(row.cwd) === samePath(cwd)) { setSelectedHostChat(null); setAutoSelected(true); }
+    if (pc) setHostWorkspaces({ ...state, [machineId]: closeWorkspace(pc, cwd) });
+  };
+  // a host chat's own actions (components/HostChatActions.tsx), for its tab, its rows and the header
+  const [hostRename, setHostRename] = useState<HostChatRef | null>(null);
+  const [hostDelete, setHostDelete] = useState<HostChatRef | null>(null);
+  const [hostNotice, setHostNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!hostNotice) return;
+    const timer = window.setTimeout(() => setHostNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [hostNotice]);
+  const hostActions = useMemo((): HostChatActions => {
+    // the row shows the change at once (HostPcs); a refusal puts it back, and says so here
+    const said = (what: string) => (cause: unknown): void => setHostNotice(t("{what} failed: {reason}", { what, reason: errorText(cause) }));
+    return {
+      pinned: (machineId, session) => hostPins.includes(hostChatPinKey(machineId, session)),
+      togglePin: (machineId, session) => setSidebarPins(toggleSidebarPin(currentSidebarPins(), hostChatPinKey(machineId, session))),
+      askRename: (target) => setHostRename(target),
+      rename: (machineId, session, title) => { void hostTracker.rename(machineId, session, title).catch(said(t("Rename"))); },
+      setRead: (machineId, session, read) => { void hostTracker.setRead(machineId, session, read).catch(said(t(read ? "Mark as read" : "Mark as unread"))); },
+      // Mark as done also closes the tab, once the host took it (a refusal leaves both)
+      setArchived: (machineId, session, archived) => {
+        void hostTracker.setArchived(machineId, session, archived).then(() => { if (archived) closeHostTabRef.current(machineId, session); }, said(t(archived ? "Mark as done" : "Restore")));
+      },
+      askDelete: (target) => setHostDelete(target),
+      isTab: (machineId, session) => isTabOpen(hostWorkspaces[machineId], session),
+      closeTab: (machineId, session) => closeHostTabRef.current(machineId, session),
+      asking: hostRename !== null || hostDelete !== null,
+    };
+  }, [hostTracker, hostPins, t, hostRename, hostDelete, hostWorkspaces]);
+  // the open chat marked done (archived chats are not placed) or deleted, here or on the PC: it is
+  // let go as a closed pane is, and the PC's first pane is opened in its place. Only that change
+  // does it: a chat just made (not listed yet) or opened from Archived stays open
+  const openHostRow = selectedHostChat ? hostChats.get(selectedHostChat.machineId)?.chats.find((chat) => chat.session === selectedHostChat.session) : undefined;
+  const openHostKey = selectedHostChat ? `${selectedHostChat.machineId}\n${selectedHostChat.session}` : null;
+  // a host restarting, a PC dropping or a failed read is not a close (openHostChatClosed)
+  const openHostLive = selectedHostChat ? !openHostChatClosed(hostChats.get(selectedHostChat.machineId), selectedHostChat.session) : false;
+  // the chat on screen is read, as in VS Code: on opening it, and when its turn ends while shown
+  // (readsOnView); a chat marked unread while open stays so
+  const openHostSeen = useRef<{ key: string | null; row: HostChatRow | undefined }>({ key: null, row: undefined });
+  useEffect(() => {
+    const key = selectedHostChat && selectedPane === null ? `${selectedHostChat.machineId}\n${selectedHostChat.session}` : null;
+    const was = openHostSeen.current.key === key ? openHostSeen.current.row : undefined;
+    // a chat not listed yet has not been seen: its first row is its opening
+    openHostSeen.current = { key, row: openHostRow ?? (openHostSeen.current.key === key ? openHostSeen.current.row : undefined) };
+    if (key === null || openHostRow === undefined || !readsOnView(was, openHostRow)) return;
+    void hostTracker.setRead(selectedHostChat!.machineId, selectedHostChat!.session, true).catch(() => undefined);
+  }, [openHostRow, selectedHostChat, selectedPane, hostTracker]);
+  const openHostWas = useRef<{ key: string | null; live: boolean }>({ key: null, live: false });
+  useEffect(() => {
+    const was = openHostWas.current;
+    openHostWas.current = { key: openHostKey, live: openHostLive };
+    if (openHostKey === null || was.key !== openHostKey || !was.live || openHostLive) return;
+    // as Close tab: the tab beside it takes its place, so marking a chat done keeps its workspace on
+    // screen (the host's list says archived before the action's answer closes the tab)
+    const shown = selectedHostChatRef.current;
+    const pc = shown ? currentHostWorkspaces()[shown.machineId] : undefined;
+    const next = shown && pc ? tabAfterClose(pc, shown.session) : null;
+    if (shown && next !== null) { selectHostChat({ machineId: shown.machineId, session: next }, "tab"); return; }
+    setSelectedHostChat(null);
+    setAutoSelected(true);
+  }, [openHostKey, openHostLive]);
+  // each PC's open agent host workspaces kept up with its list (lib/hostWorkspaces.ts upkeepPc):
+  // seeded the first time it is seen, its gone chats' tabs dropped; only a live list counts
+  useEffect(() => {
+    let next = currentHostWorkspaces();
+    for (const [machineId, pc] of hostChats) {
+      const onScreen = selectedHostChat?.machineId === machineId ? selectedHostChat.session : null;
+      next = upkeepPc(next, machineId, pc, new Set(pinnedHostFolders(hostPins, machineId)), onScreen, settings.hostAutoOpen);
+    }
+    setHostWorkspaces(next);
+  }, [hostChats, hostPins, selectedHostChat, settings.hostAutoOpen]);
+  // a host chat on screen goes when Settings hides them
+  useEffect(() => { if (!settings.hostChatsShown) setSelectedHostChat(null); }, [settings.hostChatsShown]);
+  // where the selected PC's host chats stand (lib/hostPlacement.ts): the open tabs, and the one on screen
+  const hostPlacement = useMemo(() => pcPlacement(snapshot, hostChats.get(selectedMachineId)?.chats ?? [], hostWorkspaces[selectedMachineId],
+    selectedHostChat?.machineId === selectedMachineId ? selectedHostChat.session : null), [snapshot, hostChats, hostWorkspaces, selectedMachineId, selectedHostChat]);
+  // the chat on screen is a look: shown, its tab saved nowhere
+  const hostLook = selectedHostChat !== null && !isTabOpen(hostWorkspaces[selectedHostChat.machineId], selectedHostChat.session);
+  const hostHome = selectedHostChat !== null && selectedHostChat.machineId === selectedMachineId ? hostChatHome(hostPlacement, selectedHostChat.session) : null;
+  // a host chat open in a workspace: that workspace's strip, with none of its panes' tabs open
+  const hostWorkspace = hostHome && "workspace" in hostHome ? snapshot?.workspaces.find((workspace) => workspace.workspace_id === hostHome.workspace) ?? null : null;
+  const hostWorkspacePane = hostWorkspace ? (() => {
+    const own = snapshot?.panes.filter((pane) => pane.workspace_id === hostWorkspace.workspace_id) ?? [];
+    const remembered = lastViewedPane("workspace", selectedMachineId, hostWorkspace.workspace_id);
+    return own.find((pane) => pane.pane_id === remembered) ?? own[0] ?? null;
+  })() : null;
+  const hostFolder = hostHome && "folder" in hostHome ? hostPlacement.folders.find((group) => group.cwd === hostHome.folder) ?? null : null;
   const selectedLayout = snapshot?.layouts.find((layout) => layout.tab_id === selectedPane?.tab_id);
   useLayoutEffect(() => {
     if (selectedLayout?.zoomed && selectedLayout.focused_pane_id !== selectedPaneId
@@ -957,7 +1263,7 @@ export function App() {
     const current: SplitTarget | null = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
     const after: SplitSlot = next ? next.active : was && sameTarget(select, was.other) ? otherSlot(was.active) : was ? was.active : soloSlot;
     const before = was ? (was.active === after ? current : was.other) : after === soloSlot ? current : null;
-    if (before === null || before.machineId !== select.machineId) setConnected(false);
+    if (before === null || before.machineId !== select.machineId) { setConnected(false); setConnectedBefore(false); }
     if (next === null) endSplit(after); else setSplit(next);
     setSelectedMachineId(select.machineId); setSelectedPaneId(select.paneId); setAutoSelected(keepFocus); setOutputStopped(false);
     storeSelection(select.machineId, select.paneId);
@@ -1072,6 +1378,13 @@ export function App() {
   const linkWorkspaceId = selectedPane?.workspace_id ?? (selectedPaneId === null ? null : undefined);
   const linkSlug = slugOf(selectedWorkspace?.label) || null;
   const linkFile = viewing && viewing.machineId === selectedMachineId && (viewing.paneId === null || viewing.paneId === selectedPaneId) ? viewing.path : null;
+  // the file is its pane's (its paths are read from the pane's folder): another pane or PC
+  // selected leaves it behind, and the move takes the file's entry over (below), so Back returns
+  // to the pane the file was open on, without the file
+  const fileLeft = viewing !== null && linkFile === null;
+  useEffect(() => {
+    if (fileLeft) releaseFile();
+  }, [fileLeft, releaseFile]);
   useEffect(() => {
     if (locked !== false || machines.length === 0 || snapshot === null || linkWorkspaceId === undefined || !linkLanded) return;
     const link: AppLink = {
@@ -1088,9 +1401,12 @@ export function App() {
     // Back and Forward land where the address already says: nothing to write
     if (search === window.location.search) return;
     const url = `${window.location.pathname}${search}${window.location.hash}`;
-    if (previous !== null && !popped && !autoSelected && !settingsOpen && !newSessionOpen && isNavigation(previous, link)) window.history.pushState({ [NAV_KEY]: true }, "", url);
-    else window.history.replaceState(window.history.state, "", url);
-  }, [locked, machines.length, snapshot, linkLanded, selectedMachineId, selectedPaneId, linkWorkspaceId, linkSlug, linkFile, view, settingsOpen, settingsPage, settingsLinkPage, settingsLinkSection, newSessionOpen, newTab, newFields, wideScreen, sidebarCollapsed, autoSelected]);
+    if (previous !== null && !popped && !autoSelected && !settingsOpen && !newSessionOpen && isNavigation(previous, link)) {
+      // a move that leaves the open file behind takes the file's entry: no entry is left between
+      if (fileLeft) window.history.replaceState({ [NAV_KEY]: true }, "", url);
+      else window.history.pushState({ [NAV_KEY]: true }, "", url);
+    } else window.history.replaceState(window.history.state, "", url);
+  }, [locked, machines.length, snapshot, linkLanded, selectedMachineId, selectedPaneId, linkWorkspaceId, linkSlug, linkFile, fileLeft, view, settingsOpen, settingsPage, settingsLinkPage, settingsLinkSection, newSessionOpen, newTab, newFields, wideScreen, sidebarCollapsed, autoSelected]);
 
 
   // a file a link named opens over its pane once the pane is shown, as the chat's file links do
@@ -1109,6 +1425,9 @@ export function App() {
   useEffect(() => {
     const onPop = (event: PopStateEvent): void => {
       if (settingsEntry(event.state) !== null) return;
+      // a phone's sheet closing itself steps off its entry: not a Back, and what its item opened (a
+      // worktree's shell, before the roster lists it) is written over the address once it is listed
+      if (sheetSteppedOff()) return;
       const link = readLink(window.location.search);
       // before the PCs are in, nothing can say the entry's PC is still set up: it waits as a link
       // opened with the page does, settled against its roster or answered with a note once they are
@@ -1147,41 +1466,64 @@ export function App() {
   }, []);
 
 
-  // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
-  // need none, so they count as on. A device that has not answered the permission question is
-  // asked by the item; one that has answered gets a plain switch.
+  // The menu's push item: web push to this device, one channel of the alerts beside the in-app
+  // ones and the server's ntfy topic (Settings -> Alerts holds all three). A device that has not
+  // answered the permission question is asked by the item; one that has answered gets a plain switch.
   const bell: { state: string; title: string; on: boolean; run: () => Promise<unknown> } =
-    !alertsOn
-      ? { state: t("Off on this device"), title: t("Alerts off on this device. Tap to turn them on"), on: false, run: enableNotifications }
-      : notifications !== "granted"
-        ? !settings.alertInApp
-          ? { state: t("Off on this device"), title: t("Notify me when a pane needs input or finishes"), on: false, run: enableNotifications }
-          : notifications === "default"
-            ? { state: t("On in the app"), title: t("Alerts on in the app. Tap to allow them when it is closed too"), on: true, run: enableNotifications }
-            : { state: t("On in the app"), title: t("Alerts on in the app. Tap to turn them off"), on: true, run: disableNotifications }
-        : pushOn
-          ? { state: t("On, pushed to this device"), title: t("Alerts on, pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
-          : {
-              state: t("On in this tab"),
-              // turning them off and on again retries the push subscription
-              title: pushSupported()
-                ? t("Alerts on while this tab is open. Tap to turn them off")
-                : t("Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to turn them off"),
-              on: true,
-              run: disableNotifications,
-            };
-  // hidden only where it could do nothing: no system notifications and in-app alerts off
-  const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
+    !alertsOn || notifications !== "granted"
+      ? { state: t("Off"), title: t("Push alerts to this device, even with the app closed. Tap to turn them on"), on: false, run: enableNotifications }
+      : pushOn
+        ? { state: t("On"), title: t("Alerts are pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
+        : {
+            state: t("On while this tab is open"),
+            // turning them off and on again retries the push subscription
+            title: t("The push service could not be reached: alerts show while this tab is open. Tap to turn them off"),
+            on: true,
+            run: disableNotifications,
+          };
+  // hidden where push cannot work: no push in this browser, or notifications blocked
+  const bellVisible = pushSupported() && notifications !== "denied";
   // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
-  const alertsOffDot = bellVisible && !bell.on;
-  const connWord = t(connected ? "live" : outputStopped ? "disconnected" : "reconnecting");
+  // the dot says the ⋯ holds Alerts: a Copilot folder's menu has none
+  // only when nothing tells this device at all: no push, no in-app alerts, no ntfy topic
+  const alertsOffDot = bellVisible && !bell.on && !settings.alertInApp && ntfyTopic === null && !(hostFolder !== null && selectedHostChat !== null);
+  // a host chat has no pane, whose terminal stream says live: its chip follows its own reads
+  const hostShown = selectedHostChat !== null && selectedPane === null;
+  const live = hostShown ? hostChatLive(hostChats.get(selectedHostChat.machineId)) : connected;
+  const connWord = t(live ? "live" : !hostShown && outputStopped ? "disconnected" : hostShown || connectedBefore ? "reconnecting" : "connecting");
+  const hostTitle = hostShown ? (openHostRow?.title ?? hostReadTitle)?.trim() || t("Copilot chat") : null;
+  // the header names where a host chat works (its tab names the chat), as a pane's names its workspace
+  // a chat the host was given no folder for is in the No folder row, not its scratch folder's
+  const hostNoFolder = openHostRow?.no_folder === true;
+  const hostName = hostTitle === null ? null : hostHeaderName({ workspace: hostWorkspace?.label ?? (hostNoFolder ? t("No folder") : null), cwd: openHostRow?.cwd ?? hostMadeIn, title: hostTitle });
   const crumb = selectedPane && selectedTitle !== null
-    ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
-    : null;
+    ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
+    : hostShown && hostTitle !== null
+      ? hostHeaderCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, title: hostTitle, cwd: openHostRow?.cwd ?? hostMadeIn, name: hostName ?? undefined })
+      : null;
 
   useEffect(() => {
-    document.title = selectedTitle ? `${selectedTitle} · herdr` : APP_TITLE;
-  }, [selectedTitle]);
+    const title = selectedTitle ?? hostTitle;
+    document.title = title ? `${title} · herdr` : APP_TITLE;
+  }, [selectedTitle, hostTitle]);
+
+  // A new tab's workspace: the named one, else the selected pane's. Its folder is the workspace's:
+  // a worktree's checkout, else where the pane in front (the selected one, else the one herdr has
+  // in front, else the first) is. Read from refs, so the actions keep no stale roster.
+  const newTabTarget = (target?: { machineId: string; workspaceId: string }) => {
+    const machineId = target?.machineId ?? selectionRef.current.machineId;
+    const roster = machinesRef.current.find((m) => m.id === machineId)?.snapshot;
+    // pane ids repeat across PCs: the selected pane counts only on the PC the tab is for
+    const selectedPaneId = selectionRef.current.machineId === machineId ? selectionRef.current.paneId : null;
+    const workspaceId = target?.workspaceId ?? roster?.panes.find((pane) => pane.pane_id === selectedPaneId)?.workspace_id;
+    const workspace = roster?.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+    if (!roster || !workspace) return null;
+    const panes = roster.panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
+    const inFront = panes.find((pane) => pane.pane_id === selectedPaneId)
+      ?? panes.find((pane) => pane.pane_id === roster.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
+      ?? panes[0];
+    return { machineId, workspace, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null };
+  };
 
   const actions = useMemo<AppActions>(
     () => ({
@@ -1205,23 +1547,22 @@ export function App() {
         setNewSessionOpen(true);
       },
       openNewTab: (target) => {
-        const machineId = target?.machineId ?? selectionRef.current.machineId;
-        const roster = machinesRef.current.find((m) => m.id === machineId)?.snapshot;
-        // pane ids repeat across PCs: the selected pane counts only on the PC the tab is for
-        const selectedPaneId = selectionRef.current.machineId === machineId ? selectionRef.current.paneId : null;
-        const workspaceId = target?.workspaceId ?? roster?.panes.find((pane) => pane.pane_id === selectedPaneId)?.workspace_id;
-        const workspace = roster?.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
-        if (!roster || !workspace) return;
-        // the tab's folder is the workspace's: a worktree's checkout, else where the pane in
-        // front (the selected one, else the one herdr has in front, else the first) is
-        const panes = roster.panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
-        const inFront = panes.find((pane) => pane.pane_id === selectedPaneId)
-          ?? panes.find((pane) => pane.pane_id === roster.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
-          ?? panes[0];
+        const found = newTabTarget(target);
+        if (!found) return;
+        const { machineId, workspace, cwd } = found;
         setDrawerOpen(false);
         setNewSessionMachineId(machineId);
-        setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null, number: workspace.tab_count + 1 });
+        setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd, number: workspace.tab_count + 1 });
         setNewSessionOpen(true);
+      },
+      openTerminalTab: async (target) => {
+        const found = newTabTarget(target);
+        if (!found) return;
+        const asked = selectionRef.current;
+        const created = await createTab({ workspace_id: found.workspace.workspace_id, cwd: found.cwd, label: null, agent: null }, found.machineId);
+        void load();
+        // what the user went to while herdr answered is theirs to keep
+        if (selectionStill(asked, selectionRef.current)) selectTargetRef.current(found.machineId, created.pane_id);
       },
       openPalette,
       agentStarted: (machineId, paneId) => lenses.startedAgent(paneStorageId(machineId, paneId), window.matchMedia?.("(pointer: coarse)").matches === true),
@@ -1280,7 +1621,7 @@ export function App() {
 
   // The header's More menu: what used to be three buttons of its own. Each item is there under
   // the condition its button had. At phone width the palette's button gives its room to the
-  // pane's title.
+  // pane's title, and the menu's first item opens the palette.
   // a link to a PC this app does not have lands on this PC instead, and says so: the roster lists
   // every configured PC, connected or not, so one missing from it is not set up here. So does a
   // selection of a PC removed since (a reload, a new window), here or on another device. Only a
@@ -1317,14 +1658,35 @@ export function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewFields(null); }, []);
+  const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewChatIn(null); setNewFields(null); }, []);
 
-  const moreItems: RowMenuItem[] = [
+  // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
+  const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
+  const paletteKeys = keyboardLikely ? formatKeys(shortcutDisplayKeys("palette", settings.shortcutOverrides)).join("+") : "";
+  // a Copilot folder (the agent host's chats, AHP, in a folder no herdr workspace has) is no
+  // workspace of panes: the header's ⋯ is its row's menu (MachineSidebar hostFolderItems), and the
+  // open chat's own actions stay on its tab. A herdr workspace keeps its menu, chats tabs of it or not.
+  const hostFolderMenu = hostFolder !== null && selectedHostChat !== null ? hostFolderItems({
+    canStart: hostChats.get(selectedHostChat.machineId)?.host?.state === "connected", cwd: hostFolder.cwd,
+    noFolder: hostFolder.chats.some((row) => row.no_folder === true),
+    pin: {
+      pinned: pinnedHostFolders(hostPins, selectedHostChat.machineId).includes(hostFolder.cwd),
+      toggle: () => setSidebarPins(toggleHostFolderPin(currentSidebarPins(), selectedHostChat.machineId, hostFolder.cwd, hostChatFolders(hostChats.get(selectedHostChat.machineId)?.chats ?? []))),
+    },
+    onNewHostChat: () => { setNewPrefill({ cwd: hostFolder.cwd, name: null, agent: HOST_AGENT_KIND }); setNewChatIn(hostFolder.cwd); setNewSessionMachineId(selectedHostChat.machineId); setNewTab(null); setNewSessionOpen(true); },
+    onFolderChats: () => setAllAgentsOn({ machineId: selectedHostChat.machineId, folder: hostFolder.cwd }),
+    onClose: () => closeHostWorkspace(selectedHostChat.machineId, hostFolder.cwd),
+    onCopyPath: (cwd) => void copyText(cwd).then((ok) => { if (ok) setHeaderNote("copied"); }),
+  }, t) : null;
+  const moreItems: RowMenuItem[] = hostFolderMenu ?? [
+    // first at every width: a phone's header has no palette button, and a touch screen no shortcut
+    { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
-    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
+    // from 769px Files has its own button beside the lens switch; a phone keeps it here
+    ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
-    ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
+    ...(bellVisible ? [{ id: "alerts", label: t("Push to this device"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
   ];
 
   // the chat's surface is what the pane column shows: the header's pane zone and the tab strip
@@ -1342,9 +1704,7 @@ export function App() {
         </header>
         <div className="app-body">
           <aside className="sidebar">
-            <p className="tree-state" role="status">
-              Connecting…
-            </p>
+            <ConnectingNote />
           </aside>
           <main className="terminal-host">
             <div className="terminal-placeholder">
@@ -1360,7 +1720,10 @@ export function App() {
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
   return (
-    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
+    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><HostChatActionsContext.Provider value={hostActions}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null && filePanelWidth === null ? undefined : {
+      ...(sidebarWidth === null ? {} : { "--sidebar-user-w": `${sidebarWidth}px` }),
+      ...(filePanelWidth === null ? {} : { "--file-panel-user-w": `${filePanelWidth}px` }),
+    } as CSSProperties}>
       <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}`}>
         {/* is-zoned tells this header from the connecting shell's, which has no zones to draw.
             .header-side is the sidebar's own top row from 769px (styles.css); below that its
@@ -1390,21 +1753,17 @@ export function App() {
             <Search />
           </button>
         </div>
-        {headerNote ? (
-          <div className="context">
-            <span className="pill header-note" role="status" style={{ minWidth: 0 }}>
-              <span className="context-title-text">{t(headerNote === "copied" ? "Link copied" : headerNote === "pane-closed" ? "That agent has closed: its workspace is open" : headerNote === "machine-missing" ? "That link's PC is not set up here" : "That link's workspace is closed")}</span>
-            </span>
-          </div>
-        ) : selectedPane && crumb ? (
+        <HeaderNote note={note} />
+        {note !== null ? null : (selectedPane || hostShown) && crumb ? (
           <div className="context" title={crumb.tooltip}>
             <div className="context-title">
-              {selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
-              <span className="context-title-text">{selectedTitle}</span>
+              {hostShown ? <AgentMark agent="copilot" size={18} /> : selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
+              <span className="context-title-text">{hostShown ? hostName : selectedTitle}</span>
             </div>
             <div className="context-sub">
-              <span className="machine-context-name">{crumb.machine}</span><span className="context-sep" aria-hidden="true">›</span>
-              <span>{crumb.workspace}</span>
+              {/* one PC needs no name: the sidebar leaves it out too, and More still says it; a host chat has no workspace */}
+              {crumb.showMachine && <><span className="machine-context-name">{crumb.machine}</span>{!hostShown && <span className="context-sep" aria-hidden="true">›</span>}</>}
+              {!hostShown && <span>{crumb.workspace}</span>}
               {crumb.folder !== null && (
                 <>
                   <span className="context-sep" aria-hidden="true">›</span>
@@ -1415,6 +1774,20 @@ export function App() {
           </div>
         ) : (
           <><Brand /><span className="machine-context-name">{selectedMachine?.name ?? selectedMachineId}</span></>
+        )}
+        {hostShown && (
+          // a host chat is a chat only: Chat stays pressed, and there is no terminal to switch to
+          <div className="segmented view-switch" role="group" aria-label="Pane view">
+            <button type="button" aria-pressed="true" title={t("Chat transcript (⌘⇧J)")}>
+              <MessageSquare />
+              <span className="header-desktop-only">{t("Chat")}</span>
+            </button>
+            {/* aria-disabled, not disabled: a disabled button takes no hover, so its tooltip would never show */}
+            <button type="button" aria-pressed="false" aria-disabled="true" aria-label={t("Terminal")} title={t("This chat has no terminal")} onClick={(event) => event.preventDefault()}>
+              <SquareTerminal />
+              <span className="header-desktop-only">{t("Terminal")}</span>
+            </button>
+          </div>
         )}
         {selectedPane && (
           <div className="segmented view-switch" role="group" aria-label="Pane view">
@@ -1429,18 +1802,23 @@ export function App() {
             </button>
           </div>
         )}
+        {selectedPane && wideScreen && (
+          <>
+            {/* opens Files, it is no third lens: set apart from the switch by a hairline */}
+            <span className="header-divider" aria-hidden="true" />
+            <button type="button" className="icon-button header-files-button" aria-label={t("Browse files")} title={t("Browse files")} onClick={() => setFilesOpen(true)}>
+              <FolderOpen />
+            </button>
+          </>
+        )}
         <div className="header-meta">
-          {/* speaks only while the bridge is not live; live, it stays in the document for a screen
-              reader (and the browser scripts that wait on it), drawn by nothing (styles.css) */}
-          <span
-            className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`}
-            role="status"
-            title={[connected ? null : connWord, targetHerdr ? t("herdr {version} · protocol {protocol}", { version: targetHerdr.version, protocol: targetHerdr.protocol }) : null].filter((part) => part !== null).join(" · ") || undefined}
-          >
-            <span className="conn-dot" aria-hidden="true" />
-            <span className="conn-text">{connWord}</span>
-          </span>
-          {!targetHerdr && <span className="pill pill-offline">{t("herdr offline")}</span>}
+          <ConnectionChip
+            connected={live}
+            word={connWord}
+            title={[live ? null : connWord, targetHerdr ? t("herdr {version} · protocol {protocol}", { version: targetHerdr.version, protocol: targetHerdr.protocol }) : null].filter((part) => part !== null).join(" · ") || undefined}
+          />
+          {/* the Host's herdr is away: the step to take is on that PC (the sidebar's state line says the same) */}
+          {!targetHerdr && <span className="pill pill-offline" title={selectedMachineId === "local" ? t("Start herdr on this PC, or check HERDR_SOCKET.") : undefined}>{t("herdr offline")}</span>}
           <span className="header-more">
             <button
               type="button"
@@ -1481,7 +1859,8 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} hostChats={hostChats} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} selectedHostChat={selectedHostChat} onSelectHostChat={selectHostChat} allAgentsOn={allAgentsOn} onAllAgents={setAllAgentsOn} onCloseHostWorkspace={closeHostWorkspace} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }}
+              onNewHostChat={(id, cwd) => { setNewPrefill({ cwd, name: null, agent: HOST_AGENT_KIND }); setNewChatIn(cwd); setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1491,12 +1870,14 @@ export function App() {
 
         {/* a file path in the chat opens in the viewer, relative to the selected pane's folder */}
         <OpenFileContext.Provider value={selectedPaneId !== null ? viewFile : null}>
+        <WebPanelContext.Provider value={filePanelAvailable ? openWebPage : null}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`}>
         {/* over the pane only: a bar across the window would cut the sidebar off from its top row in the header */}
         <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <TelemetryNotice enabled={locked === false} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
         {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
+        {hostNotice && <p className="pane-notice" role="alert">{hostNotice}</p>}
         {health?.lan_exposure && <LanExposureNotice host={health.lan_exposure.host} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {/* the pane's tab, or two tabs side by side (lib/split.ts): a tab dragged down out of its strip,
             or a sidebar row dragged over this area, opens its pane in the half it is dropped on */}
@@ -1524,6 +1905,24 @@ export function App() {
               const next = slotView === "chat" ? "terminal" : "chat";
               if (active) setView(next); else if (pane) pickView(machineId, pane.pane_id, next);
             };
+            // a half's own lens and close sit at the end of its tab strip. The row's free end is the
+            // half's grip: its pane, dropped on a half of the pane area, opens there too (dockSide)
+            const slotEnd = splitOn ? <div className="pane-slot-grip" draggable={paneId !== null}
+              onDragStart={(event) => {
+                if (paneId === null) return;
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId }));
+              }}>
+              {machines.length > 1 && <span className="pane-slot-machine">{machine?.name ?? machineId}</span>}
+              {pane && <button type="button" className="icon-button pane-slot-action" aria-label={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} title={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} onClick={toggleSlotView}>
+                {slotView === "chat" ? <SquareTerminal /> : <MessageSquare />}
+              </button>}
+              <button type="button" className="icon-button pane-slot-action" aria-label={t("Close this half")} title={t("Close this half")} onClick={() => closeSlot(slot)}>
+                <X />
+              </button>
+            </div> : undefined;
+            // a half with no strip to carry its close (its pane gone, or the half crashed) keeps one in a bar of its own
+            const slotBar = splitOn ? <div className="pane-slot-bar"><span className="pane-slot-title">{pane ? displayPaneTitle(pane) : t("Pane closed")}</span>{slotEnd}</div> : null;
             return (
               <MachineContext.Provider key={slot} value={machineId}><SlotSessions slot={slot} machineIds={machines.map((item) => item.id)}><PaneFollowContext.Provider value={sameTabs && !active}>
               <div
@@ -1540,32 +1939,25 @@ export function App() {
                 // text reach only the active half's terminal, so the drop makes the half active first
                 onDropCapture={active ? undefined : (event) => { if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) activateSlot(slot); }}
               >
-                {splitOn && (
-                  <div className="pane-slot-bar" draggable={paneId !== null}
-                    // the half's own pane, dropped on a half of the pane area, opens there too (dockSide)
-                    onDragStart={(event) => {
-                      if (paneId === null) return;
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId }));
-                    }}>
-                    {pane?.agent && <AgentMark agent={pane.agent} size={14} />}
-                    <span className="pane-slot-title" title={pane ? displayPaneTitle(pane) : undefined}>{pane ? displayPaneTitle(pane) : t("Pane closed")}</span>
-                    {machines.length > 1 && <span className="pane-slot-machine">{machine?.name ?? machineId}</span>}
-                    <button type="button" className="icon-button pane-slot-action" aria-label={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} title={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} onClick={toggleSlotView}>
-                      {slotView === "chat" ? <SquareTerminal /> : <MessageSquare />}
-                    </button>
-                    <button type="button" className="icon-button pane-slot-action" aria-label={t("Close this half")} title={t("Close this half")} onClick={() => closeSlot(slot)}>
-                      <X />
-                    </button>
-                  </div>
-                )}
                 {/* a pane this half cannot draw leaves the sidebar and the other half working; picking
                     another pane tries again */}
-                <RenderBoundary resetKey={`${machineId}:${paneId ?? ""}`} fallback={(retry) => <RegionCrash message={t("This pane can't be shown.")} retry={retry} onShown={active ? paneLost : undefined} />}>
+                <RenderBoundary resetKey={`${machineId}:${paneId ?? ""}`} fallback={(retry) => <>{slotBar}<RegionCrash message={t("This pane can't be shown.")} retry={retry} onShown={active ? paneLost : undefined} /></>}>
                 <CrashProbe region="pane" />
+                {/* a host chat open in its folder row: its folder's chats are the tabs */}
+                {active && hostFolder && selectedHostChat && <HostChatTabStrip folder={basename(hostFolder.cwd)} chats={hostFolder.chats} selectedSession={selectedHostChat.session} onSelect={(session) => selectHostChat({ machineId, session }, "tab")} />}
+                {active && !pane && hostWorkspace && hostWorkspacePane && slotSnapshot && selectedHostChat && (
+                  <TabStrip snapshot={slotSnapshot} workspace={hostWorkspace} selectedPane={hostWorkspacePane} panelId={slotPanelId} onSelectPane={onSelect}
+                    onNewTab={() => actions.openNewTab({ machineId, workspaceId: hostWorkspace.workspace_id })}
+                    onNewTerminal={() => actions.openTerminalTab({ machineId, workspaceId: hostWorkspace.workspace_id })} hostTabs={hostPlacement.tabs.get(hostWorkspace.workspace_id)} selectedHostSession={selectedHostChat.session}
+                    onSelectHostChat={(session) => selectHostChat({ machineId, session })} />
+                )}
+                {!(slotSnapshot && pane && workspace) && slotBar}
                 {slotSnapshot && pane && workspace && (
-                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect}
+                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect} end={slotEnd}
+                    // a workspace's host chats are tabs after its panes' (lib/hostPlacement.ts)
+                    hostTabs={active ? hostPlacement.tabs.get(workspace.workspace_id) : undefined} onSelectHostChat={(session) => selectHostChat({ machineId, session }, "tab")}
                     onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
+                    onNewTerminal={() => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
                     paneActions={active ? (paneId) => {
                       const target = snapshot?.panes.find((item) => item.pane_id === paneId);
                       if (!target || !paneActionsRef.current) return [];
@@ -1577,6 +1969,13 @@ export function App() {
                 {/* the tab strip's panel: its id is what each tab's aria-controls points at, one per half.
                     No tabIndex - the terminal (PaneTerminal) and the composer are the focusable things inside it. */}
                 <main className="terminal-host">
+                  {/* a host chat picked in the sidebar takes the pane's place in the active half */}
+                  {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
+                    <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle}
+                      onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session }, "tab", openHostRow?.cwd ?? hostMadeIn)}
+                      // a look: Keep open makes it a tab, and so does a message sent in it
+                      look={hostLook ? () => keepHostTabRef.current(selectedHostChat, hostMadeIn) : undefined} />
+                  ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
                     onOpenInHalf={wideScreen ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
@@ -1610,13 +2009,14 @@ export function App() {
                         split={herdrSplit || splitOn}
                         terminalWheelSpeed={settings.terminalWheelSpeed}
                         terminalFontFamily={settings.terminalFontFamily}
-                        theme={resolvedTheme}
-                        palette={resolvedPalette}
-                        onConnectionChange={active && itemActive ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
+                        theme={resolvedEntry.mode}
+                        palette={resolvedEntry.id}
+                        onConnectionChange={active && itemActive ? (next, before) => { setConnected(next); setConnectedBefore(before); if (next) setOutputStopped(false); } : undefined}
                         onServerMessage={active && itemActive ? handleServerMessage : undefined}
                       />
                     </OpenFileContext.Provider>} />
                   </div>
+                  )}
                 </main>
                 </RenderBoundary>
               </div>
@@ -1626,7 +2026,14 @@ export function App() {
           <SplitDropPreview visible={splitDragOn && (paneDragging || tabDrag !== null)} side={dropAt} />
         </div>
         </div>
+        </WebPanelContext.Provider>
         </OpenFileContext.Provider>
+        {/* last in the row: the file beside the pane (from 980px), the pane column shrinks and its terminal refits */}
+        {viewing !== null && fileDocked && <MachineContext.Provider value={viewing.machineId}>
+          <FileViewer key={viewing.path} docked panelStart={<FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} />} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
+        </MachineContext.Provider>}
+        {webPage !== null && filePanelAvailable && !(viewing !== null && fileDocked) &&
+          <WebPanel key={webPage} url={webPage} onClose={() => setWebPage(null)} panelStart={<FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} />} />}
       </div>
 
       <MachineContext.Provider value={newSessionMachineId}><NewSessionDialog
@@ -1637,6 +2044,21 @@ export function App() {
         tab={newTab}
         defaultCwd={newSessionMachineId === selectedMachineId ? selectedPane?.cwd ?? null : null}
         prefill={newPrefill}
+        hostChats={hostChats.get(newSessionMachineId)?.chats}
+        hostOpen={hostWorkspaces[newSessionMachineId]}
+        chatIn={newChatIn}
+        // a folder picked from the agent host list: its workspace opens (its live, unread and newest
+        // chats as tabs), no chat is made, and the first of them is shown
+        onOpenHostWorkspace={(cwd) => {
+          const chats = hostChats.get(newSessionMachineId)?.chats ?? [];
+          const state = currentHostWorkspaces();
+          const pc = openWorkspace(state[newSessionMachineId] ?? { open: [] }, cwd, chats);
+          setHostWorkspaces({ ...state, [newSessionMachineId]: pc });
+          closeNewSession();
+          const first = tabsOf(pc, cwd)[0];
+          if (first) selectHostChat({ machineId: newSessionMachineId, session: first }, "tab");
+        }}
+        onHostChat={(session, cwd) => { closeNewSession(); selectHostChat({ machineId: newSessionMachineId, session }, "tab", cwd); setHostMadeIn(cwd); }}
         onDraft={setNewFields}
         onClose={closeNewSession}
         onCreated={(paneId, agentStarted) => {
@@ -1654,20 +2076,32 @@ export function App() {
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null || diffViewing !== null} />
+      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} actions={actions} updates={updates} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} saveError={settingsSaveError} overPreview={(viewing !== null && !fileDocked) || diffViewing !== null} />
       {filesOpen && selectedPane && (
-        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={viewing !== null || diffViewing !== null} onOpenFile={viewFile}
+        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={(viewing !== null && !fileDocked) || diffViewing !== null} onOpenFile={viewFile}
           onOpenDiff={(comparison, file) => openDiff({ machineId: selectedMachineId, paneId: selectedPane.pane_id, directory: selectedPane.foreground_cwd ?? selectedPane.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
           onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
           onClose={() => setFilesOpen(false)} />
       )}
       {diffViewing !== null && <MachineContext.Provider value={diffViewing.machineId}>
-        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null} />
+        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => {
+          const docked = filePanelAvailable && openPresentation(path, settings.fileOpen) === "panel";
+          if (docked) {
+            setFilesOpen(false);
+            releaseDiff();
+          }
+          openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId }, docked);
+        }} keyboardActive={!settingsOpen && (viewing === null || fileDocked)} />
       </MachineContext.Provider>}
-      {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
+      {viewing !== null && !fileDocked && <MachineContext.Provider value={viewing.machineId}>
+        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
+      {hostRename && <RenameHostChatSheet title={hostRename.chat.title} onClose={() => setHostRename(null)}
+        onSave={(title) => hostActions.rename(hostRename.machineId, hostRename.chat.session, title)} />}
+      {/* the one place the product's name is said: it names where else the chat goes */}
+      {hostDelete && <ConfirmDialog title={t("Delete “{title}”?", { title: hostChatTitle(hostDelete.chat, t) })} body={t("This removes it from VS Code too.")} confirmLabel={t("Delete")}
+        onConfirm={() => hostTracker.remove(hostDelete.machineId, hostDelete.chat.session).then(() => setHostDelete(null))} onClose={() => setHostDelete(null)} />}
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
-    </div></MachineContext.Provider></MachineSessionsProvider>
+    </div></HostChatActionsContext.Provider></MachineContext.Provider></MachineSessionsProvider>
   );
 }

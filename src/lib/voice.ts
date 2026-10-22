@@ -322,6 +322,33 @@ interface SpeechRecognitionLike {
 }
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
+/**
+ * The text so far from a SpeechRecognition result list. Desktop Chrome gives
+ * each result a new stretch of speech, later ones starting with a space.
+ * Chrome on Android (continuous + interimResults) instead repeats the phrase
+ * so far, with no leading space, as another final result: joining them all
+ * printed every word two or three times. A piece without a leading space that
+ * starts with the text so far replaces it instead of being appended.
+ */
+export function speechTranscript(results: ArrayLike<{ readonly isFinal: boolean; readonly 0?: { readonly transcript: string } } | undefined>): { final: string; interim: string } {
+  const extend = (base: string, piece: string): string => {
+    const head = base.trim();
+    if (head && !/^\s/.test(piece) && piece.startsWith(head)) return base + piece.slice(head.length);
+    return base + piece;
+  };
+  let final = "";
+  let interim = "";
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    const text = result?.[0]?.transcript ?? "";
+    if (result?.isFinal) final = extend(final, text);
+    else interim += text;
+  }
+  const head = final.trim();
+  if (head && !/^\s/.test(interim) && interim.startsWith(head)) interim = interim.slice(head.length);
+  return { final, interim };
+}
+
 function speechRecognitionCtor(): SpeechRecognitionCtor | null {
   if (typeof window === "undefined") return null;
   const speech = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
@@ -432,7 +459,16 @@ interface Take {
   startedAt: number | null;
   recognition: SpeechRecognitionLike | null;
   finalText: string;
+  /** what earlier sessions of this take heard: Chrome ends one at each pause and the take listens again */
+  heardBefore: string;
+  /** sessions in a row that heard nothing, so a silent mic does not restart forever */
+  quietRestarts: number;
+  /** the browser refused (no permission, no mic): never listen again for this take */
+  refused: boolean;
 }
+
+/** Restarts after which a browser take that keeps hearing nothing gives up. */
+const QUIET_RESTARTS = 3;
 
 /** The imperative half of useVoiceInput: mic, recorder, meter loop, uploads. Outlives renders. */
 export function createVoiceEngine(io: EngineIO) {
@@ -637,23 +673,32 @@ export function createVoiceEngine(io: EngineIO) {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onaudiostart = () => { if (take === current && phase === "starting") markRecording(current, performance.now()); };
+    let heard = "";
+    let unfinished = "";
+    // a piece Android sends without its leading space must not glue onto the last word
+    const join = (...parts: string[]): string => tidy(parts.reduce((text, part) => (text && part && !/^\s/.test(part) ? `${text} ${part}` : text + part), ""));
     recognition.onresult = (event) => {
-      let final = "";
-      let interim = "";
-      for (let index = 0; index < event.results.length; index++) {
-        const result = event.results[index];
-        const text = result?.[0]?.transcript ?? "";
-        if (result?.isFinal) final += text;
-        else interim += text;
-      }
-      current.finalText = final;
-      if (!current.discard && current.id === lastTakeId) io.options().onPartial?.(tidy(final + interim));
+      const { final, interim } = speechTranscript(event.results);
+      heard = final;
+      unfinished = interim;
+      current.finalText = join(current.heardBefore, final);
+      if (!current.discard && current.id === lastTakeId) io.options().onPartial?.(join(current.heardBefore, final, interim));
     };
     recognition.onerror = (event) => {
       const reason = speechErrorReason(event.error);
+      if (reason) current.refused = true;
       if (reason && !current.discard) io.setError(reason);
     };
     recognition.onend = () => {
+      // Chrome (Android above all) ends a session at a pause, whatever `continuous` says, and drops
+      // a phrase it had not finalized: keep it, and listen again until the user stops the take
+      const ownEnd = take === current && current.closing === null && !current.discard && !current.refused;
+      if (ownEnd) {
+        current.heardBefore = join(current.heardBefore, heard, unfinished);
+        current.finalText = current.heardBefore;
+        current.quietRestarts = heard || unfinished ? 0 : current.quietRestarts + 1;
+        if (current.quietRestarts <= QUIET_RESTARTS) { beginBrowser(current, Speech); return; }
+      }
       if (take === current) take = null;
       const text = tidy(current.finalText);
       if (!current.discard && text !== "") io.options().onText({ text, phase: "raw", take: current.id });
@@ -798,7 +843,7 @@ export function createVoiceEngine(io: EngineIO) {
     io.setElapsed(0);
     io.setSilent(false);
     meter.silent = false;
-    const current: Take = { id: ++lastTakeId, engine, discard: false, releaseMic: false, closing: null, recorder: null, recorderAt: null, gate: null, chunks: [], heard: false, startedAt: null, recognition: null, finalText: "" };
+    const current: Take = { id: ++lastTakeId, engine, discard: false, releaseMic: false, closing: null, recorder: null, recorderAt: null, gate: null, chunks: [], heard: false, startedAt: null, recognition: null, finalText: "", heardBefore: "", quietRestarts: 0, refused: false };
     take = current;
     pressedAt = performance.now();
     // the pill shows on this very frame; the mic catches up

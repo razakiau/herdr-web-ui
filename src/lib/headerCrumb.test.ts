@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
-import { headerCrumb, showsChat } from "./headerCrumb.ts";
+import { headerCrumb, hostHeaderCrumb, hostHeaderName, showsChat } from "./headerCrumb.ts";
 
-const base = { machine: "workstation", workspace: "checkout-api", title: "Idempotent payments" };
+const base = { machine: "workstation", workspace: "checkout-api", title: "Idempotent payments", machineCount: 2 };
 
 it("leaves the folder out when the workspace already says its name", () => {
   const crumb = headerCrumb({ ...base, cwd: "/tmp/herdr-demo/checkout-api" });
@@ -21,6 +21,23 @@ it("leaves the folder out when the title or the PC already says its name", () =>
   expect(headerCrumb({ ...base, machine: "api", cwd: "/home/me/dev/api" }).folder).toBeNull();
   // a different spelling is a different name: nothing is guessed
   expect(headerCrumb({ ...base, cwd: "/home/me/dev/Checkout-API" }).folder).toBe("Checkout-API");
+});
+
+it("counts the PC name as said only while the line shows it", () => {
+  const devbox = { ...base, machine: "devbox", cwd: "/home/me/src/devbox" };
+  // one PC: its name is not on the line, so the folder is the only place that says "devbox"
+  const one = headerCrumb({ ...devbox, machineCount: 1 });
+  expect(one.showMachine).toBe(false);
+  expect(one.folder).toBe("devbox");
+  // two PCs: the PC name is on the line and already says it
+  const two = headerCrumb({ ...devbox, machineCount: 2 });
+  expect(two.showMachine).toBe(true);
+  expect(two.folder).toBeNull();
+  // a folder named otherwise is the same either way
+  expect(headerCrumb({ ...devbox, cwd: "/home/me/src/other", machineCount: 1 }).folder).toBe("other");
+  expect(headerCrumb({ ...devbox, cwd: "/home/me/src/other", machineCount: 2 }).folder).toBe("other");
+  // the More menu's place keeps the PC name with one PC
+  expect(one.place).toBe("devbox › checkout-api");
 });
 
 it("has no folder and no path for a pane herdr reports no folder for", () => {
@@ -57,4 +74,26 @@ it("takes the chat's surface only when the chat is what the pane column draws", 
   expect(showsChat(null, "chat")).toBe(false);
   // a pane herdr could not restore draws the placeholder on the terminal's surface, not the chat
   expect(showsChat({ restore_error: "no such session" }, "chat")).toBe(false);
+});
+
+it("a host chat's header names where it works, not the chat (its tab says that): the workspace, else its folder, else the title", () => {
+  expect(hostHeaderName({ workspace: "zhomelab", cwd: "/Users/x/code/zhomelab.wt/zac-191", title: "FICTIONAL chat" })).toBe("zhomelab");
+  expect(hostHeaderName({ workspace: "  ", cwd: "/tmp/fictional-repo/", title: "FICTIONAL chat" })).toBe("fictional-repo");
+  expect(hostHeaderName({ workspace: null, cwd: null, title: "FICTIONAL chat" })).toBe("FICTIONAL chat");
+  // the line under it leaves out a folder the name already says
+  expect(hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL chat", cwd: "/tmp/fictional-repo", name: "fictional-repo" }).folder).toBeNull();
+  expect(hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL chat", cwd: "/tmp/zac-191", name: "zhomelab" }).folder).toBe("zac-191");
+});
+
+it("a host chat's crumb is PC › folder: no workspace, its folder's last name", () => {
+  const crumb = hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL build chat", cwd: "/tmp/fictional-repo/" });
+  expect([crumb.machine, crumb.folder, crumb.place, crumb.path]).toEqual(["Build PC", "fictional-repo", "Build PC › fictional-repo", "/tmp/fictional-repo/"]);
+  expect(crumb.tooltip).toBe("FICTIONAL build chat · /tmp/fictional-repo/");
+  // a chat with no folder: the PC alone
+  const bare = hostHeaderCrumb({ machine: "Build PC", machineCount: 2, title: "FICTIONAL chat", cwd: null });
+  expect([bare.folder, bare.place, bare.path, bare.tooltip]).toEqual([null, "Build PC", null, "FICTIONAL chat"]);
+  expect(crumb.showMachine).toBe(true);
+  // one PC needs no name, as a pane's crumb: the folder alone (More still says the PC)
+  const one = hostHeaderCrumb({ machine: "Build PC", machineCount: 1, title: "FICTIONAL build chat", cwd: "/tmp/fictional-repo/" });
+  expect([one.showMachine, one.folder, one.place]).toEqual([false, "fictional-repo", "Build PC › fictional-repo"]);
 });

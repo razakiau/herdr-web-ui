@@ -1,6 +1,6 @@
 /**
- * The header's More menu, for the browser scripts: Browse files and Alerts are among its
- * items. It is a popover on a desktop and
+ * The header's More menu, for the browser scripts: Alerts is among its items, and Browse files
+ * at 768px and below (wider, Files is the header's own button). It is a popover on a desktop and
  * a bottom sheet at 640px and below (RowMenu), so an item is found in either.
  */
 import type { Locator, Page } from "playwright-core";
@@ -23,18 +23,18 @@ export async function runMoreItem(page: Page, label: string): Promise<void> {
 }
 
 /**
- * What the Alerts item says of this device, in its words ("On in the app", "Off on this
- * device"), read from the open menu, which is closed again. The item is a switch: a checkbox
+ * What the push item says of this device, in its words ("On", "Off", "On while this tab is
+ * open"), read from the open menu, which is closed again. The item is a switch: a checkbox
  * item in the popover, a pressed button in the sheet, and its state has to agree with its words.
  */
 export async function alertsState(page: Page): Promise<string> {
-  const item = await moreItem(page, "Alerts");
+  const item = await moreItem(page, "Push to this device");
   const state = (await item.locator(".menu-item-hint, .row-sheet-hint").textContent()) ?? "";
   const role = await item.getAttribute("role");
   const checked = await item.getAttribute(role === "menuitemcheckbox" ? "aria-checked" : "aria-pressed");
   await page.keyboard.press("Escape");
   await item.waitFor({ state: "hidden" });
-  if (checked !== String(!state.startsWith("Off"))) throw new Error(`the Alerts item says "${state}" but its ${role === "menuitemcheckbox" ? "aria-checked" : "aria-pressed"} is ${checked}`);
+  if (checked !== String(!state.startsWith("Off"))) throw new Error(`the push item says "${state}" but its ${role === "menuitemcheckbox" ? "aria-checked" : "aria-pressed"} is ${checked}`);
   return state;
 }
 

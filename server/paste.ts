@@ -119,6 +119,20 @@ export async function savePaneImage(options: {
   /** the file's own name: any type is accepted, and one that is not a pasted image keeps it */
   name?: string;
 }): Promise<string> {
+  return saveAttachment({ ...options, cwd: async () => (await paneGet(options.paneId)).cwd });
+}
+
+/**
+ * Writes an attachment under `pasteDirectory(cwd)` and returns its path: a pane's (savePaneImage)
+ * and a host chat's (server/agent-host/routes.ts chat/upload). `cwd` is read only once the body has
+ * passed its checks, so a refused file costs no lookup.
+ */
+export async function saveAttachment(options: {
+  cwd: () => Promise<string | null | undefined>;
+  contentType: string;
+  dataBase64: string;
+  name?: string;
+}): Promise<string> {
   const imageExtension = EXTENSIONS[options.contentType];
   const named = imageExtension === undefined ? storedName(options.name) : null;
   // cheap pre-check: reject the ENCODED length before allocating the decode buffer,
@@ -130,9 +144,7 @@ export async function savePaneImage(options: {
   }
   if (data.byteLength > MAX_IMAGE_BYTES) throw tooLarge();
 
-  const pane = await paneGet(options.paneId);
-
-  const directory = pasteDirectory(pane.cwd);
+  const directory = pasteDirectory(await options.cwd());
   mkdirSync(directory, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const unique = `${stamp}-${crypto.randomUUID().slice(0, 8)}`;

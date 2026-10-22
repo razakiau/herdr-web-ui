@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS, sharedSettings, type Settings } from "./settings.ts";
+import { DEFAULT_SETTINGS, sanitizeSettings, sharedSettings, type Settings } from "./settings.ts";
 import { preferencesChange, takePreferences, type Baseline } from "./preferencesSync.ts";
 
 const base = (settings: Settings, pins: readonly string[] | null): Baseline => ({ settings: sharedSettings(settings), pins });
@@ -23,9 +23,9 @@ describe("preferences sync", () => {
   it("takes the shared settings the server holds and leaves the device's own", () => {
     const mine: Settings = { ...light, terminalFontSize: 20, alertsOn: false, wrapCode: true, markdownWidth: "full" };
     const taken = takePreferences(base(mine, null), { settings: mine, pins: [] }, { revision: 3, settings: { theme: "dark", palette: "catppuccin" } }, null);
-    expect(taken.patch).toEqual({ theme: "dark", palette: "catppuccin" });
+    expect(taken.patch).toEqual({ theme: "dark", palette: "catppuccin", darkTheme: "catppuccin" });
     expect(taken.pins).toBeNull();
-    expect(taken.base).toEqual({ settings: { ...sharedSettings(mine), theme: "dark", palette: "catppuccin" }, pins: null });
+    expect(taken.base).toEqual({ settings: { ...sharedSettings(mine), theme: "dark", palette: "catppuccin", darkTheme: "catppuccin" }, pins: null });
     // nothing to send once taken
     expect(preferencesChange(taken.base, { settings: { ...mine, ...taken.patch }, pins: [] })).toBeNull();
   });
@@ -42,16 +42,26 @@ describe("preferences sync", () => {
     // light is on its way; meanwhile another browser set the palette, and then the theme back to dark
     const inFlight = { settings: { theme: "light" } };
     const concurrent = takePreferences(base(DEFAULT_SETTINGS, []), { settings: light, pins: [] }, { revision: 2, settings: { theme: "light", palette: "catppuccin" }, pins: [] }, inFlight);
-    expect(concurrent.patch).toEqual({ theme: "light", palette: "catppuccin" });
+    expect(concurrent.patch).toEqual({ theme: "light", palette: "catppuccin", lightTheme: "catppuccin" });
     const overtaken = takePreferences(base(DEFAULT_SETTINGS, []), { settings: light, pins: [] }, { revision: 3, settings: { theme: "dark" }, pins: [] }, inFlight);
     expect(overtaken.patch).toEqual({ theme: "dark" });
     expect(preferencesChange(overtaken.base, { settings: { ...light, theme: "dark" }, pins: [] })).toBeNull();
   });
 
   it("leaves a value this browser cannot read, and does not send its own back", () => {
-    const taken = takePreferences(base(DEFAULT_SETTINGS, null), { settings: DEFAULT_SETTINGS, pins: [] }, { revision: 1, settings: { theme: "purple", agentMarks: "yes", palette: "catppuccin" } }, null);
-    expect(taken.patch).toEqual({ palette: "catppuccin" });
-    expect(preferencesChange(taken.base, { settings: { ...DEFAULT_SETTINGS, palette: "catppuccin" }, pins: [] })).toBeNull();
+    const taken = takePreferences(base(DEFAULT_SETTINGS, null), { settings: DEFAULT_SETTINGS, pins: [] }, { revision: 1, settings: { theme: "purple", agentMarks: "yes", palette: "catppuccin", darkTheme: "catppuccin", lightTheme: "future-theme" } }, null);
+    expect(taken.patch).toEqual({ palette: "catppuccin", darkTheme: "catppuccin" });
+    expect(preferencesChange(taken.base, { settings: sanitizeSettings({ ...DEFAULT_SETTINGS, ...taken.patch }), pins: [] })).toBeNull();
+  });
+
+  it("keeps an unsent side edit over a legacy-only fixed-mode document", () => {
+    const local = sanitizeSettings({ ...DEFAULT_SETTINGS, darkTheme: "tokyo-night" });
+    const taken = takePreferences(base(DEFAULT_SETTINGS, []), { settings: local, pins: [] }, { revision: 2, settings: { theme: "dark", palette: "catppuccin" } }, null);
+    expect(taken.patch).toEqual({ theme: "dark" });
+    expect(taken.base.settings.darkTheme).toBe("catppuccin");
+    expect(preferencesChange(taken.base, { settings: sanitizeSettings({ ...local, ...taken.patch }), pins: [] })).toEqual({
+      settings: { palette: "tokyo-night", darkTheme: "tokyo-night" },
+    });
   });
 
   it("joins this browser's pins to the first the server holds, then follows the last write", () => {
@@ -74,5 +84,35 @@ describe("preferences sync", () => {
     const taken = takePreferences(base(DEFAULT_SETTINGS, ["a:b"]), { settings: light, pins: ["a:b", "c:d"] }, { revision: 5, settings: { theme: "dark" }, pins: [] }, null, true);
     expect(taken.patch).toEqual({ theme: "dark" });
     expect(taken.pins).toEqual([]);
+  });
+
+  it("sends_host_workspaces_only_when_changed", () => {
+    const open = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    const known: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: open };
+    expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toBeNull();
+    const closed = { m: { open: [] } };
+    expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: closed })).toEqual({ settings: {}, hostWorkspaces: closed });
+    // the server has held none: a page with nothing open writes nothing, and what was opened goes out on its own
+    const unknown: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null };
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: {} })).toBeNull();
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open })).toEqual({ settings: {}, hostWorkspaces: open });
+    expect(preferencesChange(unknown, { settings: light, pins: [], hostWorkspaces: open })).toEqual({ settings: { theme: "light" }, hostWorkspaces: open });
+  });
+
+  it("takes_remote_unless_edited_here", () => {
+    const here = { m: { open: [{ cwd: "/a", tabs: ["x"] }] }, local: { open: [{ cwd: "/l", tabs: ["y"] }] } };
+    // the first the server holds: its PCs win, this browser's other PCs are kept
+    const first = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: here }, { revision: 1, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(first.hostWorkspaces).toEqual({ m: { open: [] }, local: here.local });
+    expect(first.base.hostWorkspaces).toEqual({ m: { open: [] } });
+    // after that, the last write wins, unless changed here and not yet sent
+    const known = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    const later = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: known }, { revision: 2, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(later.hostWorkspaces).toEqual({ m: { open: [] } });
+    const edited = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: here }, { revision: 2, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(edited.hostWorkspaces).toBeNull();
+    const absent = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: known }, { revision: 3, settings: {} }, null);
+    expect(absent.hostWorkspaces).toBeNull();
+    expect(absent.base.hostWorkspaces).toEqual(known);
   });
 });

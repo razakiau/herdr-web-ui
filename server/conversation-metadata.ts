@@ -1,5 +1,6 @@
 import { isContextClear, piMessage } from "./transcript-records.ts";
 import { piContextWindow } from "./pi-models.ts";
+import { parseCopilotMetadata } from "./copilot.ts";
 import type { ConversationMetadata, ConversationResponse } from "../shared/protocol.ts";
 
 type RecordValue = Record<string, unknown>;
@@ -38,6 +39,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
   const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
   // Agy's exported rows do not attest the selected model or reasoning effort.
   if (source === "agy-transcript") return metadata;
+  if (source === "copilot-transcript") return parseCopilotMetadata(text, metadata);
   // pi states the provider on the same records that state usage, so the window is asked for
   // from what this line says rather than remembered across sources
   let piProvider: string | null = null;
@@ -70,7 +72,14 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       // A new complete context without effort must not retain an older value.
       if (model || effort !== undefined) metadata.reasoning_effort = label(effort);
     } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "pi-transcript") {
-      if (entry.type === "model_change") { metadata.model = label(entry.modelId); piProvider = label(entry.provider); }
+      if (entry.type === "model_change") {
+        // pi and omo name `provider` and `modelId`; omp names one `model`, "provider/id", where
+        // the id is what its answers name as their model
+        const named = label(entry.model);
+        const slash = named?.indexOf("/") ?? -1;
+        metadata.model = label(entry.modelId) ?? (slash > 0 ? named!.slice(slash + 1) : named);
+        piProvider = label(entry.provider) ?? (slash > 0 ? named!.slice(0, slash) : null);
+      }
       if (entry.type === "thinking_level_change") metadata.reasoning_effort = label(entry.thinkingLevel);
       const message = piMessage(entry) ?? {};
       // a turn answers at whatever model it ran at, and that is the one the window belongs to

@@ -596,3 +596,45 @@ describe("file paths in output", () => {
     expect(few.match(/markdown-file/g)).toHaveLength(2);
   });
 });
+
+describe("links in the vscode style", () => {
+  const html = (text: string, style?: "vscode") => {
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      const markdown = createElement(Markdown, { children: text, ...(style ? { style } : {}) });
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(OpenFileContext.Provider, { value: () => {}, children: markdown }) }));
+    } finally {
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+
+  it("bare_url_shows_host: a bare address reads as its host, the whole address its title", () => {
+    const out = html("see https://github.com/a/b", "vscode");
+    expect(out).toContain('class="markdown-host-link" href="https://github.com/a/b" title="https://github.com/a/b"');
+    expect(out).toContain(">github.com</a>");
+    expect(out).not.toContain(">https://github.com/a/b<");
+    // a link with its own words keeps them
+    expect(html("[the docs](https://github.com/a/b)", "vscode")).toContain(">the docs</span></a>");
+  });
+
+  it("a file reads as a pill with its icon and its line", () => {
+    const out = html("open src/lib/a.ts:12 now", "vscode");
+    expect(out).toContain("markdown-file is-pill");
+    expect(out).toContain("markdown-file-icon");
+    expect(out).toContain("<span>a.ts</span><span class=\"markdown-file-line\">:12</span>");
+    const linked = html("[report](out/REPORT.md#L4)", "vscode");
+    expect(linked).toContain("markdown-file is-pill");
+    expect(linked).toContain(":4</span>");
+  });
+
+  it("without the style, links and files read exactly as before", () => {
+    const text = "see https://github.com/a/b and src/lib/a.ts:12 and [report](out/REPORT.md#L4) and `src/x.ts`";
+    const out = html(text);
+    expect(out).toContain(">https://github.com/a/b</span></a>");
+    expect(out).not.toContain("is-pill");
+    expect(out).not.toContain("markdown-host-link");
+    expect(out).toContain('class="markdown-file" title="Open src/lib/a.ts:12">src/lib/a.ts:12</button>');
+  });
+});

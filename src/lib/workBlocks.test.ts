@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
+import { formatWorkDuration, splitTurn, visibleWorkParts, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
 import type { ConversationPart } from "../../shared/protocol.ts";
 
 const tool = (name: string, summary = name): Extract<ConversationPart, { kind: "tool" }> => ({ kind: "tool", name, summary, input: "{}", output: "" });
@@ -80,6 +80,12 @@ describe("workSummary", () => {
     expect(workSummary([tool("Edit"), tool("Write"), tool("read"), tool("Bash"), tool("WebFetch")])).toBe("2 edits · 1 file read · 1 command · 1 other tool");
   });
 
+  it("counts Copilot's reads, searches, edits and commands as what they are", () => {
+    expect(workSummary([tool("view"), tool("copilot_readFile"), tool("copilot_findTextInFiles"), tool("copilot_listDirectory"), tool("copilot_findFiles")])).toBe("5 file reads");
+    expect(workSummary([tool("create"), tool("copilot_replaceString"), tool("copilot_multiReplaceString"), tool("copilot_createFile")])).toBe("4 edits");
+    expect(workSummary([tool("run_in_terminal"), tool("ask_user"), tool("copilot_fetchWebPage")])).toBe("1 command · 2 other tools");
+  });
+
   it("is empty for reasoning and prose alone", () => {
     expect(workSummary([thinking("x"), text("y")])).toBe("");
   });
@@ -153,4 +159,27 @@ it("says the open block waits for the user while the agent is blocked, and only 
   // a settled turn keeps "Worked for …" whatever the pane's status
   expect(isWaitingWorkTurn(false, "blocked")).toBe(false);
   expect(isWaitingWorkTurn(true, undefined)).toBe(false);
+});
+
+describe("visibleWorkParts", () => {
+  it("draws no rows for skills, nor for thinking unless it is shown", () => {
+    const skill: ConversationPart = { kind: "skill", skill: { name: "review", evidence: "invocation", status: "loaded" } };
+    expect(visibleWorkParts([skill, thinking("hm")], false)).toEqual([]);
+    expect(visibleWorkParts([skill, thinking("hm")], true)).toEqual([thinking("hm")]);
+    expect(visibleWorkParts([tool("read")], false)).toEqual([tool("read")]);
+  });
+});
+
+describe("splitTurn with a Copilot turn's own rows", () => {
+  const subagent: ConversationPart = { kind: "subagent", id: "c3", agent: "explore", description: "x", model: null, started: null, ended: null, status: "done", chat: null };
+  const question: ConversationPart = { kind: "question", text: "q", options: [], chosen: [], custom: "a", skipped: false };
+  it("keeps subagents and answered questions out of the work, and out of the answer", () => {
+    const parts: ConversationPart[] = [tool("bash"), subagent, question, { kind: "text", text: "done" }];
+    expect(splitTurn(parts)).toEqual({ work: [tool("bash")], answer: [{ kind: "text", text: "done" }] });
+  });
+
+  it("they still end the narration before them: words before a subagent are work, not the answer", () => {
+    const parts: ConversationPart[] = [{ kind: "text", text: "delegating" }, subagent, { kind: "text", text: "done" }];
+    expect(splitTurn(parts)).toEqual({ work: [{ kind: "text", text: "delegating" }], answer: [{ kind: "text", text: "done" }] });
+  });
 });

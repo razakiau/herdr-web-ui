@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import type { InteractivePrompt } from "../../shared/protocol.ts";
-import { answerFromText, answerHint, answerRefusal, focusFollowsAnswer, needsConfirmation, pressOrigin, type PressOrigin } from "./promptAnswer.ts";
+import { ApiError } from "./api.ts";
+import { answerFromText, answerHint, answerRefusal, customAnswerWithFiles, focusFollowsAnswer, needsConfirmation, pressOrigin, type PressOrigin } from "./promptAnswer.ts";
 
 const prompt = (options: string[], custom: number | null, multi = false): InteractivePrompt => ({
   id: "p", agent: "claude", kind: "question", title: "Question", question: "?", body: null,
@@ -55,6 +56,10 @@ describe("answering a prompt from the chat", () => {
     expect(answerFromText(multi, "1, 3")).toEqual({ option_indices: [0, 2] });
     expect(answerFromText(multi, "1 1 2")).toEqual({ option_indices: [0, 1] });
     expect(answerFromText(multi, "1 and 3")).toBeNull();
+    // a multiple choice with a typed-answer row (Claude's) takes anything else as that answer
+    const open = prompt(["Manzana", "Pera"], 2, true);
+    expect(answerFromText(open, "1 2")).toEqual({ option_indices: [0, 1] });
+    expect(answerFromText(open, "Kiwi")).toEqual({ custom_text: "Kiwi" });
   });
 });
 
@@ -133,4 +138,40 @@ describe("focusFollowsAnswer", () => {
       expect(focusFollowsAnswer({ ...still, origin, coarse: true })).toBe(expected.coarse);
     });
   }
+});
+
+describe("customAnswerWithFiles", () => {
+  const file = (name: string) => new File(["FICTIONAL"], name, { type: "image/png" });
+
+  it("answer_with_image_prefixes_path: each upload's path leads the answer, in order", async () => {
+    const posted: string[] = [];
+    const uploaded: string[] = [];
+    const result = await customAnswerWithFiles("FICTIONAL  the red one ", [file("a.png"), file("b.png")],
+      async (each) => { uploaded.push(each.name); return `/w/.herdr-web-ui/${each.name}`; },
+      async (text) => { posted.push(text); });
+    expect(result).toEqual({ ok: true });
+    expect(uploaded).toEqual(["a.png", "b.png"]);
+    expect(posted).toEqual(["@/w/.herdr-web-ui/a.png @/w/.herdr-web-ui/b.png FICTIONAL  the red one"]);
+    // no file: the text alone, as before
+    const plain: string[] = [];
+    await customAnswerWithFiles(" FICTIONAL ", [], async () => "", async (text) => { plain.push(text); });
+    expect(plain).toEqual(["FICTIONAL"]);
+    // files and no words: the mentions alone, nothing trailing
+    const bare: string[] = [];
+    await customAnswerWithFiles("  ", [file("a.png")], async () => "/w/a.png", async (text) => { bare.push(text); });
+    expect(bare).toEqual(["@/w/a.png"]);
+  });
+
+  it("answer_upload_fails_keeps_text: nothing is posted and the reason comes back", async () => {
+    const posted: string[] = [];
+    const result = await customAnswerWithFiles("FICTIONAL", [file("a.png"), file("b.png")],
+      async (each) => { if (each.name === "b.png") throw new Error("FICTIONAL disk full"); return "/w/a.png"; },
+      async (text) => { posted.push(text); });
+    expect(result).toEqual({ ok: false, error: "FICTIONAL disk full" });
+    expect(posted).toEqual([]);
+    // the server's own words, never the URL and status before them
+    const refused = await customAnswerWithFiles("FICTIONAL", [file("a.png")],
+      async () => { throw new ApiError("/api/machines/remote/host-chats/chat/upload", 413, "FICTIONAL too big", "image_too_large"); }, async () => {});
+    expect(refused).toEqual({ ok: false, error: "FICTIONAL too big" });
+  });
 });

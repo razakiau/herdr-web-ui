@@ -29,6 +29,9 @@
  * connected page that is visible and has focus, which says so over its WebSocket): the
  * person is at a screen that already shows the change (#751). It is asked when an alert
  * would go out, so a window brought forward while the alert waits still holds it back.
+ *
+ * An ntfy topic the deployment names (`ntfy`, server/ntfy.ts) is one more recipient on the same
+ * schedule, with its own choice of alerts: it hears what a device with that choice would.
  */
 
 import { createHash } from "node:crypto";
@@ -38,6 +41,7 @@ import webpush from "web-push";
 
 import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, PushPayload } from "../shared/protocol.ts";
+import type { HostChatRow } from "../shared/host-chats.ts";
 import {
   type AlertPrefs,
   DEFAULT_ALERTS,
@@ -50,6 +54,7 @@ import {
 } from "../shared/notify-policy.ts";
 import { badRequest, jsonResponse } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
+import { type NtfyConfig, postNtfy } from "./ntfy.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
@@ -85,6 +90,8 @@ export type PushDelivery = { ok: true } | { ok: false; status: number | null; go
 
 export interface PushService {
   publicKey(): string;
+  /** the ntfy topic these alerts also go to, and which: what the Alerts page says (never the server or token) */
+  ntfyTopic(): { topic: string; alerts: AlertPrefs } | null;
   /** `parseSubscription` with this service's endpoint rule: what POST /api/push/subscribe accepts */
   parse(value: unknown): PushSubscriptionRecord | null;
   /** `alerts` absent keeps what the device chose before (a re-registration on load) */
@@ -107,6 +114,12 @@ export interface PushService {
   /** Schedules the alert this change is worth, and calls off the one it overtakes. */
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
+  /**
+   * A PC's host chats as its list now reads (server/agent-host/chats.ts rowsFrom): a chat that
+   * starts asking, finishes a turn or fails is alerted as a pane is, on the same schedule; a
+   * chat first seen is only the baseline, and one gone from the list takes its alert with it.
+   */
+  onHostChats(rows: readonly HostChatRow[], machineId?: string, machineName?: string): void;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
 }
@@ -123,7 +136,14 @@ export interface PushServiceOptions {
   inUse?: () => boolean;
   /** accept plain-http loopback endpoints: only for the tests' fake push service (push.fake.ts) */
   loopbackHttp?: boolean;
+  /** an ntfy topic that gets the same alerts (server/ntfy.ts ntfyFromEnv) */
+  ntfy?: NtfyConfig;
+  /** false while Settings hides agent host chats (the shared hostChatsShown): their changes are followed, never told */
+  hostChatsShown?: () => boolean;
 }
+
+/** Who one delay's alert goes to: these devices, and the ntfy topic or not. */
+interface Recipients { devices: PushSubscriptionRecord[]; ntfy: boolean }
 
 export { defaultStateDir } from "./update-state.ts";
 
@@ -181,6 +201,20 @@ export function endedMessage(paneId: string, title: string): PushPayload {
   return { pane_id: paneId, title, body: ENDED_NOTIFICATION_BODY, tag: paneNotificationTag(paneId) };
 }
 
+/** One notification slot per host chat, as per pane (shared/notify-policy.ts paneNotificationTag). */
+export function hostChatTag(machineId: string, session: string): string {
+  return `herdr-chat-${encodeURIComponent(machineId)}-${encodeURIComponent(session)}`;
+}
+
+/** A host chat's change as the alerts take it: a question, a finish, a failure, or nothing. */
+function hostChatAlert(previous: HostChatRow["status"] | undefined, next: HostChatRow["status"]): "blocked" | "done" | "error" | null {
+  if (previous === undefined || previous === next) return null;
+  if (next === "asks") return "blocked";
+  if (next === "error") return "error";
+  return next === "idle" && previous === "working" || next === "idle" && previous === "asks" ? "done" : null;
+}
+const HOST_ERROR_BODY = "stopped with an error";
+
 export function createPushService(options: PushServiceOptions): PushService {
   const vapidPath = join(options.stateDir, "vapid.json");
   const subscriptionsPath = join(options.stateDir, "push-subscriptions.json");
@@ -189,6 +223,8 @@ export function createPushService(options: PushServiceOptions): PushService {
   let vapid: { publicKey: string; privateKey: string } | null = null;
   let subscriptions: Map<string, PushSubscriptionRecord> | null = null;
   const lastStatus = new Map<string, AgentStatus>();
+  /** each host chat's last status, keyed `chat:<pc>:<session>` (apart from every pane key) */
+  const hostStatus = new Map<string, HostChatRow["status"]>();
   const titles = new Map<string, string>();
   // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
   // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
@@ -346,7 +382,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   }
 
   /** One timer per delay, each for the devices that wait that long; all called off together. */
-  function schedule(key: string, groups: Map<number, PushSubscriptionRecord[]>, send: (to: PushSubscriptionRecord[]) => Promise<void>): void {
+  function schedule(key: string, groups: Map<number, Recipients>, send: (to: Recipients) => Promise<void>): void {
     const cancels: Array<() => void> = [];
     let remaining = groups.size;
     for (const [delay, to] of groups) {
@@ -373,6 +409,7 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   return {
     publicKey: () => keys().publicKey,
+    ntfyTopic: () => options.ntfy ? { topic: options.ntfy.topic, alerts: options.ntfy.alerts } : null,
     parse: (value) => parseSubscription(value, options),
 
     subscribe(subscription, alerts, deviceId) {
@@ -458,13 +495,20 @@ export function createPushService(options: PushServiceOptions): PushService {
         turnStart.delete(key);
       }
       if (!shouldNotifyStatus(previous, status)) return;
-      const groups = new Map<number, PushSubscriptionRecord[]>();
+      const groups = new Map<number, Recipients>();
+      const group = (delay: number): Recipients => {
+        const found = groups.get(delay) ?? { devices: [], ntfy: false };
+        groups.set(delay, found);
+        return found;
+      };
       for (const subscription of store().values()) {
         const delay = delayFor(subscription.alerts ?? DEFAULT_ALERTS, status, worked);
-        if (delay !== null) groups.set(delay, [...(groups.get(delay) ?? []), subscription]);
+        if (delay !== null) group(delay).devices.push(subscription);
       }
+      const ntfyDelay = options.ntfy ? delayFor(options.ntfy.alerts, status, worked) : null;
+      if (ntfyDelay !== null) group(ntfyDelay).ntfy = true;
       if (groups.size === 0) return;
-      schedule(key, groups, async (to) => {
+      schedule(key, groups, async ({ devices: to, ntfy }) => {
         if (options.inUse?.()) return;
         const title = machineId === "local" ? await titleOf(paneId) : titles.get(key) ?? paneId;
         // the title can wait for herdr: a window that came into use meanwhile still holds the alert
@@ -474,7 +518,11 @@ export function createPushService(options: PushServiceOptions): PushService {
           const current = store().get(subscription.endpoint);
           return current && current.device_id === subscription.device_id ? [current] : [];
         });
-        await broadcast({ ...statusMessage(paneId, title, status), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live);
+        const message = { ...statusMessage(paneId, title, status), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) };
+        await Promise.all([
+          live.length > 0 ? broadcast(message, status === "blocked" ? "high" : "normal", live) : undefined,
+          ntfy && options.ntfy ? postNtfy(options.ntfy, { title, status, body: message.body, machineId, paneId, workspaceId: message.workspace_id }) : undefined,
+        ]);
       });
     },
 
@@ -484,9 +532,69 @@ export function createPushService(options: PushServiceOptions): PushService {
       turnStart.delete(key);
       // an ended terminal is a finish of its own: a device that wants none hears none
       const to = [...store().values()].filter((subscription) => (subscription.alerts ?? DEFAULT_ALERTS).done !== "off");
-      if (to.length === 0 || options.inUse?.()) return;
+      const ntfy = options.ntfy && options.ntfy.alerts.done !== "off" ? options.ntfy : null;
+      if ((to.length === 0 && !ntfy) || options.inUse?.()) return;
       // the pane may already be gone from herdr: the seeded title is what is left
-      await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, "normal", to);
+      const message = { ...endedMessage(paneId, titles.get(key) ?? paneId), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) };
+      await Promise.all([
+        to.length > 0 ? broadcast(message, "normal", to) : undefined,
+        ntfy ? postNtfy(ntfy, { title: message.title, status: "ended", body: message.body, machineId, paneId, workspaceId: message.workspace_id }) : undefined,
+      ]);
+    },
+
+    onHostChats(rows, machineId = "local", machineName) {
+      const prefix = `chat:${encodeURIComponent(machineId)}:`;
+      const listed = new Set<string>();
+      for (const row of rows) {
+        const key = prefix + encodeURIComponent(row.session);
+        listed.add(key);
+        const previous = hostStatus.get(key);
+        hostStatus.set(key, row.status);
+        if (previous === row.status) continue;
+        callOff(key);
+        const busy = row.status === "working" || row.status === "asks";
+        if (busy && previous !== undefined && previous !== "working" && previous !== "asks") turnStart.set(key, now());
+        let worked: number | null = null;
+        if (!busy) { const start = turnStart.get(key); worked = start === undefined ? null : now() - start; turnStart.delete(key); }
+        const alert = row.archived || options.hostChatsShown?.() === false ? null : hostChatAlert(previous, row.status);
+        if (alert === null) continue;
+        // a failure is told as a finish is: a device that wants no finishes hears none
+        const as: AgentStatus = alert === "error" ? "done" : alert;
+        const groups = new Map<number, Recipients>();
+        const group = (delay: number): Recipients => {
+          const found = groups.get(delay) ?? { devices: [], ntfy: false };
+          groups.set(delay, found);
+          return found;
+        };
+        for (const subscription of store().values()) {
+          const delay = delayFor(subscription.alerts ?? DEFAULT_ALERTS, as, worked);
+          if (delay !== null) group(delay).devices.push(subscription);
+        }
+        const ntfyDelay = options.ntfy ? delayFor(options.ntfy.alerts, as, worked) : null;
+        if (ntfyDelay !== null) group(ntfyDelay).ntfy = true;
+        if (groups.size === 0) continue;
+        const title = `${machineName ? machineName + " · " : ""}${row.title}`;
+        const body = alert === "error" ? HOST_ERROR_BODY : statusNotificationBody(alert);
+        const message: PushPayload = { pane_id: null, host_session: row.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, row.session) };
+        schedule(key, groups, async ({ devices: to, ntfy }) => {
+          if (options.inUse?.()) return;
+          const live = to.flatMap((subscription) => {
+            const current = store().get(subscription.endpoint);
+            return current && current.device_id === subscription.device_id ? [current] : [];
+          });
+          await Promise.all([
+            live.length > 0 ? broadcast(message, alert === "blocked" ? "high" : "normal", live) : undefined,
+            ntfy && options.ntfy ? postNtfy(options.ntfy, { title, status: alert, body, machineId, session: row.session }) : undefined,
+          ]);
+        });
+      }
+      // a chat gone from its PC's list (deleted, or its host restarted without it): no alert speaks for it
+      for (const key of [...hostStatus.keys()]) {
+        if (!key.startsWith(prefix) || listed.has(key)) continue;
+        callOff(key);
+        turnStart.delete(key);
+        hostStatus.delete(key);
+      }
     },
 
     async settled() {
@@ -498,7 +606,7 @@ export function createPushService(options: PushServiceOptions): PushService {
 /**
  * /api/push routes. All sit behind the token gate (they are /api/ and not health/auth):
  * a subscription receives pane titles until it is removed.
- *   GET    /api/push                        -> { public_key }
+ *   GET    /api/push                        -> { public_key, ntfy: { topic, alerts } | null }
  *   POST   /api/push/subscribe { subscription, alerts? } -> 204 (alerts: this device's AlertPrefs)
  *          | 410 subscription_gone (its push service retired the endpoint: subscribe anew)
  *   DELETE /api/push/subscribe { endpoint } -> 204
@@ -510,7 +618,7 @@ function subscriptionGone(): Response {
 
 export async function handlePushRequest(request: Request, pathname: string, push: PushService, deviceId: string | null | undefined): Promise<Response | null> {
   const route = `${request.method} ${pathname}`;
-  if (route === "GET /api/push") return jsonResponse({ public_key: push.publicKey() });
+  if (route === "GET /api/push") return jsonResponse({ public_key: push.publicKey(), ntfy: push.ntfyTopic() });
   if (route !== "POST /api/push/subscribe" && route !== "DELETE /api/push/subscribe" && route !== "POST /api/push/test") {
     const known = pathname === "/api/push" || pathname === "/api/push/subscribe" || pathname === "/api/push/test";
     return known ? badRequest("method_not_allowed", `${request.method} is not supported on ${pathname}`) : null;

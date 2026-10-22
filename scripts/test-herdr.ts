@@ -14,10 +14,17 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ping, sessionSnapshot, workspaceCreate } from "../server/herdr/client.ts";
+import { testShellEnv } from "./test-shell.ts";
 
 // macOS's temp dir is behind a symlink (/var -> /private/var): herdr reports a pane's cwd
 // resolved, so a fixture made under the unresolved path never matches the pane it is for
 process.env["TMPDIR"] = realpathSync(tmpdir());
+
+// host chats are off in every test server: a createServer without its own `agentHost` reads
+// these, and a developer's shell may set them on the very PC whose real VS Code agent host the
+// feature talks to (and would start). A test that needs the feature passes `agentHost` itself.
+delete process.env["HERDR_WEB_AGENT_HOST"];
+delete process.env["HERDR_WEB_AGENT_HOST_START"];
 
 export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "herdr-web-ui-test";
 
@@ -83,7 +90,7 @@ export async function useTestHerdr(): Promise<string | null> {
       // run from inside a herdr pane, this process carries that pane's HERDR_* variables; run by
       // an agent, it carries the agent's too (OMO_CODING_AGENT_DIR moves where a pane's omo is
       // read from), and every pane of this server would inherit them
-      env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(HERDR|OMO|SENPI|PI)_/.test(name))), ZDOTDIR: zdotdir },
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(HERDR|OMO|SENPI|PI)_/.test(name))), ...testShellEnv(dirname(socket)), ZDOTDIR: zdotdir },
     }).unref();
     const deadline = Date.now() + 15_000;
     while (!(existsSync(socket) && await answers(socket))) {

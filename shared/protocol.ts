@@ -26,6 +26,8 @@ export type {
 } from "./herdr-api.generated.ts";
 
 import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { AgentHostState } from "./host-chats.ts";
+import type { AlertPrefs } from "./notify-policy.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -162,7 +164,7 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         pane's OmO session started, or a Claude Code pane's subagents (no workflows): running ones, then
  *         those that ended in the last day; empty for any other pane or one whose session is not
  *         known yet. server_time: that PC's clock, which the times are on)
- *  GET    /api/pane/plan?pane_id=       -> PanePlan (the plan the pane's Claude Code or Codex session
+ *  GET    /api/pane/plan?pane_id=       -> PanePlan (the plan the pane's Claude Code, Codex or OmO session
  *         keeps: its task list or checklist, read from the transcript; null when it keeps none)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
@@ -279,6 +281,8 @@ export interface PaneFindResponse {
 
 /** The subscriptions whose plan limits GET /api/usage can read from a CLI's own sign-in. */
 export type UsageProviderId = "claude" | "codex" | "cursor" | "copilot" | "grok" | "antigravity" | "opencode";
+/** A provider herdr reads itself, or another an OmniRoute gateway reports ("glm", "kimi-coding"): lowercase, digits and dashes. */
+export type UsageProviderName = UsageProviderId | (string & {});
 
 /** One limit of a plan: how much of it is used and when it starts over. */
 export interface UsageWindow {
@@ -302,7 +306,7 @@ export interface UsageWindow {
 export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked";
 
 export interface ProviderUsage {
-  readonly id: UsageProviderId;
+  readonly id: UsageProviderName;
   /**
    * One account of one provider, stable across reads: the provider and its account id, or, for a
    * sign-in that does not say whose it is, the provider and where it was found. A PC signed in to
@@ -325,6 +329,39 @@ export interface UsageReport {
   readonly providers: readonly ProviderUsage[];
 }
 
+/**
+ * An OmniRoute gateway this server reads plan limits from (HERDR_WEB_OMNIROUTE_URL and _TOKEN in
+ * its environment, else saved from Settings): its accounts are in /api/usage, keyed
+ * `<provider>:omniroute:<connection>`.
+ */
+export interface OmniRouteStatus {
+  readonly configured: boolean;
+  /** env: the server's environment, which Settings cannot change; saved: from Settings; null when not configured */
+  readonly source: "env" | "saved" | null;
+  /** null when not configured */
+  readonly url: string | null;
+  readonly ok: boolean;
+  readonly problem: string | null;
+  /** ISO 8601 time the gateway last answered */
+  readonly checked_at: string | null;
+}
+
+/** CLIProxyAPI management configuration: the management key never leaves the server. */
+export interface CLIProxyStatus {
+  readonly configured: boolean;
+  readonly url: string;
+  readonly ok: boolean;
+  readonly problem: string | null;
+}
+export type CLIProxyProvider = "claude" | "codex";
+export interface CLIProxyLogin {
+  readonly url: string;
+  readonly state: string;
+}
+export interface CLIProxyLoginStatus {
+  readonly status: "wait" | "ok" | "error";
+}
+
 /** How a request got in, when it did. */
 export type AccessVia = "local" | "tailscale" | "device" | "token" | "open";
 /** Why a request did not. */
@@ -337,6 +374,8 @@ export interface HealthAuth {
   readonly required: boolean;
   readonly authenticated: boolean;
   readonly via?: AccessVia;
+  /** with `via: "token"`: the token came in an `Authorization` header (a proxy sends it), so signing out of this browser would change nothing */
+  readonly bearer?: true;
   readonly role?: DeviceRole;
   readonly reason?: AccessRefusal;
 }
@@ -421,6 +460,8 @@ export interface PortalStatus {
 /** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
 export interface PushKey {
   readonly public_key: string;
+  /** the ntfy topic the server also posts alerts to (server/ntfy.ts), and which; null without one */
+  readonly ntfy?: { readonly topic: string; readonly alerts: AlertPrefs } | null;
 }
 
 /** One turn of a structured agent conversation (the chat lens source). */
@@ -451,18 +492,53 @@ export type ConversationPart =
     /** Hermes could not load a tool-call list whose arguments exceeded its page limit. */
     arguments_omitted?: true;
     skill?: SkillActivity;
-    /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output, and the whole output's length */
+    /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output (a host chat's: GET /api/host-chats/tool-output), and the whole output's length */
     output_ref?: string; output_size?: number;
-    /** images the call returned (pi reads a picture into the result); same fetch as a user image */
+    /** images the call returned (pi reads a picture into the result); same fetch as a user image (a host chat's: GET /api/host-chats/image) */
     images?: { media_type: string; ref: string }[];
+    /** the tool's own id (a host chat's `toolName`, e.g. `bash`, `view`), for classing the call; `name` is its display name */
+    tool_id?: string;
+    /** what the call did, in the past tense (a host chat's `pastTenseMessage`), once it is done; `summary` stays what it set out to do */
+    past?: string;
+    /** a terminal call: the command it ran, and its exit code once it exited (non-zero sets `error`) */
+    command?: string; exit_code?: number;
+    /** the files the call changed, with the lines it added and removed in each */
+    edits?: { path: string; added: number; removed: number }[];
+    /** a host chat's: why the agent makes the call (AHP `intention`), shown before a command */
+    intention?: string;
+    /**
+     * a host chat's call that is not completed: still `running` (or streaming), `awaiting` a yes or
+     * no, or cancelled as `skipped` or `denied` (AHP `ToolCallCancellationReason`). Absent once done.
+     */
+    state?: "running" | "awaiting" | "skipped" | "denied";
   }
+  /**
+   * A subagent a tool call started (a host chat's subagent result), its own row. `id`: the call's id;
+   * `model`: the subagent's model, null when the bridge does not know it; `started` / `ended`: ISO
+   * times, null when unknown (ended: while it runs); `chat`: the subagent's own chat, to read it.
+   */
+  | {
+    kind: "subagent"; id: string; agent: string; description: string; model: string | null;
+    started: string | null; ended: string | null; status: "running" | "done" | "failed"; chat: string | null;
+    /** while it runs: what its own chat is doing now (its newest tool call's words), when the bridge reads it */
+    activity?: string;
+  }
+  /**
+   * A question the agent asked and the user answered (or skipped), as the history reads it back.
+   * `options`: the choices it offered, by label; `chosen`: the labels picked; `custom`: the text the
+   * user typed instead, null when none.
+   */
+  | { kind: "question"; text: string; /** the whole message the question came with (a Copilot ask_user report), markdown */ report?: string; options: string[]; chosen: string[]; custom: string | null; skipped: boolean; /** several could be picked */ multi?: true; /** pictures attached to the typed answer (a host chat's uploads), fetched by ref as a turn's images */ images?: { media_type: string; ref: string }[] }
   /** A native Claude/Codex user image, addressed by an opaque ref and fetched on demand: GET /api/pane/conversation/image?pane_id=…&ref=… */
   | { kind: "image"; media_type: string; ref: string }
   /** the summary a compaction left; the conversation before it is what it sums up */
   | { kind: "compact"; text: string }
   /** a message the agent's runtime put in the user's seat (gjc's background-job result): it starts a turn, nobody typed it.
-   * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable") */
-  | { kind: "notice"; text: string; source?: string }
+   * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable").
+   * In a host chat's assistant turn: "system" for the agent harness's notification, "error" for an
+   * error the turn stopped at (the client styles a `source: "error"` notice as an error from Task 4 on) */
+  /** `resumable`: a host chat's latest turn stopped at this error and the host can resume it (Try Again) */
+  | { kind: "notice"; text: string; source?: string; resumable?: true }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
   | { kind: "task_result"; tasks: OmoTaskResult[] };
 
@@ -543,7 +619,7 @@ export interface OmoActivity {
 
 /**
  * One step of the plan an agent keeps for its session (GET /api/pane/plan): a task of Claude
- * Code's task list (`TaskCreate`/`TaskUpdate`), or an item of Codex's `update_plan` checklist.
+ * Code's task list (`TaskCreate`/`TaskUpdate`), Codex's `update_plan` checklist, or OmO's `todo` list.
  */
 export interface PlanStep {
   id: string;
@@ -579,7 +655,7 @@ export interface ConversationResponse {
   activity?: "thinking" | "working" | "idle";
   /** Stable across appends; changes on transcript replacement or native context clear. */
   history_id?: string;
-  source: "grok-transcript" | "agy-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
+  source: "grok-transcript" | "agy-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "copilot-transcript" | "agent-host" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
@@ -708,6 +784,18 @@ export interface FileInfo {
   modified: string;
   mime: string;
   kind: FileKind;
+}
+
+/**
+ * GET /api/fs/favicon?root=: the icon the project in folder `root` keeps, or null. The PC looks
+ * through every place a project keeps one (`FAVICON_CANDIDATES` in server/project-favicon.ts),
+ * best first, each read as /api/fs/stat reads `<root>/<place>`, and answers once: a folder with
+ * no icon is `{ icon: null }`, never a 404. 400 missing_root; the access rules of /api/fs/stat
+ * (no watching device, no other site's page).
+ */
+export interface ProjectFavicon {
+  /** the image found; `path` opens it through /api/fs/file */
+  icon: FileInfo | null;
 }
 
 /** Which two states of a repository are compared. */
@@ -999,6 +1087,12 @@ export interface SlashCommand {
   source: "builtin" | "user" | "project" | "skill" | "plugin";
   /** `$`: typed as `$name` (Codex skills); otherwise `/name` */
   trigger?: "$";
+  /**
+   * where a skill comes from, for every agent: `user` is the person's own (the agent's own
+   * directory or ~/.agents/skills), `project` the checkout's, `bundled` ships with the agent,
+   * `plugin` comes with one of its plugins
+   */
+  origin?: "user" | "project" | "bundled" | "plugin";
 }
 
 /**
@@ -1020,6 +1114,13 @@ export interface InteractivePrompt {
   body: string | null;
   options: InteractivePromptOption[];
   multi_select: boolean;
+  /**
+   * A Copilot form of several questions, read whole as VS Code's carousel reads it: the card pages
+   * through them, keeps each answer on the phone (back and change it), and one Submit sends them
+   * all. An optional one (`required` false) may be left empty: it goes as skipped. The top-level
+   * fields are the first question's, for a card that reads one question only.
+   */
+  form?: InteractivePromptFormQuestion[];
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
   /** a question in Codex's queue while Codex keeps working: only the card answers it. Collapsed,
@@ -1029,11 +1130,23 @@ export interface InteractivePrompt {
   /** the questions of a form that asks several at once (omo), in order: which are answered and
    * which one the card asks now (none while the answers are reviewed). Absent for one question */
   steps?: InteractivePromptStep[];
+  /** the answers a review asks to submit (Claude, omp), each question with what was picked for it,
+   * read whole where the terminal wrapped them. A question cut off above the pane's top is null */
+  answers?: InteractivePromptAnswer[];
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;
   /** Claude's plan file behind a plan card, whose whole text is then the body: opened in the file viewer */
   plan_file?: string;
+}
+
+export interface InteractivePromptFormQuestion {
+  title: string;
+  question: string;
+  options: InteractivePromptOption[];
+  multi_select: boolean;
+  custom_option_index: number | null;
+  required: boolean;
 }
 
 export interface InteractivePromptStep {
@@ -1042,9 +1155,18 @@ export interface InteractivePromptStep {
   current: boolean;
 }
 
+export interface InteractivePromptAnswer {
+  question: string | null;
+  answer: string | null;
+  /** the note typed with the answer (omp) */
+  note?: string;
+}
+
 export interface InteractivePromptOption {
   label: string;
   description: string | null;
+  /** the agent's own pick (a Copilot host option's `recommended`), drawn as a tag */
+  recommended?: true;
 }
 
 /** POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text. */
@@ -1065,6 +1187,8 @@ export interface PushPayload {
   /** Absent in legacy payloads means local. */
   machine_id?: string;
   pane_id: string | null;
+  /** A host chat's session (shared/host-chats.ts), when the alert is a chat's, not a pane's: its tap opens the chat. */
+  host_session?: string;
   /** The workspace the pane was last seen in, so the tap of an ended pane opens that workspace. Absent when not known. */
   workspace_id?: string;
   title: string;
@@ -1222,6 +1346,10 @@ export type ServerMessage =
   | { type: "watch-end"; pane_id: string }
   /** the answer to a `ping`, with its id; only this frame, for a ping in flight, ends the client's liveness probe */
   | { type: "pong"; id: number }
+  /** where this PC's bridge stands with its agent host (HERDR_WEB_AGENT_HOST=on only) */
+  | { type: "host-chat-state"; host: AgentHostState }
+  /** a host chat changed; `session` null: the list of chats changed */
+  | { type: "host-chat-changed"; session: string | null }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 

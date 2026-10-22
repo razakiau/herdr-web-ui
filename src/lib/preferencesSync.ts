@@ -1,5 +1,5 @@
 /**
- * Keeps the shared settings and the pins (shared/preferences.ts) the same in every browser of this
+ * Keeps the shared settings, the pins and the open agent host workspaces (shared/preferences.ts) the same in every browser of this
  * server. Loaded once the app is in (never before the access gate): what the server holds is laid
  * over this browser's settings, setting by setting; a setting nobody has shared yet stays this
  * browser's own, and opening a page writes nothing. A change here sends just what changed, once the
@@ -8,10 +8,14 @@
  * setting by setting: a change made here and not yet sent stays, and goes out over what arrived.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { SHARED_SETTING_KEYS, type PreferencesChange, type SharedPreferences, type SharedSettingKey } from "../../shared/preferences.ts";
+import { mirrorPalette, SHARED_SETTING_KEYS, type PreferencesChange, type SharedPreferences, type SharedSettingKey } from "../../shared/preferences.ts";
 import { ApiError, fetchPreferences, savePreferences } from "./api.ts";
+import { DEFAULT_THEME } from "./themes.ts";
 import { sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
+import type { HostWorkspaceState } from "../../shared/host-workspaces.ts";
+import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces } from "./hostWorkspaces.ts";
+import { userErrorMessage, type UserError } from "./userError.ts";
 
 const SEND_AFTER_MS = 600;
 /** a request that failed on the way (the network, a restart) is tried again after this */
@@ -19,9 +23,9 @@ const RETRY_MS = 5_000;
 
 type Shared = Partial<Record<SharedSettingKey, unknown>>;
 /** What this browser last knew the server to hold; `pins` is null while the server has held none. */
-export interface Baseline { settings: Shared; pins: readonly string[] | null }
+export interface Baseline { settings: Shared; pins: readonly string[] | null; hostWorkspaces?: HostWorkspaceState | null }
 /** What this browser holds. */
-export interface Local { settings: Settings; pins: readonly string[] }
+export interface Local { settings: Settings; pins: readonly string[]; hostWorkspaces?: HostWorkspaceState }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -34,8 +38,18 @@ export function preferencesChange(base: Baseline, local: Local): PreferencesChan
   const now = sharedSettings(local.settings);
   const settings = Object.fromEntries(Object.entries(now).filter(([key, value]) => !same(value, base.settings[key as SharedSettingKey])));
   const pinsChanged = base.pins !== null && !same(local.pins, base.pins);
-  if (Object.keys(settings).length === 0 && !pinsChanged) return null;
-  return pinsChanged || base.pins === null ? { settings, pins: [...local.pins] } : { settings };
+  // the open host workspaces: sent when they differ from what the server holds. Unlike pins they go
+  // out alone while it holds none: a PC's first seed (lib/hostWorkspaces.ts) is new, and waiting for
+  // a setting to change would leave each device with its own. A page with none open writes nothing.
+  const known = base.hostWorkspaces ?? null;
+  const workspacesChanged = local.hostWorkspaces !== undefined && (known === null ? Object.keys(local.hostWorkspaces).length > 0 : !same(local.hostWorkspaces, known));
+  if (Object.keys(settings).length === 0 && !pinsChanged && !workspacesChanged) return null;
+  const sendWorkspaces = local.hostWorkspaces !== undefined && (workspacesChanged || known === null);
+  return {
+    settings,
+    ...(pinsChanged || base.pins === null ? { pins: [...local.pins] } : {}),
+    ...(sendWorkspaces ? { hostWorkspaces: structuredClone(local.hostWorkspaces!) } : {}),
+  };
 }
 
 export interface Taken {
@@ -44,6 +58,8 @@ export interface Taken {
   patch: Partial<Settings>;
   /** the pins to set here; null leaves them */
   pins: string[] | null;
+  /** the open host workspaces to set here; null leaves them */
+  hostWorkspaces: HostWorkspaceState | null;
 }
 
 /**
@@ -59,15 +75,27 @@ export interface Taken {
 export function takePreferences(base: Baseline, local: Local, remote: SharedPreferences, inFlight: PreferencesChange | null, force = false): Taken {
   const settings: Shared = { ...base.settings };
   const patch: Record<string, unknown> = {};
+  const incoming = { ...remote.settings };
+  // Read an old document's fixed-mode appearance into its active side. System's palette
+  // was unused, so it must not replace this device's migrated pair. This is passive
+  // migration only: the derived side advances the baseline too, never a correcting PUT.
+  if (!("darkTheme" in incoming) && !("lightTheme" in incoming) && "palette" in incoming) {
+    const mode = incoming.theme ?? base.settings.theme;
+    if (mode === "dark") incoming.darkTheme = incoming.palette;
+    if (mode === "light") incoming.lightTheme = incoming.palette;
+  }
   for (const key of SHARED_SETTING_KEYS) {
-    if (!(key in remote.settings)) continue;
-    const value = remote.settings[key];
-    if (!same(sanitizeSettings({ ...local.settings, [key]: value })[key], value)) continue;
+    if (!(key in incoming)) continue;
+    const value = incoming[key];
+    if (!same(sanitizeSettings({ [key]: value })[key], value)) continue;
     const sent = inFlight !== null && key in inFlight.settings && same(inFlight.settings[key], local.settings[key]);
     const edited = !same(local.settings[key], base.settings[key]) && !sent;
     settings[key] = value;
     if (force || !edited) patch[key] = value;
   }
+  // Palette is a derived mirror, not an independent local edit. A legacy document with no
+  // sides must not overwrite a device's migrated System pair or provoke a correcting PUT.
+  settings.palette = mirrorPalette(settings.theme, settings.darkTheme ?? DEFAULT_THEME, settings.lightTheme ?? DEFAULT_THEME);
   let pins: string[] | null = null;
   if (remote.pins !== undefined) {
     if (base.pins === null && !force) pins = [...remote.pins, ...local.pins.filter((pin) => !remote.pins!.includes(pin))];
@@ -77,16 +105,46 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
       if (force || !edited) pins = [...remote.pins];
     }
   }
-  return { base: { settings, pins: remote.pins === undefined ? base.pins : [...remote.pins] }, patch: patch as Partial<Settings>, pins };
+  // the open host workspaces: the pins' rule, joined per PC the first time (the server's PCs win)
+  let hostWorkspaces: HostWorkspaceState | null = null;
+  const knownWorkspaces = base.hostWorkspaces ?? null;
+  const localWorkspaces = local.hostWorkspaces ?? {};
+  if (remote.hostWorkspaces !== undefined) {
+    if (knownWorkspaces === null && !force) hostWorkspaces = { ...localWorkspaces, ...structuredClone(remote.hostWorkspaces) };
+    else {
+      const sent = inFlight?.hostWorkspaces !== undefined && same(inFlight.hostWorkspaces, localWorkspaces);
+      const edited = !same(localWorkspaces, knownWorkspaces) && !sent;
+      if (force || !edited) hostWorkspaces = structuredClone(remote.hostWorkspaces);
+    }
+  }
+  return {
+    base: {
+      settings, pins: remote.pins === undefined ? base.pins : [...remote.pins],
+      ...(remote.hostWorkspaces === undefined ? knownWorkspaces === null ? {} : { hostWorkspaces: knownWorkspaces } : { hostWorkspaces: structuredClone(remote.hostWorkspaces) }),
+    },
+    patch: patch as Partial<Settings>, pins, hostWorkspaces,
+  };
 }
 
-export function usePreferencesSync(enabled: boolean): (preferences: SharedPreferences) => void {
+export interface PreferencesSync {
+  /** a document the event stream brought */
+  receive(preferences: SharedPreferences): void;
+  /**
+   * the last change the server refused to save, as a sentence for Settings (lib/userError.ts); null
+   * once a save lands. The change is sent again meanwhile. A watching device and a server without
+   * the route are not refusals.
+   */
+  saveError: UserError | null;
+}
+
+export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const { settings, update } = useSettings();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
-  const latest = useRef<Local>({ settings, pins });
-  latest.current = { settings, pins };
+  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
+  const latest = useRef<Local>({ settings, pins, hostWorkspaces });
+  latest.current = { settings, pins, hostWorkspaces };
   // what this browser last knew the server to hold; until a document arrives, what it holds itself
-  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: null });
+  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: null, hostWorkspaces: null });
   const revision = useRef(0);
   // a document has arrived (the GET, or the event stream's opening): sending begins then
   const loadedRef = useRef(false);
@@ -102,6 +160,7 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
   // the send effect runs again when this moves: after a send, or a failed one's wait
   const [attempt, setAttempt] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [saveError, setSaveError] = useState<UserError | null>(null);
   // the baseline is a ref: a document that changes nothing here still moves what is pending
   const [, setTaken] = useState(0);
 
@@ -111,9 +170,13 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
     const taken = takePreferences(base.current, latest.current, remote, inFlight.current, readOnly.current);
     base.current = taken.base;
     // a second document in the same tick compares against what this one set, not the last render
-    latest.current = { settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins };
+    latest.current = {
+      settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins,
+      hostWorkspaces: taken.hostWorkspaces ?? latest.current.hostWorkspaces,
+    };
     if (Object.keys(taken.patch).length > 0) update(taken.patch);
     if (taken.pins !== null) setSidebarPins(taken.pins);
+    if (taken.hostWorkspaces !== null) setHostWorkspaces(taken.hostWorkspaces);
     loadedRef.current = true;
     setLoaded(true);
     setTaken((count) => count + 1);
@@ -144,7 +207,7 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
     return () => { cancelled = true; window.clearTimeout(retry); };
   }, [enabled, loaded, loadAttempt, receive]);
 
-  const change = loaded ? preferencesChange(base.current, { settings, pins }) : null;
+  const change = loaded ? preferencesChange(base.current, { settings, pins, hostWorkspaces }) : null;
   const pending = change === null ? null : JSON.stringify(change);
   useEffect(() => {
     if (!enabled || !loaded || off.current || readOnly.current || pending === null || inFlight.current !== null) return;
@@ -153,21 +216,36 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
       const body = JSON.parse(pending) as PreferencesChange;
       inFlight.current = body;
       savePreferences(body).then((saved) => {
+        // An older server silently drops new names. Acknowledge exactly what was sent, not
+        // today's local value: an edit made while the request was in flight still goes next.
+        for (const key of SHARED_SETTING_KEYS) {
+          if (key in body.settings && !(key in saved.settings)) base.current.settings[key] = body.settings[key];
+        }
         // the answer is the whole document as this change left it: one from elsewhere that landed
         // before comes with it, one that landed after was held and is read now
         absorb(saved);
         settled();
+        setSaveError(null);
         // what changed while this was on its way goes out now
         setAttempt((count) => count + 1);
       }).catch((error: unknown) => {
         settled();
-        if (error instanceof ApiError && error.status === 403) readOnly.current = true;
-        else if (error instanceof ApiError && error.status === 404) off.current = true;
-        else retry = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
+        if (error instanceof ApiError && error.status === 403) {
+          readOnly.current = true;
+          setSaveError(null);
+        } else if (error instanceof ApiError && error.status === 404) {
+          off.current = true;
+          setSaveError(null);
+        } else {
+          // the same refusal every RETRY_MS is one state, not a render each time
+          const next = userErrorMessage(error);
+          setSaveError((before) => before !== null && before.message === next.message && before.detail === next.detail ? before : next);
+          retry = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
+        }
       });
     }, SEND_AFTER_MS);
     return () => { window.clearTimeout(timer); window.clearTimeout(retry); };
   }, [enabled, loaded, pending, attempt, absorb, settled]);
 
-  return receive;
+  return { receive, saveError };
 }
