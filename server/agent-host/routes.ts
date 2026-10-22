@@ -1009,8 +1009,10 @@ async function removePending(call: Call): Promise<Response> {
   const id = call.body["id"];
   if (!text(id) || id === "") return badRequest("missing_id", "id is required");
   const { channel, chat } = await watched(call, session);
-  const kind = chat.steeringMessage?.id === id ? PendingMessageKind.Steering
-    : (chat.queuedMessages ?? []).some((pending) => pending.id === id) ? PendingMessageKind.Queued : null;
+  // VS Code's host also lists its steer in the queue, as kind "steering", and removes by kind
+  const listed = (chat.queuedMessages ?? []).find((pending) => pending.id === id) as { kind?: string } | undefined;
+  const kind = chat.steeringMessage?.id === id || listed?.kind === "steering" ? PendingMessageKind.Steering
+    : listed ? PendingMessageKind.Queued : null;
   if (kind === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
   call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind, id } as StateAction);
   return jsonResponse({ ok: true });

@@ -497,6 +497,16 @@ describe("what a host chat waits on, and its context", () => {
     expect(readFrom("s", "t", chat({}), ctx(sessionWith({ "agentHost/sessionArtifacts": artifacts }))).signature).not.toBe(bare.signature);
   });
 
+  it("a steer the host also lists in its queue (VS Code's reducer) is one Steering row", () => {
+    const steer = { id: "p-steer", kind: "steering", message: user("FICTIONAL steer") };
+    const later = { id: "p-later", message: user("FICTIONAL later") };
+    const read = readFrom("s", "t", chat({ steeringMessage: { id: steer.id, kind: "steering", message: steer.message }, queuedMessages: [steer, later] }));
+    expect(read.pending).toEqual([{ id: "p-steer", kind: "steering", text: "FICTIONAL steer" }, { id: "p-later", kind: "queued", text: "FICTIONAL later" }]);
+    expect(read.message_ids).toEqual(["p-steer", "p-later"]);
+    // a steer only in the queue (its steeringMessage not set) is still a steer
+    expect(readFrom("s", "t", chat({ queuedMessages: [steer] })).pending).toEqual([{ id: "p-steer", kind: "steering", text: "FICTIONAL steer" }]);
+  });
+
   it("confirmations count the running turn's calls waiting for a yes or no", () => {
     const waiting = (id: string) => ({ kind: "toolCall", toolCall: { toolCallId: id, toolName: "bash", displayName: "Run", status: "pending-confirmation", invocationMessage: "FICTIONAL" } });
     const active = { id: "turn-1", startedAt: AT, message: user("FICTIONAL go"), responseParts: [waiting("c1"), waiting("c2")] };
