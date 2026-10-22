@@ -5,7 +5,7 @@ import { useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
 import { formatPercent, moveInOrder, newOmniRouteProviders, orderProviders, providerMark, providerName, tightestWindow, usageName, useUsage, viaOmniRoute } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
-import { cliProxyRequest, fetchOmniRouteStatus } from "../lib/api.ts";
+import { cliProxyRequest, fetchOmniRouteStatus, omniRouteRequest } from "../lib/api.ts";
 import { UsageAccountDialog } from "./UsageAccountDialog.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { Segmented, SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
@@ -56,9 +56,9 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
   // The existing switch still controls whether sign-ins are sent to usage endpoints.
   const usage = useUsage(settings.showUsage);
   const [hub, setHub] = useState<CLIProxyStatus | null>(null);
-  const [dialog, setDialog] = useState<"add" | "hub" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "hub" | "omniroute" | null>(null);
   const [hubError, setHubError] = useState<string | null>(null);
-  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [confirmRemoval, setConfirmRemoval] = useState<"hub" | "omniroute" | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -117,19 +117,27 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
         <div className="usage-connection-info"><span className="settings-label">{t("Hub")}</span><span className="settings-hint" role="status">{hub.url} · {hub.ok ? t("Connected") : hub.problem ?? t("Check the hub connection")}</span></div>
         <div className="usage-connection-actions">
           <button className="btn btn-ghost" type="button" onClick={() => setDialog("hub")}>{t("Edit")}</button>
-          <button className="btn btn-ghost" type="button" onClick={() => setConfirmRemoval(true)}>{t("Remove")}</button>
+          <button className="btn btn-ghost" type="button" onClick={() => setConfirmRemoval("hub")}>{t("Remove")}</button>
         </div>
       </div>
     </SettingsGroup>}
-    {settings.showUsage && gateway?.configured && <OmniRouteProviders status={gateway} providers={reported} />}
-    {confirmRemoval && <ConfirmDialog title={t("Remove hub?")}
+    {settings.showUsage && gateway?.configured && <OmniRouteProviders status={gateway} providers={reported}
+      onEdit={() => setDialog("omniroute")} onRemove={() => setConfirmRemoval("omniroute")} />}
+    {confirmRemoval === "hub" && <ConfirmDialog title={t("Remove hub?")}
       body={t("Its accounts disappear from this list. The hub itself is not changed.")}
-      confirmLabel={t("Remove")} onClose={() => setConfirmRemoval(false)} onConfirm={async () => {
+      confirmLabel={t("Remove")} onClose={() => setConfirmRemoval(null)} onConfirm={async () => {
         const status = await cliProxyRequest<CLIProxyStatus>("", { method: "DELETE" });
-        setHub(status); setConfirmRemoval(false); usage.refresh();
+        setHub(status); setConfirmRemoval(null); usage.refresh();
         requestAnimationFrame(() => addButton.current?.focus());
       }} />}
-    {dialog && <UsageAccountDialog editHub={dialog === "hub"} hub={hub} onHubChanged={setHub} onAccountsChanged={usage.refresh} onLocalLogin={onLocalLogin} onClose={() => setDialog(null)} />}
+    {confirmRemoval === "omniroute" && <ConfirmDialog title={t("Remove OmniRoute?")}
+      body={t("Its accounts disappear from this list. OmniRoute itself is not changed.")}
+      confirmLabel={t("Remove")} onClose={() => setConfirmRemoval(null)} onConfirm={async () => {
+        const status = await omniRouteRequest({ method: "DELETE" });
+        setGateway(status); setConfirmRemoval(null); usage.refresh();
+        requestAnimationFrame(() => addButton.current?.focus());
+      }} />}
+    {dialog && <UsageAccountDialog edit={dialog === "add" ? null : dialog} hub={hub} onHubChanged={setHub} gateway={gateway} onGatewayChanged={(status) => { setGateway(status); usage.refresh(); }} onAccountsChanged={usage.refresh} onLocalLogin={onLocalLogin} onClose={() => setDialog(null)} />}
   </>;
 }
 
@@ -141,7 +149,9 @@ const SEARCH_FROM = 8;
  * gateway can hold dozens, and its list grows. One it starts reporting is marked New until this
  * page is left; it stays out of the meters until switched on.
  */
-function OmniRouteProviders({ status, providers }: { readonly status: OmniRouteStatus; readonly providers: readonly ProviderUsage[] }) {
+function OmniRouteProviders({ status, providers, onEdit, onRemove }: {
+  readonly status: OmniRouteStatus; readonly providers: readonly ProviderUsage[]; readonly onEdit: () => void; readonly onRemove: () => void;
+}) {
   const { settings, update } = useSettings();
   const t = useT();
   const [query, setQuery] = useState("");
@@ -172,7 +182,12 @@ function OmniRouteProviders({ status, providers }: { readonly status: OmniRouteS
       <div className="usage-connection-info">
         <span className="settings-label">OmniRoute</span>
         <span className="settings-hint" role="status">{status.url} · {state}</span>
+        {status.source === "env" && <span className="settings-hint">{t("Set by the server")}</span>}
       </div>
+      {status.source === "saved" && <div className="usage-connection-actions">
+        <button className="btn btn-ghost" type="button" onClick={onEdit}>{t("Edit")}</button>
+        <button className="btn btn-ghost" type="button" onClick={onRemove}>{t("Remove")}</button>
+      </div>}
     </div>
     <div className="settings-item usage-gateway-head">
       <span className="settings-label">{t("Providers to show")}</span>

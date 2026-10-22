@@ -3,11 +3,14 @@
  * Copilot, OpenCode Go, GLM, Kimi… one account per connection, read from OmniRoute's own cache
  * (GET /api/usage/provider-limits, which it refreshes on its own schedule) and never refreshed
  * from here. A `read` scope access token (oma_…) is all it needs: OmniRoute grants GETs to it and
- * nothing else. The token comes from the server's environment and never leaves this file: errors
- * are fixed words.
+ * nothing else. The token comes from the server's environment, else from Settings (OmniRouteLink),
+ * and never leaves this file: errors are fixed words.
  */
 
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { OmniRouteStatus, ProviderUsage, UsageWindow } from "../shared/protocol.ts";
+import { jsonResponse } from "./http.ts";
 import { FRESH_MS, MIN_REFRESH_MS, RETRY_MS } from "./usage.ts";
 
 type Json = Record<string, unknown>;
@@ -118,7 +121,7 @@ export class OmniRouteUsage {
     this.url = url && ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href.replace(/\/+$/, "") : null;
   }
 
-  status(): OmniRouteStatus {
+  status(): Omit<OmniRouteStatus, "source"> {
     return { configured: this.url !== null, url: this.url, ok: this.url !== null && this.readAt !== null && this.problem === null,
       problem: this.problem, checked_at: this.readAt === null ? null : new Date(this.readAt).toISOString() };
   }
@@ -162,5 +165,113 @@ export class OmniRouteUsage {
 class OmniRouteRefused extends Error {}
 
 /** The gateway named in the server's environment (HERDR_WEB_OMNIROUTE_URL, HERDR_WEB_OMNIROUTE_TOKEN). */
-export const omniRouteFromEnv = (env: Record<string, string | undefined> = process.env): OmniRouteUsage =>
-  new OmniRouteUsage({ url: env["HERDR_WEB_OMNIROUTE_URL"]?.trim() ?? "", token: env["HERDR_WEB_OMNIROUTE_TOKEN"]?.trim() ?? "" });
+export const omniRouteFromEnv = (env: Record<string, string | undefined> = process.env,
+  fetcher?: (url: string, init: RequestInit) => Promise<Response>, now?: () => number): OmniRouteUsage =>
+  new OmniRouteUsage({ url: env["HERDR_WEB_OMNIROUTE_URL"]?.trim() ?? "", token: env["HERDR_WEB_OMNIROUTE_TOKEN"]?.trim() ?? "" }, fetcher, now);
+
+export class OmniRouteError extends Error {
+  constructor(readonly code: string, readonly status: number, message: string) { super(message); }
+}
+const invalid = () => new OmniRouteError("invalid_omniroute_request", 400, "Invalid OmniRoute settings");
+const pinned = () => new OmniRouteError("omniroute_env", 409, "OmniRoute is set by the server");
+
+/**
+ * The gateway this server reads, and where it came from. The server's environment wins: whoever
+ * runs the server set it on purpose, so Settings shows it and cannot change it. Without it, the one
+ * saved from Settings, in `omniroute.json` in the state folder (mode 0600, like the Hub's).
+ */
+export class OmniRouteLink {
+  private readonly path: string;
+  private readonly pinned: boolean;
+  private saved: OmniRouteConfig | null = null;
+  private unreadable = false;
+  private usage: OmniRouteUsage;
+
+  constructor(stateDir: string, env: Record<string, string | undefined> = process.env,
+    private readonly fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+    private readonly now: () => number = Date.now) {
+    this.path = join(stateDir, "omniroute.json");
+    const fromEnv = omniRouteFromEnv(env, fetcher, now);
+    this.pinned = fromEnv.status().configured;
+    if (this.pinned) { this.usage = fromEnv; return; }
+    try {
+      const value: unknown = JSON.parse(readFileSync(this.path, "utf8"));
+      const json = record(value);
+      if (json && Object.keys(json).length === 0) this.saved = null;
+      else if (json && typeof json["url"] === "string" && typeof json["token"] === "string") this.saved = { url: json["url"], token: json["token"] };
+      else throw new Error("shape");
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        this.unreadable = true;
+        console.warn("omniroute: Could not read the OmniRoute settings");
+      }
+    }
+    this.usage = new OmniRouteUsage(this.saved ?? { url: "", token: "" }, fetcher, now);
+  }
+
+  status(): OmniRouteStatus {
+    const status = this.usage.status();
+    return { ...status, source: status.configured ? (this.pinned ? "env" : "saved") : null,
+      problem: status.problem ?? (this.unreadable && !status.configured ? "Could not read the OmniRoute settings" : null) };
+  }
+
+  report(refresh = false): Promise<readonly ProviderUsage[]> { return this.usage.report(refresh); }
+
+  /** Saves `{url, token?}` and reads the gateway once; a blank token keeps the saved one for the same URL. */
+  async save(value: unknown): Promise<OmniRouteStatus> {
+    if (this.pinned) throw pinned();
+    const json = record(value);
+    if (!json || typeof json["url"] !== "string" || json["url"].length > 2000) throw invalid();
+    const url = normalizeUrl(json["url"]);
+    const supplied = json["token"];
+    if (supplied !== undefined && (typeof supplied !== "string" || !supplied.trim())) throw invalid();
+    const token = typeof supplied === "string" ? supplied.trim() : this.saved && normalizeUrl(this.saved.url) === url ? this.saved.token : null;
+    if (!token || token.length > 2000 || /\s/.test(token) || url.includes(token)) throw invalid();
+    this.persist({ url, token });
+    await this.usage.report(true);
+    return this.status();
+  }
+
+  remove(): OmniRouteStatus {
+    if (this.pinned) throw pinned();
+    this.persist(null);
+    return this.status();
+  }
+
+  private persist(config: OmniRouteConfig | null): void {
+    mkdirSync(join(this.path, ".."), { recursive: true, mode: 0o700 });
+    const temporary = `${this.path}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(config ?? {}), { mode: 0o600 });
+    renameSync(temporary, this.path);
+    this.saved = config;
+    this.unreadable = false;
+    this.usage = new OmniRouteUsage(config ?? { url: "", token: "" }, this.fetcher, this.now);
+  }
+}
+
+function normalizeUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value.trim()); } catch { throw invalid(); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw invalid();
+  return url.href.replace(/\/+$/, "");
+}
+
+/** GET, PUT `{url, token?}` and DELETE on /api/usage/omniroute; only fixed words leave it. */
+export async function handleOmniRouteRequest(request: Request, link: OmniRouteLink): Promise<Response> {
+  const reply = (value: unknown, status = 200) => jsonResponse(value, status, { "cache-control": "no-store" });
+  try {
+    switch (request.method) {
+      case "GET": return reply(link.status());
+      case "PUT": {
+        let body: unknown;
+        try { body = await request.json(); } catch { throw invalid(); }
+        return reply(await link.save(body));
+      }
+      case "DELETE": return reply(link.remove());
+      default: return reply({ error: { code: "method_not_allowed", message: "Unknown OmniRoute operation" } }, 405);
+    }
+  } catch (error) {
+    const safe = error instanceof OmniRouteError ? error : invalid();
+    return reply({ error: { code: safe.code, message: safe.message } }, safe.status);
+  }
+}

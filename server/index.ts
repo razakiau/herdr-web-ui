@@ -68,7 +68,7 @@ import { handlePortalRequest, PortalService } from "./portal.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
-import { omniRouteFromEnv, type OmniRouteUsage } from "./omniroute.ts";
+import { handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -290,7 +290,8 @@ export function createServer(
     telemetry?: Telemetry;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
     usage?: UsageService;
-    omniRoute?: OmniRouteUsage;
+    /** Tests supply a gateway link with its own state folder and environment. */
+    omniRoute?: OmniRouteLink;
     /** Tests supply an isolated proxy service, never a user's configured instance. */
     cliProxy?: CLIProxyService;
     /** Tests use a disposable credential home and stand-in CLI binaries. */
@@ -400,7 +401,7 @@ export function createServer(
   const cliProxy = options.cliProxy ?? new CLIProxyService(options.stateDir ?? defaultStateDir());
   const cliProxyRoutes = new CLIProxyRoutes(cliProxy);
   const usageLogin = options.usageLogin ?? new UsageLoginService();
-  const omniRoute = options.omniRoute ?? omniRouteFromEnv();
+  const omniRoute = options.omniRoute ?? new OmniRouteLink(options.stateDir ?? defaultStateDir());
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
     const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
     return [...hub, ...gateway];
@@ -1313,7 +1314,7 @@ export function createServer(
       if (pathname === "/api/preferences") return handlePreferencesRequest(request, preferences);
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
-      if (pathname === "/api/usage/omniroute" && request.method === "GET") return jsonResponse(omniRoute.status(), 200, { "cache-control": "no-store" });
+      if (pathname === "/api/usage/omniroute") return handleOmniRouteRequest(request, omniRoute);
       if (pathname === "/api/usage/login") { bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
