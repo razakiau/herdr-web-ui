@@ -36,6 +36,9 @@ import {
   type ChatInputQuestion,
   type ChatState,
   type ToolResultFileEditContent,
+  type Changeset,
+  type ChangesetState,
+  type FileEdit,
   type CommandMap,
   type Message,
   type MessageAttachment,
@@ -45,13 +48,15 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState, HostCommand } from "../../shared/host-chats.ts";
+import type { AgentHostState, HostChanges, HostCommand } from "../../shared/host-chats.ts";
+import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, ANSWER_REF, currentQuestion, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { workOf } from "./artifacts.ts";
+import { agentsFrom, ANSWER_REF, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -69,6 +74,8 @@ export interface AgentHost {
   watchChat?(uri: string, session: string): Promise<() => void>;
   watchingChat?(uri: string): boolean;
   chatAt?(uri: string): ChatState | undefined;
+  /** A channel's state once, not kept (a changeset); a host without it has no Changes pill. */
+  snapshotOf?(uri: string): Promise<unknown>;
 }
 
 /** The timers a lease runs on; tests pass a clock they advance by hand. */
@@ -248,6 +255,9 @@ const GETS: Record<string, Handler> = {
   "models": listModels,
   "image": readImage,
   "tool-output": readToolOutput,
+  "edit-diff": readEditDiff,
+  "changes": readChanges,
+  "changes/diff": readChangeDiff,
   "session/config": readConfig,
   "files": listFiles,
 };
@@ -260,6 +270,7 @@ const POSTS: Record<string, Handler> = {
   "chat/checkpoint/restore": restoreCheckpoint,
   "chat/checkpoint/redo": redoCheckpoint,
   "chat/pending/remove": removePending,
+  "chat/background/stop": stopBackground,
   "chat/answer": answerQuestion,
   "chat/confirm": confirmTool,
   "chat/draft": writeDraft,
@@ -555,8 +566,17 @@ async function readImage(call: Call): Promise<Response> {
   if (ref.startsWith(ANSWER_REF)) return answerImage(call, chat, ref);
   const image = imageOf(chat, ref);
   if (!image) return noRef("image");
+  let bytes: Buffer;
+  if ("uri" in image) {
+    // a picture VS Code keeps as a file: gone from the host (a cleaned session), it is not found
+    try {
+      const read = await contentAt(call.host, image.uri);
+      bytes = Buffer.from(read.data, read.encoding === "base64" ? "base64" : "utf8");
+    } catch { return noRef("image"); }
+    if (bytes.length > MAX_ATTACHMENT_BYTES) return noRef("image");
+  } else bytes = image.bytes;
   // a running call's content can still change under the same ref
-  return new Response(new Uint8Array(image.bytes), { headers: { "content-type": image.media_type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+  return new Response(new Uint8Array(bytes), { headers: { "content-type": image.media_type, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
 }
 
 /**
@@ -587,6 +607,92 @@ async function readToolOutput(call: Call): Promise<Response> {
   const { chat, ref } = await refRead(call);
   const output = toolOutputOf(chat, ref);
   return output === null ? noRef("tool call") : jsonResponse({ output });
+}
+
+/** Past this a side is not drawn as a diff: a phone would lay out a megabyte of lines. */
+export const EDIT_SIDE_BYTES = 512 * 1024;
+
+/** A side's text, or why there is none to draw: too big, or not UTF-8 text (a NUL, or bytes that do not decode). */
+function sideText(read: { data: string; encoding: string }): string | "binary" {
+  const bytes = read.encoding === "base64" ? Buffer.from(read.data, "base64") : Buffer.from(read.data);
+  if (bytes.length > EDIT_SIDE_BYTES || bytes.includes(0)) return "binary";
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return "binary"; }
+}
+
+/**
+ * One edit's two sides, by the ref its part names (`<toolCallId>:<index>`), read through the host
+ * (the session-db refs VS Code's own diff reads): what the file was before the call and after it.
+ * A created file has no before, a deleted one no after. A side the host no longer holds makes the
+ * answer `unavailable`; one that is not text, `binary`: the client says so instead of a diff.
+ */
+async function readEditDiff(call: Call): Promise<Response> {
+  const { chat, ref } = await refRead(call);
+  const edit = fileEditOf(chat, ref);
+  if (edit === null) return noRef("edit");
+  return diffOf(call.host, edit);
+}
+
+async function diffOf(host: AgentHost, edit: ToolResultFileEditContent): Promise<Response> {
+  const uri = edit.after?.uri ?? edit.before?.uri ?? "";
+  const head = { path: pathOf(uri) ?? uri, kind: editKind(edit) };
+  let sides: (string | "binary" | null)[];
+  try {
+    sides = await Promise.all([edit.before, edit.after].map(async (side) => side === undefined ? null : sideText(await contentAt(host, side.content.uri))));
+  } catch {
+    return jsonResponse({ ...head, before: null, after: null, unavailable: true });
+  }
+  if (sides.includes("binary")) return jsonResponse({ ...head, before: null, after: null, binary: true });
+  return jsonResponse({ ...head, before: sides[0], after: sides[1] });
+}
+
+/**
+ * The changeset VS Code's Changes pill shows (agentHostSessionInputPills, 1.142): a URI template
+ * with a `{placeholder}` is skipped (a turn's or a comparison's), the "session" kind is preferred,
+ * else the first left. Its state is read once (subscribe, snapshot, unsubscribe): the pill is a
+ * count, read again when the chat's turn ends, not a live view.
+ */
+async function changesetOf(call: Call, session: string): Promise<{ label: string; state: ChangesetState } | null> {
+  const { chat } = await watched(call, session);
+  const listed = ((chat as { changesets?: readonly Changeset[] }).changesets ?? []).filter((each) => !each.uriTemplate.includes("{"));
+  const chosen = listed.find((each) => each.changeKind === "session") ?? listed[0];
+  if (!chosen || !call.host.snapshotOf) return null;
+  let state: unknown;
+  // a changeset the host cannot compute now (no git, a lost folder) is no pill, not a failed read
+  try { state = await call.host.snapshotOf(chosen.uriTemplate); } catch { return null; }
+  const files = (state as { files?: unknown } | undefined)?.files;
+  if (!Array.isArray(files)) return null;
+  return { label: chosen.label, state: state as ChangesetState };
+}
+
+const changeKindOf = (edit: FileEdit): FileEditKind => editKind(edit as ToolResultFileEditContent);
+const changePath = (edit: FileEdit): string => { const uri = edit.after?.uri ?? edit.before?.uri ?? ""; return pathOf(uri) ?? uri; };
+
+async function readChanges(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  connected(call.host);
+  const found = await changesetOf(call, session);
+  if (found === null) return jsonResponse({ changes: null });
+  const files = found.state.files.map((file) => ({
+    id: file.id, path: changePath(file.edit), kind: changeKindOf(file.edit), added: file.edit.diff?.added ?? 0, removed: file.edit.diff?.removed ?? 0,
+  }));
+  const changes: HostChanges = {
+    label: found.label, status: found.state.status, files,
+    added: files.reduce((sum, each) => sum + each.added, 0), removed: files.reduce((sum, each) => sum + each.removed, 0),
+  };
+  return jsonResponse({ changes });
+}
+
+/** One changed file's two sides, by its id in the changeset: what it was at the changeset's base, and now. */
+async function readChangeDiff(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  const ref = call.url.searchParams.get("ref") ?? "";
+  if (ref === "") return badRequest("missing_ref", "ref is required");
+  connected(call.host);
+  const file = (await changesetOf(call, session))?.state.files.find((each) => each.id === ref);
+  if (!file) return noRef("changed file");
+  return diffOf(call.host, file.edit as ToolResultFileEditContent);
 }
 
 async function listModels(call: Call): Promise<Response> {
@@ -846,8 +952,12 @@ async function resumeTurn(call: Call): Promise<Response> {
 // ─── Checkpoints (VS Code's Restore Checkpoint, Start Over and Redo) ─────────
 
 /** The file a side of an edit names, its content read through the host (session-db: refs). */
+/**
+ * A resource's bytes through the host, asked for as base64: unasked, VS Code's host sends a file as
+ * UTF-8 text, which turns a picture's (or a binary edit side's) bytes into replacement characters.
+ */
 async function contentAt(host: AgentHost, uri: string): Promise<{ data: string; encoding: string }> {
-  const read = await host.request("resourceRead", { channel: "ahp-root://", uri } as never) as { data: string; encoding: string };
+  const read = await host.request("resourceRead", { channel: "ahp-root://", uri, encoding: "base64" } as never) as { data: string; encoding: string };
   return { data: read.data, encoding: read.encoding };
 }
 
@@ -904,6 +1014,21 @@ async function removePending(call: Call): Promise<Response> {
   if (kind === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
   call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind, id } as StateAction);
   return jsonResponse({ ok: true });
+}
+
+/**
+ * VS Code's Stop on a background shell: its extension request `vscode/stopBackgroundWork {chat, id}`,
+ * only for a shell the host marks stoppable (`_meta["vscode.stopBackgroundWork"]`), as VS Code offers it.
+ */
+async function stopBackground(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const id = call.body["id"];
+  if (!text(id) || id === "") return badRequest("missing_id", "id is required");
+  const { channel, chat } = await watched(call, session);
+  const entry = workOf((chat as { backgroundWork?: readonly unknown[] }).backgroundWork).find((each) => each.id === id);
+  if (entry?.stoppable !== true) return conflictResponse("not_stoppable", "the chat runs no work by that id that can be stopped");
+  const answer = await call.host.request("vscode/stopBackgroundWork" as never, { chat: channel, id } as never) as { stopped?: unknown };
+  return jsonResponse({ stopped: answer?.stopped === true });
 }
 
 async function writeDraft(call: Call): Promise<Response> {

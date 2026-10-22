@@ -70,7 +70,7 @@ const patch = `(() => {
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL make test", input: "make test", output: "FICTIONAL ok", error: false, command: "make test", exit_code: 0 },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
-        { kind: "tool", name: "Edit file", tool_id: "edit", summary: "Editing", past: "Edited", input: JSON.stringify({ path: "/tmp/fictional-repo/src/build.ts" }), output: "", error: false, edits: [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3 }] },
+        { kind: "tool", name: "Edit file", tool_id: "edit", summary: "Editing", past: "Edited", input: JSON.stringify({ path: "/tmp/fictional-repo/src/build.ts" }), output: "", error: false, edits: [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3, kind: "edit", ref: "c-edit:0" }, { path: "/tmp/fictional-repo/src/fresh.ts", added: 2, removed: 0, kind: "create", ref: "c-edit:1" }] },
         { kind: "tool", name: "View image", tool_id: "view", summary: "Viewing", past: "Viewed the screenshot", input: "{}", output: "", error: false, images: [{ media_type: "image/png", ref: "c-shot:0" }] },
         { kind: "text", text: "FICTIONAL the edit is in; now the tests." },
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL bun test", input: "bun test", output: "FICTIONAL 3 pass", error: false, command: "bun test", exit_code: 0 },
@@ -112,8 +112,17 @@ const patch = `(() => {
       checkpoints: ids.map((id) => ({ turn: id, files: id === "h1" ? [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3 }] : [] })),
       restored: state.restored ?? null,
       background: state.background ?? { subagents: 0, commands: 0 }, confirmations: 0,
+      // ZAC-207: what the session produced, newest first, and the work still running
+      artifacts: [
+        { id: "a-pr", type: "pullRequest", label: "FICTIONAL build fix", isArtifact: true, link: "https://github.com/fictional/repo/pull/12", isGitHub: true },
+        { id: "a-issue", type: "issue", label: "FIC-3 FICTIONAL ticket", isArtifact: true, link: "https://linear.invalid/fictional/issue/FIC-3", isGitHub: false },
+        { id: "a-file", type: "file", label: "FICTIONAL design", isArtifact: true, uri: "file:///tmp/fictional-repo/docs/design.md" },
+        { id: "a-commit", type: "commit", label: "FICTIONAL fix the build", isArtifact: true, commitHash: "0123abc4567" },
+        { id: "a-ref", type: "website", label: "FICTIONAL docs", isArtifact: false, link: "https://example.invalid/docs" },
+      ],
+      work: state.work ?? [],
       context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 },
-      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.resumed, state.restored ?? null]) };
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.work ?? null, state.resumed, state.restored ?? null]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
     ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
@@ -161,6 +170,8 @@ const patch = `(() => {
     // the six-PC fixture: FICTIONAL PC E's host chat waits on a question
     if (SIX && machine === "pc-e" && path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
     if (SIX && machine === "pc-e" && path === "/api/host-chats/chats") return json({ chats: [{ session: "fictional-pc-e", title: "FICTIONAL waits on you", status: state.peAsks ? "asks" : "idle", modified_at: at(1), cwd: "/tmp/fictional-e", unread: false, archived: false }] });
+    // ZAC-207: this server reads the PR pill's state (GitHub): the fixture's PR is merged
+    if (path === "/api/references/state") return json({ states: Object.fromEntries(url.searchParams.getAll("url").map((each) => [each, { state: each.endsWith("/pull/12") ? "merged" : "unknown" }])) });
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
       if (init?.method === "POST") calls.posts.push({ path: url.pathname, body });
@@ -236,6 +247,25 @@ const patch = `(() => {
         ],
         agents: [{ uri: REPORT, name: "Report", description: "FICTIONAL writes a report" }],
       });
+      // an edit's two sides, as the host kept them: build.ts's 3 lines become 28 around a long unchanged stretch
+      if (path === "/api/host-chats/edit-diff") {
+        const ref = url.searchParams.get("ref");
+        const same = Array.from({ length: 12 }, (_, at) => "const keep" + at + " = " + at + ";");
+        if (ref === "c-edit:0") return json({ path: "/tmp/fictional-repo/src/build.ts", kind: "edit", before: ["FICTIONAL old line", ...same].join("\\n"), after: ["FICTIONAL new line", ...same, "FICTIONAL added"].join("\\n") });
+        if (ref === "c-edit:1") return json({ path: "/tmp/fictional-repo/src/fresh.ts", kind: "create", before: null, after: "FICTIONAL a\\nFICTIONAL b" });
+        return json({ error: { code: "not_found", message: "no such edit" } }, 404);
+      }
+      // ZAC-207: the chat's changeset, as VS Code's Changes pill counts it, and a file's two sides
+      if (path === "/api/host-chats/changes") return json({ changes: { label: "Branch Changes", status: "ready", added: 30, removed: 3, files: [
+        { id: "cs-build", path: "/tmp/fictional-repo/src/build.ts", kind: "edit", added: 28, removed: 3 },
+        { id: "cs-fresh", path: "/tmp/fictional-repo/src/fresh.ts", kind: "create", added: 2, removed: 0 },
+      ] } });
+      if (path === "/api/host-chats/changes/diff") {
+        const ref = url.searchParams.get("ref");
+        if (ref === "cs-build") return json({ path: "/tmp/fictional-repo/src/build.ts", kind: "edit", before: "FICTIONAL old line\\nconst keep = 1;", after: "FICTIONAL new line\\nconst keep = 1;" });
+        return json({ error: { code: "not_found", message: "no such file" } }, 404);
+      }
+      if (path === "/api/host-chats/chat/background/stop") { state.work = (state.work ?? []).filter((each) => each.id !== body.id); return json({ stopped: true }); }
       if (path === "/api/host-chats/files") return json({ files: ["src/fictional-build.ts", "README.md"].filter((file) => file.includes(url.searchParams.get("q") ?? "")) });
       // the session's mode and permissions, as the live host shapes them
       if (path === "/api/host-chats/session/config" && init?.method === "POST") { if (body.mode) state.mode = body.mode; if (body.approvals) state.approvals = body.approvals; return json({ ok: true }); }
@@ -431,9 +461,9 @@ try {
         // the vscode style: VS Code's sentence for the group, the edits' lines and the time on the right
         const head = block.locator(".work-block-head");
         assert.match(await block.getAttribute("class") ?? "", /is-vscode/, "a host chat reads in the vscode style");
-        assert.equal((await head.locator(".work-block-title").innerText()).trim(), "Edited build.ts, ran 1 command, read README.md, 1 other step", "the head sums the group up as VS Code does, a file read twice once");
-        assert.equal((await head.locator(".work-title-detail").innerText()).trim(), "build.ts, ran 1 command, read README.md, 1 other step", "the first word is plain, the rest quieter");
-        assert.equal(await head.locator(".work-block-lines").innerText(), "+28 −3", "the edits' lines on the right");
+        assert.equal((await head.locator(".work-block-title").innerText()).trim(), "Edited 2 files, ran 1 command, read README.md, 1 other step", "the head sums the group up as VS Code does, a file read twice once");
+        assert.equal((await head.locator(".work-title-detail").innerText()).trim(), "2 files, ran 1 command, read README.md, 1 other step", "the first word is plain, the rest quieter");
+        assert.equal(await head.locator(".work-block-lines").innerText(), "+30 −3", "the edits' lines on the right");
         assert.equal(await head.locator(".work-block-time").count(), 0, "an earlier group leaves the time to the last");
         assert.equal(await head.locator("svg.lucide-check.work-block-icon").count(), 1, "a finished group wears the check");
         assert.equal(await head.locator(".work-block-summary").count(), 0, "no classic counts");
@@ -461,6 +491,11 @@ try {
         await thumb.waitFor();
         assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
+        // a question is up: the session's pills give the chat its row back, as VS Code's input does
+        assert.equal(await view.locator(".session-pills").count(), 0, "no pills while the question card stands");
+        // the card (its answer field on a line of its own) and the jump button stand over the
+        // transcript's foot: the head is brought to the top, clear of them
+        await head.evaluate((node) => node.scrollIntoView({ block: "center" }));
         await head.click();
         const command = block.locator(".work-row", { hasText: "make test" });
         await command.waitFor();
@@ -475,9 +510,23 @@ try {
         assert.equal((await reasoning.locator(".work-row-text").innerText()).trim(), "Thinking FICTIONAL the build first, then the tests", "the row says Thinking and the first words");
         await reasoning.locator(".work-row-head").click();
         assert.equal(await reasoning.locator(".work-reasoning-text strong").innerText(), "the build", "opened, the reasoning is markdown");
-        const pill = block.locator(".work-row", { hasText: "Edited" }).locator(".work-file-pill");
-        assert.equal(await pill.innerText(), "build.ts", "a file the row names is a pill with its name");
-        assert.equal(await pill.locator("svg").count(), 1, "and its icon");
+        // ZAC-207: the edit lists each file it changed, its lines, and a created file says so; a tap opens its diff
+        const editRow = block.locator(".work-row", { hasText: "Edited" });
+        assert.equal(await editRow.locator(".work-file-pill").count(), 0, "the chips name the files: no pill as well");
+        const editChips = editRow.locator(".edit-chip");
+        assert.deepEqual((await editChips.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()), ["build.ts +28 −3", "fresh.ts new +2 −0"], "a chip per file, with its lines");
+        assert.equal(await editChips.first().locator("svg").count() >= 1, true, "and its icon");
+        await editChips.first().click();
+        const diff = editRow.locator(".edit-diff-lines");
+        await diff.waitFor();
+        const shown = await diff.locator("span").allInnerTexts();
+        assert.deepEqual(shown.slice(0, 2).map((line) => line.trim()), ["- FICTIONAL old line", "+ FICTIONAL new line"], "the change first, removed then added");
+        assert.ok(shown.some((line) => /⋯ 6 unchanged lines/.test(line)), `the long unchanged stretch folds (${JSON.stringify(shown)})`);
+        assert.equal(shown.at(-1)?.trim(), "+ FICTIONAL added", "and the line added at the end");
+        assert.equal(await editRow.locator(".edit-diff-open").count(), 1, "the file opens from its diff");
+        if (shots) { await editRow.scrollIntoViewIfNeeded(); await editRow.screenshot({ path: join(shots, "zac207-diff-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await editChips.first().click();
+        await diff.waitFor({ state: "detached" });
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/host-chats/chat/watch")));
         await fits("the chat");
         // nothing in the chat runs past its column: text wraps, and a table wider than the phone
@@ -518,8 +567,12 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "ask-report-390.png") });
         assert.deepEqual(spill, [], "nothing in the chat runs past its column");
         const wrap = review.locator(".markdown-table-wrap");
+        await wrap.scrollIntoViewIfNeeded();
+        // ZAC-207: a host chat opens files now, so a path in a cell is its file's pill (its name), not
+        // the whole path; the table fits its column, or scrolls in its wrap when it cannot
+        assert.equal(await wrap.locator(".markdown-file.is-pill").first().innerText(), "charge.ts", "a path in a cell is an openable pill");
         const sizes = await wrap.evaluate((node) => ({ scroll: node.scrollWidth, client: node.clientWidth, overflow: getComputedStyle(node).overflowX }));
-        assert.ok(sizes.scroll > sizes.client && sizes.overflow === "auto", `the wide table scrolls sideways in its wrap (${JSON.stringify(sizes)})`);
+        assert.equal(sizes.overflow, "auto", `the table scrolls in its wrap if it must (${JSON.stringify(sizes)})`);
         if (shots) await page.screenshot({ path: join(shots, "task-5-chat-390.png") });
         if (shots) await page.screenshot({ path: join(shots, "task-4-host-390.png") });
         console.log("PASS the chat renders through ChatView: a user turn, an assistant text and a folded tool row, and is watched");
@@ -751,9 +804,24 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "r6-card-dictation-390.png") });
         await cardMic.click();
         await cardPill.waitFor({ state: "detached" }).catch(() => undefined);
-        await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".prompt-card-custom .input")?.value.includes("wing"), null, { timeout: 5000 });
+        await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".prompt-card-custom .input")?.value.includes("wing"), null, { timeout: 5000 });
         assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL typed FICTIONAL west wing", "the words land once, after the typed ones");
         await card.getByRole("textbox").fill("");
+        // ZAC-207: a long typed answer is read whole as it is written: the field grows with its
+        // lines, up to a cap, then scrolls in itself; Shift+Enter is a new line, not a send
+        const field = card.getByRole("textbox");
+        const oneLine = await field.evaluate((node) => node.getBoundingClientRect().height);
+        await field.fill("FICTIONAL a long answer that runs on and on, past the width of the field on a phone, so it has to wrap onto more lines to be read whole");
+        await field.press("Shift+Enter");
+        await field.pressSequentially("FICTIONAL second line");
+        const grown = await field.evaluate((node) => ({ height: node.getBoundingClientRect().height, scroll: node.scrollHeight, client: node.clientHeight, value: (node as HTMLTextAreaElement).value }));
+        assert.ok(grown.height > oneLine * 2, `the field grows with a long answer (${oneLine} -> ${JSON.stringify(grown)})`);
+        assert.ok(grown.scroll <= grown.client + 1, `all of it shows (${JSON.stringify(grown)})`);
+        if (shots) await card.screenshot({ path: join(shots, "zac207-long-answer-390.png") });
+        assert.ok(grown.value.endsWith("on a phone, so it has to wrap onto more lines to be read whole\nFICTIONAL second line"), "Shift+Enter put a new line in, and sent nothing");
+        await field.fill("");
+        assert.ok(Math.abs(await field.evaluate((node) => node.getBoundingClientRect().height) - oneLine) <= 1, "emptied, it is one line again");
+        console.log("PASS a long typed answer grows its field and shows whole");
         // a typed answer with an image: the upload fails first (nothing posted, text and chip kept),
         // then the answer goes as "@<path> " + the text
         await card.getByRole("textbox").fill("FICTIONAL west");
@@ -1021,6 +1089,78 @@ try {
           await page.screenshot({ path: join(shots, "task-12-status-390.png") });
         }
         console.log("PASS background work reads as VS Code says it, and the meter opens the context breakdown");
+
+        // 5a. ZAC-207: the session's pills above the composer, one per kind as VS Code's: the chat's
+        // Changes with its lines, the one GitHub PR inline in its state's colour, "N artifacts" by kind,
+        // the one reference inline
+        const sessionPillRow = view.locator(".session-pills");
+        await sessionPillRow.waitFor();
+        await sessionPillRow.locator(".session-pill-stat").waitFor();
+        assert.deepEqual((await sessionPillRow.locator(".session-pill").allInnerTexts()).map((text) => text.trim().replace(/\s+/g, " ")), ["2 files +30 −3", "#12", "3 artifacts", "FICTIONAL docs"], "changes, the PR, the artifacts, the reference");
+        const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
+        await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");
+        assert.match(await prIcon.getAttribute("class") ?? "", /lucide-git-merge/, "a merged PR wears the merge glyph");
+        assert.equal(await sessionPillRow.getByRole("button", { name: "Branch Changes: 2 files, 30 added, 3 removed" }).count(), 1, "the changes pill reads as VS Code's");
+        await fits("the session pills");
+        if (shots) { await page.waitForTimeout(400); await page.screenshot({ path: join(shots, "zac207-pills-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await sessionPillRow.locator(".session-pill").first().click();
+        const changesSheet = page.getByRole("dialog", { name: "Branch Changes" });
+        await changesSheet.waitFor();
+        assert.deepEqual((await changesSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["build.ts", "fresh.ts · Created"]);
+        await changesSheet.getByRole("button", { name: /build\.ts/ }).click();
+        await changesSheet.locator(".edit-diff-lines").waitFor();
+        assert.match(await changesSheet.locator(".edit-diff-lines").innerText(), /- FICTIONAL old line[\s\S]*\+ FICTIONAL new line/, "a changed file opens its diff");
+        await fits("the changes sheet");
+        if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-changes-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await changesSheet.getByRole("button", { name: "Close" }).click();
+        await changesSheet.waitFor({ state: "detached" });
+        await sessionPillRow.getByRole("button", { name: "3 artifacts" }).click();
+        const artifactSheet = page.getByRole("dialog", { name: "Artifacts" });
+        await artifactSheet.waitFor();
+        assert.deepEqual((await artifactSheet.locator(".session-sheet-heading").allInnerTexts()).map((text) => text.trim().toLowerCase()), ["issues", "commits", "files"], "VS Code's order");
+        assert.deepEqual((await artifactSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["FIC-3 FICTIONAL ticket", "FICTIONAL fix the build", "FICTIONAL design"]);
+        assert.equal(await artifactSheet.locator(".session-sheet-row", { hasText: "FICTIONAL fix the build" }).locator(".session-sheet-detail").innerText(), "0123abc", "a commit shows its short hash");
+        await fits("the artifacts sheet");
+        if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-artifacts-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await artifactSheet.getByRole("button", { name: "Close" }).click();
+        await artifactSheet.waitFor({ state: "detached" });
+        await page.evaluate((SUB) => {
+          const host = window as unknown as { hostState: { work: unknown[] }; pushHostTurn(text: string): void };
+          host.hostState.work = [
+            { id: "shell:1", kind: "shell", label: "FICTIONAL dev server", command: "bun run dev", started: "2026-10-22T10:00:00.000Z", stoppable: true },
+            { id: "subagent:2", kind: "subagent", label: "explore", started: "2026-10-22T10:00:00.000Z", stoppable: false, chat: SUB },
+          ];
+          host.pushHostTurn("FICTIONAL work started");
+        }, SUB);
+        // a subagent and a shell are their own pills, as VS Code's Subagents and Background Shells
+        await sessionPillRow.getByRole("button", { name: "1 shell" }).waitFor();
+        assert.equal(await sessionPillRow.getByRole("button", { name: "1 subagent" }).count(), 1, "the subagent has its own pill");
+        await sessionPillRow.getByRole("button", { name: "1 shell" }).click();
+        const workSheet = page.getByRole("dialog", { name: "Shells" });
+        await workSheet.waitFor();
+        assert.deepEqual((await workSheet.locator(".session-sheet-label").allInnerTexts()).map((text) => text.trim()), ["FICTIONAL dev server"]);
+        assert.equal(await workSheet.getByRole("button", { name: "Stop" }).count(), 1, "the shell the host lets stop has Stop");
+        if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, "zac207-running-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await workSheet.getByRole("button", { name: "Stop" }).click();
+        await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string; body: { id?: string } }[] } }).hostCalls.posts.some((post) => post.path.endsWith("/chat/background/stop") && post.body.id === "shell:1"));
+        await workSheet.waitFor({ state: "detached" });
+        await sessionPillRow.getByRole("button", { name: "1 subagent" }).click();
+        const subagentSheet = page.getByRole("dialog", { name: "Subagents" });
+        await subagentSheet.waitFor();
+        // ZAC-207: a running subagent goes to its row in the transcript, opened, and the sheet closes
+        const subagentEntry = subagentSheet.getByRole("button", { name: /explore/ });
+        assert.equal(await subagentEntry.count(), 1, "a subagent with a chat is a row to tap");
+        await subagentEntry.click();
+        await subagentSheet.waitFor({ state: "detached" });
+        const revealed = view.locator(`.subagent-row[data-subagent-chat="${SUB}"]`);
+        await revealed.waitFor();
+        assert.equal(await revealed.locator(".subagent-row-head").getAttribute("aria-expanded"), "true", "its row is opened");
+        const inView = await revealed.evaluate((node) => { const box = node.getBoundingClientRect(); const list = node.closest(".chat-view")!.getBoundingClientRect(); return box.top >= list.top - 1 && box.top < list.bottom; });
+        assert.ok(inView, "and in view");
+        assert.match(await revealed.getAttribute("class") ?? "", /is-revealed/, "and marked");
+        if (shots) { await page.waitForTimeout(200); await page.screenshot({ path: join(shots, "zac207-reveal-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await page.evaluate(() => { (window as unknown as { hostState: { work: unknown[] } }).hostState.work = []; });
+        console.log("PASS the session's pills, one per kind as VS Code's: Changes with its lines and diffs, a merged PR in purple, the artifacts by kind, the reference inline, Stop on a shell, and a subagent taken to its row");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
         const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;

@@ -30,7 +30,6 @@ import {
   type Customization,
   type InputRequestResponsePart,
   type Message,
-  type MessageEmbeddedResourceAttachment,
   type ModelSelection,
   type ResponsePart,
   type RootState,
@@ -45,7 +44,8 @@ import {
   type ToolResultTerminalContent,
   type Turn,
 } from "@microsoft/agent-host-protocol";
-import type { ConversationPart, ConversationTurn, InteractivePromptOption } from "../../shared/protocol.ts";
+import { artifactsOf, workOf } from "./artifacts.ts";
+import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
@@ -70,7 +70,7 @@ export function statusOf(status: number): Status {
   return "idle";
 }
 
-function pathOf(uri: string | undefined): string | null {
+export function pathOf(uri: string | undefined): string | null {
   if (!uri?.startsWith("file:")) return null;
   try { return fileURLToPath(uri); } catch { return null; }
 }
@@ -170,6 +170,30 @@ function imagesOf(tool: ToolCallState): ToolResultEmbeddedResourceContent[] {
 function editOf(edit: ToolResultFileEditContent): { path: string; added: number; removed: number } {
   const uri = edit.after?.uri ?? edit.before?.uri ?? "";
   return { path: pathOf(uri) ?? uri, added: edit.diff?.added ?? 0, removed: edit.diff?.removed ?? 0 };
+}
+
+/** What an edit did to its file, as VS Code's snapshot controller reads the two sides. */
+export function editKind(edit: ToolResultFileEditContent): FileEditKind {
+  if (edit.before === undefined) return "create";
+  if (edit.after === undefined) return "delete";
+  return edit.before.uri === edit.after.uri ? "edit" : "rename";
+}
+
+/** One edit as a tool part lists it: its file, lines, kind, where a rename came from, and the ref its diff is read by. */
+function shownEdit(edit: ToolResultFileEditContent, ref: string): ToolEdit {
+  const kind = editKind(edit);
+  const from = kind === "rename" ? pathOf(edit.before!.uri) ?? edit.before!.uri : null;
+  return { ...editOf(edit), kind, ...(from !== null ? { from } : {}), ref };
+}
+
+/** The edit a part's ref (`<toolCallId>:<index>`, the index among the call's edits) names; null when the chat holds none. */
+export function fileEditOf(chat: ChatState, ref: string): ToolResultFileEditContent | null {
+  const at = ref.lastIndexOf(":");
+  const digits = at < 0 ? "" : ref.slice(at + 1);
+  if (!/^(?:0|[1-9]\d*)$/.test(digits)) return null;
+  const tool = toolCallOf(chat, ref.slice(0, at));
+  const edits = tool ? contentOf(tool).filter((item): item is ToolResultFileEditContent => item.type === ToolResultContentType.FileEdit) : [];
+  return edits[Number(digits)] ?? null;
 }
 
 /** A turn's file edits in the order its calls made them (VS Code's checkpoint is these). */
@@ -382,7 +406,8 @@ function toolPart(tool: ToolCallState, turn: TurnRead): ConversationPart {
   const terminal = content.find((item): item is ToolResultTerminalContent => item.type === ToolResultContentType.Terminal);
   const exitCode = terminal?.result?.exitCode;
   const images = imagesOf(tool).map((image, index) => ({ media_type: image.contentType, ref: `${tool.toolCallId}:${index}` }));
-  const edits = content.flatMap((item) => (item.type === ToolResultContentType.FileEdit ? [editOf(item)] : []));
+  const edits = content.filter((item): item is ToolResultFileEditContent => item.type === ToolResultContentType.FileEdit)
+    .map((item, index) => shownEdit(item, `${tool.toolCallId}:${index}`));
   const part: Extract<ConversationPart, { kind: "tool" }> = {
     kind: "tool",
     name: tool.displayName,
@@ -526,7 +551,7 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
       : part !== stoppedAt ? []
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
     return [
-      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.contentType, ref: `${USER_REF}${turn.id}:${index}` }))] },
+      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts },
     ];
   });
@@ -535,9 +560,34 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
 /** A user image's ref is `turn:<turnId>:<index>`; a tool's is `<toolCallId>:<index>`. */
 const USER_REF = "turn:";
 
-/** The images a user message carried (pasted or attached), in order: the index in its ref counts these alone. */
-function userImagesOf(message: Message): MessageEmbeddedResourceAttachment[] {
-  return (message.attachments ?? []).flatMap((each) => (each.type === MessageAttachmentKind.EmbeddedResource && IMAGE_TYPES.has(each.contentType) ? [each] : []));
+/**
+ * The images a user message carried, in order: the index in its ref counts these alone. One the
+ * phone sent is embedded; one VS Code pasted or snapshotted is a file the host keeps (a resource
+ * with displayKind image), read through the host when shown. Its type: the snapshot's own, else
+ * the file's extension; an image of a type a browser may not draw is left out.
+ */
+type UserImage = { media_type: string; data: string } | { media_type: string; uri: string };
+function userImagesOf(message: Message): UserImage[] {
+  return (message.attachments ?? []).flatMap((each): UserImage[] => {
+    if (each.type === MessageAttachmentKind.EmbeddedResource) return IMAGE_TYPES.has(each.contentType) ? [{ media_type: each.contentType, data: each.data }] : [];
+    if (each.type !== MessageAttachmentKind.Resource || each.displayKind !== "image") return [];
+    const snapshot = (each._meta as Record<string, { contentType?: unknown } | undefined> | undefined)?.[SNAPSHOT_META]?.contentType;
+    const type = normalImageType(typeof snapshot === "string" ? snapshot : each.contentType) ?? imageTypeOfPath(each.uri);
+    return type ? [{ media_type: type, uri: each.uri }] : [];
+  });
+}
+
+const SNAPSHOT_META = "vscode.agentHost.snapshotAttachment";
+const IMAGE_EXTENSIONS: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+/** `image/jpg` (VS Code's snapshot says so) is `image/jpeg`; any type not drawn here is none. */
+function normalImageType(type: string | undefined): string | null {
+  const lower = type?.toLowerCase();
+  const normal = lower === "image/jpg" ? "image/jpeg" : lower;
+  return normal && IMAGE_TYPES.has(normal) ? normal : null;
+}
+function imageTypeOfPath(uri: string): string | null {
+  const match = /\.([a-z0-9]+)(?:[?#].*)?$/i.exec(uri);
+  return match ? IMAGE_EXTENSIONS[match[1]!.toLowerCase()] ?? null : null;
 }
 
 /** A tool call of the chat by its id, in any turn it holds. */
@@ -555,7 +605,7 @@ function toolCallOf(chat: ChatState, toolCallId: string): ToolCallState | undefi
  * The image a part's ref (`<toolCallId>:<index>`) names, its bytes decoded from the mirror's copy;
  * null for a ref the chat has no image under.
  */
-export function imageOf(chat: ChatState, ref: string): { media_type: string; bytes: Buffer } | null {
+export function imageOf(chat: ChatState, ref: string): { media_type: string; bytes: Buffer } | { media_type: string; uri: string } | null {
   const at = ref.lastIndexOf(":");
   const digits = at < 0 ? "" : ref.slice(at + 1);
   // one spelling per image: `c1:0`, never `c1:`, `c1:00` or `c1:0x0`
@@ -565,7 +615,8 @@ export function imageOf(chat: ChatState, ref: string): { media_type: string; byt
     const id = ref.slice(USER_REF.length, at);
     const turn = (chat.activeTurn ? [...chat.turns, chat.activeTurn] : chat.turns).find((each) => each.id === id);
     const attached = turn ? userImagesOf(turn.message)[index] : undefined;
-    return attached ? { media_type: attached.contentType, bytes: Buffer.from(attached.data, "base64") } : null;
+    if (!attached) return null;
+    return "uri" in attached ? attached : { media_type: attached.media_type, bytes: Buffer.from(attached.data, "base64") };
   }
   const tool = toolCallOf(chat, ref.slice(0, at));
   const image = tool ? imagesOf(tool)[index] : undefined;
@@ -917,6 +968,8 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     busy: chat.activeTurn !== undefined,
     commands: withSkills(commandsFrom(context?.session?.()), context?.skills?.() ?? []),
     background: backgroundOf(chat),
+    work: workOf((chat as { backgroundWork?: readonly unknown[] }).backgroundWork),
+    artifacts: artifactsOf((context?.session?.() as { _meta?: Record<string, unknown> } | undefined)?._meta),
     confirmations: pendingToolCalls(chat).length,
     // the running turn may have no usage yet: the newest turn that reported one
     context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null), context?.modelWindow),
@@ -936,7 +989,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
-    read.background, read.confirmations, read.context, read.restored,
+    read.background, read.work, read.artifacts, read.confirmations, read.context, read.restored,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];

@@ -547,3 +547,76 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
     display: inline;
   }
 }
+
+/* the session's pills above the composer (VS Code's agent-host input pills): PRs and issues in
+   their state's colour, the artifacts sheet, the work still running. One line; a phone scrolls it. */
+.session-pills {
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.session-pills::-webkit-scrollbar { display: none; }
+.session-pill {
+  display: inline-flex; flex: none; align-items: center; gap: var(--space-1);
+  min-height: 1.75rem; padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border); border-radius: 999px;
+  background: var(--bg-elevated, transparent); color: var(--text); font: inherit; font-size: var(--fs-xs);
+  cursor: pointer; white-space: nowrap;
+}
+.session-pill:hover, .session-pill[aria-expanded="true"] { border-color: var(--text-dim); background: var(--bg-hover); }
+.session-pill:focus-visible, .session-sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.session-pill-label { font-variant-numeric: tabular-nums; }
+.session-pill-icon { flex: none; width: 1.05em; height: 1.05em; color: var(--text-dim); }
+.session-pill.is-running .session-pill-icon { color: var(--status-working); }
+/* VS Code's charts.green / purple / red / orange and descriptionForeground, in this theme's tokens */
+.session-pill-icon[data-tone="green"] { color: var(--status-done); }
+.session-pill-icon[data-tone="purple"] { color: var(--syntax-number); }
+.session-pill-icon[data-tone="red"] { color: var(--status-blocked); }
+.session-pill-icon[data-tone="orange"] { color: var(--syntax-keyword); }
+.session-pill-icon[data-tone="muted"] { color: var(--text-dim); opacity: 0.75; }
+
+.session-sheet { width: min(100%, 28rem); }
+.session-sheet-section + .session-sheet-section { margin-top: var(--space-3); }
+.session-sheet-heading {
+  margin: 0 0 var(--space-1); color: var(--text-dim);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.session-sheet-list { margin: 0; padding: 0; list-style: none; }
+.session-sheet-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; min-height: 2.5rem; padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer;
+}
+.session-sheet-row:not(.is-static):not(:disabled):hover { background: var(--bg-hover); }
+.session-sheet-row:disabled { cursor: default; opacity: 0.7; }
+.session-sheet-row.is-static { cursor: default; }
+.session-sheet-row .session-pill-icon { width: 1.1em; height: 1.1em; }
+.session-sheet-go { flex: none; width: 1em; height: 1em; margin-inline-start: auto; color: var(--text-dim); }
+.session-sheet-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.session-sheet-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-strong); }
+.session-sheet-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: var(--fs-xs); }
+code.session-sheet-detail { font-family: var(--font-mono); }
+.session-sheet-aside { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.session-sheet-error { color: var(--danger-text, var(--status-blocked)); font-size: var(--fs-xs); }
+.session-sheet-stop { flex: none; }
+
+@media (max-width: 640px) {
+  .session-pills { padding-inline: var(--space-3); }
+}
+
+/* ZAC-207: the Changes pill's lines, VS Code's green and red; a single entry's name stays short */
+.session-pill-label { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
+.session-pill-stat { display: inline-flex; gap: 0.35em; flex: none; font-family: var(--font-mono); font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.session-pill-added { color: var(--status-done); }
+.session-pill-removed { color: var(--status-blocked); }
+.session-sheet-summary { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
+.session-sheet-kind { color: var(--text-dim); font-size: var(--fs-xs); }
+.session-sheet-row .session-pill-stat { margin-inline-start: auto; font-size: var(--fs-xs); }
+.session-sheet-row .session-pill-stat + .session-sheet-go { margin-inline-start: var(--space-1); }
+.session-sheet-chevron { transition: transform 120ms ease; }
+.session-sheet-row[aria-expanded="true"] .session-sheet-chevron { transform: rotate(90deg); }
+.session-sheet-item > .edit-diff { margin: 0 0 var(--space-2) var(--space-2); }
+@media (prefers-reduced-motion: reduce) { .session-sheet-chevron { transition: none; } }

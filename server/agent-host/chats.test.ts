@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatState, RootState, SessionState, SessionSummary, StateAction, ToolCallResult } from "@microsoft/agent-host-protocol";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
-import { agentsFrom, commandsFrom, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
+import { agentsFrom, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
 import { parseInline } from "../../src/lib/markdown.ts";
 import { reducedChat, toolCallActions } from "./fake-host.ts";
 
@@ -486,6 +486,17 @@ describe("what a host chat waits on, and its context", () => {
     expect(readFrom("s", "t", chat({ backgroundWork: work })).signature).not.toBe(readFrom("s", "t", chat({})).signature);
   });
 
+  it("a read carries the session's artifacts and the chat's running work, and either changes its signature", () => {
+    const work = [{ kind: "shell", id: "shell:1", label: "FICTIONAL dev server", startedAt: AT, command: "npm run dev", _meta: { "vscode.stopBackgroundWork": true } }];
+    const artifacts = [{ id: "a1", type: "issue", label: "FICTIONAL ticket", link: "https://linear.invalid/FIC-1" }];
+    const read = readFrom("s", "t", chat({ backgroundWork: work }), ctx(sessionWith({ "agentHost/sessionArtifacts": artifacts })));
+    expect(read.work).toEqual([{ id: "shell:1", kind: "shell", label: "FICTIONAL dev server", command: "npm run dev", started: AT, stoppable: true }]);
+    expect(read.artifacts).toEqual([{ id: "a1", type: "issue", label: "FICTIONAL ticket", isArtifact: true, link: "https://linear.invalid/FIC-1" }]);
+    const bare = readFrom("s", "t", chat({}), ctx(sessionWith(undefined)));
+    expect({ work: bare.work, artifacts: bare.artifacts }).toEqual({ work: [], artifacts: [] });
+    expect(readFrom("s", "t", chat({}), ctx(sessionWith({ "agentHost/sessionArtifacts": artifacts }))).signature).not.toBe(bare.signature);
+  });
+
   it("confirmations count the running turn's calls waiting for a yes or no", () => {
     const waiting = (id: string) => ({ kind: "toolCall", toolCall: { toolCallId: id, toolName: "bash", displayName: "Run", status: "pending-confirmation", invocationMessage: "FICTIONAL" } });
     const active = { id: "turn-1", startedAt: AT, message: user("FICTIONAL go"), responseParts: [waiting("c1"), waiting("c2")] };
@@ -602,6 +613,27 @@ describe("host chat turns, whole", () => {
     for (const ref of ["turn:turn-1:1", "turn:turn-9:0", "turn:turn-1:00", "turn:turn-1"]) expect({ ref, image: imageOf(state, ref) }).toEqual({ ref, image: null });
   });
 
+  it("an image the host keeps as a file (a snapshot, a VS Code paste) shows in the user turn by ref, read from its uri", () => {
+    const message = { ...user("FICTIONAL see"), attachments: [
+      { type: "resource", label: "shot.jpg", displayKind: "image", uri: "file:///fictional/attachments/a/shot.jpg", _meta: { "vscode.agentHost.snapshotAttachment": { isSnapshot: true, contentType: "image/jpg" } } },
+      { type: "resource", label: "Pasted Image", displayKind: "image", uri: "file:///fictional/attachments/b/Pasted%20Image.png" },
+      { type: "resource", label: "notes.txt", displayKind: "document", uri: "file:///fictional/notes.txt" },
+      { type: "embeddedResource", label: "inline.png", displayKind: "image", data: PNG, contentType: "image/png" },
+      { type: "resource", label: "odd", displayKind: "image", uri: "file:///fictional/attachments/c/odd.bmp" },
+    ] };
+    const state = reducedChat([{ type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message } as StateAction, finished()]);
+    expect(turnsFrom(state)[0]!.parts).toEqual([
+      { kind: "text", text: "FICTIONAL see" },
+      { kind: "image", media_type: "image/jpeg", ref: "turn:turn-1:0" },
+      { kind: "image", media_type: "image/png", ref: "turn:turn-1:1" },
+      { kind: "image", media_type: "image/png", ref: "turn:turn-1:2" },
+    ]);
+    expect(imageOf(state, "turn:turn-1:0")).toEqual({ media_type: "image/jpeg", uri: "file:///fictional/attachments/a/shot.jpg" });
+    expect(imageOf(state, "turn:turn-1:1")).toEqual({ media_type: "image/png", uri: "file:///fictional/attachments/b/Pasted%20Image.png" });
+    expect(imageOf(state, "turn:turn-1:2")).toEqual({ media_type: "image/png", bytes: Buffer.from(PNG, "base64") });
+    expect(imageOf(state, "turn:turn-1:3")).toBeNull();
+  });
+
   it("file_edit_gives_edit_counts", () => {
     const side = (path: string) => ({ uri: `file://${path}`, content: { uri: `ahp-content://fictional${path}` } });
     const edits = [
@@ -611,10 +643,30 @@ describe("host chat turns, whole", () => {
     ];
     const part = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c1", "edit", "Edit file"), done(edits)), finished()])));
     expect(part.edits).toEqual([
-      { path: "/tmp/fictional-repo/a.ts", added: 3, removed: 1 },
-      { path: "/tmp/fictional-repo/new.ts", added: 9, removed: 0 },
-      { path: "/tmp/fictional-repo/gone.ts", added: 0, removed: 0 },
+      { path: "/tmp/fictional-repo/a.ts", added: 3, removed: 1, kind: "edit", ref: "c1:0" },
+      { path: "/tmp/fictional-repo/new.ts", added: 9, removed: 0, kind: "create", ref: "c1:1" },
+      { path: "/tmp/fictional-repo/gone.ts", added: 0, removed: 0, kind: "delete", ref: "c1:2" },
     ]);
+  });
+
+  it("file_edit_rename_names_where_it_came_from", () => {
+    const side = (path: string) => ({ uri: `file://${path}`, content: { uri: `ahp-content://fictional${path}` } });
+    const edits = [{ type: "fileEdit", before: side("/tmp/fictional-repo/old.ts"), after: side("/tmp/fictional-repo/moved.ts"), diff: { added: 1, removed: 1 } }];
+    const part = tool(assistant(reducedChat([started(), ...toolCallActions("turn-1", call("c2", "edit", "Edit file"), done(edits)), finished()])));
+    expect(part.edits).toEqual([{ path: "/tmp/fictional-repo/moved.ts", added: 1, removed: 1, kind: "rename", from: "/tmp/fictional-repo/old.ts", ref: "c2:0" }]);
+  });
+
+  it("edit_of_finds_a_calls_edit_by_ref", () => {
+    const side = (path: string) => ({ uri: `file://${path}`, content: { uri: `ahp-content://fictional${path}` } });
+    const edits = [
+      { type: "text", text: "FICTIONAL done" },
+      { type: "fileEdit", before: side("/tmp/fictional-repo/a.ts"), after: side("/tmp/fictional-repo/a.ts"), diff: { added: 3, removed: 1 } },
+      { type: "fileEdit", after: side("/tmp/fictional-repo/new.ts") },
+    ];
+    const state = reducedChat([started(), ...toolCallActions("turn-1", call("c1", "edit", "Edit file"), done(edits)), finished()]);
+    expect(fileEditOf(state, "c1:1")?.after?.uri).toBe("file:///tmp/fictional-repo/new.ts");
+    expect(fileEditOf(state, "c1:0")?.before?.uri).toBe("file:///tmp/fictional-repo/a.ts");
+    for (const ref of ["c1:2", "c1", "c9:0", "c1:01", "c1:-1"]) expect({ ref, edit: fileEditOf(state, ref) }).toEqual({ ref, edit: null });
   });
 
   it("subagent_result_becomes_subagent_part", () => {

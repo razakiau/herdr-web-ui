@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, GitFork, Layers, RotateCcw, Target, Wrench,
+  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, GitFork, Layers, RotateCcw, Target, Wrench,
   type LucideProps,
 } from "lucide-react";
 
@@ -53,13 +53,14 @@ import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath } from "../../shared/machines.ts";
 import { stickyRequestIndex } from "../lib/chatStickyRequest.ts";
 import { checkpointRows, type CheckpointRow } from "../lib/hostCheckpoints.ts";
-import type { HostCheckpoint } from "../../shared/host-chats.ts";
+import type { HostCheckpoint, HostEditDiff } from "../../shared/host-chats.ts";
+import type { ToolEdit } from "../../shared/protocol.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { useSkillMatcher } from "../lib/useSkillMatcher.ts";
 import type { SkillMatcher } from "../lib/skillMentions.ts";
-import { lineDiff } from "../lib/diff.ts";
+import { foldContext, lineDiff } from "../lib/diff.ts";
 import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
@@ -68,7 +69,7 @@ import { hostSource, paneSource, type ChatSource } from "../lib/chatSource.ts";
 import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
 import { toolIcon } from "../lib/toolIcons.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
-import { SubagentRow } from "./SubagentRow.tsx";
+import { RevealedSubagentContext, SubagentRow } from "./SubagentRow.tsx";
 import { QuestionSummary } from "./QuestionSummary.tsx";
 
 /** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
@@ -153,6 +154,8 @@ export interface ChatViewProps {
   /** false while the pane sits off-tab (a cached or retained pane): no reads, no conversation-watch */
   visible?: boolean;
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
+  /** set by the view: takes the reader to a subagent's row by its chat and opens it (a host chat's "N running" sheet); false when no loaded turn holds it */
+  revealSubagent?: { current: ((chat: string) => boolean) | null };
   refreshKey: number;
   /** bumped by a conversation push; coalesced to at most one read a second */
   invalidationKey?: number;
@@ -579,6 +582,71 @@ function FilePill({ path }: { path: string }) {
   return <button type="button" className="work-file-pill" title={t("Open {path}", { path })} onClick={() => open(path)}><FileGlyph name={name} /><span>{name}</span></button>;
 }
 
+/** Lines of unchanged text kept each side of a change in an edit's diff, as VS Code's inline diff. */
+const EDIT_CONTEXT = 3;
+
+/** One edit's diff, read from the host when its chip opens: the changes and a little around them. */
+function EditDiffBody({ edit }: { edit: ToolEdit }) {
+  const source = useContext(ChatSourceContext);
+  const openFile = useContext(OpenFileContext);
+  const load = useMemo(() => source?.editDiff === undefined || edit.ref === undefined ? null
+    : (signal: AbortSignal) => source.editDiff!(edit.ref!, signal), [source, edit.ref]);
+  return <DiffBody load={load} onOpen={openFile !== null && edit.kind !== "delete" ? () => openFile(edit.path) : null} />;
+}
+
+/** A file change's diff, read when shown: its lines with unchanged runs folded, or why there are none. */
+export function DiffBody({ load, onOpen }: { load: ((signal: AbortSignal) => Promise<HostEditDiff>) | null; onOpen: (() => void) | null }) {
+  const t = useT();
+  const [diff, setDiff] = useState<HostEditDiff | "loading" | "failed">("loading");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (load === null) { setDiff("failed"); return; }
+    const abort = new AbortController();
+    setDiff("loading");
+    load(abort.signal).then(setDiff, () => { if (!abort.signal.aborted) setDiff("failed"); });
+    return () => abort.abort();
+  }, [load, attempt]);
+  const lines = useMemo(() => typeof diff === "object" && (diff.before !== null || diff.after !== null)
+    ? foldContext(lineDiff(diff.before ?? "", diff.after ?? ""), EDIT_CONTEXT) : null, [diff]);
+  return <div className="edit-diff">
+    {onOpen !== null && <button type="button" className="btn btn-ghost edit-diff-open" onClick={onOpen}>{t("Open file")}<ArrowRight aria-hidden="true" /></button>}
+    {diff === "loading" ? <p className="edit-diff-note">{t("Loading the diff…")}</p>
+      : diff === "failed" ? <p className="edit-diff-note">{t("Couldn't load the diff")} <button type="button" className="btn btn-ghost" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>
+        : diff.binary ? <p className="edit-diff-note">{t("Binary or too large to show")}</p>
+          : diff.unavailable ? <p className="edit-diff-note">{t("The host no longer keeps this change")}</p>
+            : lines !== null && lines.length > 0 ? <pre className="chat-diff edit-diff-lines">{lines.map((line, index) => line.kind === "fold"
+              ? <span key={index} className="chat-diff-fold">{t(line.count === 1 ? "⋯ 1 unchanged line" : "⋯ {n} unchanged lines", { n: line.count })}{"\n"}</span>
+              : <span key={index} className={line.kind === "add" ? "chat-diff-add" : line.kind === "del" ? "chat-diff-del" : undefined}>{line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}{line.text}{"\n"}</span>)}</pre>
+              : <p className="edit-diff-note">{t("No changes to the text")}</p>}
+  </div>;
+}
+
+/**
+ * The files a host call changed, as VS Code lists them under the call: the file's icon and name,
+ * what happened to it when it was not a plain edit, and its lines; a tap opens its diff under it.
+ */
+function EditChips({ edits, stateKey }: { edits: ToolEdit[]; stateKey: string }) {
+  return <div className="edit-chips">{edits.map((edit) => <EditChip key={edit.ref} edit={edit} stateKey={`${stateKey}:edit:${edit.ref}`} />)}</div>;
+}
+
+function EditChip({ edit, stateKey }: { edit: ToolEdit; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  const name = baseName(edit.path);
+  const tag = edit.kind === "create" ? t("new") : edit.kind === "delete" ? t("deleted") : edit.kind === "rename" ? t("renamed") : null;
+  return <div className={`edit-chip-wrap${open ? " is-open" : ""}`}>
+    <button type="button" className={`edit-chip is-${edit.kind ?? "edit"}`} aria-expanded={open} title={edit.from !== undefined ? `${edit.from} → ${edit.path}` : edit.path} onClick={() => setOpen(!open)}>
+      <FileGlyph name={name} />
+      <span className="edit-chip-name">{name}</span>
+      {tag !== null && <span className="edit-chip-tag">{tag}</span>}
+      {(edit.added > 0 || edit.removed > 0) && <span className="edit-chip-lines"><span className="chat-diff-add">+{edit.added}</span><span className="chat-diff-del">−{edit.removed}</span></span>}
+      <ChevronDown className="edit-chip-caret" aria-hidden="true" />
+    </button>
+    {open && <EditDiffBody edit={edit} />}
+  </div>;
+}
+
 /** A row's text from the host (`Ran \`ls\``): its code spans as code, a file it links as its name. */
 function RowText({ text }: { text: string }) {
   return <>{parseInline(text, false).map((node, index) => <RowNode key={index} node={node} />)}</>;
@@ -642,7 +710,9 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   const named = part.past !== undefined && parseInline(part.past, false).some(function names(node: InlineNode): boolean {
     return node.type === "file" || ("children" in node && node.children.some(names));
   });
-  const pill = file !== null && !named ? file : null;
+  // a host call's edits list each file it changed, its diff a tap away: the pill would name one again
+  const diffable = (part.edits ?? []).filter((edit) => edit.ref !== undefined);
+  const pill = file !== null && !named && diffable.length === 0 ? file : null;
   const output = isTodoTool(part.name) && parseTodoAnswer(part.output) !== null ? "" : whole.text ?? part.output;
   // without the host's words (a Copilot pane), the row keeps what the classic row says
   // VS Code's terminal title (chatTerminalToolProgressPart.ts): the intention first when there is
@@ -662,6 +732,7 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
       </button>
       {pill !== null && <FilePill path={pill} />}
     </div>
+    {diffable.length > 0 && <EditChips edits={diffable} stateKey={stateKey} />}
     {open && <div className="work-row-detail">
       {command !== null
         // VS Code's terminal part: the command line as a code block, its output under it
@@ -1175,7 +1246,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, revealSubagent, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -1870,6 +1941,27 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     pagingAway.current = true; stickToBottom.current = false; setAway(true);
     void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
   }, []);
+  // a running subagent tapped in the pills' sheet: its turn brought to the top, and its row (read
+  // through RevealedSubagentContext) opens itself and is marked a moment, mounted now or later
+  const [revealed, setRevealed] = useState<{ chat: string; at: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!revealSubagent) return;
+    const reveal = (chat: string): boolean => {
+      const index = timelineRows.findIndex((row) => row.turn.parts.some((part) => part.kind === "subagent" && part.chat === chat));
+      if (index < 0) return false;
+      setRevealed({ chat, at: Date.now() });
+      pagingAway.current = true; stickToBottom.current = false; setAway(true);
+      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+      return true;
+    };
+    revealSubagent.current = reveal;
+    return () => { if (revealSubagent.current === reveal) revealSubagent.current = null; };
+  });
+  useEffect(() => {
+    if (revealed === null) return;
+    const done = setTimeout(() => setRevealed(null), 2000);
+    return () => clearTimeout(done);
+  }, [revealed]);
   const renderTurn = useCallback((row: { key: string; turn: ConversationTurn }, index: number) => {
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
@@ -1934,7 +2026,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
-  return <ChatSourceContext.Provider value={chat}><SubagentChatContext.Provider value={subagentTurns}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
+  return <ChatSourceContext.Provider value={chat}><RevealedSubagentContext.Provider value={revealed}><SubagentChatContext.Provider value={subagentTurns}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
     <div className="chat-frame">
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
@@ -1987,5 +2079,5 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ImageViewerContext.Provider></ChatHistoryContext.Provider></SubagentChatContext.Provider></ChatSourceContext.Provider>;
+  </ImageViewerContext.Provider></ChatHistoryContext.Provider></SubagentChatContext.Provider></RevealedSubagentContext.Provider></ChatSourceContext.Provider>;
 });

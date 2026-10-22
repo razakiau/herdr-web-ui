@@ -5,7 +5,7 @@
  * the right "Working for 3s" / "Worked for 5m 43s". While it runs, a connector line and what it does
  * now. Opened, it reads the subagent's own chat (`readChat`) and draws its turns with the same Turn.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, CircleX, LoaderCircle, MessagesSquare } from "lucide-react";
 
 import type { ConversationPart, ConversationTurn } from "../../shared/protocol.ts";
@@ -54,12 +54,25 @@ export interface SubagentRowProps {
   now?: number;
 }
 
+/** The subagent the reader was just taken to (a host chat's "N running" sheet), by its chat: its row opens and is marked. */
+export const RevealedSubagentContext = createContext<{ chat: string; at: number } | null>(null);
+
 export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }: SubagentRowProps) {
   const t = useT();
   const running = part.status === "running" && live;
   const now = useSecondClock(running, fixedNow);
   const [chosen, setOpen] = useChatRowToggle(`subagent:${part.id}`, false);
   const open = chosen === true;
+  const revealed = useContext(RevealedSubagentContext);
+  const isRevealed = revealed !== null && part.chat !== null && revealed.chat === part.chat;
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!isRevealed) return;
+    setOpen(true);
+    sectionRef.current?.scrollIntoView({ block: "start" });
+    // setOpen changes with the row's memory, not with each reveal
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRevealed, revealed?.at]);
   const canOpen = readChat !== undefined && part.chat !== null;
   const [turns, setTurns] = useState<ConversationTurn[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -87,7 +100,7 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
     {time !== null && <span className="subagent-row-time">{time}</span>}
     {canOpen && <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>}
   </>;
-  return <section className={`subagent-row is-${part.status}`} aria-label={t("Subagent: {name}", { name: part.agent })}>
+  return <section ref={sectionRef} className={`subagent-row is-${part.status}${isRevealed ? " is-revealed" : ""}`} {...(part.chat !== null ? { "data-subagent-chat": part.chat } : {})} aria-label={t("Subagent: {name}", { name: part.agent })}>
     {canOpen
       ? <button type="button" className="subagent-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>{head}</button>
       : <div className="subagent-row-head">{head}</div>}

@@ -78,6 +78,7 @@ import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
+import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
 import { hostChatsRoute } from "./agent-host/routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { withHostAgent } from "./agent-host/agents.ts";
@@ -292,6 +293,8 @@ export function createServer(
     usage?: UsageService;
     /** Tests supply a gateway link with its own state folder and environment. */
     omniRoute?: OmniRouteLink;
+    /** where a host chat's PR and issue pills read their state (server/references.ts); tests pass a stand-in */
+    references?: ReferenceStateSource;
     /** Tests supply an isolated proxy service, never a user's configured instance. */
     cliProxy?: CLIProxyService;
     /** Tests use a disposable credential home and stand-in CLI binaries. */
@@ -402,6 +405,7 @@ export function createServer(
   const cliProxyRoutes = new CLIProxyRoutes(cliProxy);
   const usageLogin = options.usageLogin ?? new UsageLoginService();
   const omniRoute = options.omniRoute ?? new OmniRouteLink(options.stateDir ?? defaultStateDir());
+  const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
     const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
     return [...hub, ...gateway];
@@ -1228,7 +1232,9 @@ export function createServer(
       // /api/push/test stays with a session that can drive only because it is a mutation.
       const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe";
       // a repository's changes are file contents too: the patch of a credential file is that file
-      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname);
+      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname)
+        // and a host chat edit's two sides: what the file held before and after the call
+        || /^\/api\/(?:machines\/[^/]+\/)?host-chats\/edit-diff$/.test(pathname);
       if (readOnly && (fileRead || directoryListing || repositoryDiff || mutating && !ownPreferences)) {
         return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
       }
@@ -1315,6 +1321,7 @@ export function createServer(
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       if (pathname === "/api/usage/omniroute") return handleOmniRouteRequest(request, omniRoute);
+      if (pathname === "/api/references/state") return handleReferenceStateRequest(request, references);
       if (pathname === "/api/usage/login") { bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line

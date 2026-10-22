@@ -7,7 +7,7 @@
  * memory): a pane's is the key the pane's chat has always been kept under (paneStorageId), a host
  * chat's `host:<machine>:<session>`, so a host chat never shares a pane's memory.
  */
-import type { HostChatRead } from "../../shared/host-chats.ts";
+import type { HostChatRead, HostEditDiff } from "../../shared/host-chats.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError, getJson, type ConversationPageQuery } from "./api.ts";
@@ -29,6 +29,8 @@ export interface ChatSource {
   subagentTurns?(chat: string): Promise<ConversationTurn[]>;
   /** host: Try Again on the latest turn's resumable error (chat/turnResume) */
   resume?(): Promise<void>;
+  /** host: one edit's two sides, by the ref its tool part lists it under */
+  editDiff?(ref: string, signal?: AbortSignal): Promise<HostEditDiff>;
 }
 
 /** A herdr pane's chat: the reads ChatView made before there were two sources. */
@@ -160,6 +162,7 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       for (const listener of [...changeListeners]) listener();
     },
     toolOutput: async (ref, signal) => (await getJson<{ output: string }>(machinePath(machineId, `host-chats/tool-output?${query(ref)}`), { signal })).output,
+    editDiff: (ref, signal) => getJson<HostEditDiff>(machinePath(machineId, `host-chats/edit-diff?${query(ref)}`), { signal }),
     // one lease however many hold it (StrictMode mounts an effect twice): asked at once, renewed
     // every 30 s; a chat no longer shown lets it run out
     watch(enabled) {

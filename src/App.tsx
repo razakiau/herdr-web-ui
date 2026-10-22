@@ -2004,7 +2004,8 @@ export function App() {
                     <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle}
                       onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session }, "tab", openHostRow?.cwd ?? hostMadeIn)}
                       // a look: Keep open makes it a tab, and so does a message sent in it
-                      look={hostLook ? () => keepHostTabRef.current(selectedHostChat, hostMadeIn) : undefined} />
+                      look={hostLook ? () => keepHostTabRef.current(selectedHostChat, hostMadeIn) : undefined}
+                      onOpenFile={(path) => openFile({ path, paneId: null, machineId: selectedHostChat.machineId })} />
                   ) : (
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}

@@ -1213,6 +1213,19 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
   });
 
+  it("background/stop sends VS Code's stop for a stoppable shell, and refuses work that is not or is gone", async () => {
+    const shell = (id: string, stoppable: boolean) => ({ kind: "shell", id, label: "FICTIONAL server", command: "npm run dev", startedAt: AT, ...(stoppable ? { _meta: { "vscode.stopBackgroundWork": true } } : {}) });
+    const r = await busy({ backgroundWork: [shell("shell:1", true), shell("shell:2", false)] });
+    expect(await call(r, "/api/host-chats/chat/background/stop", { session: sessionUri(1), id: "shell:1" })).toEqual({ status: 200, json: { stopped: true } });
+    expect(r.fake.requests.filter((each) => each.method === "vscode/stopBackgroundWork").map((each) => each.params)).toEqual([{ chat: chatUri(1), id: "shell:1" }]);
+    for (const id of ["shell:2", "shell:9"]) {
+      const refused = await call(r, "/api/host-chats/chat/background/stop", { session: sessionUri(1), id });
+      expect({ id, status: refused.status, code: refused.json.error.code }).toEqual({ id, status: 409, code: "not_stoppable" });
+    }
+    const bare = await call(r, "/api/host-chats/chat/background/stop", { session: sessionUri(1) });
+    expect({ status: bare.status, code: bare.json.error.code }).toEqual({ status: 400, code: "missing_id" });
+  });
+
   it("a read lists the session's / commands: its enabled skills, prompts and agents", async () => {
     const r = await rig();
     const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
@@ -1465,6 +1478,20 @@ describe("host chat image and tool-output routes", () => {
     }
   });
 
+  it("a user image VS Code keeps as a file is read through the host, whole bytes, and one it lost is not found", async () => {
+    const pasted = reducedChat([
+      { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: { ...user("FICTIONAL see"), attachments: [
+        { type: "resource", label: "Pasted Image", displayKind: "image", uri: "file:///fictional/attachments/a/Pasted%20Image.png" },
+        { type: "resource", label: "gone.png", displayKind: "image", uri: "file:///fictional/attachments/b/gone.png" },
+      ] } } as StateAction,
+      { type: "chat/turnComplete", turnId: "turn-1", duration: 1000 } as StateAction,
+    ], chatState(1));
+    const r = await rig({ chats: { [chatUri(1)]: pasted, [chatUri(2)]: chatState(2) }, files: { "file:///fictional/attachments/a/Pasted%20Image.png": PNG_BYTES } });
+    const shown = await fetchRaw(r, imagePath("turn:turn-1:0"));
+    expect({ status: shown.status, type: shown.type, same: shown.bytes.equals(PNG_BYTES) }).toEqual({ status: 200, type: "image/png", same: true });
+    expect((await fetchRaw(r, imagePath("turn:turn-1:1"))).status).toBe(404);
+  });
+
   it("image_route_unknown_ref_404", async () => {
     const r = await rig({ chats: { [chatUri(1)]: withResults(), [chatUri(2)]: chatState(2) } });
     for (const ref of ["c1:1", "c9:0", "c1", "c2:0", "c1:-1", "c1:", "c1:0x0", "c1:00", "c1: 0"]) {
@@ -1486,6 +1513,61 @@ describe("host chat image and tool-output routes", () => {
     expect(await call(r, path("c2"))).toEqual({ status: 200, json: { output: LONG_OUTPUT } });
     const unknown = await call(r, path("c9"));
     expect({ status: unknown.status, code: unknown.json.error.code }).toEqual({ status: 404, code: "not_found" });
+  });
+});
+
+describe("host chat changes: VS Code's Changes pill (the chat's changeset)", () => {
+  const CS = "ahp-folder-changeset://FICTIONAL/changeset/branch";
+  const A = "file:///tmp/fictional-repo/a.ts", B = "file:///tmp/fictional-repo/b.ts";
+  const blob = (name: string) => `git-blob:/tmp/fictional-repo/${name}?FICTIONAL`;
+  const catalogue = [
+    { label: "This Turn", uriTemplate: "ahp-chat://FICTIONAL/changeset/turn/{turnId}", changeKind: "turn" },
+    { label: "Branch Changes", uriTemplate: CS, changeKind: "branch" },
+    { label: "Uncommitted Changes", uriTemplate: "ahp-chat://FICTIONAL/changeset/uncommitted", changeKind: "uncommitted" },
+  ];
+  const branch = { status: "ready", files: [
+    { id: "f-a", edit: { before: { uri: A, content: { uri: blob("a") } }, after: { uri: A, content: { uri: A } }, diff: { added: 4, removed: 1 } } },
+    { id: "f-b", edit: { after: { uri: B, content: { uri: B } }, diff: { added: 2 } } },
+  ] };
+  const changing = (state: unknown = branch, changesets: unknown = catalogue) => rig({
+    chats: { [chatUri(1)]: chatState(1, { changesets }), [chatUri(2)]: chatState(2) },
+    changesets: { [CS]: state as never },
+    files: { [blob("a")]: "old", [A]: "new", [B]: "made" },
+  });
+  const changes = (r: Rig, n = 1) => call(r, `/api/host-chats/changes?session=${encodeURIComponent(sessionUri(n))}`);
+
+  it("sums the first changeset without a template, as VS Code picks it, and lets go of its channel", async () => {
+    const r = await changing();
+    expect(await changes(r)).toEqual({ status: 200, json: { changes: {
+      label: "Branch Changes", status: "ready", added: 6, removed: 1,
+      files: [{ id: "f-a", path: "/tmp/fictional-repo/a.ts", kind: "edit", added: 4, removed: 1 }, { id: "f-b", path: "/tmp/fictional-repo/b.ts", kind: "create", added: 2, removed: 0 }],
+    } } });
+    expect(r.fake.requests.filter((each) => each.method === "subscribe" && (each.params as { channel: string }).channel === CS).length).toBe(1);
+    await until("the unsubscribe", () => r.fake.requests.some((each) => each.method === "unsubscribe" && (each.params as { channel: string }).channel === CS));
+  });
+
+  it("a session-kind changeset wins over the first one, as VS Code's default", async () => {
+    const SESSION = "ahp-chat://FICTIONAL/changeset/session";
+    const r = await rig({
+      chats: { [chatUri(1)]: chatState(1, { changesets: [...catalogue, { label: "Session Changes", uriTemplate: SESSION, changeKind: "session" }] }), [chatUri(2)]: chatState(2) },
+      changesets: { [SESSION]: { status: "ready", files: [] } as never, [CS]: branch as never },
+    });
+    expect((await changes(r)).json.changes).toMatchObject({ label: "Session Changes", added: 0, removed: 0, files: [] });
+  });
+
+  it("no changeset is no changes; a changeset the host cannot give is none either", async () => {
+    const none = await changing(branch, []);
+    expect(await changes(none)).toEqual({ status: 200, json: { changes: null } });
+    const lost = await rig({ chats: { [chatUri(1)]: chatState(1, { changesets: catalogue }), [chatUri(2)]: chatState(2) } });
+    expect(await changes(lost)).toEqual({ status: 200, json: { changes: null } });
+  });
+
+  it("a changed file's diff is its two sides, by the file's id", async () => {
+    const r = await changing();
+    const diff = (id: string) => call(r, `/api/host-chats/changes/diff?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(id)}`);
+    expect(await diff("f-a")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: "old", after: "new" } });
+    expect(await diff("f-b")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/b.ts", kind: "create", before: null, after: "made" } });
+    expect((await diff("f-z")).status).toBe(404);
   });
 });
 
@@ -1512,6 +1594,29 @@ describe("host chat checkpoints: Restore Checkpoint, Start Over and Redo (VS Cod
   const files = { [ref("a@0")]: "a0", [ref("a@1")]: "a1", [ref("a@2")]: "a2", [ref("b@1")]: "b1", [A]: "a2", [B]: "b1" };
   const restoring = (overrides: Record<string, unknown> = {}) => rig({ files, chats: { [chatUri(1)]: chatState(1, { turns, ...overrides }), [chatUri(2)]: chatState(2) } });
   const read = async (r: Rig) => (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+
+  it("an edit's diff is its two sides as the host kept them, by the ref its part names", async () => {
+    const r = await restoring();
+    const diff = (ref: string) => call(r, `/api/host-chats/edit-diff?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(ref)}`);
+    const parts = (await read(r)).turns.flatMap((each) => each.parts).flatMap((part) => part.kind === "tool" ? part.edits ?? [] : []);
+    expect(parts.map((edit) => [edit.ref, edit.kind])).toEqual([["t1-call:0", "edit"], ["t2-call:0", "edit"], ["t2-call:1", "create"]]);
+    // the second turn's edit of a: what the file was after the first turn, and after this call
+    expect(await diff("t2-call:0")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: "a1", after: "a2" } });
+    expect(await diff("t2-call:1")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/b.ts", kind: "create", before: null, after: "b1" } });
+    for (const ref of ["t2-call:2", "t9-call:0", "t2-call", "t2-call:01"]) {
+      const answer = await diff(ref);
+      expect({ ref, status: answer.status, code: answer.json.error.code }).toEqual({ ref, status: 404, code: "not_found" });
+    }
+  });
+
+  it("an edit side the host no longer holds, or that is not text, says so instead of failing the diff", async () => {
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe]).toString("latin1");
+    const r = await rig({ files: { ...files, [ref("a@1")]: binary }, chats: { [chatUri(1)]: chatState(1, { turns }), [chatUri(2)]: chatState(2) } });
+    r.fake.files.delete(ref("a@0"));
+    const diff = (key: string) => call(r, `/api/host-chats/edit-diff?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(key)}`);
+    expect(await diff("t1-call:0")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: null, after: null, unavailable: true } });
+    expect(await diff("t2-call:0")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: null, after: null, binary: true } });
+  });
 
   it("a read names each turn's checkpoint and the files its edits touched", async () => {
     const r = await restoring();
