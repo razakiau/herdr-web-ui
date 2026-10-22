@@ -160,6 +160,11 @@ export interface HostCheckpoint {
  */
 export interface HostEditDiff { path: string; kind: FileEditKind; before: string | null; after: string | null; unavailable?: true; binary?: true }
 
+/** One file of a chat's changeset, as VS Code's Changes view lists it; `id` reads its diff (changes/diff). */
+export interface HostChangedFile { id: string; path: string; kind: FileEditKind; added: number; removed: number }
+/** The chat's changeset VS Code's Changes pill counts ("Branch Changes"): its files and their lines; `status` "computing" until the host has it. */
+export interface HostChanges { label: string; status: "computing" | "recomputing" | "ready" | "error"; files: HostChangedFile[]; added: number; removed: number }
+
 /** What VS Code's agent host records a session produced (`agentHost/sessionArtifacts`), by kind. */
 export type HostArtifactType = "pullRequest" | "issue" | "commit" | "website" | "file" | "resource";
 /** One artifact (`isArtifact`) or reference of a session, as the host recorded it. */

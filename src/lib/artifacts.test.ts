@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostArtifact } from "../../shared/host-chats.ts";
-import { artifactLook, pathOfFileUri, sessionPills } from "./artifacts.ts";
+import { artifactLook, groupState, pathOfFileUri, sessionPills } from "./artifacts.ts";
 
 const a = (id: string, type: HostArtifact["type"], extra: Partial<HostArtifact> = {}): HostArtifact => ({ id, type, label: `FICTIONAL ${id}`, isArtifact: true, ...extra });
 
@@ -51,6 +51,19 @@ describe("artifactLook (VS Code's Kq / Nbe icons and colours)", () => {
     expect(artifactLook(a("w", "website"))).toEqual({ icon: "website", tone: "neutral" });
     expect(artifactLook(a("r", "resource"))).toEqual({ icon: "resource", tone: "neutral" });
     expect(artifactLook(a("f", "file", { uri: "file:///x/y.ts" }))).toEqual({ icon: "file", tone: "neutral" });
+  });
+});
+
+describe("groupState (VS Code's summary pill icon: the most pressing state of the group)", () => {
+  it("ranks PRs attention > open > draft > merged > closed, issues open > completed > not planned, unknown last", () => {
+    expect(groupState(["closed", "merged", "draft"])).toBe("draft");
+    expect(groupState(["merged", "open", "closed"])).toBe("open");
+    expect(groupState(["open", "attention"])).toBe("attention");
+    expect(groupState(["closed", "merged"])).toBe("merged");
+    expect(groupState(["unknown", "closed"])).toBe("closed");
+    expect(groupState(["not_planned", "completed"])).toBe("completed");
+    expect(groupState(["completed", "open", "not_planned"])).toBe("open");
+    expect(groupState([])).toBe("unknown");
   });
 });
 

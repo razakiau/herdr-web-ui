@@ -90,6 +90,15 @@ export function artifactLook(artifact: HostArtifact, state: ReferenceState = "un
   }
 }
 
+/**
+ * The state a group's summary pill shows ("3 Pull Requests"): its most pressing member's, as VS
+ * Code's priority table ranks them (error 6 > comment 5 > open 4 > draft 3 > merged 2 > closed 1).
+ */
+const PRIORITY: Record<ReferenceState, number> = { attention: 5, open: 4, draft: 3, merged: 2, completed: 2, closed: 1, not_planned: 1, unknown: 0 };
+export function groupState(states: readonly ReferenceState[]): ReferenceState {
+  return states.reduce<ReferenceState>((best, each) => (PRIORITY[each] > PRIORITY[best] ? each : best), "unknown");
+}
+
 /** The pill's short name for a GitHub PR or issue: `#157`, as VS Code labels it from the link; else its label. */
 export function shortLabel(artifact: HostArtifact): string {
   const match = artifact.link ? /\/(?:pull|issues)\/(\d+)\/?$/.exec(artifact.link) : null;

@@ -36,6 +36,9 @@ import {
   type ChatInputQuestion,
   type ChatState,
   type ToolResultFileEditContent,
+  type Changeset,
+  type ChangesetState,
+  type FileEdit,
   type CommandMap,
   type Message,
   type MessageAttachment,
@@ -45,7 +48,8 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState, HostCommand } from "../../shared/host-chats.ts";
+import type { AgentHostState, HostChanges, HostCommand } from "../../shared/host-chats.ts";
+import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
@@ -70,6 +74,8 @@ export interface AgentHost {
   watchChat?(uri: string, session: string): Promise<() => void>;
   watchingChat?(uri: string): boolean;
   chatAt?(uri: string): ChatState | undefined;
+  /** A channel's state once, not kept (a changeset); a host without it has no Changes pill. */
+  snapshotOf?(uri: string): Promise<unknown>;
 }
 
 /** The timers a lease runs on; tests pass a clock they advance by hand. */
@@ -250,6 +256,8 @@ const GETS: Record<string, Handler> = {
   "image": readImage,
   "tool-output": readToolOutput,
   "edit-diff": readEditDiff,
+  "changes": readChanges,
+  "changes/diff": readChangeDiff,
   "session/config": readConfig,
   "files": listFiles,
 };
@@ -621,16 +629,70 @@ async function readEditDiff(call: Call): Promise<Response> {
   const { chat, ref } = await refRead(call);
   const edit = fileEditOf(chat, ref);
   if (edit === null) return noRef("edit");
+  return diffOf(call.host, edit);
+}
+
+async function diffOf(host: AgentHost, edit: ToolResultFileEditContent): Promise<Response> {
   const uri = edit.after?.uri ?? edit.before?.uri ?? "";
   const head = { path: pathOf(uri) ?? uri, kind: editKind(edit) };
   let sides: (string | "binary" | null)[];
   try {
-    sides = await Promise.all([edit.before, edit.after].map(async (side) => side === undefined ? null : sideText(await contentAt(call.host, side.content.uri))));
+    sides = await Promise.all([edit.before, edit.after].map(async (side) => side === undefined ? null : sideText(await contentAt(host, side.content.uri))));
   } catch {
     return jsonResponse({ ...head, before: null, after: null, unavailable: true });
   }
   if (sides.includes("binary")) return jsonResponse({ ...head, before: null, after: null, binary: true });
   return jsonResponse({ ...head, before: sides[0], after: sides[1] });
+}
+
+/**
+ * The changeset VS Code's Changes pill shows (agentHostSessionInputPills, 1.142): a URI template
+ * with a `{placeholder}` is skipped (a turn's or a comparison's), the "session" kind is preferred,
+ * else the first left. Its state is read once (subscribe, snapshot, unsubscribe): the pill is a
+ * count, read again when the chat's turn ends, not a live view.
+ */
+async function changesetOf(call: Call, session: string): Promise<{ label: string; state: ChangesetState } | null> {
+  const { chat } = await watched(call, session);
+  const listed = ((chat as { changesets?: readonly Changeset[] }).changesets ?? []).filter((each) => !each.uriTemplate.includes("{"));
+  const chosen = listed.find((each) => each.changeKind === "session") ?? listed[0];
+  if (!chosen || !call.host.snapshotOf) return null;
+  let state: unknown;
+  // a changeset the host cannot compute now (no git, a lost folder) is no pill, not a failed read
+  try { state = await call.host.snapshotOf(chosen.uriTemplate); } catch { return null; }
+  const files = (state as { files?: unknown } | undefined)?.files;
+  if (!Array.isArray(files)) return null;
+  return { label: chosen.label, state: state as ChangesetState };
+}
+
+const changeKindOf = (edit: FileEdit): FileEditKind => editKind(edit as ToolResultFileEditContent);
+const changePath = (edit: FileEdit): string => { const uri = edit.after?.uri ?? edit.before?.uri ?? ""; return pathOf(uri) ?? uri; };
+
+async function readChanges(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  connected(call.host);
+  const found = await changesetOf(call, session);
+  if (found === null) return jsonResponse({ changes: null });
+  const files = found.state.files.map((file) => ({
+    id: file.id, path: changePath(file.edit), kind: changeKindOf(file.edit), added: file.edit.diff?.added ?? 0, removed: file.edit.diff?.removed ?? 0,
+  }));
+  const changes: HostChanges = {
+    label: found.label, status: found.state.status, files,
+    added: files.reduce((sum, each) => sum + each.added, 0), removed: files.reduce((sum, each) => sum + each.removed, 0),
+  };
+  return jsonResponse({ changes });
+}
+
+/** One changed file's two sides, by its id in the changeset: what it was at the changeset's base, and now. */
+async function readChangeDiff(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  const ref = call.url.searchParams.get("ref") ?? "";
+  if (ref === "") return badRequest("missing_ref", "ref is required");
+  connected(call.host);
+  const file = (await changesetOf(call, session))?.state.files.find((each) => each.id === ref);
+  if (!file) return noRef("changed file");
+  return diffOf(call.host, file.edit as ToolResultFileEditContent);
 }
 
 async function listModels(call: Call): Promise<Response> {

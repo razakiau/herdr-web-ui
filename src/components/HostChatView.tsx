@@ -332,7 +332,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
     {/* a question or approval takes the input's place, as in VS Code: the pills wait until it is answered */}
-    {!chat?.prompt && <HostSessionPills machineId={machineId} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
+    {!chat?.prompt && <HostSessionPills machineId={machineId} session={session} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(chat) => revealSubagent.current?.(chat) ?? false} />}
     <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
