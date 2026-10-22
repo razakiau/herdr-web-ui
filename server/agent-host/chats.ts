@@ -28,6 +28,7 @@ import {
   type ChatInputRequest,
   type ChatState,
   type Customization,
+  type PendingMessage,
   type InputRequestResponsePart,
   type Message,
   type ModelSelection,
@@ -950,6 +951,22 @@ export function contextUsageOf(session: SessionState | undefined, newest?: Turn 
   return usage;
 }
 
+/**
+ * The chat's waiting messages, each once. VS Code's host keeps its steer in `steeringMessage` and
+ * also in `queuedMessages` with `kind: "steering"` (its reducer's pendingMessageSet), so an entry
+ * of that kind, or the steer's own id, is the Steering row and not a second, queued one.
+ */
+function pendingOf(chat: ChatState): NonNullable<HostChatRead["pending"]> {
+  const steer = chat.steeringMessage;
+  const queue = (chat.queuedMessages ?? []) as readonly (PendingMessage & { kind?: string })[];
+  const steers = [...(steer ? [steer] : []), ...queue.filter((each) => each.kind === "steering" && each.id !== steer?.id)];
+  const queued = queue.filter((each) => each.kind !== "steering" && each.id !== steer?.id);
+  return [
+    ...steers.map((each) => ({ id: each.id, kind: "steering" as const, text: each.message.text })),
+    ...queued.map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),
+  ];
+}
+
 export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext, restored: HostChatRead["restored"] = null): HostChatRead {
   const prompt = promptFrom(chat);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
@@ -973,13 +990,10 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     confirmations: pendingToolCalls(chat).length,
     // the running turn may have no usage yet: the newest turn that reported one
     context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null), context?.modelWindow),
-    pending: [
-      ...(chat.steeringMessage ? [{ id: chat.steeringMessage.id, kind: "steering" as const, text: chat.steeringMessage.message.text }] : []),
-      ...(chat.queuedMessages ?? []).map((each) => ({ id: each.id, kind: "queued" as const, text: each.message.text })),
-    ],
+    pending: pendingOf(chat),
     message_ids: [
       ...chat.turns.map((turn) => turn.id), ...(chat.activeTurn ? [chat.activeTurn.id] : []),
-      ...(chat.steeringMessage ? [chat.steeringMessage.id] : []), ...(chat.queuedMessages ?? []).map((pending) => pending.id),
+      ...pendingOf(chat).map((pending) => pending.id),
     ],
     checkpoints: checkpointsOf(chat),
     restored,

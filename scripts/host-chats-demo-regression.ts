@@ -1035,6 +1035,16 @@ try {
         assert.equal(await steering.locator(".host-pending-row").count(), 1, "one steering row");
         assert.match(await steering.locator(".host-pending-text").textContent() ?? "", /FICTIONAL steer one\s+FICTIONAL steer two/, "holding both texts in order");
         console.log("PASS a second steer says it was added to your steer, one row holding both");
+        // the row is one line; a tap shows the whole message, wrapped, and another folds it back
+        const steerText = steering.locator(".host-pending-text");
+        const lines = () => steerText.evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight || "20")));
+        assert.equal(await lines(), 1, "a waiting row is one line");
+        await steerText.click();
+        assert.equal(await steerText.getAttribute("aria-expanded"), "true", "a tap opens it");
+        assert.ok(await lines() >= 2, "open, it shows both steers, one per line");
+        await steerText.click();
+        assert.equal(await lines(), 1, "a second tap folds it back");
+        console.log("PASS a tap on a waiting row shows its whole message");
         await box.fill("FICTIONAL later");
         await view.locator(".composer-send-menu").click();
         // at 390 px the menu is the app's bottom sheet (RowMenu)

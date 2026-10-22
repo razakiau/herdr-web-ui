@@ -1213,6 +1213,13 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
   });
 
+  it("pending/remove takes off a steer the host lists only in its queue, as a steer", async () => {
+    const r = await busy({ queuedMessages: [{ id: uuid(46), kind: "steering", message: user("FICTIONAL steer") }] });
+    expect(await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(46) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the removal", () => actions(r.fake, "chat/pendingMessageRemoved").length === 1);
+    expect(only(r.fake, "chat/pendingMessageRemoved")).toMatchObject({ kind: "steering", id: uuid(46) });
+  });
+
   it("background/stop sends VS Code's stop for a stoppable shell, and refuses work that is not or is gone", async () => {
     const shell = (id: string, stoppable: boolean) => ({ kind: "shell", id, label: "FICTIONAL server", command: "npm run dev", startedAt: AT, ...(stoppable ? { _meta: { "vscode.stopBackgroundWork": true } } : {}) });
     const r = await busy({ backgroundWork: [shell("shell:1", true), shell("shell:2", false)] });

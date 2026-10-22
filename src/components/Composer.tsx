@@ -1543,13 +1543,20 @@ export function Composer({
 /** A host chat's messages waiting for its running turn, under VS Code's "Steering" and "Queued" dividers. */
 function HostPending({ pending, onRemove }: { pending: NonNullable<ComposerProps["pending"]>; onRemove?: (id: string) => void }) {
   const t = useT();
+  // a tap on a row's text shows all of it, wrapped; another folds it back to one line
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (id: string): void => setOpen((current) => {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
   const groups = (["steering", "queued"] as const).map((kind) => ({ kind, rows: pending.filter((each) => each.kind === kind) })).filter((group) => group.rows.length > 0);
   return <div className="host-pending" aria-label={t("Waiting messages")} role="group">
     {groups.map((group) => <section key={group.kind} className="host-pending-group" data-kind={group.kind}>
       <p className="host-pending-divider">{t(group.kind === "steering" ? "Steering" : "Queued")}</p>
       <ul className="host-pending-list">
-        {group.rows.map((row) => <li key={row.id} className="host-pending-row" data-pending={row.id}>
-          <span className="host-pending-text">{row.text}</span>
+        {group.rows.map((row) => <li key={row.id} className="host-pending-row" data-pending={row.id} data-open={open.has(row.id) || undefined}>
+          <button type="button" className="host-pending-text" aria-expanded={open.has(row.id)} onClick={() => toggle(row.id)}>{row.text}</button>
           {onRemove && <button type="button" className="icon-button host-pending-remove" aria-label={t("Remove from Queue")} title={t("Remove from Queue")} onClick={() => onRemove(row.id)}>
             <X aria-hidden="true" />
           </button>}
