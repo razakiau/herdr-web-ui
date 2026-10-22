@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { mirrorPalette, SHARED_SETTING_KEYS, type PreferencesChange, type SharedPreferences, type SharedSettingKey } from "../../shared/preferences.ts";
 import { ApiError, fetchPreferences, savePreferences } from "./api.ts";
 import { DEFAULT_THEME } from "./themes.ts";
-import { sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
+import { DEFAULT_SETTINGS, sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
 import type { HostWorkspaceState } from "../../shared/host-workspaces.ts";
 import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces } from "./hostWorkspaces.ts";
@@ -22,6 +22,8 @@ const SEND_AFTER_MS = 600;
 const RETRY_MS = 5_000;
 
 type Shared = Partial<Record<SharedSettingKey, unknown>>;
+/** Settings that were each device's own until 2026-10-22: the app installed again from Chrome lost the voice choices made in Brave. */
+const BACKFILLED: ReadonlySet<SharedSettingKey> = new Set(["voiceInput", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"]);
 /** What this browser last knew the server to hold; `pins` is null while the server has held none. */
 export interface Baseline { settings: Shared; pins: readonly string[] | null; hostWorkspaces?: HostWorkspaceState | null }
 /** What this browser holds. */
@@ -84,8 +86,12 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
     if (mode === "dark") incoming.darkTheme = incoming.palette;
     if (mode === "light") incoming.lightTheme = incoming.palette;
   }
+  const defaults = sharedSettings(DEFAULT_SETTINGS);
   for (const key of SHARED_SETTING_KEYS) {
-    if (!(key in incoming)) continue;
+    // a setting shared since a release (BACKFILLED) that the server has never held is known as the
+    // default, so a choice this browser made while it was its own goes out with the next sync and
+    // reaches a new install; every other unheld one stays each browser's own, as before
+    if (!(key in incoming)) { if (BACKFILLED.has(key) && !force) settings[key] = defaults[key]; continue; }
     const value = incoming[key];
     if (!same(sanitizeSettings({ [key]: value })[key], value)) continue;
     const sent = inFlight !== null && key in inFlight.settings && same(inFlight.settings[key], local.settings[key]);

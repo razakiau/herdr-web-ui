@@ -27,7 +27,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems, type AllAgentsOn } from "./components/MachineSidebar.tsx";
 import type { HostChatTarget } from "./components/AgentSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
-import { basename, errorText, hostChatLive, hostChatRoster, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs } from "./lib/hostChats.ts";
+import { basename, errorText, hostChatLive, hostChatRoster, noteHostChatStreamOpen, readsOnView, openHostChatClosed, takeHostChatEvent, useHostChatPcs, type HostPc } from "./lib/hostChats.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement, samePath } from "./lib/hostPlacement.ts";
@@ -89,7 +89,7 @@ import { markSelection, selectionStill, type SelectionMark } from "./lib/selecti
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
 import { watchDrawerSwipe } from "./lib/edgeSwipe.ts";
 import { Droplet } from "./components/Droplet.tsx";
-import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./lib/droplet.ts";
+import { dropletAllows, endedTurn, hostChatDroplets, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./lib/droplet.ts";
 import { canPlayAlertSound, playAlertSound, unlockAlertSound, type AlertSoundKind } from "./lib/alertSound.ts";
 import { createAlertTurnPlayer } from "./lib/alertTurns.ts";
 import { dockPane, draggedPane, paneDragData, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, slotSide, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./lib/split.ts";
@@ -1028,6 +1028,36 @@ export function App() {
   // each PC's host chats (lib/hostChats.ts), read once for the sidebar and the tab strip
   // none while Settings hides agent host chats (Agent host): herdr as it is without them
   const { pcs: hostChats, tracker: hostTracker } = useHostChatPcs(hostChatRoster(machines, settings.hostChatsShown));
+  // In-app alerts for host chats (lib/droplet.ts hostChatDroplets), as dropIn gives panes: the
+  // server's ntfy and device alerts stay quiet while the app is in use, so this is what says it
+  const hostSeen = useRef(new Map<string, HostPc>());
+  const hostTurns = useRef(new Map<string, Map<string, number>>());
+  useEffect(() => {
+    const seen = hostSeen.current;
+    for (const [machineId, pc] of hostChats) {
+      const before = seen.get(machineId);
+      if (before === pc) continue;
+      seen.set(machineId, pc);
+      const turns = hostTurns.current.get(machineId) ?? new Map<string, number>();
+      hostTurns.current.set(machineId, turns);
+      const news = hostChatDroplets(before?.chats, pc.chats, turns, alertsRef.current, Date.now());
+      if (!alertInAppRef.current || document.visibilityState !== "visible") continue;
+      const open = selectedHostChatRef.current;
+      for (const item of news) {
+        if (open?.machineId === machineId && open.session === item.session && !drawerOpenRef.current) continue;
+        showDroplet({
+          machineId,
+          paneId: "",
+          session: item.session,
+          agent: "copilot",
+          title: item.title,
+          machine: machinesRef.current.length > 1 ? machinesRef.current.find((m) => m.id === machineId)?.name ?? null : null,
+          kind: item.kind,
+        });
+      }
+    }
+    for (const machineId of [...seen.keys()]) if (!hostChats.has(machineId)) { seen.delete(machineId); hostTurns.current.delete(machineId); }
+  }, [hostChats]);
   const hostPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   // the agent host workspaces open per PC, and their tabs (lib/hostWorkspaces.ts)
   const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
@@ -2069,7 +2099,8 @@ export function App() {
         }}
       /></MachineContext.Provider>
       {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={closeMachineDialog} onConnected={(id) => { closeMachineDialog(); selectTarget(id, null); void load(); }} />}
-      <Droplet onOpen={(machineId, paneId) => {
+      <Droplet onOpen={(machineId, paneId, session) => {
+        if (session !== undefined) { setFilesOpen(false); selectHostChatRef.current({ machineId, session }); return; }
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing
         if (!machinesRef.current.find((m) => m.id === machineId)?.snapshot?.panes.some((p) => p.pane_id === paneId)) return;
         // Files lists the pane it was opened on, and would open its paths on the new one

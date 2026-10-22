@@ -1882,6 +1882,13 @@ try {
         await six.evaluate(() => (window as unknown as { askOnPcE(): void }).askOnPcE());
         const asking = six.getByRole("region", { name: "PC FICTIONAL PC E", exact: true });
         await asking.waitFor();
+        // in the app, the server holds its alerts back: the question drops in as an in-app alert, and opens the chat
+        const drop = six.locator(".droplet-card");
+        await drop.waitFor({ state: "visible", timeout: 5_000 }).catch(() => assert.fail("a host chat that asks raises no in-app alert"));
+        assert.equal(await six.locator(".droplet").getAttribute("data-kind"), "blocked", "the alert says the chat needs input");
+        assert.match((await drop.getAttribute("aria-label")) ?? "", /^FICTIONAL waits on you, FICTIONAL PC E · Needs input\. Open chat$/, "the alert names the chat and its PC");
+        await six.locator(".droplet-close").click();
+        await six.locator(".droplet").waitFor({ state: "detached" });
         await fold.getByRole("button", { name: /^Other PCs \(4\)/ }).waitFor();
         assert.equal(await six.locator(".machine-group").count(), 2, "the PC in use and the one that needs you are open");
         assert.equal(await six.getByRole("region", { name: "PC Laptop", exact: true }).count(), 1, "the PC in use is open");
@@ -1901,6 +1908,7 @@ try {
         await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).waitFor();
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS six PCs: Other PCs folds the ones not in use, the one that needs you stays open, and the fold is remembered");
+        console.log("PASS a host chat that asks drops in as an in-app alert");
         // a host chat's alert links to it (an ntfy tap, a tapped push on a cold start): the address opens
         // the chat on its PC, then lets the chat go from the address
         await six.goto(`http://127.0.0.1:${server.port}/?machine=remote&chat=${encodeURIComponent("fictional-session-old")}`);

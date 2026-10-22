@@ -212,6 +212,7 @@
 .droplet[data-kind="blocked"] { --droplet-tone: var(--droplet-blocked); }
 .droplet[data-kind="done"] { --droplet-tone: var(--droplet-done); }
 .droplet[data-kind="ended"] { --droplet-tone: var(--droplet-text-dim); }
+.droplet[data-kind="error"] { --droplet-tone: var(--droplet-blocked); }
 
 @media (max-width: 768px) {
   .droplet {

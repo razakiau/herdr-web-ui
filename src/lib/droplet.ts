@@ -1,6 +1,7 @@
 import type { AgentStatus } from "../../shared/protocol.ts";
 import { shouldNotifyStatus, type AlertPrefs } from "../../shared/notify-policy.ts";
 import { paneStorageId } from "../../shared/machines.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
 
 /**
  * In-app alerts: a notice that drops from the top edge while the app is on screen.
@@ -12,11 +13,13 @@ import { paneStorageId } from "../../shared/machines.ts";
  * showDroplet(); components/Droplet.tsx is the one place that draws them.
  */
 
-export type DropletKind = "blocked" | "done" | "ended";
+export type DropletKind = "blocked" | "done" | "ended" | "error";
 
 export interface DropletNotice {
   machineId: string;
+  /** the pane it is about; a host chat's notice has none and names its `session` */
   paneId: string;
+  session?: string;
   agent: string | null;
   /** the pane's name, as the sidebar shows it */
   title: string;
@@ -105,6 +108,40 @@ export function endedTurn(started: Map<string, number>, lasted: Map<string, numb
   return last ?? null;
 }
 
+export interface HostChatDroplet { session: string; title: string; kind: "blocked" | "done" | "error" }
+
+/**
+ * What one PC's host chats did between two reads of its list that is news, as server/push.ts
+ * onHostChats tells ntfy and the devices: asks, a turn finished (from working or asks), or a
+ * failure, which is told as a finish is. A chat first seen (`before` undefined: the page just
+ * read the PC) or archived says nothing. `turns` keeps when each chat's turn began, by session,
+ * for the device's long-turn choice.
+ */
+export function hostChatDroplets(before: readonly HostChatRow[] | undefined, after: readonly HostChatRow[], turns: Map<string, number>, prefs: AlertPrefs, now: number): HostChatDroplet[] {
+  const busy = (status: HostChatRow["status"] | undefined): boolean => status === "working" || status === "asks";
+  const was = new Map((before ?? []).map((row) => [row.session, row.status]));
+  const out: HostChatDroplet[] = [];
+  for (const row of after) {
+    const previous = was.get(row.session);
+    if (before === undefined || previous === undefined || previous === row.status) continue;
+    let worked: number | null = null;
+    if (busy(row.status)) {
+      if (!busy(previous)) turns.set(row.session, now);
+    } else {
+      const since = turns.get(row.session);
+      turns.delete(row.session);
+      worked = since === undefined ? null : now - since;
+    }
+    if (row.archived) continue;
+    const kind = row.status === "asks" ? "blocked" : row.status === "error" ? "error" : row.status === "idle" && busy(previous) ? "done" : null;
+    if (kind === null || !dropletAllows(prefs, kind === "blocked" ? "blocked" : "done", worked)) continue;
+    out.push({ session: row.session, title: row.title, kind });
+  }
+  const listed = new Set(after.map((row) => row.session));
+  for (const session of [...turns.keys()]) if (!listed.has(session)) turns.delete(session);
+  return out;
+}
+
 /** Only movement this recent counts as a flick: a finger that rested first has not slowed it. */
 export const FLICK_WINDOW_MS = 100;
 
@@ -130,7 +167,7 @@ const lastShown = new Map<string, number>();
 /** Shows a notice in the open app; false when nothing draws them (no Droplet mounted) or it repeats one just shown. */
 export function showDroplet(notice: DropletNotice, now = Date.now()): boolean {
   if (listeners.size === 0) return false;
-  const key = `${notice.machineId}\n${notice.paneId}\n${notice.kind}`;
+  const key = `${notice.machineId}\n${notice.session ?? notice.paneId}\n${notice.kind}`;
   const last = lastShown.get(key);
   if (last !== undefined && now - last < DROPLET_REPEAT_MS) return false;
   lastShown.set(key, now);
