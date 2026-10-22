@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { OmniRouteUsage, omniRouteUsages } from "./omniroute.ts";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages } from "./omniroute.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -130,5 +133,109 @@ describe("OmniRouteUsage", () => {
     const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, async () => { throw new Error(`down ${TOKEN}`); }, () => NOW);
     expect(await service.report()).toEqual([]);
     expect(service.status().problem).toBe("Could not reach OmniRoute");
+  });
+});
+
+describe("OmniRouteLink", () => {
+  const ok = { "/api/usage/provider-limits": () => Response.json(limits), "/api/providers": () => Response.json(connections) };
+  const fetcher = (answers: Record<string, () => Response>) => async (url: string) =>
+    answers[new URL(url).pathname]?.() ?? new Response("{}", { status: 404 });
+  const dir = () => mkdtempSync(join(tmpdir(), "omniroute-link-"));
+
+  it("is off with nothing saved and nothing in the environment", () => {
+    const link = new OmniRouteLink(dir(), {}, fetcher(ok), () => NOW);
+    expect(link.status()).toMatchObject({ configured: false, source: null, url: null });
+  });
+
+  it("saves a URL and token to a file only the server reads, checks them, and keeps them across a restart", async () => {
+    const state = dir();
+    const link = new OmniRouteLink(state, {}, fetcher(ok), () => NOW);
+    const status = await link.save({ url: "http://omniroute.test:20128/", token: TOKEN });
+    expect(status).toMatchObject({ configured: true, source: "saved", url: "http://omniroute.test:20128", ok: true, problem: null });
+    expect(statSync(join(state, "omniroute.json")).mode & 0o777).toBe(0o600);
+    expect(JSON.stringify(status)).not.toContain(TOKEN);
+    const again = new OmniRouteLink(state, {}, fetcher(ok), () => NOW);
+    expect(again.status()).toMatchObject({ configured: true, source: "saved", url: "http://omniroute.test:20128" });
+    expect((await again.report()).length).toBe(3);
+  });
+
+  it("a blank token keeps the saved one for the same URL, and a new URL needs a new token", async () => {
+    const link = new OmniRouteLink(dir(), {}, fetcher(ok), () => NOW);
+    await link.save({ url: "http://omniroute.test", token: TOKEN });
+    expect((await link.save({ url: "http://omniroute.test" })).ok).toBe(true);
+    await expect(link.save({ url: "http://other.test" })).rejects.toThrow("Invalid OmniRoute settings");
+  });
+
+  it("refuses a URL that is not http(s), carries credentials, or holds the token", async () => {
+    const link = new OmniRouteLink(dir(), {}, fetcher(ok), () => NOW);
+    for (const url of ["ftp://omniroute.test", "http://user:pw@omniroute.test", `http://omniroute.test/?t=${TOKEN}`, "not a url"])
+      await expect(link.save({ url, token: TOKEN })).rejects.toThrow("Invalid OmniRoute settings");
+    await expect(link.save({ url: "http://omniroute.test", token: "two words" })).rejects.toThrow("Invalid OmniRoute settings");
+    expect(link.status().configured).toBe(false);
+  });
+
+  it("saves a token OmniRoute refuses, and says so in fixed words", async () => {
+    const link = new OmniRouteLink(dir(), {}, fetcher({ ...ok, "/api/usage/provider-limits": () => new Response(TOKEN, { status: 401 }) }), () => NOW);
+    const status = await link.save({ url: "http://omniroute.test", token: TOKEN });
+    expect(status).toMatchObject({ configured: true, ok: false, problem: "OmniRoute refused the token" });
+  });
+
+  it("remove forgets the saved gateway", async () => {
+    const state = dir();
+    const link = new OmniRouteLink(state, {}, fetcher(ok), () => NOW);
+    await link.save({ url: "http://omniroute.test", token: TOKEN });
+    expect(link.remove()).toMatchObject({ configured: false, source: null });
+    expect(new OmniRouteLink(state, {}, fetcher(ok), () => NOW).status().configured).toBe(false);
+    expect(await link.report()).toEqual([]);
+  });
+
+  it("the server's environment wins over a saved gateway, and the form cannot change or remove it", async () => {
+    const state = dir();
+    await new OmniRouteLink(state, {}, fetcher(ok), () => NOW).save({ url: "http://saved.test", token: TOKEN });
+    const env = { HERDR_WEB_OMNIROUTE_URL: "http://env.test", HERDR_WEB_OMNIROUTE_TOKEN: TOKEN };
+    const link = new OmniRouteLink(state, env, fetcher(ok), () => NOW);
+    expect(link.status()).toMatchObject({ configured: true, source: "env", url: "http://env.test" });
+    await expect(link.save({ url: "http://other.test", token: TOKEN })).rejects.toThrow("OmniRoute is set by the server");
+    expect(() => link.remove()).toThrow("OmniRoute is set by the server");
+    expect(link.status().url).toBe("http://env.test");
+  });
+
+  it("an unreadable saved file is no gateway, and says so without its contents", () => {
+    const state = dir();
+    writeFileSync(join(state, "omniroute.json"), `{"url": "http://x.test", "token": ${JSON.stringify(TOKEN)}`);
+    const status = new OmniRouteLink(state, {}, fetcher(ok), () => NOW).status();
+    expect(status).toMatchObject({ configured: false, problem: "Could not read the OmniRoute settings" });
+    expect(JSON.stringify(status)).not.toContain(TOKEN);
+  });
+});
+
+describe("handleOmniRouteRequest", () => {
+  const ok = { "/api/usage/provider-limits": () => Response.json(limits), "/api/providers": () => Response.json(connections) };
+  const fetcher = async (url: string) => (ok as Record<string, () => Response>)[new URL(url).pathname]?.() ?? new Response("{}", { status: 404 });
+  const call = (link: OmniRouteLink, method: string, body?: unknown) => handleOmniRouteRequest(new Request("http://herdr.test/api/usage/omniroute",
+    { method, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body), headers: { "content-type": "application/json" } }) }), link);
+
+  it("GET reads, PUT saves, DELETE forgets, none caches and none echoes the token", async () => {
+    const link = new OmniRouteLink(mkdtempSync(join(tmpdir(), "omniroute-routes-")), {}, fetcher, () => NOW);
+    const saved = await call(link, "PUT", { url: "http://omniroute.test", token: TOKEN });
+    expect(saved.status).toBe(200);
+    expect(saved.headers.get("cache-control")).toBe("no-store");
+    const text = await saved.text();
+    expect(text).not.toContain(TOKEN);
+    expect(JSON.parse(text)).toMatchObject({ configured: true, source: "saved", ok: true });
+    expect(await (await call(link, "GET")).json()).toMatchObject({ configured: true, source: "saved" });
+    expect(await (await call(link, "DELETE")).json()).toMatchObject({ configured: false });
+  });
+
+  it("answers a bad body and a pinned gateway with fixed words", async () => {
+    const link = new OmniRouteLink(mkdtempSync(join(tmpdir(), "omniroute-routes-")), {}, fetcher, () => NOW);
+    const bad = await call(link, "PUT", `{"url": ${JSON.stringify(TOKEN)}`);
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: { code: "invalid_omniroute_request", message: "Invalid OmniRoute settings" } });
+    const env = new OmniRouteLink(mkdtempSync(join(tmpdir(), "omniroute-routes-")), { HERDR_WEB_OMNIROUTE_URL: "http://env.test", HERDR_WEB_OMNIROUTE_TOKEN: TOKEN }, fetcher, () => NOW);
+    const refused = await call(env, "DELETE");
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: { code: "omniroute_env", message: "OmniRoute is set by the server" } });
+    expect((await call(link, "POST", {})).status).toBe(405);
   });
 });

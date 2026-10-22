@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Network, SquareTerminal, X } from "lucide-react";
-import type { CLIProxyStatus } from "../../shared/protocol.ts";
+import type { CLIProxyStatus, OmniRouteStatus } from "../../shared/protocol.ts";
 import type { UsageLoginProvider } from "../../shared/usage-login.ts";
 import { fetchUsageLoginProviders } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
@@ -11,21 +11,25 @@ import { AgentMark } from "./AgentMark.tsx";
 import { CLIProxyAccountLogin } from "./CLIProxyLogin.tsx";
 import { UsageHubConnect } from "./UsageHubConnect.tsx";
 import { UsageLocalLogin } from "./UsageLocalLogin.tsx";
+import { UsageOmniRouteConnect } from "./UsageOmniRouteConnect.tsx";
 import "./UsageAccountDialog.css";
 
-type Step = { readonly kind: "provider" } | { readonly kind: "hub"; readonly returnTo: UsageLoginProvider | null }
+type Step = { readonly kind: "provider" } | { readonly kind: "omniroute" } | { readonly kind: "hub"; readonly returnTo: UsageLoginProvider | null }
   | { readonly kind: "account"; readonly provider: UsageLoginProvider; readonly method: "choose" | "local" | "hub" };
 
-export function UsageAccountDialog({ editHub, hub, onHubChanged, onAccountsChanged, onLocalLogin, onClose }: {
-  readonly editHub: boolean;
+export function UsageAccountDialog({ edit, hub, onHubChanged, gateway, onGatewayChanged, onAccountsChanged, onLocalLogin, onClose }: {
+  /** opens straight on that connection's form */
+  readonly edit: "hub" | "omniroute" | null;
   readonly hub: CLIProxyStatus | null;
   readonly onHubChanged: (status: CLIProxyStatus) => void;
+  readonly gateway: OmniRouteStatus | null;
+  readonly onGatewayChanged: (status: OmniRouteStatus) => void;
   readonly onAccountsChanged: () => void;
   readonly onLocalLogin: (paneId: string) => void;
   readonly onClose: () => void;
 }) {
   const t = useT();
-  const [step, setStep] = useState<Step>(editHub ? { kind: "hub", returnTo: null } : { kind: "provider" });
+  const [step, setStep] = useState<Step>(edit === "hub" ? { kind: "hub", returnTo: null } : edit === "omniroute" ? { kind: "omniroute" } : { kind: "provider" });
   const [providers, setProviders] = useState<readonly UsageLoginProvider[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -55,7 +59,12 @@ export function UsageAccountDialog({ editHub, hub, onHubChanged, onAccountsChang
           <AgentMark agent={PROVIDER_MARK[provider.id]} size={24} /><span><strong>{PROVIDER_NAME[provider.id]}</strong><span id={`usage-provider-desc-${provider.id}`} className="settings-hint">{provider.id === "claude" || provider.id === "codex" ? t("On this PC or through the hub") : t("On the server PC")}</span></span>
         </button>)}
         <button type="button" className="account-choice" aria-label={t("Hub")} onClick={() => setStep({ kind: "hub", returnTo: null })}><Network size={24} aria-hidden="true" /><span><strong>{t("Hub")}</strong><span className="settings-hint">{t("Import accounts from CLIProxyAPI")}</span></span></button>
+        {gateway?.source !== "env" && <button type="button" className="account-choice" aria-label="OmniRoute" onClick={() => setStep({ kind: "omniroute" })}><AgentMark agent="omniroute" size={24} /><span><strong>OmniRoute</strong><span className="settings-hint">{t("Plan limits of the accounts in an OmniRoute gateway")}</span></span></button>}
       </div>;
+      break;
+    case "omniroute":
+      title = t("Connect OmniRoute"); current = 1; steps = [t("Provider"), t("Connection")];
+      body = <UsageOmniRouteConnect gateway={gateway} onConnected={onGatewayChanged} onDone={done} />;
       break;
     case "hub":
       title = t("Connect a hub"); current = 1; steps = [t("Provider"), t("Connection")];

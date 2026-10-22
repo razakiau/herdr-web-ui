@@ -97,9 +97,14 @@ export function fetchUsage(refresh = false): Promise<UsageReport> {
 }
 
 /** Local server's CLIProxyAPI controls; secrets are only ever sent, never read back. */
-/** The OmniRoute gateway this server reads plan limits from, if any (set in its environment). */
+/** The OmniRoute gateway this server reads plan limits from, if any (its environment, else Settings). */
 export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteStatus> {
   return getJson<OmniRouteStatus>("/api/usage/omniroute", { cache: "no-store", ...(signal ? { signal } : {}) });
+}
+
+/** Save (PUT `{url, token?}`) or forget (DELETE) the OmniRoute gateway this server reads; the server's environment refuses both. */
+export function omniRouteRequest(init: RequestInit): Promise<OmniRouteStatus> {
+  return getJson<OmniRouteStatus>("/api/usage/omniroute", { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(30_000) });
 }
 
 export function cliProxyRequest<T>(path = "", init: RequestInit = {}): Promise<T> {

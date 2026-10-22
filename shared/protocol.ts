@@ -331,10 +331,13 @@ export interface UsageReport {
 
 /**
  * An OmniRoute gateway this server reads plan limits from (HERDR_WEB_OMNIROUTE_URL and _TOKEN in
- * its environment): its accounts are in /api/usage, keyed `<provider>:omniroute:<connection>`.
+ * its environment, else saved from Settings): its accounts are in /api/usage, keyed
+ * `<provider>:omniroute:<connection>`.
  */
 export interface OmniRouteStatus {
   readonly configured: boolean;
+  /** env: the server's environment, which Settings cannot change; saved: from Settings; null when not configured */
+  readonly source: "env" | "saved" | null;
   /** null when not configured */
   readonly url: string | null;
   readonly ok: boolean;
