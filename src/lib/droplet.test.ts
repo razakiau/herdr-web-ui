@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { DROPLET_REPEAT_MS, FLICK_WINDOW_MS, LONG_TURN_MS, dropletAllows, endedTurn, flickVelocity, onDroplet, seedStatuses, showDroplet, trackTurn, type DropletNotice, type QueuedDroplet } from "./droplet.ts";
+import { DROPLET_REPEAT_MS, FLICK_WINDOW_MS, LONG_TURN_MS, dropletAllows, endedTurn, flickVelocity, hostChatDroplets, onDroplet, seedStatuses, showDroplet, trackTurn, type DropletNotice, type QueuedDroplet } from "./droplet.ts";
 import { shouldNotifyStatus } from "../../shared/notify-policy.ts";
 import type { AgentStatus } from "../../shared/protocol.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
 
 const notice: DropletNotice = { machineId: "local", paneId: "p1", agent: "claude", title: "api", machine: null, kind: "blocked" };
 
@@ -164,5 +165,43 @@ describe("seedStatuses", () => {
     expect(known.size).toBe(0);
     seedStatuses(known, roster(["p1", "idle"]));
     expect(known.get("p1")).toBe("idle");
+  });
+});
+
+describe("hostChatDroplets", () => {
+  const row = (session: string, status: HostChatRow["status"], extra: Partial<HostChatRow> = {}): HostChatRow =>
+    ({ session, title: `chat ${session}`, status, modified_at: "2026-10-22T10:00:00Z", cwd: "/w", unread: false, archived: false, ...extra });
+  const always = { input: true, done: "always" as const };
+
+  it("tells a chat that asks, finishes or fails, as the server's alerts do", () => {
+    const turns = new Map<string, number>();
+    const before = [row("a", "idle"), row("b", "working"), row("c", "working")];
+    expect(hostChatDroplets(before, before, turns, always, 0)).toEqual([]);
+    const after = [row("a", "asks"), row("b", "idle"), row("c", "error")];
+    expect(hostChatDroplets(before, after, turns, always, 1_000)).toEqual([
+      { session: "a", title: "chat a", kind: "blocked" },
+      { session: "b", title: "chat b", kind: "done" },
+      { session: "c", title: "chat c", kind: "error" },
+    ]);
+  });
+
+  it("is quiet about a chat first seen, an archived one, and a move that is no news", () => {
+    const turns = new Map<string, number>();
+    expect(hostChatDroplets(undefined, [row("a", "asks")], turns, always, 0)).toEqual([]);
+    expect(hostChatDroplets([row("a", "working")], [row("a", "idle", { archived: true })], turns, always, 0)).toEqual([]);
+    expect(hostChatDroplets([row("a", "idle")], [row("a", "working")], turns, always, 0)).toEqual([]);
+    expect(hostChatDroplets([row("a", "error")], [row("a", "idle")], turns, always, 0)).toEqual([]);
+  });
+
+  it("follows the device's choices: no finishes when off, only long turns when long, input when on", () => {
+    expect(hostChatDroplets([row("a", "idle")], [row("a", "asks")], new Map(), { input: false, done: "always" }, 0)).toEqual([]);
+    expect(hostChatDroplets([row("a", "working")], [row("a", "error")], new Map(), { input: true, done: "off" }, 0)).toEqual([]);
+    const turns = new Map<string, number>();
+    const long = { input: true, done: "long" as const };
+    hostChatDroplets([row("a", "idle")], [row("a", "working")], turns, long, 1_000);
+    expect(hostChatDroplets([row("a", "working")], [row("a", "idle")], turns, long, 1_000 + LONG_TURN_MS - 1)).toEqual([]);
+    hostChatDroplets([row("a", "idle")], [row("a", "working")], turns, long, 100_000);
+    expect(hostChatDroplets([row("a", "working")], [row("a", "idle")], turns, long, 100_000 + LONG_TURN_MS)).toEqual([{ session: "a", title: "chat a", kind: "done" }]);
+    expect(turns.size).toBe(0);
   });
 });
