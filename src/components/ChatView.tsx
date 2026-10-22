@@ -1949,9 +1949,14 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     const reveal = (target: SubagentTarget): boolean => {
       const index = timelineRows.findIndex((row) => row.turn.parts.some((part) => part.kind === "subagent" && isSubagentTarget(part, target)));
       if (index < 0) return false;
-      setRevealed({ ...target, at: Date.now() });
+      const at = Date.now();
+      setRevealed({ ...target, at });
       pagingAway.current = true; stickToBottom.current = false; setAway(true);
-      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+      // the list's index scroll can land after the row has scrolled itself (a tall last turn, live):
+      // the turn's top then sits over the row, a screen or more above it. Once it lands, the row
+      // scrolls itself again (a new `at` for the same reveal)
+      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 })
+        .then(() => setRevealed((now) => now !== null && now.at === at ? { ...now, at: at + 1 } : now));
       return true;
     };
     revealSubagent.current = reveal;
