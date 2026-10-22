@@ -28,6 +28,7 @@ const patch = `(() => {
   const sources = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const SIX = new URLSearchParams(location.search).get("pcs") === "6";
+  const NO_PANES = new URLSearchParams(location.search).get("panes") === "0";
   const ids = SIX ? ["local", "remote", "pc-c", "pc-d", "pc-e", "pc-f"] : ["local", "remote"];
   const NAMES = { local: "Laptop", remote: "Build PC", "pc-c": "FICTIONAL PC C", "pc-d": "FICTIONAL PC D", "pc-e": "FICTIONAL PC E", "pc-f": "FICTIONAL PC F" };
   const roster = (original) => ids.map((id) => {
@@ -39,6 +40,8 @@ const patch = `(() => {
     if (id === "remote") { const pane = machine.snapshot.panes.find((item) => item.workspace_id === machine.snapshot.workspaces[0].workspace_id); pane.cwd = "/tmp/fictional-repo/"; pane.foreground_cwd = "/tmp/fictional-repo/"; }
     // the six-PC fixture: no pane asks anywhere, so only a host chat's question keeps a folded PC open
     if (SIX) for (const pane of machine.snapshot.panes) if (pane.agent_status === "blocked") pane.agent_status = "idle";
+    // the no-pane fixture: every shell workspace on the Build PC closed, only agent host folders left
+    if (NO_PANES && id === "remote") { machine.snapshot.panes = []; machine.snapshot.workspaces = []; machine.snapshot.focused_pane_id = null; }
     return machine;
   });
   const at = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -515,7 +518,17 @@ try {
         assert.equal(await editRow.locator(".work-file-pill").count(), 0, "the chips name the files: no pill as well");
         const editChips = editRow.locator(".edit-chip");
         assert.deepEqual((await editChips.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()), ["build.ts +28 −3", "fresh.ts new +2 −0"], "a chip per file, with its lines");
-        assert.equal(await editChips.first().locator("svg").count() >= 1, true, "and its icon");
+        // the file's VS Code Material icon, its own SVG loaded and square at the chip's text size;
+        // Mono greys it as it does the agent marks
+        const chipIcon = editChips.first().locator("img.file-glyph");
+        assert.equal(await chipIcon.getAttribute("data-icon"), "typescript", "and its language's icon");
+        await page.waitForFunction((node) => (node as HTMLImageElement).complete && (node as HTMLImageElement).naturalWidth > 0, await chipIcon.elementHandle(), { timeout: 5_000 });
+        const iconBox = await chipIcon.boundingBox();
+        assert.ok(iconBox !== null && iconBox.width > 8 && Math.abs(iconBox.width - iconBox.height) < 0.5, `the icon is drawn square (${JSON.stringify(iconBox)})`);
+        assert.equal(await chipIcon.evaluate((node) => getComputedStyle(node).filter), "none", "in its colors");
+        await page.evaluate(() => { document.documentElement.dataset["marks"] = "mono"; });
+        assert.equal(await chipIcon.evaluate((node) => getComputedStyle(node).filter), "grayscale(1)", "Mono greys it");
+        await page.evaluate(() => { document.documentElement.dataset["marks"] = "color"; });
         await editChips.first().click();
         const diff = editRow.locator(".edit-diff-lines");
         await diff.waitFor();
@@ -2102,6 +2115,22 @@ try {
         await fits("the Appearance settings");
         console.log("PASS Smooth animations turns every endless easing from steps to smooth");
       } finally { await sixContext.close(); }
+      // a PC whose shell workspaces were all closed: its first agent host workspace's chat opens, not an empty page
+      const bareContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
+      try {
+        await bareContext.addInitScript(() => {
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("herdr-web-ui:selection", JSON.stringify({ machine_id: "remote", pane_id: null }));
+        });
+        const bare = await bareContext.newPage();
+        const errors: string[] = [];
+        bare.on("pageerror", (error) => errors.push(error.message));
+        await bare.goto(`http://127.0.0.1:${server.port}/?panes=0`);
+        await bare.locator(".host-chat[data-host-session]").waitFor({ timeout: 10_000 }).catch(() => assert.fail("a PC with no panes shows an empty page instead of its agent host chat"));
+        assert.match(await bare.locator(".host-chat[data-host-session]").innerText(), /FICTIONAL/, "the chat opened is one of its folder's");
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS a PC with no panes opens its first agent host workspace's chat");
+      } finally { await bareContext.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }
 } finally { rmSync(app, { recursive: true, force: true }); }

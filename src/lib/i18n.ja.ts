@@ -300,7 +300,7 @@ export const JA: Record<string, string> = {
   "Workspaces": "ワークスペース順",
   "Activity": "アクティビティ順",
   "Agent logos": "エージェントのロゴ",
-  "Draw each agent's logo in its brand colors, or without color": "各エージェントのロゴをブランドの色、または色なしで表示します",
+  "Draw agent logos and file icons in their colors, or without color": "エージェントのロゴとファイルアイコンを本来の色、または色なしで表示します",
   "Color": "カラー",
   "Mono": "モノクロ",
   "Status indicators": "状態インジケーター",

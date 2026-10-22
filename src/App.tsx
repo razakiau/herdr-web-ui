@@ -31,7 +31,7 @@ import { basename, errorText, hostChatLive, hostChatRoster, noteHostChatStreamOp
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle, type HostChatActions, type HostChatRef } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { hostChatHome, pcPlacement, samePath } from "./lib/hostPlacement.ts";
-import { closeTab, closeWorkspace, currentHostWorkspaces, openWorkspace, tabsOf, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./lib/hostWorkspaces.ts";
+import { closeTab, closeWorkspace, currentHostWorkspaces, firstHostTab, openWorkspace, tabsOf, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./lib/hostWorkspaces.ts";
 import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleHostFolderPin, toggleSidebarPin } from "./lib/sidebarPins.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
@@ -1163,6 +1163,14 @@ export function App() {
     }
     setHostWorkspaces(next);
   }, [hostChats, hostPins, selectedHostChat, settings.hostAutoOpen]);
+  // a PC with no herdr pane opens its first agent host workspace's first tab, as a PC with panes
+  // opens its first pane: the page is never left empty while a workspace is open
+  const firstTab = settings.hostChatsShown ? firstHostTab(hostWorkspaces[selectedMachineId]) : null;
+  useEffect(() => {
+    if (firstTab === null || !snapshot || selectedMachine?.state !== "connected" || snapshot.panes.length > 0) return;
+    if (selectedPaneId !== null || selectedHostChat !== null || pendingLink.current?.machine === selectedMachineId) return;
+    selectHostChatRef.current({ machineId: selectedMachineId, session: firstTab }, "tab");
+  }, [firstTab, snapshot, selectedMachine?.state, selectedPaneId, selectedHostChat, selectedMachineId]);
   // a host chat on screen goes when Settings hides them
   useEffect(() => { if (!settings.hostChatsShown) setSelectedHostChat(null); }, [settings.hostChatsShown]);
   // where the selected PC's host chats stand (lib/hostPlacement.ts): the open tabs, and the one on screen

@@ -79,7 +79,8 @@
   color: var(--text-strong);
 }
 
-.dir-browser-item svg {
+.dir-browser-item svg,
+.dir-browser-item .file-glyph {
   flex: none;
   width: var(--icon-size);
   height: var(--icon-size);
