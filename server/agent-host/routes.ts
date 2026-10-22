@@ -51,7 +51,8 @@ import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
-import { agentsFrom, ANSWER_REF, currentQuestion, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { workOf } from "./artifacts.ts";
+import { agentsFrom, ANSWER_REF, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -248,6 +249,7 @@ const GETS: Record<string, Handler> = {
   "models": listModels,
   "image": readImage,
   "tool-output": readToolOutput,
+  "edit-diff": readEditDiff,
   "session/config": readConfig,
   "files": listFiles,
 };
@@ -260,6 +262,7 @@ const POSTS: Record<string, Handler> = {
   "chat/checkpoint/restore": restoreCheckpoint,
   "chat/checkpoint/redo": redoCheckpoint,
   "chat/pending/remove": removePending,
+  "chat/background/stop": stopBackground,
   "chat/answer": answerQuestion,
   "chat/confirm": confirmTool,
   "chat/draft": writeDraft,
@@ -589,6 +592,38 @@ async function readToolOutput(call: Call): Promise<Response> {
   return output === null ? noRef("tool call") : jsonResponse({ output });
 }
 
+/** Past this a side is not drawn as a diff: a phone would lay out a megabyte of lines. */
+export const EDIT_SIDE_BYTES = 512 * 1024;
+
+/** A side's text, or why there is none to draw: too big, or not UTF-8 text (a NUL, or bytes that do not decode). */
+function sideText(read: { data: string; encoding: string }): string | "binary" {
+  const bytes = read.encoding === "base64" ? Buffer.from(read.data, "base64") : Buffer.from(read.data);
+  if (bytes.length > EDIT_SIDE_BYTES || bytes.includes(0)) return "binary";
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return "binary"; }
+}
+
+/**
+ * One edit's two sides, by the ref its part names (`<toolCallId>:<index>`), read through the host
+ * (the session-db refs VS Code's own diff reads): what the file was before the call and after it.
+ * A created file has no before, a deleted one no after. A side the host no longer holds makes the
+ * answer `unavailable`; one that is not text, `binary`: the client says so instead of a diff.
+ */
+async function readEditDiff(call: Call): Promise<Response> {
+  const { chat, ref } = await refRead(call);
+  const edit = fileEditOf(chat, ref);
+  if (edit === null) return noRef("edit");
+  const uri = edit.after?.uri ?? edit.before?.uri ?? "";
+  const head = { path: pathOf(uri) ?? uri, kind: editKind(edit) };
+  let sides: (string | "binary" | null)[];
+  try {
+    sides = await Promise.all([edit.before, edit.after].map(async (side) => side === undefined ? null : sideText(await contentAt(call.host, side.content.uri))));
+  } catch {
+    return jsonResponse({ ...head, before: null, after: null, unavailable: true });
+  }
+  if (sides.includes("binary")) return jsonResponse({ ...head, before: null, after: null, binary: true });
+  return jsonResponse({ ...head, before: sides[0], after: sides[1] });
+}
+
 async function listModels(call: Call): Promise<Response> {
   connected(call.host);
   const session = call.url.searchParams.get("session");
@@ -904,6 +939,21 @@ async function removePending(call: Call): Promise<Response> {
   if (kind === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
   call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind, id } as StateAction);
   return jsonResponse({ ok: true });
+}
+
+/**
+ * VS Code's Stop on a background shell: its extension request `vscode/stopBackgroundWork {chat, id}`,
+ * only for a shell the host marks stoppable (`_meta["vscode.stopBackgroundWork"]`), as VS Code offers it.
+ */
+async function stopBackground(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const id = call.body["id"];
+  if (!text(id) || id === "") return badRequest("missing_id", "id is required");
+  const { channel, chat } = await watched(call, session);
+  const entry = workOf((chat as { backgroundWork?: readonly unknown[] }).backgroundWork).find((each) => each.id === id);
+  if (entry?.stoppable !== true) return conflictResponse("not_stoppable", "the chat runs no work by that id that can be stopped");
+  const answer = await call.host.request("vscode/stopBackgroundWork" as never, { chat: channel, id } as never) as { stopped?: unknown };
+  return jsonResponse({ stopped: answer?.stopped === true });
 }
 
 async function writeDraft(call: Call): Promise<Response> {

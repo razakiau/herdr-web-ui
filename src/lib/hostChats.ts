@@ -5,6 +5,7 @@
  * `host-chat-changed`) that App.tsx hands to noteHostChatMessage refetch a PC's list, and so do the
  * page coming back on screen and the app's event stream reopening (onHostChatResume).
  */
+import type { ReferenceState } from "./artifacts.ts";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import type { Machine, MachineEvent } from "../../shared/machines.ts";
@@ -329,6 +330,18 @@ export async function sendHost(machineId: string, body: Omit<HostSend, "id">, la
 /** Stops the chat's running turn (a chat with none is left be). */
 export async function stopHost(machineId: string, session: string): Promise<void> {
   await post(machineId, "host-chats/chat/stop", { session });
+}
+
+/** VS Code's Stop on a background shell the host marks stoppable. */
+export async function stopHostBackground(machineId: string, session: string, id: string): Promise<void> {
+  await post(machineId, "host-chats/chat/background/stop", { session, id });
+}
+
+/** Each PR and issue link's state, as this server reads it (GET /api/references/state). */
+export async function fetchReferenceStates(urls: readonly string[], signal?: AbortSignal): Promise<Record<string, ReferenceState>> {
+  const query = new URLSearchParams(urls.map((url) => ["url", url])).toString();
+  const answer = await getJson<{ states: Record<string, { state: ReferenceState }> }>(`/api/references/state?${query}`, { signal });
+  return Object.fromEntries(Object.entries(answer.states).map(([url, each]) => [url, each.state]));
 }
 
 /** Try Again: resumes the chat's latest turn from the error it stopped at. */

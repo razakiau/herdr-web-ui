@@ -1213,6 +1213,19 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
   });
 
+  it("background/stop sends VS Code's stop for a stoppable shell, and refuses work that is not or is gone", async () => {
+    const shell = (id: string, stoppable: boolean) => ({ kind: "shell", id, label: "FICTIONAL server", command: "npm run dev", startedAt: AT, ...(stoppable ? { _meta: { "vscode.stopBackgroundWork": true } } : {}) });
+    const r = await busy({ backgroundWork: [shell("shell:1", true), shell("shell:2", false)] });
+    expect(await call(r, "/api/host-chats/chat/background/stop", { session: sessionUri(1), id: "shell:1" })).toEqual({ status: 200, json: { stopped: true } });
+    expect(r.fake.requests.filter((each) => each.method === "vscode/stopBackgroundWork").map((each) => each.params)).toEqual([{ chat: chatUri(1), id: "shell:1" }]);
+    for (const id of ["shell:2", "shell:9"]) {
+      const refused = await call(r, "/api/host-chats/chat/background/stop", { session: sessionUri(1), id });
+      expect({ id, status: refused.status, code: refused.json.error.code }).toEqual({ id, status: 409, code: "not_stoppable" });
+    }
+    const bare = await call(r, "/api/host-chats/chat/background/stop", { session: sessionUri(1) });
+    expect({ status: bare.status, code: bare.json.error.code }).toEqual({ status: 400, code: "missing_id" });
+  });
+
   it("a read lists the session's / commands: its enabled skills, prompts and agents", async () => {
     const r = await rig();
     const read = await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
@@ -1512,6 +1525,29 @@ describe("host chat checkpoints: Restore Checkpoint, Start Over and Redo (VS Cod
   const files = { [ref("a@0")]: "a0", [ref("a@1")]: "a1", [ref("a@2")]: "a2", [ref("b@1")]: "b1", [A]: "a2", [B]: "b1" };
   const restoring = (overrides: Record<string, unknown> = {}) => rig({ files, chats: { [chatUri(1)]: chatState(1, { turns, ...overrides }), [chatUri(2)]: chatState(2) } });
   const read = async (r: Rig) => (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
+
+  it("an edit's diff is its two sides as the host kept them, by the ref its part names", async () => {
+    const r = await restoring();
+    const diff = (ref: string) => call(r, `/api/host-chats/edit-diff?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(ref)}`);
+    const parts = (await read(r)).turns.flatMap((each) => each.parts).flatMap((part) => part.kind === "tool" ? part.edits ?? [] : []);
+    expect(parts.map((edit) => [edit.ref, edit.kind])).toEqual([["t1-call:0", "edit"], ["t2-call:0", "edit"], ["t2-call:1", "create"]]);
+    // the second turn's edit of a: what the file was after the first turn, and after this call
+    expect(await diff("t2-call:0")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: "a1", after: "a2" } });
+    expect(await diff("t2-call:1")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/b.ts", kind: "create", before: null, after: "b1" } });
+    for (const ref of ["t2-call:2", "t9-call:0", "t2-call", "t2-call:01"]) {
+      const answer = await diff(ref);
+      expect({ ref, status: answer.status, code: answer.json.error.code }).toEqual({ ref, status: 404, code: "not_found" });
+    }
+  });
+
+  it("an edit side the host no longer holds, or that is not text, says so instead of failing the diff", async () => {
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe]).toString("latin1");
+    const r = await rig({ files: { ...files, [ref("a@1")]: binary }, chats: { [chatUri(1)]: chatState(1, { turns }), [chatUri(2)]: chatState(2) } });
+    r.fake.files.delete(ref("a@0"));
+    const diff = (key: string) => call(r, `/api/host-chats/edit-diff?session=${encodeURIComponent(sessionUri(1))}&ref=${encodeURIComponent(key)}`);
+    expect(await diff("t1-call:0")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: null, after: null, unavailable: true } });
+    expect(await diff("t2-call:0")).toEqual({ status: 200, json: { path: "/tmp/fictional-repo/a.ts", kind: "edit", before: null, after: null, binary: true } });
+  });
 
   it("a read names each turn's checkpoint and the files its edits touched", async () => {
     const r = await restoring();
