@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Folder, FolderOpen, GitBranch, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, GitBranch, RefreshCw } from "lucide-react";
 
 import "./RepoChanges.css";
 import { FileGlyph } from "./FileGlyph.tsx";
@@ -94,7 +94,7 @@ export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps)
       return <li key={`folder:${entry.path}`}>
         <button type="button" className="repo-change-folder" style={indent} aria-expanded={open} onClick={() => toggle(entry.path)}>
           <span className="repo-change-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
-          {open ? <FolderOpen className="repo-change-glyph" aria-hidden="true" /> : <Folder className="repo-change-glyph" aria-hidden="true" />}
+          <FileGlyph name={entry.name} kind="directory" open={open} className="repo-change-glyph" />
           <span className="repo-change-folder-name">{entry.name}</span>
           <span className="repo-change-folder-count" aria-hidden="true">{entry.files.toLocaleString(locale)}</span>
         </button>
