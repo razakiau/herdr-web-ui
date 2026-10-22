@@ -572,17 +572,7 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
 .session-pill-icon { flex: none; width: 1.05em; height: 1.05em; color: var(--text-dim); }
 .session-pill.is-running .session-pill-icon { color: var(--status-working); }
 /* VS Code's charts.green / purple / red / orange and descriptionForeground, in this theme's tokens */
-/*
- * PR and issue states in GitHub's own colours (Primer's open/done/closed/attention fg), not the
- * palette's: a palette's "number" or "keyword" colour is amber or brown in several themes, and a
- * merged PR then read orange (owner, 2026-10-22). Light themes take Primer's light values.
- */
-.session-pills, .session-sheet {
-  --gh-open: #3fb950; --gh-done: #ab7df8; --gh-closed: #f85149; --gh-attention: #d29922;
-}
-[data-theme="light"] .session-pills, [data-theme="light"] .session-sheet {
-  --gh-open: #1a7f37; --gh-done: #8250df; --gh-closed: #cf222e; --gh-attention: #9a6700;
-}
+/* PR and issue states in GitHub's own colours (tokens in styles.css: --gh-*) */
 .session-pill-icon[data-tone="green"] { color: var(--gh-open); }
 .session-pill-icon[data-tone="purple"] { color: var(--gh-done); }
 .session-pill-icon[data-tone="red"] { color: var(--gh-closed); }

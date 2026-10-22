@@ -47,4 +47,12 @@ describe("workOf (AHP backgroundWork)", () => {
     ]);
     expect(workOf(undefined)).toEqual([]);
   });
+
+  it("names a subagent's tool call, the key its transcript row has: the host's work URI (ahp-chat://subagent/<session>/<call>) is not the row's resource", () => {
+    // VS Code 1.142's host: work chat = br(session, toolCallId), the row's resource = kp(session, toolCallId)
+    const chat = `ahp-chat://subagent/${Buffer.from("copilotcli:/FICTIONAL").toString("base64url")}/${encodeURIComponent("toolu_FICTIONAL/1")}`;
+    expect(workOf([{ kind: "subagent", id: "subagent:9", label: "explore", startedAt: AT, chat }])).toEqual([
+      { id: "subagent:9", kind: "subagent", label: "explore", started: AT, stoppable: false, chat, toolCall: "toolu_FICTIONAL/1" },
+    ]);
+  });
 });
