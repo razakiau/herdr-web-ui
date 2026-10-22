@@ -649,7 +649,7 @@
 }
 
 .composer-send-progress {
-  animation: composer-send-spin var(--dur-spin) steps(8) infinite;
+  animation: composer-send-spin var(--dur-spin) var(--ease-spin) infinite;
 }
 
 @keyframes composer-send-spin {

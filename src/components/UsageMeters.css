@@ -152,7 +152,7 @@
 }
 
 .usage-popover-head .icon-button svg.is-spinning {
-  animation: usage-spin 0.8s steps(8) infinite;
+  animation: usage-spin 0.8s var(--ease-spin) infinite;
 }
 
 @keyframes usage-spin {

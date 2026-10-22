@@ -518,7 +518,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
    steps, so it reads as alive at a glance without tugging at the eye, and the browser draws only
    those steps. Every dot shares one phase (alignBreath), so several runs breathe together. */
 .sidebar-status[data-status="working"] .sidebar-status-dot {
-  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
+  animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite;
 }
 
 .sidebar-status[data-status="waiting"] .sidebar-status-dot {
@@ -558,7 +558,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 .sidebar-status[data-status="done"] .sidebar-status-glyph { color: var(--indicator-done); }
 
 .sidebar-status[data-status="working"] .sidebar-status-glyph {
-  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
+  animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite;
 }
 
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }

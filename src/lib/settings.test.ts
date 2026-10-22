@@ -120,6 +120,27 @@ describe("saved theme migration", () => {
   });
 });
 
+it("steps endless animations until this account turns smooth motion on", () => {
+  expect(DEFAULT_SETTINGS.smoothMotion).toBe(false);
+  expect(sanitizeSettings({ smoothMotion: "yes" }).smoothMotion).toBe(false);
+  expect(sanitizeSettings({ smoothMotion: true }).smoothMotion).toBe(true);
+  expect(SETTING_SCOPE.smoothMotion).toBe("shared");
+  const root = { lang: "", dataset: {} as Record<string, string>, style: { colorScheme: "", setProperty() {}, removeProperty() {} } };
+  const before = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: root, querySelector: () => null } });
+  try {
+    const smooth = sanitizeSettings({ smoothMotion: true });
+    applyToDocument(smooth, themeFor(smooth, "dark"), "en");
+    expect(root.dataset["motion"]).toBe("smooth");
+    const stepped = sanitizeSettings({});
+    applyToDocument(stepped, themeFor(stepped, "dark"), "en");
+    expect(root.dataset["motion"]).toBe("stepped");
+  } finally {
+    if (before) Object.defineProperty(globalThis, "document", before);
+    else delete (globalThis as { document?: unknown }).document;
+  }
+});
+
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
   expect(sanitizeSettings({}).releasePaneAway).toBe(false);

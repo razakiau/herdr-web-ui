@@ -794,7 +794,7 @@
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: work-shimmer 2s steps(10, jump-none) infinite;
+  animation: work-shimmer 2s var(--ease-shimmer) infinite;
 }
 
 @keyframes work-shimmer {
@@ -1835,7 +1835,7 @@ button.subagent-row-head { cursor: pointer; }
   color: var(--text-dim);
 }
 .subagent-row.is-failed .subagent-row-icon { color: var(--status-blocked); }
-.subagent-row-icon.is-spinning { animation: subagent-spin var(--dur-spin) steps(8) infinite; }
+.subagent-row-icon.is-spinning { animation: subagent-spin var(--dur-spin) var(--ease-spin) infinite; }
 @keyframes subagent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .subagent-row-icon.is-spinning { animation: none; } }
 .subagent-row-main {

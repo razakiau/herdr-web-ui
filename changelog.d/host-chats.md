@@ -10,6 +10,10 @@
   what the chat waits on with its context window.
 - The PC groups fold from three PCs: the ones not in use go under "Other PCs", and one with a chat
   or agent that needs you stays open.
+- A picture attached to a question's typed answer shows under Answered as a thumbnail that opens
+  in the viewer, instead of its file path.
+- Settings > Appearance > Smooth animations (off by default, synced): spinners, working dots and
+  the "Working" shimmer move every frame instead of in steps.
 
 ### Fixed
 

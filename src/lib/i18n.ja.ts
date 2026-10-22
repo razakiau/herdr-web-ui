@@ -961,6 +961,8 @@ export const JA: Record<string, string> = {
   "Alerts": "通知",
   "Needs you": "応答が必要",
   "Keep screen on": "画面をオンのままにする",
+  "Smooth animations": "滑らかなアニメーション",
+  "Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.": "スピナーや作業中のドットを毎フレーム描画します。エージェントの作業中、横で再生している動画がカクつくことがあります。",
   "While a terminal or chat pane is open.": "ターミナルやチャットのペインを開いている間、画面をオンに保ちます。",
   "Needs HTTPS or localhost.": "HTTPS または localhost が必要です。",
   "This browser can't keep the screen on.": "このブラウザーでは画面をオンに保てません。",

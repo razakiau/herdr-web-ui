@@ -313,6 +313,9 @@ function AppearancePage() {
       <SettingsRow label={t("Density")}>
         <Segmented label={t("Density")} value={settings.density} onChange={(density) => update({ density })} options={[{ value: "comfortable", label: t("Comfortable") }, { value: "compact", label: t("Compact") }]} />
       </SettingsRow>
+      <SettingsRow label={t("Smooth animations")} description={t("Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.")}>
+        <Toggle label={t("Smooth animations")} checked={settings.smoothMotion} onChange={(smoothMotion) => update({ smoothMotion })} />
+      </SettingsRow>
       <SettingsRow label={t("Language")} description={t("Follows the browser unless you choose one")} htmlFor="settings-language">
         <select id="settings-language" className="select settings-select" value={settings.language} onChange={(event) => update({ language: event.target.value as typeof settings.language })}>
           {LANGUAGE_SETTINGS.map((language) => <option key={language} value={language}>{language === "system" ? t("System") : LANGUAGE_NAMES[language]}</option>)}

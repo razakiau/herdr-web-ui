@@ -1908,6 +1908,28 @@ try {
         assert.ok(!new URL(six.url()).searchParams.has("chat"), "the chat leaves the address once open");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a host chat's alert link opens the chat on its PC");
+        // Settings > Appearance > Smooth animations: off, every endless easing steps; on, the same
+        // animations run smooth, read from the computed style of real elements
+        const easing = () => six.evaluate(() => {
+          const probe = document.createElement("span");
+          probe.style.animation = "x 1s var(--ease-spin) infinite, y 1s var(--ease-pulse) infinite, z 1s var(--ease-breathe) infinite, w 1s var(--ease-shimmer) infinite";
+          document.body.append(probe);
+          const value = getComputedStyle(probe).animationTimingFunction;
+          probe.remove();
+          return { motion: document.documentElement.dataset["motion"], value };
+        });
+        const stepped = await easing();
+        assert.equal(stepped.motion, "stepped", "motion is stepped by default");
+        assert.ok(stepped.value.split(/,\s*(?![^()]*\))/).every((part) => part.startsWith("steps(")), `every endless easing steps by default (${stepped.value})`);
+        await six.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await six.getByRole("button", { name: "Settings", exact: true }).click();
+        await six.locator('[data-settings-page="appearance"]').click();
+        await six.getByRole("switch", { name: "Smooth animations", exact: true }).click();
+        const smooth = await easing();
+        assert.equal(smooth.motion, "smooth", "the switch sets data-motion=smooth");
+        assert.ok(smooth.value.split(/,\s*(?![^()]*\))/).every((part) => !part.startsWith("steps(")), `every endless easing runs smooth once on (${smooth.value})`);
+        await fits("the Appearance settings");
+        console.log("PASS Smooth animations turns every endless easing from steps to smooth");
       } finally { await sixContext.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }

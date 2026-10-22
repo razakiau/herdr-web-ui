@@ -959,6 +959,8 @@ export const KO: Record<string, string> = {
   "Alerts": "알림",
   "Needs you": "내 응답 필요",
   "Keep screen on": "화면 켜짐 유지",
+  "Smooth animations": "부드러운 애니메이션",
+  "Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.": "스피너와 작업 중 점을 매 프레임 그립니다. 에이전트가 작업하는 동안 옆에서 재생 중인 동영상이 끊길 수 있습니다.",
   "While a terminal or chat pane is open.": "터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다.",
   "Needs HTTPS or localhost.": "HTTPS 또는 localhost가 필요합니다.",
   "This browser can't keep the screen on.": "이 브라우저는 화면을 켜 둘 수 없습니다.",
