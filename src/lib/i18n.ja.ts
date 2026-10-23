@@ -1454,6 +1454,8 @@ export const JA: Record<string, string> = {
   "Older": "それ以前",
   "Other PCs": "その他の PC",
   "Other PCs ({n})": "その他の PC ({n})",
+  "Move {name} to Other PCs": "{name} をその他の PC に移動",
+  "Move to Other PCs": "その他の PC に移動",
   "Search agents": "エージェントを検索",
   "{n} asking": "{n} 件が回答待ち",
   "{n} days ago": "{n} 日前",

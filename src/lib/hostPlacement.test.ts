@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { Machine } from "../../shared/machines.ts";
-import { agentsListHostChats, foldPcs, placeHostChats } from "./hostPlacement.ts";
+import { agentsListHostChats, foldPcs, keepPc, keptPcs, placeHostChats, unkeepPc } from "./hostPlacement.ts";
 import type { PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -109,6 +109,21 @@ describe("foldPcs", () => {
     const needs = foldPcs(six, "c", (id) => id === "e");
     expect(ids(needs.open)).toEqual(["c", "e"]);
     expect(ids(needs.folded)).toEqual(["a", "b", "d", "f"]);
+  });
+
+  it("kept PCs stay open alongside the current one, in roster order", () => {
+    const six = ["a", "b", "c", "d", "e", "f"].map(pc);
+    const kept = new Set(["e", "b"]);
+    const fold = foldPcs(six, "d", (id) => kept.has(id));
+    expect(fold.open.map((machine) => machine.id)).toEqual(["b", "d", "e"]);
+  });
+
+  it("keepPc adds once, unkeepPc removes, and a missing PC is dropped", () => {
+    expect(keepPc([], "a")).toEqual(["a"]);
+    expect(keepPc(["a"], "a")).toEqual(["a"]);
+    expect(keepPc(["a"], "b")).toEqual(["a", "b"]);
+    expect(unkeepPc(["a", "b"], "a")).toEqual(["b"]);
+    expect(keptPcs(["a", "gone", "b"], ["a", "b", "c"])).toEqual(["a", "b"]);
   });
 
   it("with no current PC the first one is open", () => {

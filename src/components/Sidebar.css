@@ -127,7 +127,10 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* at the rows' start, as every other head in the sidebar: a centred caption was the one head
+     that broke the sidebar's left edge (desktop audit, 2026-10-23) */
+  justify-content: flex-start;
+  padding-inline-start: var(--space-2);
   /* half the caption's height above the card's edge, half below it */
   margin: var(--space-1) 0 calc(var(--fs-2xs) * var(--lh-tight) / -2);
   color: var(--text-dim);
@@ -608,8 +611,8 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   padding: var(--space-2) var(--side-gutter) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
 }
 
-/* Keep the footer at the bottom when both lists are short after the upper section folds. */
-.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .sidebar-footer {
+/* The footer stays at the bottom when both lists are short: the spare height is above it */
+.sidebar-footer {
   margin-top: auto;
 }
 

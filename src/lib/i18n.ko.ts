@@ -1452,6 +1452,8 @@ export const KO: Record<string, string> = {
   "Older": "이전",
   "Other PCs": "다른 PC",
   "Other PCs ({n})": "다른 PC ({n})",
+  "Move {name} to Other PCs": "{name}을(를) 다른 PC로 이동",
+  "Move to Other PCs": "다른 PC로 이동",
   "Search agents": "에이전트 검색",
   "{n} asking": "{n}개 응답 대기",
   "{n} days ago": "{n}일 전",

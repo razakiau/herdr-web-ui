@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, FoldVertical, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -12,7 +12,7 @@ import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
 import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
 import { basename, type HostPc } from "../lib/hostChats.ts";
 import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
-import { foldPcs, pcPlacement, samePath } from "../lib/hostPlacement.ts";
+import { foldPcs, keepPc, keptPcs, pcPlacement, samePath, unkeepPc } from "../lib/hostPlacement.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
 import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
@@ -105,20 +105,38 @@ export function MachineSidebar(props: Props) {
   const [ownAllOn, setOwnAllOn] = useState<AllAgentsOn | null>(null);
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
-  // a PC picked from "Other PCs": a full group until another one is picked
-  const [picked, setPicked] = useState<string | null>(null);
-  useEffect(() => { setPicked(null); }, [props.selectedMachineId]);
-  // with three PCs or more, the ones not in use fold (lib/hostPlacement.ts foldPcs): the current PC,
-  // the one picked from the fold, and every PC with a question or an approval waiting stay open
-  const { open: openPcs, folded } = foldPcs(props.machines, props.selectedMachineId,
-    (id) => id === picked || pcActivity(props.machines.find((machine) => machine.id === id)!, hostChats.get(id), activity).asking > 0);
+  // the PCs kept open on this device (lib/hostPlacement.ts keepPc): picked from "Other PCs", worked
+  // on or that asked, each stays a full group until it is put back from its header
+  const [kept, setKept] = useState<string[]>(storedKept);
+  const saveKept = (next: string[]): void => {
+    setKept(next);
+    try { localStorage.setItem(KEPT_KEY, JSON.stringify(next)); } catch { /* storage denied: they last for the page */ }
+  };
+  const asking = (id: string): boolean => pcActivity(props.machines.find((machine) => machine.id === id)!, hostChats.get(id), activity).asking > 0;
+  const askingIds = props.machines.filter((machine) => asking(machine.id)).map((machine) => machine.id).join(" ");
+  // the PC in use and one that asked join the kept ones, so answering or moving on folds neither
+  useEffect(() => {
+    let next = kept;
+    if (props.selectedMachineId !== null && props.machines.some((machine) => machine.id === props.selectedMachineId)) next = keepPc(next, props.selectedMachineId);
+    for (const id of askingIds ? askingIds.split(" ") : []) next = keepPc(next, id);
+    if (next.length !== kept.length) saveKept(next);
+  }, [props.selectedMachineId, askingIds, props.machines.length]);
+  const keptHere = keptPcs(kept, props.machines.map((machine) => machine.id));
+  // with three PCs or more, the others fold (foldPcs): the current PC, the kept ones and every PC
+  // with a question or an approval waiting stay open
+  const { open: openPcs, folded } = foldPcs(props.machines, props.selectedMachineId, (id) => keptHere.includes(id) || asking(id));
+  // foldPcs folds nothing with one or two PCs: there is nowhere to put one back to
+  const foldable = props.machines.length > 2;
+  const putBack = (id: string): void => saveKept(unkeepPc(kept, id));
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
   const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
   return <SidebarActivityProvider value={activity}><div className="sidebar-shell">
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })} />)}
-      {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={setPicked} />}
+      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
+        // the PC in use, and one that asks, have nothing to put back: they stay open whatever is kept
+        onPutBack={foldable && machine.id !== props.selectedMachineId && !asking(machine.id) ? () => putBack(machine.id) : undefined} />)}
+      {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveKept(keepPc(kept, id))} />}
       <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect}
@@ -141,7 +159,17 @@ export function MachineSidebar(props: Props) {
   </div></SidebarActivityProvider>;
 }
 
-function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void }) {
+const KEPT_KEY = "herdr-web-ui:pcs-kept-open";
+
+function storedKept(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(KEPT_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
+  } catch { return []; }
+}
+
+/** `onPutBack`: folds the PC into "Other PCs" again; absent where it would stay open anyway */
+function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutBack, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void; onPutBack?: (() => void) | undefined }) {
   const t = useT();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
@@ -206,6 +234,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, ...pro
         <span className={`machine-dot is-${machine.action_required === "setup" ? "setup" : machine.state}`} title={machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state])} aria-hidden="true" />
       </div>
       {machine.kind === "ssh" && <button className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}
+      {onPutBack && <button className="sidebar-row-action machine-put-back" aria-label={t("Move {name} to Other PCs", { name: machine.name })} title={t("Move to Other PCs")} onClick={onPutBack}><FoldVertical aria-hidden="true" /></button>}
       {/* the fold over this PC's workspaces sits beside the + */}
       <button className="sidebar-row-action machine-toggle" aria-expanded={!collapsed} aria-label={collapsed ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} title={collapsed ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>{collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
       <button className="sidebar-row-action machine-new" disabled={!online} aria-label={t("New workspace on {name}", { name: machine.name })} title={t("New workspace")} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
