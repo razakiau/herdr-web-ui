@@ -2091,6 +2091,21 @@ try {
         // a PC picked from the fold opens as a full group
         await six.getByRole("region", { name: "Other PCs", exact: true }).locator('.other-pcs-item[data-machine="pc-c"] .other-pcs-row').click();
         await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).waitFor();
+        // a PC opened stays open until it is put back (the owner, 2026-10-23: picking another PC, or
+        // working on one, folded the last back into the list, and it had to be found again there)
+        await six.getByRole("region", { name: "Other PCs", exact: true }).locator('.other-pcs-item[data-machine="pc-d"] .other-pcs-row').click();
+        await six.getByRole("region", { name: "PC FICTIONAL PC D", exact: true }).waitFor();
+        assert.equal(await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).count(), 1, "picking a second PC keeps the first open");
+        await six.reload();
+        await six.locator(".conn-live").waitFor({ state: "attached" });
+        await six.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await six.getByRole("region", { name: "PC FICTIONAL PC D", exact: true }).waitFor();
+        assert.equal(await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).count(), 1, "and both stay open on this device after a reload");
+        // put back from its header, it folds into Other PCs again
+        await six.getByRole("button", { name: "Move FICTIONAL PC C to Other PCs", exact: true }).click();
+        await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).waitFor({ state: "detached" });
+        assert.equal(await six.getByRole("region", { name: "Other PCs", exact: true }).locator('.other-pcs-item[data-machine="pc-c"]').count(), 1, "it is a row of the fold again");
+        assert.equal(await six.getByRole("button", { name: "Move Laptop to Other PCs", exact: true }).count(), 0, "the PC in use has no put-back: it is always open");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS six PCs: Other PCs folds the ones not in use, the one that needs you stays open, and the fold is remembered");
         console.log("PASS a host chat that asks drops in as an in-app alert");
