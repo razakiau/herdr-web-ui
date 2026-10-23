@@ -311,7 +311,7 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
     agent: subagent.agentName ?? subagent.title,
     // the call's intent ("Fix the login bug"), as VS Code's row reads; the host's is the agent's own blurb
     description: intent ?? subagent.description ?? "",
-    ...(intent !== null && subagent.description ? { about: subagent.description } : {}),
+    ...(intent !== null && subagent.description && subagent.description.trim() !== intent ? { about: subagent.description } : {}),
     ...(background || (status === "running" && settled(tool)) ? { background: true as const } : {}),
     model: ownModel !== undefined && shownModel(ownModel, turn.model) ? turn.context!.modelName(ownModel) : null,
     started,
