@@ -769,11 +769,14 @@ try {
         assert.ok(rows.below && rows.weight >= 600, `title bold over its description: ${JSON.stringify(rows)}`);
         if (shots) { await card.scrollIntoViewIfNeeded(); await card.screenshot({ path: join(shots, "r4-askcard-390.png") }); }
         assert.equal(await card.getByRole("textbox").getAttribute("placeholder"), "Other…", "the typed-answer field is the Other… slot");
-        // the status row says what the chat waits on, VS Code's words, and ends with its context meter
+        // the status line says what the chat waits on, VS Code's words; on a phone it ends with the
+        // context meter (a wide window has it by Send: the wide pass below)
         assert.equal((await view.locator(".host-chat-status-line").textContent())?.trim(), "Waiting for your response", "an open question: Waiting for your response");
-        assert.equal((await view.locator(".host-chat-meter-label").textContent())?.trim(), "42% · 84K / 200K", "the meter reads copilot.usageInfo");
-        assert.equal(await view.locator(".host-chat-meter").getAttribute("title"), "Context window: 42% · 84K / 200K");
-        assert.equal((await view.locator(".host-chat-meter-short").innerText()).trim(), "42%", "a phone shows the percent, the counts in its title and sheet");
+        const meter = view.locator('.host-chat-status .host-chat-meter[data-place="status"]');
+        assert.equal(await meter.isVisible(), true, "a phone shows the status line's meter");
+        assert.equal(await view.locator('.host-chat-meter[data-place="toolbar"]').isVisible(), false, "and not the toolbar's");
+        assert.equal((await meter.locator(".host-chat-meter-label").textContent())?.trim(), "42%", "the meter shows the percent of copilot.usageInfo");
+        assert.equal(await meter.getAttribute("title"), "Context window: 42% · 84K / 200K", "the counts are in its title");
         await fits("the card");
         // the card opens to a full-height sheet: the question scrolls, the answer field stays in view,
         // and collapsing keeps the typed text
@@ -1111,7 +1114,7 @@ try {
         assert.deepEqual(shimmer, { clip: "text", name: "work-shimmer", image: true }, "the live title shimmers");
         if (shots) await page.screenshot({ path: join(shots, "r4-working-390.png") });
         assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");
-        await view.locator(".host-chat-meter").click();
+        await view.locator('.host-chat-meter[data-place="status"]').click();
         const contextSheet = page.getByRole("dialog", { name: "Context window" });
         await contextSheet.waitFor();
         assert.deepEqual((await contextSheet.locator("dt").allInnerTexts()).map((text) => text.trim()), ["Conversation", "System", "Tool definitions", "Used"], "the breakdown the host sent");
@@ -1185,6 +1188,11 @@ try {
         // a subagent and a shell are their own pills, as VS Code's Subagents and Background Shells
         await sessionPillRow.getByRole("button", { name: "1 shell" }).waitFor();
         assert.equal(await sessionPillRow.getByRole("button", { name: "1 subagent" }).count(), 1, "the subagent has its own pill");
+        // the pills count the running work: the status line does not say it a second time
+        await page.evaluate(() => { const host = window as unknown as { hostState: { background: unknown }; pushHostTurn(text: string): void }; host.hostState.background = { subagents: 1, commands: 1 }; host.pushHostTurn("FICTIONAL still going"); });
+        await view.locator(".chat-turn", { hasText: "FICTIONAL still going" }).last().waitFor();
+        assert.equal(await view.locator(".host-chat-status-line", { hasText: /running/ }).count(), 0, "no \"… running\" line under pills that say it");
+        await page.evaluate(() => { (window as unknown as { hostState: { background: unknown } }).hostState.background = { subagents: 0, commands: 0 }; });
         await sessionPillRow.getByRole("button", { name: "1 shell" }).click();
         const workSheet = page.getByRole("dialog", { name: "Shells" });
         await workSheet.waitFor();
@@ -2145,6 +2153,42 @@ try {
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a PC with no panes opens its first agent host workspace's chat");
       } finally { await bareContext.close(); }
+      // a wide window (desktop audit, 2026-10-23): what sits between the transcript and the composer
+      // stands on the chat's column, the meter is by Send, and the turn rail sits beside the column
+      const wideContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+      try {
+        await wideContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await wideContext.addInitScript((session) => {
+          if (localStorage.getItem("herdr-web-ui:host-workspaces") === null) localStorage.setItem("herdr-web-ui:host-workspaces", JSON.stringify({ remote: { open: [{ cwd: "/tmp/fictional-repo", tabs: [session] }] } }));
+        }, SESSION);
+        const wide = await wideContext.newPage();
+        const errors: string[] = [];
+        wide.on("pageerror", (error) => errors.push(error.message));
+        await wide.goto(`http://127.0.0.1:${server.port}/`);
+        await wide.locator(".conn-live").waitFor({ state: "attached" });
+        await wide.locator(`.agents-sidebar .host-chat-item`).first().click();
+        const chat = wide.locator(".host-chat[data-host-session]");
+        await chat.locator(".composer-surface").waitFor();
+        await wide.evaluate(() => {
+          const host = window as unknown as { hostState: { work: unknown[] }; pushHostTurn(text: string): void };
+          host.hostState.work = [{ id: "subagent:9", kind: "subagent", label: "FICTIONAL explore", started: "2026-10-22T10:00:00.000Z", stoppable: false }];
+          host.pushHostTurn("FICTIONAL wide turn");
+        });
+        await chat.locator(".session-pill").first().waitFor();
+        const edges = await chat.evaluate((node) => {
+          const left = (selector: string) => { const box = node.querySelector(selector)?.getBoundingClientRect(); return box ? Math.round(box.left) : null; };
+          const toolbar = node.querySelector<HTMLElement>('.composer-controls-right .host-chat-meter[data-place="toolbar"]');
+          const status = node.querySelector<HTMLElement>('.host-chat-meter[data-place="status"]');
+          return { composer: left(".composer-surface"), pill: left(".session-pill"),
+            meter: toolbar !== null && toolbar.offsetParent !== null && toolbar.nextElementSibling?.classList.contains("composer-action") === true && (status === null || status.offsetParent === null) };
+        });
+        assert.notEqual(edges.composer, null);
+        assert.equal(edges.pill, edges.composer, `the first pill starts where the composer does (${JSON.stringify(edges)})`);
+        assert.equal(edges.meter, true, "the context meter is in the composer's toolbar");
+        if (shots) await wide.screenshot({ path: join(shots, "desktop-chat-1440.png") });
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS a wide window: pills on the chat's column, the meter by Send");
+      } finally { await wideContext.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }
 } finally { rmSync(app, { recursive: true, force: true }); }

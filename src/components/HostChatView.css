@@ -56,14 +56,8 @@
   outline-offset: -2px;
 }
 
-/* a hairline between two triggers, as VS Code's toolbar parts its pickers */
-.host-chat-pill + .host-chat-pill::before {
-  content: "";
-  width: var(--hairline);
-  height: var(--space-3);
-  margin-inline: calc(var(--space-2) * -1) var(--space-1);
-  background: var(--border-strong);
-}
+/* triggers are parted by their own padding and hover fill: hairlines between them read as three
+   unrelated groups beside the bare attach and mic buttons (desktop audit, 2026-10-23) */
 
 .host-chat-pill-label {
   font-weight: var(--fw-medium);
@@ -79,9 +73,11 @@
   font-family: var(--font-mono);
 }
 
-/* Assisted and Allow all are named, in the notice's color: approvals no longer stop for you */
+/* Assisted and Allow all are named in the label's own colour; the shield before them carries the
+   notice colour alone. Words and shield both tinted made the row's loudest part a setting rather
+   than the message (desktop audit, 2026-10-23) */
 .host-chat-pill-aside.is-raised {
-  color: var(--notice);
+  color: var(--text);
 }
 
 .host-chat-pill-icon {
@@ -417,10 +413,6 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   .host-chat-pill {
     padding: 0 var(--space-1);
   }
-
-  .host-chat-pill + .host-chat-pill::before {
-    margin-inline: calc(var(--space-1) * -1) var(--space-1);
-  }
 }
 
 /* narrower still (a 390 px phone once attach and the mic stand before them): the model's dim effort
@@ -431,14 +423,21 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   }
 }
 
-/* the chat's status row over its composer (HostChatStatus.tsx): what it waits on, VS Code's words,
-   and its context meter at the end, which opens the window's breakdown */
+/* The rows between the transcript and the composer (the pills, the status line, the bars) stand on
+   the chat's column (--chat-w), as the transcript, the question card and the composer do: their
+   start is the text's start. A pane narrower than the column keeps the gutter it had. */
+.host-chat {
+  --host-chat-gutter: max(var(--space-4), (100% - var(--chat-w)) / 2);
+}
+
+/* the chat's status line over its composer (HostChatStatus.tsx): what it waits on, VS Code's words.
+   Its context meter is the composer's, by Send */
 .host-chat-status {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  padding: 0 var(--space-4) var(--space-1);
+  padding: 0 var(--host-chat-gutter) var(--space-1);
   color: var(--text-dim);
   font-size: var(--fs-xs);
 }
@@ -455,8 +454,8 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: var(--space-2);
-  height: var(--chip-h);
+  gap: var(--space-1);
+  height: var(--control-h);
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-pill);
@@ -473,25 +472,34 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   color: var(--text);
 }
 
-.host-chat-meter-bar {
-  position: relative;
-  inline-size: 2.5rem;
-  block-size: 4px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--border);
+/* the composer's ring (Composer.css .composer-context) drawn as used, not as left: VS Code's meter */
+.host-chat-meter {
+  font-size: var(--fs-xs);
 }
 
-.host-chat-meter-bar > span {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  border-radius: inherit;
-  background: var(--text-dim);
+.host-chat-meter-ring {
+  flex: none;
+  width: 14px;
+  height: 14px;
 }
 
-.host-chat-meter.is-high .host-chat-meter-bar > span {
-  background: var(--notice, var(--status-blocked));
+.host-chat-meter-track,
+.host-chat-meter-used {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.host-chat-meter-track {
+  stroke: var(--border-strong);
+}
+
+.host-chat-meter-used {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+.host-chat-meter.is-high {
+  color: var(--notice, var(--status-blocked));
 }
 
 .host-context-sheet {
@@ -530,22 +538,41 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   border-top: var(--hairline) solid var(--border);
 }
 
-.host-chat-meter-short {
+@media (max-width: 480px) {
+  .host-chat {
+    --host-chat-gutter: var(--space-3);
+  }
+
+}
+
+/* one meter is shown (HostChatStatus.tsx): by Send with room, at the status line's end on a phone,
+   whose toolbar has none to spare (the model's name was cut at 390 px) */
+.host-chat-meter[data-place="status"] {
+  display: none;
+  height: var(--chip-h);
+}
+
+.host-chat-status.is-meter-only {
   display: none;
 }
 
 @media (max-width: 480px) {
-  .host-chat-status {
-    padding-inline: var(--space-3);
-  }
-
-  .host-chat-meter-label {
+  .host-chat-meter[data-place="toolbar"] {
     display: none;
   }
 
-  .host-chat-meter-short {
-    display: inline;
+  .host-chat-meter[data-place="status"] {
+    display: inline-flex;
   }
+
+  .host-chat-status.is-meter-only {
+    display: flex;
+  }
+}
+
+/* a bar over the composer (not open in its workspace, forking, restored) on the same column */
+.host-chat > .checkpoint-bar {
+  margin-inline: var(--host-chat-gutter);
 }
 
 /* the session's pills above the composer (VS Code's agent-host input pills): PRs and issues in
@@ -554,7 +581,7 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   display: flex;
   gap: var(--space-1);
   min-width: 0;
-  padding: 0 var(--space-4) var(--space-1);
+  padding: 0 var(--host-chat-gutter, var(--space-4)) var(--space-1);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -607,7 +634,7 @@ code.session-sheet-detail { font-family: var(--font-mono); }
 .session-sheet-stop { flex: none; }
 
 @media (max-width: 640px) {
-  .session-pills { padding-inline: var(--space-3); }
+  .host-chat { --host-chat-gutter: var(--space-3); }
 }
 
 /* ZAC-207: the Changes pill's lines, VS Code's green and red; a single entry's name stays short */

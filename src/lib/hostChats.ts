@@ -558,10 +558,12 @@ export function readsOnView(was: HostChatRow | undefined, now: HostChatRow | und
  * commands); null when none, and the app's own working word stands. A bridge from before these
  * fields sends none of them: nothing to say.
  */
-export function hostStatusLine(read: HostChatRead, t: Translate): string | null {
+export function hostStatusLine(read: HostChatRead, t: Translate, { workShown = false }: { workShown?: boolean } = {}): string | null {
   if (read.prompt?.kind === "question") return t("Waiting for your response");
   const confirmations = read.confirmations ?? 0;
   if (confirmations > 0) return confirmations === 1 ? t("1 confirmation pending") : t("{0} confirmations pending", { 0: confirmations });
+  // the session pills name the running work ("1 subagent", "2 shells"): the same count twice is noise
+  if (workShown) return null;
   const { subagents, commands } = read.background ?? { subagents: 0, commands: 0 };
   const agents = subagents === 1 ? t("1 subagent") : subagents > 1 ? t("{0} subagents", { 0: subagents }) : null;
   const shells = commands === 1 ? t("1 background command") : commands > 1 ? t("{0} background commands", { 0: commands }) : null;

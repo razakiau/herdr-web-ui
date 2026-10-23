@@ -139,6 +139,8 @@ export interface ComposerProps {
   hostMenus?: { slash(query: string): HostSlashItem[]; files(query: string): Promise<string[]> };
   /** drawn in the status pill's place: a host chat's model and agent pills, which press */
   pills?: ReactNode;
+  /** drawn before Send/Stop, as VS Code's input toolbar ends: a host chat's context meter */
+  toolbarEnd?: ReactNode;
 }
 
 /** A chip sent with a host chat's message: an uploaded file (its type and name), or an "@" pick (a path of the chat's folder). */
@@ -290,6 +292,7 @@ export function Composer({
   keywords,
   hostMenus,
   pills,
+  toolbarEnd,
   attachAsChips = false,
 }: ComposerProps) {
   const t = useT();
@@ -1458,6 +1461,7 @@ export function Composer({
           )}
         </div>
         <div className="composer-controls composer-controls-right">
+          {toolbarEnd}
           {!sendShown ? (
             <button
               type="button"

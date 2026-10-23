@@ -27,7 +27,7 @@ import {
 } from "../lib/hostChats.ts";
 import type { HostSendPick } from "../lib/compose.ts";
 import { Composer, type SentAttachment } from "./Composer.tsx";
-import { HostChatStatus } from "./HostChatStatus.tsx";
+import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import type { SubagentTarget } from "./SubagentRow.tsx";
 import { OpenFileContext } from "../lib/filePaths.ts";
@@ -336,8 +336,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     <HostSessionPills machineId={machineId} session={session} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />
-    <HostChatStatus read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
+    <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
+      toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} sendMenu={sendMenu}
       pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}

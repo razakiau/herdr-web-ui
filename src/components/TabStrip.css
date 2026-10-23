@@ -19,6 +19,39 @@
   display: none;
 }
 
+/* the edge with tabs out of view fades (TabStrip.tsx useStripOverflow); a mask, as the key bar's,
+   so it is the strip's own colours in every palette. A strip whose + is pinned at its end keeps
+   the + whole: its end fade stops short of it */
+.tab-strip {
+  --strip-fade: var(--space-8);
+  --strip-fade-start: 0px;
+  --strip-fade-end: 0px;
+}
+
+.tab-strip[data-overflow-start],
+.tab-strip[data-overflow-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    currentColor var(--strip-fade-start),
+    currentColor calc(100% - var(--strip-fade-end)),
+    transparent
+  );
+}
+
+.tab-strip[data-overflow-start] { --strip-fade-start: var(--strip-fade); }
+.tab-strip[data-overflow-end] { --strip-fade-end: var(--strip-fade); }
+.tab-strip[data-overflow-end]:has(> .tab-strip-add) {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    currentColor var(--strip-fade-start),
+    currentColor calc(100% - var(--control-h) - var(--strip-fade)),
+    transparent calc(100% - var(--control-h)),
+    currentColor calc(100% - var(--control-h))
+  );
+}
+
 /* a split view half's row: its tabs scroll, as wide as they are, and the end (App's grip and
    close) takes the rest of the row */
 .tab-strip-row {

@@ -26,6 +26,7 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
   const [fits, setFits] = useState(false);
   const [railPx, setRailPx] = useState(0);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
   const ticks = useRef<(HTMLButtonElement | null)[]>([]);
 
   useEffect(() => {
@@ -71,6 +72,9 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
   const slots = minimapSlots(count, railPx);
   const currentSlot = current === null ? null : minimapTurnSlot(current, slots, count);
   const stop = Math.min(focusIndex ?? currentSlot ?? slots - 1, slots - 1);
+  // the turn a pointer or the keyboard is on, named beside its tick
+  const previewSlot = hovered ?? focusIndex;
+  const previewTurn = previewSlot === null || previewSlot >= slots ? null : minimapSlotTarget(previewSlot, slots, count);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     const next = minimapStep(stop, slots, event.key);
     if (next === null) return;
@@ -84,6 +88,7 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
     style={{ height: `min(${(count - 1) * SPACING_PX}px, calc(100% - ${MARGIN_REM}rem))`, "--minimap-steps": slots - 1 } as CSSProperties}
     onKeyDown={onKeyDown}
     onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusIndex(null); }}
+    onPointerLeave={() => setHovered(null)}
     onWheel={(event) => scroller.current?.scrollBy({ top: event.deltaY })}
   >
     {Array.from({ length: slots }, (_, index) => {
@@ -98,10 +103,14 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
         tabIndex={index === stop ? 0 : -1}
         aria-label={t("Go to turn {n}", { n: turnIndex + 1 })}
         aria-current={index === currentSlot ? "true" : undefined}
-        title={turn.preview || undefined}
+        aria-description={turn.preview || undefined}
+        onPointerEnter={() => setHovered(index)}
         onFocus={() => setFocusIndex(index)}
         onClick={() => onJump(turn.row)}
       />;
     })}
+    {previewTurn !== null && turns[previewTurn]!.preview && <span className="chat-minimap-preview" aria-hidden="true" style={{ top: `${minimapTop(previewSlot!, slots)}%` }}>
+      <span className="chat-minimap-preview-n">{previewTurn + 1}</span>{turns[previewTurn]!.preview}
+    </span>}
   </nav>;
 }

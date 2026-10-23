@@ -2,7 +2,8 @@
    workspace list has the rest. Parted from it by space, not a rule. */
 .agents-sidebar {
   display: flex;
-  flex: 0 1 auto;
+  /* its rows' height up to the cap; the workspace list is the one that shrinks and scrolls */
+  flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
   max-height: 50%;
