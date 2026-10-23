@@ -83,6 +83,7 @@ import { hostChatsRoute } from "./agent-host/routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { withHostAgent } from "./agent-host/agents.ts";
 import { MachineRelay } from "./machine-relay.ts";
+import { handlePresenceRequest, PagePresence } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
 
@@ -365,6 +366,8 @@ export function createServer(
   const clients = new Set<Client>();
   /** connections whose page is in use (`presence`), relayed ones included: while any is, no web push goes out */
   const present = new Set<Client>();
+  /** pages in use that say so over HTTP (server/page-presence.ts): a page reading host chats has no WebSocket */
+  const pages = new PagePresence();
   type PendingLease = { attachment: PaneAttachment; pty: PtySession | MirrorSession; authority: object };
   const pendingAuthorities = new WeakMap<Client, Map<string, object>>();
   type PendingItem = PendingRecord<Client, PendingLease>;
@@ -647,7 +650,7 @@ export function createServer(
     });
   }
   const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
-  const { push, omo, gjc, claudeAgents, plans, clientSnapshot, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false });
+  const { push, omo, gjc, claudeAgents, plans, clientSnapshot, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false });
   const bridgeToken = randomBytes(32).toString("hex");
 
   function broadcast(paneId: string, message: ServerMessage): void {
@@ -1230,7 +1233,8 @@ export function createServer(
       // it. The endpoint it registers is https-only (server/push.ts), and that is the
       // protection: a watch device's subscription is delivered every status change anyway.
       // /api/push/test stays with a session that can drive only because it is a mutation.
-      const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe";
+      // A page saying it is on screen (/api/presence) only holds alerts back, so `watch` keeps it too.
+      const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe" || pathname === "/api/presence";
       // a repository's changes are file contents too: the patch of a credential file is that file
       const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname)
         // and a host chat edit's two sides: what the file held before and after the call
@@ -1326,6 +1330,8 @@ export function createServer(
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
+
+      if (pathname === "/api/presence") return handlePresenceRequest(request, pages);
 
       if (pathname === "/api/push" || pathname.startsWith("/api/push/")) {
         try {

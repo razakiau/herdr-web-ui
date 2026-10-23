@@ -561,6 +561,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/cliproxy/login" || path === "/api/cliproxy/callback") return error("demo", "Sign in from an installed server, not the public demo.", 409);
   if (path === "/api/push" || path.startsWith("/api/push/")) return error("push_unavailable", "the demo sends no alerts", 404);
+  // the demo sends no alerts, so a page in use has nothing to hold back
+  if (path === "/api/presence") return new Response(null, { status: 204 });
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   // the demo has no VS Code: its PCs answer as a bridge with the feature off, and draw no group
   // (scripts/host-chats-demo-regression.ts answers a remote PC's chats itself)

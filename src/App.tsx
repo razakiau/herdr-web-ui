@@ -48,6 +48,7 @@ import type { HostChatRow } from "../shared/host-chats.ts";
 import { LOCAL_MACHINE, paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
+import { reportPageInUse } from "./lib/presence.ts";
 import { setAgentRowTokens } from "./lib/agentRowTokens.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
 import { SnapshotRequests } from "./lib/snapshotRequests.ts";
@@ -686,6 +687,13 @@ export function App() {
     for (const event of events) window.addEventListener(event, unlock, true);
     return () => { for (const event of events) window.removeEventListener(event, unlock, true); };
   }, [settings.alertSound]);
+
+  // This page tells the server when it is in use, so ntfy and push stay quiet while the in-app
+  // alerts speak, a terminal open or not (lib/presence.ts reportPageInUse)
+  useEffect(() => {
+    if (locked !== false) return;
+    return reportPageInUse();
+  }, [locked]);
 
   // One SSE subscription watches every PC, even when no terminal is selected.
   useEffect(() => {

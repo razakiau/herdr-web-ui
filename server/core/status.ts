@@ -7,6 +7,7 @@ import type { AgentStatus, HerdrPane, PlanSummary, ServerMessage, SessionSnapsho
 import { alertStatus, paneTitle } from "../../shared/notify-policy.ts";
 import { BackgroundWait } from "../background-wait.ts";
 import { ntfyFromEnv, type NtfyConfig } from "../ntfy.ts";
+import type { PagePresence } from "../page-presence.ts";
 import { ClaudeSubagentStatus } from "../claude-subagents.ts";
 import { codexOpenRollout, paneCodexHome } from "../codex.ts";
 import { startStatusCollector } from "../collector.ts";
@@ -32,7 +33,7 @@ import { type Client, send } from "./connections.ts";
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Lease>({ options, devices, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown }: {
+export function createStatusHub<Lease>({ options, devices, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -49,6 +50,8 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
   devices: DeviceStore;
   clients: Set<Client>;
   present: Set<Client>;
+  /** pages in use that said so over HTTP (server/page-presence.ts) */
+  pages?: PagePresence;
   pending: PendingInputs<Client, Lease>;
   drainPending: (paneId: string) => void;
   holdPendingPane: (paneId: string, fault: { code: string; message: string }) => void;
@@ -65,7 +68,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     now: options.statusNow,
     loopbackHttp: options.pushLoopbackHttp === true,
     canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)),
-    inUse: () => present.size > 0,
+    inUse: () => present.size > 0 || pages?.inUse() === true,
     hostChatsShown,
     // the deployment's ntfy topic, if any (server/ntfy.ts); a test server passes its own or none
     ntfy: (options.ntfy === undefined ? ntfyFromEnv(process.env) : options.ntfy) ?? undefined,
