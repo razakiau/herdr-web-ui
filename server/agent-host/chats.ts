@@ -285,11 +285,22 @@ function activityOf(chat: ChatState): string | undefined {
  * A subagent the call started. AHP gives a tool call no start or end time, so its times are its
  * turn's: started with the turn, ended when the turn ended (null while the turn runs on).
  */
+/** The task call's own words: its short intent and whether it runs in the background (Copilot CLI's task tool). */
+function taskInput(tool: ToolCallState): { intent: string | null; background: boolean } {
+  let input: unknown;
+  try { input = JSON.parse("toolInput" in tool && typeof tool.toolInput === "string" ? tool.toolInput : ""); } catch { return { intent: null, background: false }; }
+  if (!isRecord(input)) return { intent: null, background: false };
+  const intent = typeof input["description"] === "string" && input["description"].trim() !== "" ? input["description"].trim() : null;
+  return { intent, background: input["mode"] === "background" };
+}
+
 function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, turn: TurnRead): ConversationPart {
   const failed = "success" in tool && tool.success === false;
-  const status = !settled(tool) ? "running" : failed || tool.status === ToolCallStatus.Cancelled ? "failed" : "done";
   // its own chat, when the bridge holds it: the real times and model, and what it does now
   const own = turn.context?.chat(subagent.resource);
+  const { intent, background } = taskInput(tool);
+  // a background task's call settles as soon as it is launched: its own chat still running says it runs on
+  const status = !settled(tool) || (!failed && own?.activeTurn !== undefined) ? "running" : failed || tool.status === ToolCallStatus.Cancelled ? "failed" : "done";
   const timing = own ? chatTiming(own) : null;
   const ownModel = own ? (own.activeTurn ?? own.turns.at(-1))?.message.model?.id : undefined;
   const activity = own && status === "running" ? activityOf(own) : undefined;
@@ -298,7 +309,10 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
     kind: "subagent",
     id: tool.toolCallId,
     agent: subagent.agentName ?? subagent.title,
-    description: subagent.description ?? "",
+    // the call's intent ("Fix the login bug"), as VS Code's row reads; the host's is the agent's own blurb
+    description: intent ?? subagent.description ?? "",
+    ...(intent !== null && subagent.description ? { about: subagent.description } : {}),
+    ...(background || (status === "running" && settled(tool)) ? { background: true as const } : {}),
     model: ownModel !== undefined && shownModel(ownModel, turn.model) ? turn.context!.modelName(ownModel) : null,
     started,
     ended: status === "running" ? null : timing?.started ? timing.ended ?? turn.times.ended : turn.times.ended,
