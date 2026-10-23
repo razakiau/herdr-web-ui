@@ -709,6 +709,10 @@ describe("host chat turns, whole", () => {
     // the row's words are the call's intent; the host's cut blurb is kept apart, whole as it came
     expect({ description: running.description, about: running.about }).toEqual({ description: "FICTIONAL fix the parser", about: subagent.description });
     expect(read(over).status).toBe("done");
+    // a host that echoes the intent as the description gives no second line
+    const echoed = { ...subagent, description: "FICTIONAL fix the parser" };
+    const echoParent = reducedChat([started(), ...toolCallActions("turn-1", task, done([echoed])), finished()]);
+    expect((turnsFrom(echoParent)[1]!.parts[0] as { about?: string }).about).toBeUndefined();
     // a sync call with no chat read stays as the call says
     expect(read(undefined).status).toBe("done");
   });
