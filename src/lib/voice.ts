@@ -623,7 +623,9 @@ export function createVoiceEngine(io: EngineIO) {
       if (!stream || !stream.getAudioTracks().some((track) => track.readyState === "live")) {
         stream?.getTracks().forEach((track) => track.stop());
         stream = null;
-        const opened = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        // no echo cancellation: on Android it opens the mic in call mode, which pauses or ducks the
+        // user's music and jumps its volume back when the mic closes (ZAC-207); dictation plays nothing to cancel
+        const opened = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
         if (take !== current) {
           // this request was cancelled or finished while the mic opened: only its own stream may
           // close, never the one a newer take is recording from
