@@ -559,6 +559,8 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   scrollbar-width: none;
 }
 .session-pills::-webkit-scrollbar { display: none; }
+/* a question card stands over the pills: air between them, so the row does not read as the card's foot */
+.prompt-dock:not(:empty) ~ .session-pills { padding-top: var(--space-2); }
 .session-pill {
   display: inline-flex; flex: none; align-items: center; gap: var(--space-1);
   min-height: 1.75rem; padding: 0 var(--space-2);

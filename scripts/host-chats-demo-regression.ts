@@ -494,8 +494,17 @@ try {
         await thumb.waitFor();
         assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
-        // a question is up: the session's pills give the chat its row back, as VS Code's input does
-        assert.equal(await view.locator(".session-pills").count(), 0, "no pills while the question card stands");
+        // a question is up: the session's pills (its PR, issue, artifacts) stay under the card, clear of it
+        const askPills = view.locator(".session-pills");
+        await askPills.locator(".session-pill").first().waitFor();
+        assert.ok((await askPills.locator(".session-pill").allInnerTexts()).some((text) => text.includes("artifacts")), "the artifacts pill stands while the question card does");
+        const cardBox = await view.locator(".prompt-dock").boundingBox();
+        const pillsBox = await askPills.locator(".session-pill").first().boundingBox();
+        assert.ok(cardBox !== null && pillsBox !== null && pillsBox.y >= cardBox.y + cardBox.height + 6, `the pills sit below the card, with air between (${JSON.stringify({ cardBox, pillsBox })})`);
+        if (shots) await page.screenshot({ path: join(shots, "ask-pills-390.png") });
+        // card and pills leave the transcript a thin strip at 390 px: the card is folded, as a reader would, while the transcript is read
+        await view.locator(".prompt-card-fold").click();
+        await view.locator(".prompt-card.is-folded").waitFor();
         // the card (its answer field on a line of its own) and the jump button stand over the
         // transcript's foot: the head is brought to the top, clear of them
         await head.evaluate((node) => node.scrollIntoView({ block: "center" }));
@@ -665,6 +674,8 @@ try {
         });
         const pinned = view.locator(".chat-sticky-request");
         await pinned.waitFor({ timeout: 3000 }).catch(() => assert.fail("no sticky request once the message scrolled out"));
+        // the folded card leaves a taller transcript: its rows re-measure for a moment before the pin settles
+        await page.waitForFunction(() => document.querySelector(".host-chat .chat-sticky-request")?.textContent?.trim() === "FICTIONAL find the config", undefined, { timeout: 3000 }).catch(() => undefined);
         assert.equal((await pinned.innerText()).trim(), "FICTIONAL find the config", "the sticky row is the turn's own message");
         const clamp = await pinned.locator(".chat-sticky-request-text").evaluate((node) => getComputedStyle(node).webkitLineClamp);
         assert.equal(clamp, "2", "cut to two lines");
