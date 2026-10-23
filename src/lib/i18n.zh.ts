@@ -1456,6 +1456,8 @@ export const ZH: Record<string, string> = {
   "Older": "更早",
   "Other PCs": "其他 PC",
   "Other PCs ({n})": "其他 PC ({n})",
+  "Move {name} to Other PCs": "将 {name} 移到其他 PC",
+  "Move to Other PCs": "移到其他 PC",
   "Search agents": "搜索代理",
   "{n} asking": "{n} 个等待回答",
   "{n} days ago": "{n} 天前",

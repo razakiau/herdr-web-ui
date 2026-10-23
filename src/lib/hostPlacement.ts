@@ -71,8 +71,27 @@ export function agentsListHostChats(rows: HostChatRow[], pinned: (s: string) => 
 }
 
 /**
+ * The PCs kept open on this device (MachineSidebar.tsx): each one picked from "Other PCs", worked on
+ * or that asked, until it is put back from its header. One slot for "the last one picked" folded a
+ * PC back as soon as another was picked or worked on, and it had to be found in the fold again
+ * (the owner, 2026-10-23).
+ */
+export function keepPc(kept: readonly string[], id: string): string[] {
+  return kept.includes(id) ? [...kept] : [...kept, id];
+}
+
+export function unkeepPc(kept: readonly string[], id: string): string[] {
+  return kept.filter((each) => each !== id);
+}
+
+/** The kept ids that are still PCs of the roster: a removed PC does not linger in storage */
+export function keptPcs(kept: readonly string[], roster: readonly string[]): string[] {
+  return kept.filter((id) => roster.includes(id));
+}
+
+/**
  * The PCs drawn as full groups and the ones under "Other PCs": with one or two PCs none fold;
- * otherwise the current PC (else the first) and every PC that needs you stay open, in roster order.
+ * otherwise the current PC (else the first) and every PC kept open or that needs you, in roster order.
  */
 export function foldPcs(machines: Machine[], current: string | null, needsYou: (id: string) => boolean): { open: Machine[]; folded: Machine[] } {
   if (machines.length <= 2) return { open: machines, folded: [] };

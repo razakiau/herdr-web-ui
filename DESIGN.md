@@ -893,6 +893,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   panes have come, an empty list says **Loading agents…**, never "No agents running".
 - A PC's header is the head of its workspaces, and the caret beside its `+` is the one fold over
   them. The roster has no label or fold of its own.
+- With three PCs or more the others fold into **Other PCs (n)**. A PC stays a full group once it
+  is opened: picked from the fold, worked on (it held the selection), or asking. It stays open
+  until its header's put-back (`.machine-put-back`, lucide `FoldVertical`, **Move to Other PCs**,
+  shown like the manage button: on header hover or focus, always on a touch screen) folds it again.
+  The set is kept on this device (`herdr-web-ui:pcs-kept-open`). The PC in use and one that asks
+  have no put-back. A single "last picked" slot folded a PC as soon as another was picked or
+  worked on, so it had to be found in the fold again.
 - A repository's parent row keeps `workspace.label`; its opened linked
   worktree rows show their actual checkout branches. Each row's compact status
   glyph rolls up all of the workspace's panes as herdr does (blocked, then done, then working,
