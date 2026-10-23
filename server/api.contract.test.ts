@@ -2806,6 +2806,59 @@ describe("web push", () => {
     }
   }, 60_000);
 
+  it("holds alerts while a page with no terminal open says over HTTP that it is in use (ZAC-207)", async () => {
+    let created: Awaited<ReturnType<typeof workspaceCreate>> | undefined;
+    let dir: string | undefined;
+    let device: FakePushService | undefined;
+    let bridge: ReturnType<typeof createServer> | undefined;
+    let watcher: RecordingSocket | undefined;
+    try {
+      created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-http-presence" });
+      const paneId = created.root_pane.pane_id;
+      dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-http-presence-"));
+      device = await startFakePushService();
+      bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: dir, machines: false, pushLoopbackHttp: true,
+        alertTiming: { short: 0, long: 0, longTurn: 0 } });
+      const base = `http://127.0.0.1:${bridge.port}`;
+      expect((await fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: device.subscription }) })).status).toBe(204);
+      const say = async (active: boolean) => {
+        const response = await fetch(`${base}/api/presence`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ page: "phone-page-0001", active }) });
+        expect(response.status).toBe(204);
+      };
+      // a socket that never says presence, only to see the statuses land
+      watcher = await RecordingSocket.connect(`ws://127.0.0.1:${bridge.port}/ws`);
+      const report = async (state: "working" | "blocked"): Promise<boolean> => {
+        watcher!.seen.length = 0;
+        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state });
+        return watcher!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === state,
+          `${state} seen`, 2_500).then(() => true).catch(() => false);
+      };
+      const alerts = () => device!.received.filter((push) => push.payload.pane_id === paneId);
+
+      await say(true);
+      let blocked = false;
+      for (let attempt = 0; attempt < 8 && !blocked; attempt++) {
+        await report("working");
+        blocked = await report("blocked");
+      }
+      expect(blocked).toBe(true);
+      await bridge.alertsSettled();
+      expect(alerts()).toHaveLength(0);
+
+      await say(false);
+      expect(await report("working")).toBe(true);
+      expect(await report("blocked")).toBe(true);
+      const pushed = await device.waitFor((push) => push.payload.pane_id === paneId, "alert once the page left", 5_000);
+      expect(pushed.payload.body).toBe("waiting for your input");
+    } finally {
+      watcher?.close();
+      bridge?.stop();
+      device?.stop();
+      if (created) await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("reports a Codex unknown after work as done over WS and HTTP and delivers its completion push", async () => {
     // Exercise the real collector -> CompletionTracker -> PushService path using
     // manually reported statuses in owned panes. No Codex request or real device.
