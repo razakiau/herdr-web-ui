@@ -46,6 +46,15 @@ describe("SubagentRow", () => {
     expect(running).not.toContain("lucide-messages-square");
   });
 
+  it("a background subagent spins and counts on after its turn has ended (ZAC-207)", () => {
+    const row = render(createElement(SubagentRow, { part: part({ status: "running", ended: null, background: true, activity: "FICTIONAL reading" }), live: false, now: Date.parse(AT) + 63_000 }));
+    expect(row).toContain("lucide-loader-circle");
+    expect(text(row)).toContain("Working for 1m 3s");
+    expect(text(row)).toContain("FICTIONAL reading");
+    // a sync one whose turn is over is not shown as working
+    expect(render(createElement(SubagentRow, { part: part({ status: "running", ended: null }), live: false, now: Date.parse(AT) + 63_000 }))).not.toContain("lucide-loader-circle");
+  });
+
   it("subagent_model_only_when_different", () => {
     // the bridge leaves `model` null when it is the chat's own: the row shows what it is given
     expect(render(createElement(SubagentRow, { part: part(), live: false }))).not.toContain("subagent-row-model");

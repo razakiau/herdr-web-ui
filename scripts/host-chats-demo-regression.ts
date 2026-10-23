@@ -82,7 +82,7 @@ const patch = `(() => {
       ] },
       { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
       { role: "assistant", ts: at(6), end_ts: at(5), parts: [
-        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
+        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", about: "FICTIONAL a read-only agent that searches the code and answers one question about it, cited", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
         { kind: "notice", text: "Subagent \`FICTIONAL explore\` has completed.", source: "system" },
         { kind: "question", text: "FICTIONAL which config?", options: ["FICTIONAL debug", "FICTIONAL release"], chosen: ["FICTIONAL release"], custom: null, skipped: false },
         { kind: "text", text: "FICTIONAL release it is." },
@@ -647,6 +647,9 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-collapsed-390.png") });
         await sub.locator(".subagent-row-head").click();
         await sub.locator(".subagent-row-body .chat-turn-agent", { hasText: "FICTIONAL the config is release.toml" }).waitFor();
+        // opened, the row's cut words stand whole, the agent's own description quieter under them
+        assert.equal((await sub.locator(".subagent-row-body .subagent-row-intent").innerText()).trim(), "FICTIONAL find the build config", "the task, whole");
+        assert.match(await sub.locator(".subagent-row-body .subagent-row-blurb").innerText(), /cited$/, "the agent's description, whole to its last word");
         assert.ok((await page.evaluate(() => (window as unknown as { hostCalls: { subagent?: number } }).hostCalls.subagent ?? 0)) >= 1, "its chat is read by its URI");
         await fits("the opened subagent row");
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-expanded-390.png") });
