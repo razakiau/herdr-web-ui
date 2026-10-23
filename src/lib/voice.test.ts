@@ -394,12 +394,15 @@ describe("createVoiceEngine", () => {
   const define = (target: object, name: string, value: unknown) => Object.defineProperty(target, name, { configurable: true, writable: true, value });
   /** each getUserMedia call, to be answered by the test in the order it chooses */
   let micRequests: Array<(stream: FakeStream) => void> = [];
+  /** the constraints each getUserMedia call asked for */
+  let micConstraints: unknown[] = [];
   let frames: FrameRequestCallback[] = [];
   let uploads: Array<(response: Response) => void> = [];
   let uploadedLanguages: Array<FormDataEntryValue | null> = [];
 
   beforeEach(() => {
     micRequests = [];
+    micConstraints = [];
     frames = [];
     uploads = [];
     uploadedLanguages = [];
@@ -416,7 +419,7 @@ describe("createVoiceEngine", () => {
       uploadedLanguages.push((init.body as FormData).get("language"));
       return new Promise<Response>((resolve) => { uploads.push(resolve); });
     });
-    define(navigator, "mediaDevices", { getUserMedia: () => new Promise<FakeStream>((resolve) => { micRequests.push(resolve); }) });
+    define(navigator, "mediaDevices", { getUserMedia: (constraints: unknown) => { micConstraints.push(constraints); return new Promise<FakeStream>((resolve) => { micRequests.push(resolve); }); } });
   });
 
   afterEach(() => {
@@ -510,6 +513,15 @@ describe("createVoiceEngine", () => {
       const idle = reached("idle");
       uploads[0]!(new Response('{"type":"done","text":"teszt"}\n'));
       await idle;
+    } finally { voice.cancel(); }
+  });
+
+  it("opens the mic without echo cancellation, so Android leaves the music playing (ZAC-207)", () => {
+    const { voice } = engine();
+    try {
+      voice.press();
+      // echo cancellation puts Android in call mode: other audio pauses or ducks, then jumps back when the mic closes
+      expect(micConstraints).toEqual([{ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } }]);
     } finally { voice.cancel(); }
   });
 
