@@ -530,6 +530,10 @@ export type ConversationPart =
     started: string | null; ended: string | null; status: "running" | "done" | "failed"; chat: string | null;
     /** while it runs: what its own chat is doing now (its newest tool call's words), when the bridge reads it */
     activity?: string;
+    /** the agent's own description (its definition's blurb) when `description` is the call's intent */
+    about?: string;
+    /** launched in the background: it may run on after its turn has ended */
+    background?: true;
   }
   /**
    * A question the agent asked and the user answered (or skipped), as the history reads it back.

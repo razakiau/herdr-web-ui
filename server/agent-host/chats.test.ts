@@ -696,6 +696,27 @@ describe("host chat turns, whole", () => {
     expect((assistant(failed)[0] as { status: string }).status).toBe("failed");
   });
 
+  it("a background subagent runs while its own chat does, under its call's own words (ZAC-207)", () => {
+    const subagent = { type: "subagent", resource: "ahp-chat://default/fictional-bg", title: "Worker", agentName: "Worker", description: "FICTIONAL subagent for multi-step work that needs the te" };
+    const task = { ...call("c5", "task", "Task"), toolInput: JSON.stringify({ agent_type: "Worker", mode: "background", description: "FICTIONAL fix the parser", prompt: "FICTIONAL the long brief" }) };
+    // the task call settles once launched, and its turn ends; the subagent's chat goes on
+    const parent = reducedChat([started(), ...toolCallActions("turn-1", task, done([subagent])), finished()]);
+    const live = reducedChat([{ type: "chat/turnStarted", turnId: "s-1", startedAt: AT, message: user("FICTIONAL the long brief") } as StateAction]);
+    const over = reducedChat([{ type: "chat/turnStarted", turnId: "s-1", startedAt: AT, message: user("FICTIONAL the long brief") } as StateAction, { type: "chat/turnComplete", turnId: "s-1", duration: 5000 } as StateAction]);
+    const read = (own: ReturnType<typeof reducedChat> | undefined) => turnsFrom(parent, { chat: (uri) => uri === subagent.resource ? own : undefined, modelName: (id) => id })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
+    const running = read(live);
+    expect({ status: running.status, ended: running.ended, background: running.background }).toEqual({ status: "running", ended: null, background: true });
+    // the row's words are the call's intent; the host's cut blurb is kept apart, whole as it came
+    expect({ description: running.description, about: running.about }).toEqual({ description: "FICTIONAL fix the parser", about: subagent.description });
+    expect(read(over).status).toBe("done");
+    // a host that echoes the intent as the description gives no second line
+    const echoed = { ...subagent, description: "FICTIONAL fix the parser" };
+    const echoParent = reducedChat([started(), ...toolCallActions("turn-1", task, done([echoed])), finished()]);
+    expect((turnsFrom(echoParent)[1]!.parts[0] as { about?: string }).about).toBeUndefined();
+    // a sync call with no chat read stays as the call says
+    expect(read(undefined).status).toBe("done");
+  });
+
   it("tool_carries_intention_and_outcome", () => {
     // the intention a terminal call gives, before its command (chatTerminalToolProgressPart.ts)
     const withIntention = reducedChat([started(), { type: "chat/toolCallStart", turnId: "turn-1", toolCallId: "c1", toolName: "bash", displayName: "Run in terminal", intention: "FICTIONAL check the build" } as StateAction,

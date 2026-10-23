@@ -82,7 +82,7 @@ const patch = `(() => {
       ] },
       { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
       { role: "assistant", ts: at(6), end_ts: at(5), parts: [
-        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
+        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", about: "FICTIONAL a read-only agent that searches the code and answers one question about it, cited", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
         { kind: "notice", text: "Subagent \`FICTIONAL explore\` has completed.", source: "system" },
         { kind: "question", text: "FICTIONAL which config?", options: ["FICTIONAL debug", "FICTIONAL release"], chosen: ["FICTIONAL release"], custom: null, skipped: false },
         { kind: "text", text: "FICTIONAL release it is." },
@@ -494,8 +494,17 @@ try {
         await thumb.waitFor();
         assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
-        // a question is up: the session's pills give the chat its row back, as VS Code's input does
-        assert.equal(await view.locator(".session-pills").count(), 0, "no pills while the question card stands");
+        // a question is up: the session's pills (its PR, issue, artifacts) stay under the card, clear of it
+        const askPills = view.locator(".session-pills");
+        await askPills.locator(".session-pill").first().waitFor();
+        assert.ok((await askPills.locator(".session-pill").allInnerTexts()).some((text) => text.includes("artifacts")), "the artifacts pill stands while the question card does");
+        const cardBox = await view.locator(".prompt-dock").boundingBox();
+        const pillsBox = await askPills.locator(".session-pill").first().boundingBox();
+        assert.ok(cardBox !== null && pillsBox !== null && pillsBox.y >= cardBox.y + cardBox.height + 6, `the pills sit below the card, with air between (${JSON.stringify({ cardBox, pillsBox })})`);
+        if (shots) await page.screenshot({ path: join(shots, "ask-pills-390.png") });
+        // card and pills leave the transcript a thin strip at 390 px: the card is folded, as a reader would, while the transcript is read
+        await view.locator(".prompt-card-fold").click();
+        await view.locator(".prompt-card.is-folded").waitFor();
         // the card (its answer field on a line of its own) and the jump button stand over the
         // transcript's foot: the head is brought to the top, clear of them
         await head.evaluate((node) => node.scrollIntoView({ block: "center" }));
@@ -638,6 +647,9 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-collapsed-390.png") });
         await sub.locator(".subagent-row-head").click();
         await sub.locator(".subagent-row-body .chat-turn-agent", { hasText: "FICTIONAL the config is release.toml" }).waitFor();
+        // opened, the row's cut words stand whole, the agent's own description quieter under them
+        assert.equal((await sub.locator(".subagent-row-body .subagent-row-intent").innerText()).trim(), "FICTIONAL find the build config", "the task, whole");
+        assert.match(await sub.locator(".subagent-row-body .subagent-row-blurb").innerText(), /cited$/, "the agent's description, whole to its last word");
         assert.ok((await page.evaluate(() => (window as unknown as { hostCalls: { subagent?: number } }).hostCalls.subagent ?? 0)) >= 1, "its chat is read by its URI");
         await fits("the opened subagent row");
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-expanded-390.png") });
@@ -665,6 +677,8 @@ try {
         });
         const pinned = view.locator(".chat-sticky-request");
         await pinned.waitFor({ timeout: 3000 }).catch(() => assert.fail("no sticky request once the message scrolled out"));
+        // the folded card leaves a taller transcript: its rows re-measure for a moment before the pin settles
+        await page.waitForFunction(() => document.querySelector(".host-chat .chat-sticky-request")?.textContent?.trim() === "FICTIONAL find the config", undefined, { timeout: 3000 }).catch(() => undefined);
         assert.equal((await pinned.innerText()).trim(), "FICTIONAL find the config", "the sticky row is the turn's own message");
         const clamp = await pinned.locator(".chat-sticky-request-text").evaluate((node) => getComputedStyle(node).webkitLineClamp);
         assert.equal(clamp, "2", "cut to two lines");

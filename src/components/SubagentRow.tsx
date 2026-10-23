@@ -65,7 +65,8 @@ export function isSubagentTarget(part: { id: string; chat: string | null }, targ
 
 export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }: SubagentRowProps) {
   const t = useT();
-  const running = part.status === "running" && live;
+  // a background subagent runs on after its turn: its own chat is what says it runs
+  const running = part.status === "running" && (live || part.background === true);
   const now = useSecondClock(running, fixedNow);
   const [chosen, setOpen] = useChatRowToggle(`subagent:${part.id}`, false);
   const open = chosen === true;
@@ -94,24 +95,29 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
 
   const ms = elapsed(part, now);
   const duration = ms === null ? null : formatElapsedTime(ms, t);
-  const time = duration === null ? null : part.status === "running" ? t("Working for {duration}", { duration }) : t("Worked for {duration}", { duration });
-  const Icon = part.status === "running" ? LoaderCircle : part.status === "failed" ? CircleX : MessagesSquare;
+  const time = duration === null ? null : running ? t("Working for {duration}", { duration }) : t("Worked for {duration}", { duration });
+  const Icon = running ? LoaderCircle : part.status === "failed" ? CircleX : MessagesSquare;
   const head = <>
-    <Icon className={`subagent-row-icon${part.status === "running" ? " is-spinning" : ""}`} aria-hidden="true" />
+    <Icon className={`subagent-row-icon${running ? " is-spinning" : ""}`} aria-hidden="true" />
     <span className="subagent-row-main">
       <span className="subagent-row-name">{part.agent}</span>
-      {part.description.length > 0 && <span className="subagent-row-description">{part.description}</span>}
+      {part.description.length > 0 && <span className="subagent-row-description" title={part.description}>{part.description}</span>}
       {part.model !== null && <span className="subagent-row-model">{part.model}</span>}
     </span>
     {time !== null && <span className="subagent-row-time">{time}</span>}
     {canOpen && <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>}
   </>;
-  return <section ref={sectionRef} className={`subagent-row is-${part.status}${isRevealed ? " is-revealed" : ""}`} {...(part.chat !== null ? { "data-subagent-chat": part.chat } : {})} aria-label={t("Subagent: {name}", { name: part.agent })}>
+  return <section ref={sectionRef} className={`subagent-row is-${running ? "running" : part.status === "running" ? "done" : part.status}${isRevealed ? " is-revealed" : ""}`} {...(part.chat !== null ? { "data-subagent-chat": part.chat } : {})} aria-label={t("Subagent: {name}", { name: part.agent })}>
     {canOpen
       ? <button type="button" className="subagent-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>{head}</button>
       : <div className="subagent-row-head">{head}</div>}
-    {part.status === "running" && part.activity !== undefined && !open && <p className="subagent-row-activity">{part.activity}</p>}
+    {running && part.activity !== undefined && !open && <p className="subagent-row-activity">{part.activity}</p>}
     {open && canOpen && <div className="subagent-row-body">
+      {/* the row's head cuts its words to one line: opened, they stand whole, the agent's own blurb under them */}
+      {(part.description.length > 0 || part.about !== undefined) && <div className="subagent-row-about">
+        {part.description.length > 0 && <p className="subagent-row-intent">{part.description}</p>}
+        {part.about !== undefined && <p className="subagent-row-blurb">{part.about}</p>}
+      </div>}
       {failed ? <p className="subagent-row-note">{t("Couldn't load the subagent's chat.")} <button type="button" className="btn btn-ghost" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>
         : turns === null ? <p className="subagent-row-note">{t("Loading…")}</p>
           : turns.length === 0 ? <p className="subagent-row-note">{t("Subagent chat is not available yet.")}</p>

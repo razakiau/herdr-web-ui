@@ -1857,6 +1857,11 @@ button.subagent-row-head { cursor: pointer; }
   color: var(--text-dim);
 }
 .subagent-row-model { flex: none; max-width: 40%; font-size: var(--fs-xs); align-self: center; }
+/* opened: the task's words whole, then the agent's own description, quieter */
+.subagent-row-about { display: grid; gap: var(--space-1); margin-bottom: var(--space-2); }
+.subagent-row-intent, .subagent-row-blurb { margin: 0; overflow-wrap: anywhere; }
+.subagent-row-intent { color: var(--text); font-size: var(--fs-sm); }
+.subagent-row-blurb { color: var(--text-dim); font-size: var(--fs-xs); }
 .subagent-row-time {
   flex: none;
   color: var(--text-dim);
