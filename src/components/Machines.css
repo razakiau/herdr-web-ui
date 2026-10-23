@@ -3,7 +3,10 @@
    The fold and the + close the header at its right. */
 .machine-list {
   position: relative;
-  flex: 1 1 0;
+  /* as tall as its groups, shrinking to scroll when they are taller than the room: a list that
+     took every spare pixel put a gap above Agents that changed with how many PCs were open
+     (desktop audit, 2026-10-23). The spare height goes above the footer (Sidebar.css) */
+  flex: 0 1 auto;
   min-height: 0;
   padding-top: var(--space-2);
   overflow-y: auto;
@@ -11,12 +14,6 @@
   scroll-padding-bottom: var(--space-4);
 }
 
-/* When every PC is folded, keep this section at its headings instead of reserving the whole
-   flexible column, whether or not Agents has rows: a visible Agents list takes the space below
-   it (AgentSidebar.css) and the footer stays at the bottom (Sidebar.css). */
-.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .machine-list {
-  flex: 0 1 auto;
-}
 
 /* a list that is cut fades out at its lower edge */
 .machine-list::after {

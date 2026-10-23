@@ -884,8 +884,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   selection is `--bg-hover`; keyboard focus draws the ring inside the row and no fill. No rule
   separates sections: `--space-4` and a dim `--fs-sm` head do.
 - The PC/workspace list and the lower Agents list scroll independently above the fixed footer.
-  Agents takes the height of its rows, at most half the sidebar, docked above the footer; the
-  workspace list has the rest. The Agents heading stays outside its scroll area and shows its
+  Agents takes the height of its rows, at most half the sidebar, right under the workspace list;
+  the workspace list is as tall as its groups and is the one that shrinks and scrolls. Spare
+  height goes above the footer, never between the two lists. The Agents heading stays outside its scroll area and shows its
   count only while folded. A list that is cut fades out at its lower edge. An empty or folded
   Agents list gives its space back; PC and workspace folds do not hide agent rows. In the drawer
   (`max-width: 768px`) the list starts folded. Until the PCs are in and every connected PC's
@@ -956,7 +957,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `--radius-lg`, no fill, so hover and selection read inside it as elsewhere),
   with no mark of their own (the card says so); the rest follow `--space-2` below in the
   chosen order. The card's caption sits on its top edge, as a fieldset's legend does
-  (`.sidebar-pinned-label`: a pin and **PINNED**, centered, `--fs-2xs` semibold caps in
+  (`.sidebar-pinned-label`: a pin and **PINNED** at the rows' start, as every sidebar head, `--fs-2xs` semibold caps in
   `--text-dim` on the `--bg-panel` it masks the edge with); it is hidden from screen readers,
   where the list itself is labelled **Pinned**. Without pins there is no card and no caption. Pins are shared with the other browsers of the server.
 - Appearance's **Sidebar rows** is **One line** by default: a workspace row is its name, and an
@@ -1500,7 +1501,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 ### Composer (`.composer`)
 - Chat mode is ONE surface: the stack, the transcript and the composer region all sit on `--bg`,
   and the composer column equals the transcript column (`--chat-w`, same `--space-4` gutter,
-  `--space-3` at `480px` and below).
+  `--space-3` at `480px` and below). In a host chat every row between the two stands on that
+  column too (`--host-chat-gutter`): the session pills, the status line and the bars (not open in
+  its workspace, forking, restored), and so do the sticky request and, just left of it, the turn
+  rail. The rail names a turn beside its tick on hover or focus (`.chat-minimap-preview`). The
+  context meter (a ring that fills as the window is used, and the percent) stands before Send/Stop;
+  at `480px` and below the toolbar has no room for it and it ends the status line instead. The
+  status line does not repeat a running count the pills already show. Toolbar triggers are parted
+  by their own padding, not hairlines; a raised permission level keeps the notice colour on its
+  shield only.
   On a phone (`<=768px`), while the card follows the transcript directly (no held message, pending
   row, prompt card or notice between them) and no greeting stands over it, the card floats over the
   transcript's end as an iPhone's input bar does: the composer rises `--composer-over`
@@ -1551,8 +1560,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   a tap or drag on it reaches the chat under it, which puts the keyboard away.
 - The round button (`.composer-action`, a `--space-8` / `32px` circle with a `--space-4` glyph) is
   Send or Stop in the same place at the same size, so only the glyph changes: Send is `--primary`
-  with lucide `ArrowUp`; Stop is `--text-strong` with a `--bg` square, and turns
-  `--status-blocked` on hover and focus. Not connected, Stop is disabled and loses its fill
+  with lucide `ArrowUp`; Stop is `--bg-hover` with a `--border-strong` edge and a `--text-strong`
+  square (a solid `--text-strong` disc was the loudest thing on screen for every turn), and turns
+  `--status-blocked` with a `--primary-text` square on hover and focus. Not connected, Stop is disabled and loses its fill
   (`--border-strong` outline, `--text-dim` glyph). A coarse pointer keeps that compact visible
   circle inside a transparent `--touch-target` / `44px` button, so tapping remains easy.
 - The status content (`.composer-status`, `role="status"`) sits between the two control groups,

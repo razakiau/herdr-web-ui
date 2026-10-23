@@ -462,7 +462,9 @@
     "text text text"
     "left status right";
   background: var(--bg-elevated);
-  border: var(--hairline) solid var(--border);
+  /* --border is within a few shades of --bg-elevated in the dark palettes: the box had no edge at
+     rest and read as a floating slab (desktop audit, 2026-10-23) */
+  border: var(--hairline) solid var(--border-strong);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-card);
   transition:
@@ -617,15 +619,22 @@
   --composer-action-fill: var(--primary);
 }
 
-/* the one round button: Stop is Send's circle in the text colour, in the same place at the same
-   size, so only the glyph changes when the agent starts and ends a turn */
+/* the one round button: Stop is Send's circle in the same place at the same size, so only the glyph
+   and the fill change when the agent starts and ends a turn. Its fill is a raised neutral with the
+   text colour's glyph: a solid --text-strong disc was the loudest thing on screen for the whole of
+   every turn (desktop audit, 2026-10-23); the danger colour comes on hover and focus */
 .composer-stop {
-  --composer-action-fill: var(--text-strong);
-  color: var(--bg);
+  --composer-action-fill: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.composer-stop::before {
+  border-color: var(--border-strong);
 }
 
 .composer-stop:focus-visible:not(:disabled) {
   --composer-action-fill: var(--status-blocked);
+  color: var(--primary-text);
 }
 
 /* not connected, it stops nothing: it must not read as live */
@@ -663,6 +672,7 @@
 
   .composer-stop:hover:not(:disabled) {
     --composer-action-fill: var(--status-blocked);
+    color: var(--primary-text);
   }
 
   .composer-controls .icon-button:hover:not(:disabled) {

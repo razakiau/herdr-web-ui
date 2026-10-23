@@ -163,10 +163,42 @@ function moveTabFocus(event: KeyboardEvent<HTMLDivElement>): void {
   buttons[next]?.focus();
 }
 
+/**
+ * The strip's edge with tabs out of view fades (TabStrip.css reads the attributes), as the key bar's
+ * does: tabs were cut at the pane's edge with no sign there were more (desktop audit, 2026-10-23).
+ * Measured before the first paint, then on scroll and on any resize, at most once a frame.
+ */
+function useStripOverflow(strip: { current: HTMLDivElement | null }, count: number): void {
+  useLayoutEffect(() => {
+    const row = strip.current;
+    if (!row) return;
+    let frame = 0;
+    const measure = (): void => {
+      frame = 0;
+      const hidden = row.scrollWidth - row.clientWidth;
+      row.toggleAttribute("data-overflow-start", row.scrollLeft >= 1);
+      row.toggleAttribute("data-overflow-end", hidden - row.scrollLeft >= 1);
+    };
+    const schedule = (): void => { if (frame === 0) frame = requestAnimationFrame(measure); };
+    measure();
+    row.addEventListener("scroll", schedule, { passive: true });
+    const observer = new ResizeObserver(schedule);
+    observer.observe(row);
+    for (const tab of row.children) observer.observe(tab);
+    return () => {
+      cancelAnimationFrame(frame);
+      row.removeEventListener("scroll", schedule);
+      observer.disconnect();
+    };
+  }, [strip, count]);
+}
+
 /** A folder row's tabs: its host chats, as a workspace's strip draws them, with no pane beside them. */
 export function HostChatTabStrip({ folder, chats, selectedSession, onSelect }: { folder: string; chats: HostChatRow[]; selectedSession: string; onSelect(session: string): void }) {
   const t = useT();
-  return <div className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: folder })} onKeyDown={moveTabFocus}>
+  const strip = useRef<HTMLDivElement | null>(null);
+  useStripOverflow(strip, chats.length);
+  return <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: folder })} onKeyDown={moveTabFocus}>
     {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} />)}
   </div>;
 }
@@ -320,6 +352,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   useLayoutEffect(() => {
     if (!scroll.current.moved) bringOpenTab();
   }, [faces]);
+  useStripOverflow(strip, tabs.length + hostTabs.length + (shown ? 1 : 0));
   const onScroll = (): void => {
     const row = strip.current;
     if (row) scroll.current = stripScrolled(scroll.current, row.scrollLeft, row.scrollWidth - row.clientWidth);

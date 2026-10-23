@@ -1,10 +1,13 @@
-/* the turn rail: a short dash per turn the user sent, in the margin left of the chat column */
+/* the turn rail: a short dash per turn the user sent, in the margin just left of the chat column.
+   At the pane's edge it stood 140 px from the text it indexes and read as the sidebar's decoration
+   (desktop audit, 2026-10-23); it now ends --space-6 before the column */
 .chat-minimap {
   position: absolute;
   top: 50%;
-  left: var(--space-2);
+  left: max(var(--space-2), (100% - var(--chat-w)) / 2 - var(--space-6) - var(--space-4));
   z-index: var(--z-header);
-  width: var(--space-4);
+  /* a wider hit than the dash: 8 px tall ticks were a hard aim with a mouse */
+  width: var(--space-6);
   transform: translateY(-50%);
 }
 
@@ -33,8 +36,39 @@
 }
 
 .chat-minimap-tick:hover::before {
-  width: var(--space-3);
-  background: var(--text-dim);
+  width: var(--space-4);
+  background: var(--text);
+}
+
+/* the turn a tick goes to, beside it: the native title came a second late or not at all, so a
+   hover showed nothing and the rail's purpose stayed a guess (desktop audit, 2026-10-23) */
+.chat-minimap-preview {
+  position: absolute;
+  left: calc(100% + var(--space-2));
+  z-index: 1;
+  width: max-content;
+  max-width: min(22rem, 40vw);
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  pointer-events: none;
+  transform: translateY(-50%);
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.chat-minimap-preview-n {
+  margin-inline-end: var(--space-1);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-minimap-tick[aria-current="true"]::before {

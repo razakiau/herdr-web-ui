@@ -49,7 +49,9 @@
 .chat-sticky-request {
   position: absolute;
   inset-block-start: var(--space-2);
-  inset-inline: var(--space-3);
+  /* on the chat's column, as the user's bubble it stands for: across the whole pane it ran past
+     the column into the tab strip's corner on a wide screen (desktop audit, 2026-10-23) */
+  inset-inline: max(var(--space-3), (100% - var(--chat-w)) / 2);
   z-index: 3;
   display: flex;
   justify-content: flex-end;
