@@ -1602,9 +1602,9 @@
   margin: 0 auto var(--space-2);
 }
 
-/* a host chat's pickers (Composer's `pills`): they take the left group's room and the status cell
-   gives way; a narrow row drops words before it cuts any (HostChatView.css, @container pickers),
-   and only a row still too long scrolls sideways */
+/* a host chat's model chip (Composer's `pills`): it takes the left group's room and the status cell
+   gives way; a narrow row drops the effort word, then the name ellipsizes (HostChatView.css,
+   @container pickers). Nothing scrolls sideways: the chip is the row's only words */
 .composer-surface:has(.composer-pickers) {
   grid-template-columns: minmax(0, 1fr) 0 auto;
 }
@@ -1617,9 +1617,7 @@
   flex: 1 1 0;
   min-width: 0;
   container: pickers / inline-size;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  overflow: hidden;
 }
 
 .composer-pickers::-webkit-scrollbar {

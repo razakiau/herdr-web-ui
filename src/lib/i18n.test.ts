@@ -78,6 +78,7 @@ function labelMapKeys(): string[] {
     ...grab("components/ModelPicker.tsx", "MODE_LABEL", value),
     ...grab("components/ModelPicker.tsx", "APPROVALS_LABEL", value),
     ...grab("components/ModelPicker.tsx", "APPROVALS_HINT", value),
+    ...grab("components/ModelPicker.tsx", "MODE_HINT", value),
     ...grab("components/HostChatStatus.tsx", "CONTEXT_PART", value),
     ...grab("lib/modelProvider.ts", "SECTION_TITLES", /"([^"]+)"/g),
     ...grab("lib/hostSlash.ts", "HOST_SLASH_DETAIL", value),

@@ -1,9 +1,8 @@
 /**
  * A host chat's status line, between its transcript and its composer: what the chat waits on, in
  * VS Code's words (hostStatusLine). Its context meter (contextMeter) opens the window's breakdown as
- * Copilot reports it. With room it is the composer's, by Send, as VS Code's input toolbar has it; a
- * phone's toolbar has none to spare (the model's name was cut), so there it ends this line instead.
- * Both are drawn and CSS shows one (HostChatView.css, .host-chat-meter[data-place]).
+ * Copilot reports it. It is the composer's on every width, by the round button, as VS Code's input
+ * toolbar has it (HostChatView passes it as the composer's toolbarEnd).
  */
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
@@ -28,21 +27,18 @@ const CONTEXT_PART = {
 interface MeterProps { read: HostChatRead | null; open: boolean; onOpen(): void; onClose(): void }
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
-export function HostChatStatus({ workShown = false, ...meter }: MeterProps & { workShown?: boolean }) {
+export function HostChatStatus({ read, workShown = false }: { read: HostChatRead | null; workShown?: boolean }) {
   const t = useT();
-  const { read } = meter;
   if (read === null) return null;
   const line = hostStatusLine(read, t, { workShown });
-  const hasMeter = contextMeter(read.context ?? null) !== null;
-  if (line === null && !hasMeter) return null;
-  return <div className={`host-chat-status${line === null ? " is-meter-only" : ""}`}>
+  if (line === null) return null;
+  return <div className="host-chat-status">
     <span className="host-chat-status-line" role="status">{line}</span>
-    <HostContextMeter {...meter} place="status" />
   </div>;
 }
 
 /** The context meter: a ring and the percent; the counts are in its title and its sheet. */
-export function HostContextMeter({ read, open, onOpen, onClose, place = "toolbar" }: MeterProps & { place?: "toolbar" | "status" }) {
+export function HostContextMeter({ read, open, onOpen, onClose }: MeterProps) {
   const t = useT();
   const meter = contextMeter(read?.context ?? null);
   if (read === null || meter === null) return null;
@@ -50,7 +46,7 @@ export function HostContextMeter({ read, open, onOpen, onClose, place = "toolbar
   const circumference = 2 * Math.PI * radius;
   const percent = meter.label.split(" · ")[0];
   return <>
-    <button type="button" className={`host-chat-meter${meter.percent >= 80 ? " is-high" : ""}`} data-place={place} aria-haspopup="dialog" aria-expanded={open}
+    <button type="button" className={`host-chat-meter${meter.percent >= 80 ? " is-high" : ""}`} aria-haspopup="dialog" aria-expanded={open}
       aria-label={t("Context window: {usage}", { usage: meter.label })} title={t("Context window: {usage}", { usage: meter.label })} onClick={onOpen}>
       <svg className="host-chat-meter-ring" viewBox="0 0 16 16" aria-hidden="true">
         <circle className="host-chat-meter-track" cx="8" cy="8" r={radius} />
@@ -59,7 +55,7 @@ export function HostContextMeter({ read, open, onOpen, onClose, place = "toolbar
       </svg>
       <span className="host-chat-meter-label" aria-hidden="true">{percent}</span>
     </button>
-    {open && place === "toolbar" && read.context && <ContextSheet usage={read.context} label={meter.label} onClose={onClose} />}
+    {open && read.context && <ContextSheet usage={read.context} label={meter.label} onClose={onClose} />}
   </>;
 }
 

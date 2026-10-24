@@ -45,6 +45,7 @@ import {
   hostSendKey,
   HOST_SEND_MENU,
   type HostSendPick,
+  roundButton,
 } from "../lib/compose.ts";
 import type { HostSlashItem } from "../lib/hostSlash.ts";
 import { compactCommandText } from "../lib/compactContext.ts";
@@ -141,6 +142,8 @@ export interface ComposerProps {
   pills?: ReactNode;
   /** drawn before Send/Stop, as VS Code's input toolbar ends: a host chat's context meter */
   toolbarEnd?: ReactNode;
+  /** drawn right after attach: a host chat's settings button (mode, permissions, agent) */
+  settingsButton?: ReactNode;
 }
 
 /** A chip sent with a host chat's message: an uploaded file (its type and name), or an "@" pick (a path of the chat's folder). */
@@ -293,6 +296,7 @@ export function Composer({
   hostMenus,
   pills,
   toolbarEnd,
+  settingsButton,
   attachAsChips = false,
 }: ComposerProps) {
   const t = useT();
@@ -1087,6 +1091,8 @@ export function Composer({
   );
 
   const isWorking = agentStatus === "working";
+  // a host chat's one round button (ZAC-207): voice on an empty box, Send once anything would go
+  const round = pills === undefined ? null : roundButton({ working: isWorking, text, attachments: attachments.length, voice: dictation.shown });
   // an explicit click sends /compact the way a typed message goes; only where the agent lists it, never while it works
   const compactText = compactCommandText(commands);
   const compactNow = compactText !== null && connected && !sending && !isWorking && agentStatus !== "blocked" ? () => sendQuick(compactText) : undefined;
@@ -1405,7 +1411,9 @@ export function Composer({
           >
             <Plus aria-hidden="true" />
           </button>}
-          {dictation.shown && <MicButton dictation={dictation} />}
+          {settingsButton}
+          {/* a host chat's mic is on the right, in or beside the round button (roundButton) */}
+          {dictation.shown && pills === undefined && <MicButton dictation={dictation} />}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
           {/* a host chat's pickers take the row after the mic, where they have the width the status pill had */}
           {pills !== undefined && <div className="composer-pickers">{pills}</div>}
@@ -1462,7 +1470,9 @@ export function Composer({
         </div>
         <div className="composer-controls composer-controls-right">
           {toolbarEnd}
-          {!sendShown ? (
+          {round === "voice" && <MicButton dictation={dictation} round className="composer-voice-wrap" />}
+          {round === "send" && dictation.shown && pills !== undefined && <MicButton dictation={dictation} />}
+          {round === "voice" ? null : !sendShown ? (
             <button
               type="button"
               className="composer-action composer-stop"
