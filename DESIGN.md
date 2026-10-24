@@ -1541,8 +1541,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   last 3 folder files this chat sent, kept in this browser. The ask card's `+` opens the same
   sheet, and its picks are the composer's chips.
   A form's pager stands in the card's header on a window wider than 640px, and at the card's foot,
-  centred (or left of Submit), on a phone. In full screen the message keeps its own height (a long
-  one scrolls) and the answers sit at the sheet's foot, so no empty band opens under the pager.
+  centred (or left of Submit), on a phone. In full screen on a wide window the sheet is as tall as
+  its content, up to the window; on a phone it is full height, the message keeps its own height (a
+  long one scrolls) and the answers sit at the sheet's foot, so no empty band opens under the pager.
   While the agent works, the quiet mic stays before Stop so a voice steer is one tap away.
   On a phone (`<=768px`), while the card follows the transcript directly (no held message, pending
   row, prompt card or notice between them) and no greeting stands over it, the card floats over the

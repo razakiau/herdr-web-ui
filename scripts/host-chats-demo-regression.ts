@@ -905,6 +905,10 @@ try {
         await formSheet.waitFor();
         const pad = await formSheet.locator(".prompt-card").evaluate((n) => parseFloat(getComputedStyle(n).paddingLeft));
         assert.ok(pad >= 20, `full screen on a wide window has the sheet's margins (${pad} px)`);
+        // a short question: the sheet is as tall as its content, with no dead band between the message
+        // and the options (owner, ZAC-207, a desktop screenshot)
+        const wideGap = await formSheet.evaluate((sheet) => Math.round(sheet.querySelector(".prompt-card-options")!.getBoundingClientRect().top - sheet.querySelector(".prompt-card-body")!.getBoundingClientRect().bottom));
+        assert.ok(wideGap <= 24, `full screen on a wide window fits a short question (${wideGap} px between the message and the options)`);
         if (shots) { await settled(page); await page.screenshot({ path: join(shots, "ask-form-expanded-1440.png") }); }
         await formSheet.getByRole("button", { name: "Exit full screen" }).click();
         await formSheet.waitFor({ state: "detached" });
