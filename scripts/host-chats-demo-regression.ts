@@ -146,6 +146,7 @@ const patch = `(() => {
   // a turn that ends takes its steering and queued messages with it, as a host does
   window.setHostBusy = (busy) => { state.busy = busy; if (!busy) state.pending = []; push({ type: "host-chat-changed", session: SESSION }); };
   // a turn made on the PC: only its push tells the phone
+  window.rereadHost = () => push({ type: "host-chat-changed", session: SESSION });
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
   window.EventSource = class extends EventTarget {
     constructor(url, options) {
@@ -272,7 +273,7 @@ const patch = `(() => {
       if (path === "/api/host-chats/files") return json({ files: ["src/fictional-build.ts", "README.md"].filter((file) => file.includes(url.searchParams.get("q") ?? "")) });
       // the session's mode and permissions, as the live host shapes them
       if (path === "/api/host-chats/session/config" && init?.method === "POST") { if (body.mode) state.mode = body.mode; if (body.approvals) state.approvals = body.approvals; return json({ ok: true }); }
-      if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: ["default", "assisted", "autoApprove"] });
+      if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: localStorage.getItem("demo:no-approvals") === "1" ? [] : ["default", "assisted", "autoApprove"] });
       if (path === "/api/host-chats/chat/watch" || path === "/api/host-chats/chat/draft" || path === "/api/host-chats/chat/confirm") return json({ ok: true });
       if (path === "/api/host-chats/chat/answer") { if (state.holdAnswer) return json({ error: { code: "prompt_changed", message: "FICTIONAL changed" } }, 409); state.answered = true; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/send") {
@@ -772,9 +773,10 @@ try {
         // the status line says what the chat waits on, VS Code's words; on a phone it ends with the
         // context meter (a wide window has it by Send: the wide pass below)
         assert.equal((await view.locator(".host-chat-status-line").textContent())?.trim(), "Waiting for your response", "an open question: Waiting for your response");
-        const meter = view.locator('.host-chat-status .host-chat-meter[data-place="status"]');
-        assert.equal(await meter.isVisible(), true, "a phone shows the status line's meter");
-        assert.equal(await view.locator('.host-chat-meter[data-place="toolbar"]').isVisible(), false, "and not the toolbar's");
+        // the meter sits in the composer's row on a phone too (ZAC-207 redesign): the row has room now
+        const meter = view.locator('.composer-controls-right .host-chat-meter');
+        assert.equal(await meter.isVisible(), true, "a phone shows the meter by the round button");
+        assert.equal(await view.locator('.host-chat-status .host-chat-meter').count(), 0, "and none in the status line");
         assert.equal((await meter.locator(".host-chat-meter-label").textContent())?.trim(), "42%", "the meter shows the percent of copilot.usageInfo");
         assert.equal(await meter.getAttribute("title"), "Context window: 42% · 84K / 200K", "the counts are in its title");
         await fits("the card");
@@ -918,18 +920,20 @@ try {
         const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        assert.deepEqual(await sheet.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label") ?? tab.textContent)), ["All, 4 models", "Copilot, 1 model", "fictional, 3 models"], "a tab per group, Copilot first, each with its count");
-        // the provider tabs stay at the sheet's top while its list scrolls (the owner scrolled past Copilot's to reach OmniRoute's)
+        // the provider tab chips are gone (ZAC-207 redesign): captions and the search do their job
+        assert.equal(await sheet.locator(".host-picker-tabs").count(), 0, "no provider tab chips");
+        assert.equal(await sheet.locator(".host-picker-option, .host-model-row").first().evaluate((n) => getComputedStyle(n).borderTopWidth), "0px", "no outlined rows");
+        // the search stays at the sheet's top while its list scrolls (the owner scrolled past Copilot's to reach OmniRoute's)
         const tabsAt = await sheet.locator(".modal-body").evaluate((body) => {
           body.style.flex = "none"; body.style.height = "160px";
           body.scrollTop = body.scrollHeight;
           const scrolled = body.scrollTop;
-          const box = body.querySelector(".host-picker-tabs")!.getBoundingClientRect();
+          const box = body.querySelector(".host-picker-head")!.getBoundingClientRect();
           const frame = body.getBoundingClientRect();
           return { scrolled, top: Math.round(box.top - frame.top), shown: box.top >= frame.top - 1 && box.bottom <= frame.bottom };
         });
         assert.ok(tabsAt.scrolled > 100, `the list really scrolled: ${JSON.stringify(tabsAt)}`);
-        assert.ok(tabsAt.shown, `the provider tabs stay in view at the list's end: ${JSON.stringify(tabsAt)}`);
+        assert.ok(tabsAt.shown, `the search stays in view at the list's end: ${JSON.stringify(tabsAt)}`);
         await sheet.locator(".modal-body").evaluate((body) => { body.style.flex = ""; body.style.height = ""; body.scrollTop = 0; });
         assert.deepEqual(await sheet.locator(".host-picker-group").evaluateAll((groups) => groups.map((group) => group.getAttribute("aria-label"))),
           ["Copilot", "fictional · Anthropic", "fictional · FICTIONAL Go", "fictional"], "Copilot's own, then the router split by the vendor its names carry");
@@ -961,58 +965,67 @@ try {
         await sheet.waitFor({ state: "detached" });
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B/, "the pill says the model");
         assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "and its effort beside the name");
-        await view.locator(".host-chat-agent").click();
-        const agents = page.getByRole("dialog", { name: "Agent", exact: true });
-        await agents.waitFor();
-        assert.equal(await agents.locator(".host-picker-option[data-agent]").first().textContent(), "Agent", '"Agent" comes first');
-        await agents.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
-        // the sheet slides up from the bottom edge: measured and drawn once it has settled
+        // agent, mode and permissions live in one settings sheet behind the settings icon (ZAC-207 redesign)
+        const settingsButton = view.locator(".host-chat-settings");
+        assert.equal(await settingsButton.getAttribute("data-tone"), "quiet", "Manual leaves the settings icon quiet");
+        assert.equal(await settingsButton.getAttribute("aria-label"), "Chat settings: Interactive, Manual, Agent", "the icon reads the mode, permissions and agent");
+        await settingsButton.click();
+        const settings = page.getByRole("dialog", { name: "Chat settings", exact: true });
+        await settings.waitFor();
+        const settingsSheet = page.locator('.host-picker[data-picker="settings"]');
+        assert.deepEqual(await settingsSheet.locator(".host-picker-provider").allTextContents(), ["Permissions", "Mode", "Agent"], "permissions, then mode, then agent");
+        assert.equal(await settingsSheet.locator('.host-picker-option[data-approvals="autoApprove"] .host-picker-option-id').textContent(), "Copilot runs all tools without asking for approval.");
+        assert.equal(await settingsSheet.locator(".host-picker-option.is-picked .host-picker-check").count(), 3, "one checkmark per section");
+        assert.equal(await settingsSheet.locator(".host-picker-option").first().evaluate((n) => getComputedStyle(n).borderTopWidth), "0px", "no outlined cards");
+        assert.ok(await settingsSheet.locator(".host-picker-option").first().evaluate((n) => n.getBoundingClientRect().height >= 50), "rows are at least 50 px");
+        assert.equal(await settings.locator(".host-picker-option[data-agent]").first().locator(".host-picker-option-name").textContent(), "Agent", '"Agent" comes first');
+        await settings.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
         await page.waitForFunction(() => {
           const surface = document.querySelector(".host-picker");
           return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
         });
         await fits("the open sheet");
-        if (shots) await page.screenshot({ path: join(shots, "task-5-sheet-390.png") });
-        await agents.locator(`[data-agent="${REPORT}"]`).click();
-        await agents.waitFor({ state: "detached" });
-        // the chat's mode and permissions: a third pill, set once on the chat (session/config)
-        const modePill = view.locator(".host-chat-mode");
-        assert.equal(await modePill.getAttribute("title"), "Interactive · Manual", "the trigger's tooltip says the mode and the permissions");
-        assert.equal(await modePill.getAttribute("aria-label"), "Pick Mode and Permissions, Interactive, Manual", "both are read out");
-        await modePill.click();
-        const modes = page.getByRole("dialog", { name: "Agent mode", exact: true });
-        await modes.waitFor();
-        await page.waitForFunction(() => {
-          const surface = document.querySelector(".host-picker");
-          return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
-        });
-        await fits("the open mode sheet");
         if (shots) await page.screenshot({ path: join(shots, "task-9-mode-390.png") });
-        await modes.locator('[data-mode="plan"]').click();
-        await modes.waitFor({ state: "detached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title") === "Plan · Manual");
+        await settings.locator(`[data-agent="${REPORT}"]`).click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.endsWith("Report"));
+        await settingsButton.click();
+        await settings.waitFor();
+        await settings.locator('[data-mode="plan"]').click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.startsWith("Chat settings: Plan, Manual"));
         assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).map((post) => post.body), [{ session: SESSION, mode: "plan" }], "picking Plan posts the mode alone");
-        console.log("PASS the model pill wears the Claude mark, search narrows to GLM, and Plan is the chat's mode");
-        // Allow all at 390 px: the row fits before Send (no sideways scroll), the level is a shield glyph in the notice's color
-        await modePill.click();
-        const modes2 = page.getByRole("dialog", { name: "Agent mode", exact: true });
-        await modes2.waitFor();
-        await modes2.locator('[data-approvals="autoApprove"]').click();
-        await modes2.waitFor({ state: "detached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("data-approvals") === "autoApprove", undefined, { timeout: 10_000 })
-          .catch(() => assert.fail("the mode pill shows Allow all"));
-        const row = await view.locator(".composer-pickers").evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
-        assert.ok(row.scroll <= row.client + 1, `the pickers fit before Send with Allow all (${row.scroll} > ${row.client})`);
-        assert.equal(await modePill.locator(".host-chat-pill-shield").count(), 1, "a raised level wears a shield");
+        console.log("PASS the model chip wears the Claude mark, search narrows to GLM, and Plan is the chat's mode from the settings sheet");
+        // Allow all: the settings icon turns the notice colour; the row still fits
+        await settingsButton.click();
+        await settings.waitFor();
+        await settings.locator('[data-approvals="autoApprove"]').click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("data-tone") === "raised", undefined, { timeout: 10_000 })
+          .catch(() => assert.fail("the settings icon is raised for Allow all"));
+        assert.ok(await view.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "the row fits with Allow all");
         await page.waitForFunction(() => document.querySelector(".modal-scrim, .host-picker") === null);
         await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
         if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "composer-allow-all-390.png") });
-        await modePill.click();
-        await modes2.waitFor();
-        await modes2.locator('[data-approvals="default"]').click();
-        await modes2.waitFor({ state: "detached" });
-        console.log("PASS Allow all keeps the composer's pickers on one row before Send, as a shield");
-        assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/);
+        await settingsButton.click();
+        await settings.waitFor();
+        await settings.locator('[data-approvals="default"]').click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("data-tone") === "quiet");
+        // a host with no permission levels: the sheet has Mode and Agent only, and the icon stays quiet
+        await page.evaluate(() => { localStorage.setItem("demo:no-approvals", "1"); (window as unknown as { rereadHost(): void }).rereadHost(); });
+        await page.waitForTimeout(800);
+        await view.locator(".host-chat-settings").click();
+        await settings.waitFor();
+        await page.waitForFunction(() => document.querySelectorAll('.host-picker[data-picker="settings"] .host-picker-provider').length === 2);
+        assert.deepEqual(await settingsSheet.locator(".host-picker-provider").allTextContents(), ["Mode", "Agent"], "no permission levels, no Permissions section");
+        assert.equal(await view.locator(".host-chat-settings").getAttribute("data-tone"), "quiet");
+        await page.keyboard.press("Escape");
+        await settings.waitFor({ state: "detached" });
+        await page.evaluate(() => { localStorage.removeItem("demo:no-approvals"); (window as unknown as { rereadHost(): void }).rereadHost(); });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.includes("Manual"));
+        console.log("PASS Allow all raises the settings icon; a host without permission levels shows Mode and Agent");
+        assert.match(await view.locator(".host-chat-settings").getAttribute("aria-label") ?? "", /Report$/);
         const drafts = await posts("/api/machines/remote/host-chats/chat/draft");
         assert.deepEqual(drafts.at(-1)?.body, { session: SESSION, model: { id: "fictional/model-b", effort: "high" } }, "the model pick is written to the chat's draft");
         const box = view.getByRole("textbox", { name: "Message" });
@@ -1089,7 +1102,7 @@ try {
         await queuedRows.locator(".host-pending-row", { hasText: "FICTIONAL later" }).waitFor();
         await queuedRows.locator(".host-pending-divider", { hasText: "Queued" }).waitFor();
         assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "the pills still show model-b · high after the send");
-        assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/, "and Report");
+        assert.match(await view.locator(".host-chat-settings").getAttribute("aria-label") ?? "", /Report$/, "and Report");
         assert.deepEqual(bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)), { session: SESSION, text: "FICTIONAL later", mode: "queue", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Add to Queue posts mode queue with the pills' model and agent");
         await menu.waitFor({ state: "detached" });
         if (shots) await page.screenshot({ path: join(shots, "task-8-pending-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
@@ -1114,7 +1127,7 @@ try {
         assert.deepEqual(shimmer, { clip: "text", name: "work-shimmer", image: true }, "the live title shimmers");
         if (shots) await page.screenshot({ path: join(shots, "r4-working-390.png") });
         assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");
-        await view.locator('.host-chat-meter[data-place="status"]').click();
+        await view.locator('.composer-controls-right .host-chat-meter').click();
         const contextSheet = page.getByRole("dialog", { name: "Context window" });
         await contextSheet.waitFor();
         assert.deepEqual((await contextSheet.locator("dt").allInnerTexts()).map((text) => text.trim()), ["Conversation", "System", "Tool definitions", "Used"], "the breakdown the host sent");
@@ -1259,7 +1272,7 @@ try {
         // back to Interactive (as if set in VS Code), so /plan has something to change; the turn ends
         await page.evaluate(() => { (window as unknown as { hostState: { mode: string } }).hostState.mode = "interactive"; });
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false));
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title")?.startsWith("Interactive"));
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.startsWith("Chat settings: Interactive"));
         const slashConfigsBefore = (await posts("/api/machines/remote/host-chats/session/config")).length;
         const slashSendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
         await box.fill("/");
@@ -1271,24 +1284,43 @@ try {
         assert.ok(labels.indexOf("/fictional-skill") > labels.findIndex((label) => label.startsWith("/plan")), "the config commands come first");
         await slashMenu.getByText("Create an implementation plan before coding").first().waitFor();
         await fits("the / menu");
-        // the pills say their words: none is cut at 390 px (the old status slot squeezed them to "FICTION…", "R…", "In…")
-        const cut = await view.locator(".host-chat-pill-label, .host-chat-pill-aside").evaluateAll((spans) => spans.filter((span) => span.scrollWidth > span.clientWidth + 1).map((span) => span.textContent));
-        assert.deepEqual(cut, [], "no pill's words are cut");
-        assert.equal(await view.locator(".composer-pickers").evaluate((row) => row.scrollWidth <= row.clientWidth + 1), true, "the pickers fit the row at 390 px: nothing scrolls out of sight");
+        await box.fill("");
+        await page.waitForFunction(() => document.querySelector(".composer-menu") === null);
+        // one quiet row (ZAC-207 redesign): + · settings · the model chip · the ring · one round button
+        const order = await view.locator(".composer-controls-left > *, .composer-controls-right > *").evaluateAll((nodes) =>
+          nodes.filter((n) => (n as HTMLElement).offsetParent !== null)
+            .map((n) => n.className.toString().match(/composer-attach|host-chat-settings|composer-pickers|host-chat-meter|composer-voice|composer-send|composer-stop/)?.[0])
+            .filter(Boolean));
+        assert.deepEqual(order, ["composer-attach", "host-chat-settings", "composer-pickers", "host-chat-meter", "composer-voice"], `the row reads + · settings · model · ring · voice on an empty box (${order.join(", ")})`);
+        assert.equal(await view.locator(".host-chat-model .agent-mark, .host-chat-model .model-mark-sparkle").count(), 1, "the model chip keeps its provider mark");
+        assert.equal(await view.locator(".host-chat-agent, .host-chat-mode").count(), 0, "agent and mode pills are gone");
+        await box.fill("x");
+        await view.locator(".composer-send").waitFor();
+        assert.equal(await view.locator(".composer-voice").count(), 0, "voice becomes send on the first character");
+        await view.locator(".composer-controls-right .voice-mic-wrap").waitFor();
+        await box.fill("");
+        // at 360 px with a custom agent picked: nothing overflows and the model name still says itself
+        await page.setViewportSize({ width: 360, height: 780 });
+        assert.ok(await view.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "nothing overflows at 360");
+        const shownChars = await view.locator(".host-chat-model .host-chat-pill-label").evaluate((n) => {
+          const full = n.textContent ?? ""; const per = n.scrollWidth / Math.max(1, full.length); return Math.floor(n.clientWidth / per);
+        });
+        assert.ok(shownChars >= 8, `the model name shows at least 8 characters at 360 (${shownChars})`);
+        await page.setViewportSize({ width: 390, height: 844 });
+        console.log("PASS the row is + · settings · model · ring · voice, voice turns to send on a character, and fits 360");
         // a closed sheet slides out as a copy in an inert shadow host at the end of <body> (lib/sheets.ts leave): the picture waits for it to go
         await page.waitForFunction(() => ![...document.body.children].some((node) => node instanceof HTMLElement && node.inert && node.shadowRoot === null && node.getAttribute("aria-hidden") === "true" && node.childElementCount === 0));
         if (shots) await page.screenshot({ path: join(shots, "task-9b-slash-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
         if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "task-9c-composer-390.png") });
         // a desktop window: the same row with room, every word and caret shown
         await page.setViewportSize({ width: 1280, height: 844 });
-        await page.waitForFunction(() => getComputedStyle(document.querySelector(".host-chat-mode .host-chat-pill-label")!).display !== "none");
         if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "task-9c-composer-1280.png") });
         await page.setViewportSize({ width: 390, height: 844 });
         await box.fill("/plan FICTIONAL task");
         await box.press("Escape");
         await view.getByRole("button", { name: "Send message" }).click();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL task" }).waitFor({ state: "attached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title")?.startsWith("Plan"));
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.startsWith("Chat settings: Plan"));
         const configs = (await posts("/api/machines/remote/host-chats/session/config")).slice(slashConfigsBefore);
         assert.deepEqual(configs.map((post) => post.body), [{ session: SESSION, mode: "plan" }], "/plan sets the mode, once");
         assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/send")).slice(slashSendsBefore).map((post) => post.body["text"]), ["FICTIONAL task"], "and the rest is the message, once");
@@ -1751,7 +1783,7 @@ try {
         await made.locator(".chat-empty").waitFor();
         assert.equal(await made.locator('.chat-empty svg[aria-label="copilot"]').count(), 1, "the empty chat wears Copilot's mark");
         assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no VS Code mark anywhere");
-        for (const pill of [".host-chat-model", ".host-chat-agent"]) assert.equal(await made.locator(`.composer ${pill}`).count(), 1, `the composer's ${pill} pill`);
+        for (const pill of [".host-chat-model", ".host-chat-settings"]) assert.equal(await made.locator(`.composer ${pill}`).count(), 1, `the composer's ${pill} pill`);
         assert.equal(await made.locator(".composer .composer-attach").count(), 1, "attach, as any chat");
         assert.equal(await made.locator(".composer .voice-mic").count(), 1, "dictation, as any chat");
         // the first message goes from that composer, once, as a chat/send of that chat
@@ -2192,14 +2224,20 @@ try {
         await chat.locator(".session-pill").first().waitFor();
         const edges = await chat.evaluate((node) => {
           const left = (selector: string) => { const box = node.querySelector(selector)?.getBoundingClientRect(); return box ? Math.round(box.left) : null; };
-          const toolbar = node.querySelector<HTMLElement>('.composer-controls-right .host-chat-meter[data-place="toolbar"]');
-          const status = node.querySelector<HTMLElement>('.host-chat-meter[data-place="status"]');
+          const toolbar = node.querySelector<HTMLElement>('.composer-controls-right .host-chat-meter');
+          const status = node.querySelector<HTMLElement>('.host-chat-status .host-chat-meter');
           return { composer: left(".composer-surface"), pill: left(".session-pill"),
-            meter: toolbar !== null && toolbar.offsetParent !== null && toolbar.nextElementSibling?.classList.contains("composer-action") === true && (status === null || status.offsetParent === null) };
+            meter: toolbar !== null && toolbar.offsetParent !== null && toolbar.parentElement?.lastElementChild?.matches(".composer-action, .voice-mic-wrap") === true && (status === null || status.offsetParent === null) };
         });
         assert.notEqual(edges.composer, null);
         assert.equal(edges.pill, edges.composer, `the first pill starts where the composer does (${JSON.stringify(edges)})`);
         assert.equal(edges.meter, true, "the context meter is in the composer's toolbar");
+        assert.match((await chat.locator(".composer-controls-right .host-chat-meter").innerText()).trim(), /\d+%/, "a wide row says the meter's percent");
+        // a mouse window names a picked custom agent beside the model, as VS Code's toolbar does
+        await chat.locator(".host-chat-settings").click();
+        await wide.getByRole("dialog", { name: "Chat settings", exact: true }).locator(`[data-agent="${REPORT}"]`).click();
+        await chat.locator(".host-chat-agent-name", { hasText: "Report" }).waitFor({ timeout: 5_000 }).catch(() => assert.fail("the agent's name shows by the model on a wide window"));
+        assert.ok(await chat.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "the wide row fits");
         if (shots) await wide.screenshot({ path: join(shots, "desktop-chat-1440.png") });
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a wide window: pills on the chat's column, the meter by Send");
