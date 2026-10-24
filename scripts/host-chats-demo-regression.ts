@@ -1045,7 +1045,7 @@ try {
         await view.locator(".composer-attach").click();
         const attach = page.locator(".attach-sheet[role=dialog]");
         await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
-        if (shots) await settled(page); await page.screenshot({ path: join(shots, "composer-attach-sheet-390.png") });
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "composer-attach-sheet-390.png") }); }
         assert.deepEqual((await attach.locator(".attach-tile").allInnerTexts()).map((text) => text.trim()), ["Camera", "Photos"], "two tiles: Camera, Photos");
         const [photos] = await Promise.all([page.waitForEvent("filechooser"), attach.locator(".attach-tile", { hasText: "Photos" }).click()]);
         assert.equal(await photos.element().getAttribute("accept"), "image/*", "Photos asks for images only");
@@ -1098,7 +1098,7 @@ try {
         await view.locator(".composer-attach").click();
         await attach.waitFor();
         assert.deepEqual((await attach.getByRole("region", { name: "Recent in this chat" }).locator(".attach-recent").allInnerTexts()).map((text) => text.trim()), ["README.md"], "a file sent with the chat is one tap away next time");
-        if (shots) await settled(page); await page.screenshot({ path: join(shots, "composer-attach-recent-390.png") });
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "composer-attach-recent-390.png") }); }
         await page.keyboard.press("Escape");
         await attach.waitFor({ state: "detached" });
 
