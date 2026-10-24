@@ -520,7 +520,10 @@ try {
         assert.match(await second.getAttribute("class") ?? "", /is-folded/, "a finished turn's last group is folded too (ZAC-228)");
         assert.match(await agentTurn.locator(".chat-agent-meta .chat-meta-duration").innerText(), /^Worked for \d+m$/, "the turn's footer says once how long it worked (ZAC-228)");
         assert.equal((await agentTurn.locator(".chat-agent-meta .chat-meta-model").innerText()).trim(), "FICTIONAL Model A", "and the model that answered");
-        assert.equal(await agentTurn.locator(".chat-agent-meta .chat-meta-model").evaluate((node) => getComputedStyle(node, "::before").content), '"·"', "a dot between it and the time worked, never run together (owner)");
+        // on a phone the model starts its own line, no "·" leading it (live at 390 px, ZAC-228)
+        const modelLine = await agentTurn.locator(".chat-agent-meta .chat-meta-model").evaluate((node) => ({ dot: getComputedStyle(node, "::before").content, inset: Math.round(node.getBoundingClientRect().left - node.parentElement!.getBoundingClientRect().left), below: Math.round(node.getBoundingClientRect().top - node.parentElement!.querySelector("time")!.getBoundingClientRect().bottom) }));
+        assert.equal(modelLine.dot, "none", "no dot leads the model's own line");
+        assert.ok(modelLine.inset <= 0 && modelLine.below >= 0, `the model starts its own line (${modelLine.inset} px in, ${modelLine.below} px below the time)`);
         // each fact on one line: at 390 px the time and the duration broke in two (live crawl, ZAC-228)
         for (const fact of [".chat-agent-meta time", ".chat-agent-meta .chat-meta-duration"]) {
           const lines = await agentTurn.locator(fact).first().evaluate((node) => Math.round(node.getBoundingClientRect().height / parseFloat(getComputedStyle(node).lineHeight || "16")));
