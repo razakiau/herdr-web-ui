@@ -680,8 +680,12 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 The agent marks in `src/components/agentSvgMarks.ts` other than droid and maki, which the
 built client in `dist/` carries, come from [LobeHub Icons](https://github.com/lobehub/lobe-icons)
 (`@lobehub/icons-static-svg`), and so do the model provider marks a host chat's model picker
-shows there (openai, microsoft, deepseek, zhipu, minimax; version 1.95.1). The marks themselves
-belong to their owners.
+shows there (openai, microsoft, deepseek, minimax; version 1.95.1; zai and hunyuan, version
+1.98.0). The marks themselves belong to their owners.
+
+The Xiaomi mark the picker shows for MiMo models (`xiaomimimo`) comes from
+[Simple Icons](https://github.com/simple-icons/simple-icons) 16.35.0, released under CC0 1.0
+(public domain). The mark itself belongs to Xiaomi.
 
 ```
 MIT License
