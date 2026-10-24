@@ -1078,6 +1078,9 @@ try {
         const chips = view.locator(".composer-attachments .composer-attachment");
         await view.locator(".composer-attachment.is-ready img").waitFor();
         assert.equal(await box.inputValue(), "", "an uploaded file puts no @path in the box");
+        // a bare "@" lists the chat's folder before any letter, as VS Code's does
+        await box.fill("FICTIONAL look @");
+        await view.locator(".composer-menu").getByText("README.md").waitFor({ timeout: 3_000 });
         await box.fill("FICTIONAL look @READ");
         await view.locator(".composer-menu").getByText("README.md").click();
         await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 2);
