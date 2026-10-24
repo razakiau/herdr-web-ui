@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage, pendingActionUncertain, HOST_SEND_MENU, hostSendKey } from "./compose.ts";
 import { briefDescription, commandGroup, commandsForTrigger, slashCommandReplacement } from "./compose.ts";
+import { roundButton, settingsTone } from "./compose.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "./mentions.ts";
 
 describe("menu rows", () => {
@@ -466,5 +467,32 @@ describe("the host send menu (VS Code's queue picker)", () => {
     expect(hostSendKey(key(), "steer", false)).toBeNull();
     expect(hostSendKey(key({ metaKey: true }), "steer", false)).toBe("steer");
     expect(hostSendKey(key({ ctrlKey: true, altKey: true }), "steer", false)).toBe("queue");
+  });
+});
+
+describe("roundButton", () => {
+  it("is voice on an empty idle box when dictation is there", () => {
+    expect(roundButton({ working: false, text: "", attachments: 0, voice: true })).toBe("voice");
+  });
+  it("is send as soon as there is text or an attachment", () => {
+    expect(roundButton({ working: false, text: "a", attachments: 0, voice: true })).toBe("send");
+    expect(roundButton({ working: false, text: "  ", attachments: 1, voice: true })).toBe("send");
+  });
+  it("is send, never a dead voice button, without dictation", () => {
+    expect(roundButton({ working: false, text: "", attachments: 0, voice: false })).toBe("send");
+  });
+  it("is stop on a busy chat with nothing typed, send once something is", () => {
+    expect(roundButton({ working: true, text: "", attachments: 0, voice: true })).toBe("stop");
+    expect(roundButton({ working: true, text: "steer", attachments: 0, voice: true })).toBe("send");
+  });
+});
+
+describe("settingsTone", () => {
+  it("is raised only for a non-default level", () => {
+    expect(settingsTone("autoApprove")).toBe("raised");
+    expect(settingsTone("assisted")).toBe("raised");
+    expect(settingsTone("default")).toBe("quiet");
+    expect(settingsTone(null)).toBe("quiet");
+    expect(settingsTone(undefined)).toBe("quiet");
   });
 });
