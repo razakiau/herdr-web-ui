@@ -137,6 +137,7 @@ describe("demo transport", () => {
     "/api/pane/selection": "copying a selection across screens: not part of the demo (listed when this guard was added)",
     "/api/providers": "an OmniRoute gateway's own route, asked server to server by server/omniroute.ts",
     "/api/usage/provider-limits": "an OmniRoute gateway's own route, asked server to server by server/omniroute.ts",
+    "/api/pricing": "an OmniRoute gateway's own price table, asked server to server by server/omniroute.ts",
     "/api/preferences": "a 404 turns shared-settings sync off, as on an older server (fetchPreferences, src/lib/api.ts)",
     "/api/updates/check": "the demo's /api/updates says managed: false, so Settings offers no check",
     "/api/updates/install": "the demo's /api/updates says managed: false, so Settings offers no install",

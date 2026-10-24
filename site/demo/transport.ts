@@ -538,6 +538,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/usage") return json(usageReport(), 200, { "cache-control": "no-store" });
   // the demo's pills have no PR or issue to ask about; any link reads as unknown (its kind's neutral icon)
   if (path === "/api/references/state") return json({ states: Object.fromEntries(url.searchParams.getAll("url").map((each) => [each, { state: "unknown" }])) });
+  // no gateway in the demo: no prices, so the context popup shows no cost (ZAC-224)
+  if (path === "/api/usage/omniroute/pricing") return json({ prices: null, fallback: null }, 200, { "cache-control": "no-store" });
   if (path === "/api/usage/omniroute") return json({ configured: false, url: null, ok: false, problem: null, checked_at: null }, 200, { "cache-control": "no-store" });
   if (path === "/api/usage/login") {
     if (method === "GET") {
