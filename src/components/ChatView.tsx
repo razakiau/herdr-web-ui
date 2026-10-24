@@ -23,6 +23,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
+import { mcpCall } from "../lib/mcpCall.ts";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
@@ -717,7 +718,12 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   // without the host's words (a Copilot pane), the row keeps what the classic row says
   // VS Code's terminal title (chatTerminalToolProgressPart.ts): the intention first when there is
   // one, else what happened to the command; skipped keeps its word, as it never ran
-  const label = command !== null
+  // an MCP call (ZAC-228): VS Code's "Ran `tool`" and its server, never the proxy's bare name
+  const mcp = command === null ? mcpCall(part) : null;
+  const hostWords = (words: string | undefined) => words !== undefined && words.trim().length > 0 && words.trim() !== part.name;
+  const label = mcp !== null && !hostWords(part.past)
+    ? <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : part.error ? "Failed" : "Ran")} <code>{mcp.tool}</code>{mcp.server !== null && <> <span className="work-row-server">{mcp.server}</span></>}</>
+    : command !== null
     ? part.intention !== undefined && part.state !== "skipped" ? <>{part.intention} <code>{command}</code></>
       : <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : "Ran")} <code>{command}</code></>
     : part.past !== undefined && part.past.trim().length > 0 ? <RowText text={part.past} />
@@ -738,7 +744,11 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
         // VS Code's terminal part: the command line as a code block, its output under it
         ? <><pre className="work-row-command"><code>{command}</code></pre>
           {output.length > 0 ? <ToolOutput part={part} output={output} whole={whole} /> : <p className="work-row-empty">{t("No output was produced by the command.")}</p>}</>
-        : <><p className="work-row-tool">{part.name}</p><ToolInputView part={part} />{output.length > 0 && <ToolOutput part={part} output={output} whole={whole} />}</>}
+        : mcp !== null
+          // VS Code's MCP part: the arguments it was given, then what it answered
+          ? <><p className="work-row-section">{t("Input")}</p><pre className="work-row-command"><code>{typeof mcp.args === "string" ? mcp.args : JSON.stringify(mcp.args, null, 2)}</code></pre>
+            {output.length > 0 && <><p className="work-row-section">{t("Output")}</p><ToolOutput part={part} output={output} whole={whole} /></>}</>
+          : <><p className="work-row-tool">{part.name}</p><ToolInputView part={part} />{output.length > 0 && <ToolOutput part={part} output={output} whole={whole} />}</>}
     </div>}
   </div>;
 }
@@ -1165,7 +1175,15 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   // its tool groups (VS Code's); the classic style keeps them after the work, in order
   // so is a host's system notification ("`x` has completed") that came before the answer
   const answerAt = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
-  const inWork = (part: ConversationPart): boolean => isSystemNotice(part) && (answerAt < 0 || turn.parts.indexOf(part) < answerAt);
+  // the host's "Subagent `x` has completed" for a subagent this turn draws as a card: its card says it (ZAC-228)
+  // and "Background agent `<task>` is complete" (the host's own words, 2026-10-24), when the card is in this turn
+  const carded = style === "vscode" ? new Set(turn.parts.flatMap((part) => part.kind === "subagent" ? [part.agent, part.description] : [])) : new Set<string>();
+  const saidByCard = (part: ConversationPart): boolean => {
+    if (!isSystemNotice(part)) return false;
+    const named = /^(?:Subagent|Background agent) `([^`]+)` (?:has completed|has failed|is complete)\.?$/.exec(part.text.trim());
+    return named !== null && carded.has(named[1]!);
+  };
+  const inWork = (part: ConversationPart): boolean => isSystemNotice(part) && !saidByCard(part) && (answerAt < 0 || turn.parts.indexOf(part) < answerAt);
   const vscodeWork = style === "vscode" ? turn.parts.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question" || inWork(part)) : work;
   const worked = style === "vscode" && !live && vscodeWork.length > 0 ? formatWorkDuration(turn.ts, turn.end_ts ?? null) : null;
   const ownRows = style !== "vscode" ? turn.parts.flatMap((part, index) =>
@@ -1176,7 +1194,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   const goal = turnGoal(turn.parts);
   const firstAnswer = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
   const noticeRows = (before: boolean) => turn.parts.flatMap((part, index) =>
-    isNotice(part) && !(style === "vscode" && inWork(part)) && (firstAnswer >= 0 && index < firstAnswer) === before
+    isNotice(part) && !saidByCard(part) && !(style === "vscode" && inWork(part)) && (firstAnswer >= 0 && index < firstAnswer) === before
       ? [style === "vscode" && isSystemNotice(part) ? <SystemNotice key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} />
         : <NoticeRow key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} time={null} />] : []);
   return <article className={`chat-turn chat-turn-agent${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>

@@ -1356,7 +1356,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   code is drawn as one text rather than an element per line, so it never holds the page.
   A table fills the reply's width; its cells, file paths included, break between words only, so a
   column is never narrower than its longest word, and a table without room scrolls sideways in
-  its own box.
+  its own box. Its look is Claude's and VS Code's (ZAC-228): no outer box and no vertical rules,
+  a semibold `--text-strong` header over a `--border-strong` rule, `--border` hairlines between
+  rows, cells top-aligned, 6em to 28em wide.
   Thinking renders as a folded block only when **Show thinking** is enabled.
 - Auto-follow stops when the reader scrolls up; later output raises a **New messages** pill.
 - An empty chat is greeted from the composer (`.composer-greeting`, below), only where the agent's
@@ -1416,6 +1418,19 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   writes after it. A settled turn's groups are all folded, whatever text they hold, because the
   words stand outside them. No group head carries a time: the turn's footer says once
   "Worked for 7s" (`.chat-meta-duration`) after the copy buttons and the time of day.
+
+### Subagent card (`.subagent-card`, `SubagentRow.tsx`)
+- A host chat's subagent is a hairline `--bg-panel` card, `--radius-lg`, on the turn's column
+  (ZAC-228). Closed: the icon (spinner while it runs, `CircleX` failed), the name in
+  `--text-strong` semibold, the task in `--text-dim` ellipsized, the time, a caret; while it runs
+  its latest step sits under the head, indented to the name. The model is not on the head.
+- Open, under a hairline: the agent's blurb and its model (when not the chat's), then three
+  sections under `--fs-2xs` caps captions: **Asked** (its prompt, dim Markdown), **Work** (its
+  turns drawn as the chat's, its narration kept) and **Answer** (its closing words). A subagent's
+  subagent is a card inside it, on `--bg`, to any depth.
+- A running card opens by itself and closes when it ends; once the reader opens or closes it,
+  that choice stays. The host's "Subagent `x` has completed" / "Background agent `x` is
+  complete" line is not drawn for a card in the same turn: the card says it.
 
 ### Plan (`.bg-tasks-plan`, `.bg-step`, `.plan-count`)
 - A pane's plan has no control of its own: it shares the composer's background-task chip

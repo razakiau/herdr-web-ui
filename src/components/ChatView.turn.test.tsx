@@ -150,6 +150,18 @@ describe("a turn's style", () => {
     expect(html).not.toContain("chat-notice-label");
   });
 
+  it("vscode names the MCP tool a call ran and its server, like VS Code (ZAC-228)", () => {
+    const call = { kind: "tool" as const, name: "mcp_tool_call", tool_id: "lab-search-mcp_tool_call", summary: "mcp_tool_call", past: "mcp_tool_call",
+      input: JSON.stringify({ tool_name: "mobbin-search_screens", arguments: { query: "FICTIONAL composer" } }), output: "FICTIONAL 6 screens" };
+    const html = styled(settled([call, { kind: "text", text: "FICTIONAL done" }]), "vscode");
+    expect(html).toContain("Ran <code>mobbin-search_screens</code>");
+    expect(html).toContain('<span class="work-row-server">lab-search</span>');
+    expect(html.replace(/<[^>]+>/g, " ")).not.toContain("mcp_tool_call");
+    const failed = styled(settled([{ ...call, error: true }, { kind: "text", text: "FICTIONAL done" }]), "vscode");
+    expect(failed).toContain("Failed <code>mobbin-search_screens</code>");
+    expect(failed).toContain("lucide-circle-x");
+  });
+
   it("vscode keeps an MCP call out of the fold, its own row after the block", () => {
     const html = styled(settled([
       { kind: "tool", name: "bash", tool_id: "bash", summary: "ls", input: "ls", output: "", command: "ls" },
@@ -233,6 +245,18 @@ describe("subagents and answered questions in a Copilot turn", () => {
     expect(block).toBeLessThan(html.indexOf("subagent-row"));
     expect(html.indexOf("subagent-row")).toBeLessThan(html.indexOf("question-summary"));
     expect(html.indexOf("question-summary")).toBeLessThan(html.indexOf("FICTIONAL done"));
+  });
+
+  it("drops the host's \"has completed\" line for a subagent the turn shows as a card, and keeps any other (ZAC-228)", () => {
+    const done = { kind: "notice" as const, text: "Subagent `explore` has completed.", source: "system" as const };
+    const other = { kind: "notice" as const, text: "Subagent `FICTIONAL other` has completed.", source: "system" as const };
+    const background = { kind: "notice" as const, text: "Background agent `FICTIONAL find the config` is complete", source: "system" as const };
+    const html = styled(settled([subagent, done, background, other, { kind: "text", text: "FICTIONAL done" }]), "vscode");
+    expect(html).not.toContain("<code>FICTIONAL find the config</code>");
+    expect(html).toContain("subagent-card");
+    expect(html).not.toContain("<code>explore</code><span> has completed");
+    expect(html).toContain("<code>FICTIONAL other</code><span> has completed");
+    expect(html).toContain("FICTIONAL other");
   });
 
   it("a turn that is only a subagent and a question has no work block, and its answer still reads", () => {

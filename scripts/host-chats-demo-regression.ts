@@ -17,10 +17,11 @@ import { chromePath } from "./chrome-path.ts";
 const SESSION = "fictional-session-1";
 const REPORT = "file:///tmp/fictional/agents/Report.agent.md";
 const SUB = "ahp-chat://default/fictional-sub";
+const SUB_NESTED = "ahp-chat://default/fictional-sub-nested";
 const app = mkdtempSync(join(tmpdir(), "herdr-agent-host-chats-"));
 const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
-  const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)}, SUB = ${JSON.stringify(SUB)};
+  const SESSION = ${JSON.stringify(SESSION)}, REPORT = ${JSON.stringify(REPORT)}, SUB = ${JSON.stringify(SUB)}, SUB_NESTED = ${JSON.stringify(SUB_NESTED)};
   const calls = window.hostCalls = { posts: [], models: [] };
   // a chat's actions (Task 7): titles given, chats marked unread, read, done and deleted
   const edits = window.hostEdits = { titles: {}, unread: {}, archived: {}, deleted: [], failRead: false };
@@ -51,8 +52,19 @@ const patch = `(() => {
       calls.subagent = (calls.subagent ?? 0) + 1;
       return { session: SUB, title: "explore", status: "idle", turns: [
         { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the build config" }] },
-        { role: "assistant", ts: at(6), end_ts: at(5), parts: [{ kind: "text", text: "FICTIONAL the config is release.toml" }] },
+        { role: "assistant", ts: at(6), end_ts: at(5), parts: [
+          { kind: "tool", name: "Search", tool_id: "grep", summary: "FICTIONAL config", input: "{}", output: "" },
+          { kind: "text", text: "FICTIONAL two candidates; asking a helper about the second" },
+          { kind: "subagent", id: "c-nested", agent: "helper", description: "FICTIONAL read release.toml", model: null, started: at(6), ended: at(5), status: "done", chat: SUB_NESTED },
+          { kind: "text", text: "FICTIONAL the config is release.toml" },
+        ] },
       ], cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: ["sub-1"], signature: "sub" };
+    }
+    if (session === SUB_NESTED) {
+      return { session: SUB_NESTED, title: "helper", status: "idle", turns: [
+        { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL read release.toml" }] },
+        { role: "assistant", ts: at(6), end_ts: at(5), parts: [{ kind: "text", text: "FICTIONAL it targets x86" }] },
+      ], cursor: null, prompt: null, model: null, agent: null, busy: false, message_ids: ["nested-1"], signature: "nested" };
     }
     const made = state.created.find((chat) => chat.session === session);
     if (made) {
@@ -89,6 +101,8 @@ const patch = `(() => {
         // a reply as the review chats write them: list items with long code and paths, and a table wider than the phone
         { kind: "text", text: "FICTIONAL findings:\\n\\n- **FICTIONAL blocker**: \\\`FICTIONAL_unusually_long_function_name_that_never_breaks_anywhere()\\\` in /tmp/fictional-repo/src/some/deeply/nested/folder/structure/file.ts reads the wrong row\\n- FICTIONAL second point that is a plain long sentence and has to wrap onto several lines on a phone\\n\\n| FICTIONAL file | FICTIONAL finding | FICTIONAL severity | FICTIONAL suggested change |\\n|---|---|---|---|\\n| src/fictional/review/handlers/charge.ts | FICTIONAL the handler reads a stale snapshot | FICTIONAL high | FICTIONAL read the row inside the transaction |\\n| src/fictional/review/handlers/refund.ts | FICTIONAL no idempotency key | FICTIONAL medium | FICTIONAL key the request on the order id |" },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/src/refund.ts" }), output: "", error: false },
+        // an MCP call through a gateway, as the host sends it (ZAC-228)
+        { kind: "tool", name: "mcp_tool_call", tool_id: "lab-search-mcp_tool_call", summary: "mcp_tool_call", past: "mcp_tool_call", input: JSON.stringify({ tool_name: "FICTIONAL-search_screens", arguments: { query: "FICTIONAL composer" } }), output: "FICTIONAL 6 screens", error: false },
         { kind: "text", text: "FICTIONAL done." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
@@ -598,6 +612,23 @@ try {
         await asked.scrollIntoViewIfNeeded();
         if (shots) await page.screenshot({ path: join(shots, "ask-report-390.png") });
         assert.deepEqual(spill, [], "nothing in the chat runs past its column");
+        // ZAC-228: the wide table scrolls in its wrap, with Claude's and VS Code's look (no box, no
+        // vertical rules, a stronger rule under the header), and its columns keep a readable width
+        const table = await review.locator(".markdown-table-wrap").evaluate((wrap) => {
+          const cell = wrap.querySelector("td")!, head = wrap.querySelector("th")!;
+          const cs = getComputedStyle(cell), hs = getComputedStyle(head);
+          return { scrolls: wrap.scrollWidth > wrap.clientWidth, left: cs.borderLeftStyle, headRule: hs.borderBottomColor !== cs.borderBottomColor, narrowest: Math.min(...[...wrap.querySelectorAll("th")].map((th) => th.getBoundingClientRect().width)) };
+        });
+        assert.equal(table.scrolls, true, "a table wider than the phone scrolls in its wrap");
+        assert.equal(table.left, "none", "no vertical rules");
+        assert.ok(table.headRule, "the header's rule is stronger than a row's");
+        assert.ok(table.narrowest >= 60, `no column crushed below a readable width (${table.narrowest}px)`);
+        // ZAC-228: an MCP call reads as VS Code's "Ran `tool`" and its server, and opens to its input and output
+        const mcpRow = view.locator(".work-standalone .work-row", { hasText: "FICTIONAL-search_screens" });
+        assert.equal((await mcpRow.locator(".work-row-text").innerText()).replace(/\s+/g, " ").trim(), "Ran FICTIONAL-search_screens lab-search", "the tool it ran and its server, not the proxy's name");
+        await mcpRow.locator(".work-row-head").click();
+        assert.deepEqual(await mcpRow.locator(".work-row-section").allInnerTexts(), ["INPUT", "OUTPUT"], "opened: its input, then its output");
+        assert.match(await mcpRow.locator(".work-row-command").innerText(), /"query": "FICTIONAL composer"/, "the arguments the tool was given");
         const wrap = review.locator(".markdown-table-wrap");
         await wrap.scrollIntoViewIfNeeded();
         // ZAC-207: a host chat opens files now, so a path in a cell is its file's pill (its name), not
@@ -649,17 +680,28 @@ try {
         assert.equal(await subTurn.locator(".work-block .subagent-row").count(), 0, "a subagent is never inside a work block");
         assert.equal((await sub.locator(".subagent-row-name").innerText()).trim(), "explore", "the agent's name");
         assert.equal((await sub.locator(".subagent-row-description").innerText()).trim(), "FICTIONAL find the build config", "its task");
-        assert.equal((await sub.locator(".subagent-row-model").innerText()).trim(), "FICTIONAL Model B", "a model not the chat's");
+        assert.equal(await sub.locator(".subagent-row-model").count(), 0, "closed, the card leaves the model to its body (ZAC-228)");
+        assert.match(await sub.getAttribute("class") ?? "", /subagent-card/, "a subagent is a card (ZAC-228)");
+        assert.equal(await sub.evaluate((node) => getComputedStyle(node).borderTopStyle), "solid", "the card has its edge (ZAC-228)");
         assert.equal((await sub.locator(".subagent-row-time").innerText()).trim(), "Worked for 5m 43s", "VS Code's elapsed time");
         assert.equal(await sub.locator("svg.lucide-messages-square").count(), 1, "the comment-discussion icon");
         await sub.scrollIntoViewIfNeeded();
         await fits("the subagent row");
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-collapsed-390.png") });
-        await sub.locator(".subagent-row-head").click();
-        await sub.locator(".subagent-row-body .chat-turn-agent", { hasText: "FICTIONAL the config is release.toml" }).waitFor();
-        // opened, the row's cut words stand whole, the agent's own description quieter under them
-        assert.equal((await sub.locator(".subagent-row-body .subagent-row-intent").innerText()).trim(), "FICTIONAL find the build config", "the task, whole");
-        assert.match(await sub.locator(".subagent-row-body .subagent-row-blurb").innerText(), /cited$/, "the agent's description, whole to its last word");
+        await sub.locator(":scope > .subagent-row-head").click();
+        await sub.locator(":scope > .subagent-row-body .subagent-answer", { hasText: "FICTIONAL the config is release.toml" }).waitFor();
+        // opened (ZAC-228): the agent's blurb and model, then Asked / Work / Answer
+        assert.match(await sub.locator(":scope > .subagent-row-body .subagent-row-blurb").innerText(), /cited$/, "the agent's description, whole to its last word");
+        assert.equal((await sub.locator(":scope > .subagent-row-body > .subagent-row-about .subagent-row-model").innerText()).trim(), "FICTIONAL Model B", "a model not the chat's, in the body");
+        const body = sub.locator(":scope > .subagent-row-body");
+        assert.deepEqual(await body.locator(":scope > .subagent-section > .subagent-caption").allInnerTexts(), ["ASKED", "WORK", "ANSWER"], "the three sections in order");
+        assert.equal((await body.locator(":scope > .subagent-section .subagent-asked").innerText()).trim(), "FICTIONAL find the build config", "what it was asked, whole");
+        assert.equal((await body.locator(":scope > .subagent-section .subagent-answer").first().innerText()).trim(), "FICTIONAL the config is release.toml", "its answer");
+        assert.match(await body.locator(":scope > .subagent-section").nth(1).innerText(), /FICTIONAL two candidates/, "its narration stays in the work");
+        const nested = body.locator(".subagent-card", { hasText: "helper" });
+        assert.equal(await nested.count(), 1, "a subagent's subagent is a card inside it");
+        await nested.locator(".subagent-row-head").click();
+        await nested.locator(".subagent-answer", { hasText: "FICTIONAL it targets x86" }).waitFor();
         assert.ok((await page.evaluate(() => (window as unknown as { hostCalls: { subagent?: number } }).hostCalls.subagent ?? 0)) >= 1, "its chat is read by its URI");
         await fits("the opened subagent row");
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-expanded-390.png") });
@@ -673,7 +715,7 @@ try {
         // the host's "has completed" sits between the subagent and the question, its Markdown drawn
         const done = await subTurn.evaluate((node) => {
           const row = node.querySelector(".chat-system-notification")!;
-          const order = [...node.querySelectorAll(".subagent-row, .chat-system-notification, .question-summary")].map((el) => el.className.split(" ")[0]);
+          const order = [...node.querySelectorAll(".subagent-row, .chat-system-notification, .question-summary")].filter((el) => el.parentElement?.closest(".subagent-row") === null).map((el) => el.className.split(" ")[0]);
           return { text: (row as HTMLElement).innerText.trim(), code: row.querySelector("code")?.textContent ?? null, order };
         });
         assert.deepEqual(done, { text: "Subagent FICTIONAL explore has completed.", code: "FICTIONAL explore", order: ["subagent-row", "chat-system-notification", "question-summary"] }, "a system notification in place, as Markdown");
@@ -1382,7 +1424,7 @@ try {
         await subagentSheet.waitFor({ state: "detached" });
         const revealed = view.locator(`.subagent-row[data-subagent-chat="${SUB}"]`);
         await revealed.waitFor();
-        assert.equal(await revealed.locator(".subagent-row-head").getAttribute("aria-expanded"), "true", "its row is opened");
+        assert.equal(await revealed.locator(":scope > .subagent-row-head").getAttribute("aria-expanded"), "true", "its row is opened");
         const inView = await revealed.evaluate((node) => { const box = node.getBoundingClientRect(); const list = node.closest(".chat-view")!.getBoundingClientRect(); return box.top >= list.top - 1 && box.top < list.bottom; });
         assert.ok(inView, "and in view");
         assert.match(await revealed.getAttribute("class") ?? "", /is-revealed/, "and marked");

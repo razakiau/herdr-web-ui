@@ -11,6 +11,8 @@ import { ChevronDown, ChevronRight, CircleX, LoaderCircle, MessagesSquare } from
 import type { ConversationPart, ConversationTurn } from "../../shared/protocol.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
 import { useT, type Translate } from "../lib/i18n.ts";
+import { splitTurn } from "../lib/workBlocks.ts";
+import { Markdown } from "./Markdown.tsx";
 
 export type SubagentPart = Extract<ConversationPart, { kind: "subagent" }>;
 
@@ -63,13 +65,35 @@ export function isSubagentTarget(part: { id: string; chat: string | null }, targ
   return (target.toolCall !== undefined && part.id === target.toolCall) || (target.chat !== undefined && part.chat === target.chat);
 }
 
+/**
+ * A subagent's chat in three parts (ZAC-228): what it was asked (its first user words), its work
+ * (every assistant turn, the words it wrote between its steps kept in place), and its answer (the
+ * last turn's closing words, taken out of that turn). Nothing is dropped: a later user turn stays
+ * in the work.
+ */
+export function subagentSections(turns: ConversationTurn[]): { asked: string | null; work: ConversationTurn[]; answer: string | null } {
+  const words = (turn: ConversationTurn) => turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n").trim();
+  const first = turns[0];
+  const asked = first !== undefined && first.role === "user" && words(first).length > 0 ? words(first) : null;
+  const rest = asked === null ? turns : turns.slice(1);
+  const last = rest.at(-1);
+  if (last === undefined || last.role !== "assistant") return { asked, work: rest, answer: null };
+  const closing = splitTurn(last.parts).answer;
+  if (closing.length === 0) return { asked, work: rest, answer: null };
+  const answer = closing.map((part) => part.text).join("\n\n");
+  const trimmed = { ...last, parts: last.parts.filter((part) => !closing.includes(part as never)) };
+  return { asked, work: [...rest.slice(0, -1), ...(trimmed.parts.length > 0 ? [trimmed] : [])], answer };
+}
+
 export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }: SubagentRowProps) {
   const t = useT();
   // a background subagent runs on after its turn: its own chat is what says it runs
   const running = part.status === "running" && (live || part.background === true);
   const now = useSecondClock(running, fixedNow);
-  const [chosen, setOpen] = useChatRowToggle(`subagent:${part.id}`, false);
-  const open = chosen === true;
+  const [chosen, setOpen] = useChatRowToggle(`subagent:${part.id}`, null);
+  const canOpen = readChat !== undefined && part.chat !== null;
+  // a running one opens by itself and closes when it ends, unless the reader chose (ZAC-228)
+  const open = canOpen && (chosen ?? running);
   const revealed = useContext(RevealedSubagentContext);
   const isRevealed = revealed !== null && isSubagentTarget(part, revealed);
   const sectionRef = useRef<HTMLElement>(null);
@@ -80,7 +104,6 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
     // setOpen changes with the row's memory, not with each reveal
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRevealed, revealed?.at]);
-  const canOpen = readChat !== undefined && part.chat !== null;
   const [turns, setTurns] = useState<ConversationTurn[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -102,26 +125,39 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
     <span className="subagent-row-main">
       <span className="subagent-row-name">{part.agent}</span>
       {part.description.length > 0 && <span className="subagent-row-description" title={part.description}>{part.description}</span>}
-      {part.model !== null && <span className="subagent-row-model">{part.model}</span>}
     </span>
     {time !== null && <span className="subagent-row-time">{time}</span>}
     {canOpen && <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>}
   </>;
-  return <section ref={sectionRef} className={`subagent-row is-${running ? "running" : part.status === "running" ? "done" : part.status}${isRevealed ? " is-revealed" : ""}`} {...(part.chat !== null ? { "data-subagent-chat": part.chat } : {})} aria-label={t("Subagent: {name}", { name: part.agent })}>
+  const sections = turns === null ? null : subagentSections(turns);
+  return <section ref={sectionRef} className={`subagent-row subagent-card is-${running ? "running" : part.status === "running" ? "done" : part.status}${isRevealed ? " is-revealed" : ""}`} {...(part.chat !== null ? { "data-subagent-chat": part.chat } : {})} aria-label={t("Subagent: {name}", { name: part.agent })}>
     {canOpen
       ? <button type="button" className="subagent-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>{head}</button>
       : <div className="subagent-row-head">{head}</div>}
-    {running && part.activity !== undefined && !open && <p className="subagent-row-activity">{part.activity}</p>}
+    {running && part.activity !== undefined && <p className="subagent-row-activity">{part.activity}</p>}
     {open && canOpen && <div className="subagent-row-body">
       {/* the row's head cuts its words to one line: opened, they stand whole, the agent's own blurb under them */}
-      {(part.description.length > 0 || part.about !== undefined) && <div className="subagent-row-about">
-        {part.description.length > 0 && <p className="subagent-row-intent">{part.description}</p>}
+      {(part.about !== undefined || part.model !== null) && <div className="subagent-row-about">
         {part.about !== undefined && <p className="subagent-row-blurb">{part.about}</p>}
+        {part.model !== null && <p className="subagent-row-model">{part.model}</p>}
       </div>}
       {failed ? <p className="subagent-row-note">{t("Couldn't load the subagent's chat.")} <button type="button" className="btn btn-ghost" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>
-        : turns === null ? <p className="subagent-row-note">{t("Loading…")}</p>
-          : turns.length === 0 ? <p className="subagent-row-note">{t("Subagent chat is not available yet.")}</p>
-            : turns.map((turn, index) => <div key={index} className="subagent-row-turn">{renderTurn ? renderTurn(turn, index) : null}</div>)}
+        : sections === null ? <p className="subagent-row-note">{t("Loading…")}</p>
+          : turns!.length === 0 ? <p className="subagent-row-note">{t("Subagent chat is not available yet.")}</p>
+            : <>
+              {(sections.asked ?? part.description).length > 0 && <div className="subagent-section">
+                <h4 className="subagent-caption">{t("Asked")}</h4>
+                <div className="subagent-asked"><Markdown style="vscode">{sections.asked ?? part.description}</Markdown></div>
+              </div>}
+              {sections.work.length > 0 && <div className="subagent-section">
+                <h4 className="subagent-caption">{t("Work")}</h4>
+                {sections.work.map((turn, index) => <div key={index} className="subagent-row-turn">{renderTurn ? renderTurn(turn, index) : null}</div>)}
+              </div>}
+              {sections.answer !== null && <div className="subagent-section">
+                <h4 className="subagent-caption">{t("Answer")}</h4>
+                <div className="subagent-answer"><Markdown style="vscode">{sections.answer}</Markdown></div>
+              </div>}
+            </>}
     </div>}
   </section>;
 }
