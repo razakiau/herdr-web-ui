@@ -1433,7 +1433,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   breathing `--status-working` dot (`.work-block-dot`, `sidebar-breathe`, in step through
   `lib/breath.ts`), the one sign for "in progress" that the sidebar and a tab's dot share. A
   spinner stays the subagent card's. An MCP call's row wears MCP's own mark (`McpIcon.tsx`,
-  Simple Icons, CC0) and reads "Ran `tool` server".
+  Simple Icons, CC0) and reads "Ran `tool` server". Three or more MCP calls in a row fold into
+  one such line, "Ran 3 MCP tools lab-search" (its failures in red after it), that opens to each
+  call; a call waiting for an answer is never folded into one.
+- A host chat's todo bar reads the SDK session's store: a CLI chat's own, a chat VS Code started
+  through the `sdkSessionId` its `agentSessionData` store names.
 
 ### Subagent card (`.subagent-card`, `SubagentRow.tsx`)
 - A host chat's subagent is a hairline `--bg-panel` card, `--radius-lg`, on the turn's column

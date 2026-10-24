@@ -1489,6 +1489,7 @@ export const JA: Record<string, string> = {
   "Edited {file}": "{file} を編集しました",
   "Edited {n} files": "{n} 個のファイルを編集しました",
   "Ran 1 command": "1 個のコマンドを実行しました",
+  "Ran {n} MCP tools": "MCP ツールを {n} 個実行",
   "Ran {n} commands": "{n} 個のコマンドを実行しました",
   "ran 1 command": "1 個のコマンドを実行",
   "ran {n} commands": "{n} 個のコマンドを実行",

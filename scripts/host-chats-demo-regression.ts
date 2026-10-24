@@ -104,6 +104,10 @@ const patch = `(() => {
         // an MCP call through a gateway, as the host sends it (ZAC-228)
         { kind: "tool", name: "mcp_tool_call", tool_id: "lab-search-mcp_tool_call", summary: "mcp_tool_call", past: "mcp_tool_call", input: JSON.stringify({ tool_name: "FICTIONAL-search_screens", arguments: { query: "FICTIONAL composer" } }), output: "FICTIONAL 6 screens", error: false },
         { kind: "text", text: "FICTIONAL done." },
+        // three MCP calls in a row fold into one line (ZAC-228); the web read names each by its full id
+        ...["FICTIONAL-get_issue", "FICTIONAL-save_issue", "FICTIONAL-save_comment"].map((tool, index) => ({ kind: "tool", name: "lab-search-mcp_tool_call", tool_id: "lab-search-mcp_tool_call",
+          summary: "mcp_tool_call", past: index === 1 ? '"mcp_tool_call" failed' : "mcp_tool_call", input: JSON.stringify({ tool_name: tool, arguments: { id: "FIC-" + index } }), output: "FICTIONAL ok", error: index === 1 })),
+        { kind: "text", text: "FICTIONAL filed." },
       ] },
       { role: "user", ts: at(2), parts: [{ kind: "text", text: "FICTIONAL what next" }] },
       { role: "assistant", ts: at(2), parts: [        { kind: "question", text: "FICTIONAL Next", report: "FICTIONAL **Bundle 9** is live.\\n\\n- FICTIONAL the row reads its own chat\\n- FICTIONAL a path that runs long: /tmp/fictional-repo/src/some/deeply/nested/folder/structure/file.ts", options: [], chosen: [], custom: "FICTIONAL ship it", skipped: false }, { kind: "question", text: "FICTIONAL Notes (optional)", options: [], chosen: [], custom: null, skipped: true }, { kind: "question", text: "FICTIONAL Screenshot?", options: [], chosen: [], custom: null, skipped: false, images: [{ media_type: "image/png", ref: "answer:paste-1.png" }] }, { kind: "text", text: "FICTIONAL which way should I go?" }, ...(state.resumed ? [] : [{ kind: "notice", text: "FICTIONAL 502 from the model", source: "error", resumable: true }])] },
@@ -660,6 +664,15 @@ try {
         await mcpRow.locator(".work-row-head").click();
         assert.deepEqual(await mcpRow.locator(".work-row-section").allInnerTexts(), ["INPUT", "OUTPUT"], "opened: its input, then its output");
         assert.match(await mcpRow.locator(".work-row-command").innerText(), /"query": "FICTIONAL composer"/, "the arguments the tool was given");
+        // three in a row: one line that opens to each, and its failure in red
+        const mcpRun = view.locator(".work-standalone .mcp-run");
+        assert.equal((await mcpRun.locator(":scope > .work-row-line .work-row-text").innerText()).replace(/\s+/g, " ").trim(), "Ran 3 MCP tools lab-search 1 failed", "a run of MCP calls folds to one line");
+        assert.equal(await mcpRun.locator(".mcp-run-rows").count(), 0, "folded");
+        await mcpRun.locator(":scope > .work-row-line .work-row-head").click();
+        assert.deepEqual((await mcpRun.locator(".mcp-run-rows .work-row-text").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()),
+          ["Ran FICTIONAL-get_issue lab-search", "Failed FICTIONAL-save_issue lab-search", "Ran FICTIONAL-save_comment lab-search"], "opened: each call by the tool it ran");
+        await fits("an opened MCP run");
+        await mcpRun.locator(":scope > .work-row-line .work-row-head").click();
         const wrap = review.locator(".markdown-table-wrap");
         await wrap.scrollIntoViewIfNeeded();
         // ZAC-207: a host chat opens files now, so a path in a cell is its file's pill (its name), not

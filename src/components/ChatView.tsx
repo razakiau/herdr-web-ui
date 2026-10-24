@@ -24,6 +24,7 @@ import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
 import { mcpCall, mcpWordsSayMore } from "../lib/mcpCall.ts";
+import { McpIcon } from "./McpIcon.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
@@ -757,6 +758,43 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   </div>;
 }
 
+/** From this many MCP calls in a row, they fold into one line that opens to them (owner, ZAC-228: ten Linear calls filled a screen). */
+export const MCP_RUN_FOLD = 3;
+
+/** The calls kept out of the tool group, in runs: MCP calls together; one waiting for an answer, or a diagram, alone. */
+export function standaloneRuns(parts: readonly ToolPartType[]): ToolPartType[][] {
+  const runs: ToolPartType[][] = [];
+  for (const part of parts) {
+    const foldable = toolKind(part) === "mcp" && part.state !== "awaiting";
+    const last = runs.at(-1);
+    if (foldable && last !== undefined && last.every((each) => toolKind(each) === "mcp" && each.state !== "awaiting")) last.push(part);
+    else runs.push([part]);
+  }
+  return runs;
+}
+
+/** A run of MCP calls as one line, "Ran 10 MCP tools" with their servers, that opens to each call. */
+function McpRun({ parts, stateKey, rowKey }: { parts: ToolPartType[]; stateKey: string; rowKey(part: ToolPartType): string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, null);
+  const running = parts.some((part) => part.state === "running");
+  const open = chosen ?? false;
+  const failed = parts.filter((part) => part.error === true).length;
+  const servers = [...new Set(parts.map((part) => mcpCall(part)?.server).filter((server): server is string => typeof server === "string"))];
+  const Icon = failed > 0 ? CircleX : McpIcon;
+  return <div className={`work-row is-vscode mcp-run${failed > 0 ? " is-error" : ""}`}>
+    <div className="work-row-line">
+      <button type="button" className="work-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {running ? <span className="work-block-dot" aria-hidden="true" onAnimationStart={alignBreath} /> : <Icon className="work-row-icon" aria-hidden="true" />}
+        <span className="work-row-text">{t("Ran {n} MCP tools", { n: parts.length })}{servers.length > 0 && <> <span className="work-row-server">{servers.join(", ")}</span></>}
+          {failed > 0 && <> <span className="mcp-run-failed">{t("{n} failed", { n: failed })}</span></>}</span>
+        <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
+      </button>
+    </div>
+    {open && <div className="mcp-run-rows">{parts.map((part) => <VscodeWorkRow key={rowKey(part)} stateKey={rowKey(part)} part={part} />)}</div>}
+  </div>;
+}
+
 /**
  * The work block in VS Code's words: one per turn, open and folded as the classic one, its head the
  * tool group's sentence ("Edited x.ts, ran 2 commands") with a wrench, a check once done or the error
@@ -799,7 +837,9 @@ function VscodeWorkBlockView({ paneId, parts, live, waiting, defaultOpen, stateK
       </AnimatedHeight>
     </section>}
     <WorkImages paneId={paneId} parts={parts} />
-    {standalone.length > 0 && <div className="work-standalone">{standalone.map((part) => <VscodeWorkRow key={parts.indexOf(part)} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} />)}</div>}
+    {standalone.length > 0 && <div className="work-standalone">{standaloneRuns(standalone).map((run) => run.length >= MCP_RUN_FOLD
+      ? <McpRun key={parts.indexOf(run[0]!)} parts={run} stateKey={`mcp-run:${offset + parts.indexOf(run[0]!)}`} rowKey={(part) => `tool:${offset + parts.indexOf(part)}`} />
+      : run.map((part) => <VscodeWorkRow key={parts.indexOf(part)} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} />))}</div>}
   </>;
 }
 

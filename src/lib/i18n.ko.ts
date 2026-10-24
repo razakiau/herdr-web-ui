@@ -1487,6 +1487,7 @@ export const KO: Record<string, string> = {
   "Edited {file}": "{file} 편집함",
   "Edited {n} files": "파일 {n}개 편집함",
   "Ran 1 command": "명령 1개 실행함",
+  "Ran {n} MCP tools": "MCP 도구 {n}개 실행함",
   "Ran {n} commands": "명령 {n}개 실행함",
   "ran 1 command": "명령 1개 실행함",
   "ran {n} commands": "명령 {n}개 실행함",

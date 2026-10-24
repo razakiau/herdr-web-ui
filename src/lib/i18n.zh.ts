@@ -1491,6 +1491,7 @@ export const ZH: Record<string, string> = {
   "Edited {file}": "已编辑 {file}",
   "Edited {n} files": "已编辑 {n} 个文件",
   "Ran 1 command": "已运行 1 个命令",
+  "Ran {n} MCP tools": "运行了 {n} 个 MCP 工具",
   "Ran {n} commands": "已运行 {n} 个命令",
   "ran 1 command": "运行了 1 个命令",
   "ran {n} commands": "运行了 {n} 个命令",

@@ -1804,6 +1804,10 @@
 .work-images { margin-top: var(--space-1); }
 /* a call VS Code never folds: its own row after the block */
 .work-standalone { display: flex; flex-direction: column; }
+/* a run of MCP calls folded to one line (ZAC-228): its calls open under it, indented to its words */
+.mcp-run-rows { display: flex; flex-direction: column; padding-inline-start: calc(var(--fs-md) + var(--space-2)); }
+.mcp-run.is-error .mcp-run-failed { color: var(--status-blocked); }
+.mcp-run .work-row-head .work-row-caret { margin-inline-start: auto; }
 
 .markdown-host-link {
   color: var(--accent);

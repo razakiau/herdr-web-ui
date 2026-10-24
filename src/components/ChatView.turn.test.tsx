@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { changesLine, groupStartsOpen, Turn } from "./ChatView.tsx";
+import { changesLine, groupStartsOpen, Turn, standaloneRuns } from "./ChatView.tsx";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] } as ConversationTurn);
@@ -419,6 +419,19 @@ describe("the end of a host answer (ZAC-228)", () => {
     const html = plain(draw(mcp));
     expect(html).toContain("Failed fictional-search lab-search");
     expect(html).not.toContain("mcp_tool_call");
+  });
+
+  it("folds three MCP calls in a row into one line, and leaves two, or one waiting for you, alone", () => {
+    const call = (tool: string, extra: Record<string, unknown> = {}) => ({ kind: "tool" as const, name: "mcp_tool_call", tool_id: "lab-search-mcp_tool_call", summary: "mcp_tool_call",
+      input: JSON.stringify({ tool_name: tool, arguments: {} }), output: "", error: false, ...extra });
+    const three = plain(draw(agent([call("fictional-a"), call("fictional-b"), call("fictional-c", { error: true }), { kind: "text", text: "FICTIONAL after" }])));
+    expect(three).toContain("Ran 3 MCP tools lab-search 1 failed");
+    expect(three).not.toContain("fictional-a");
+    const two = plain(draw(agent([call("fictional-a"), call("fictional-b"), { kind: "text", text: "FICTIONAL after" }])));
+    expect(two).toContain("Ran fictional-a lab-search");
+    expect(two).not.toContain("MCP tools");
+    const runs = standaloneRuns([call("a"), call("b"), call("c", { state: "awaiting" }), call("d")] as Parameters<typeof standaloneRuns>[0]);
+    expect(runs.map((run) => run.length)).toEqual([2, 1, 1]);
   });
 
   it("a running group wears the sidebar's breathing dot, a finished one its check", () => {
