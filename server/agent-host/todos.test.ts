@@ -26,6 +26,17 @@ function store(uuid: string, sql: string[]): string {
   return path;
 }
 
+const CHAT = "591b2f3f-e34c-4671-a7b8-e46c47c0b43b";
+
+/** VS Code's own store for a chat: session_metadata naming the SDK session it runs on */
+function vscodeStore(dir: string, chat: string, value: string): void {
+  mkdirSync(join(dir, chat), { recursive: true });
+  const db = new Database(join(dir, chat, "session.db"));
+  db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+  db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [value]);
+  db.close();
+}
+
 describe("readSessionTodos", () => {
   test("reads todos in the order they were written", () => {
     store(UUID, [SCHEMA,
@@ -67,5 +78,28 @@ describe("readSessionTodos", () => {
     db.run("UPDATE todos SET status = 'done'");
     db.close();
     expect(readSessionTodos(`copilotcli:/${UUID}`, home)?.[0]?.status).toBe("done");
+  });
+
+  test("finds a VS Code chat's todos through the SDK session its own store names (live, 2026-10-24)", () => {
+    store(UUID, [SCHEMA, "INSERT INTO todos (id, title, status) VALUES ('t1', 'FICTIONAL plan', 'in_progress')"]);
+    const agentDirs = [join(home, "absent"), join(home, "agentSessionData")];
+    expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toBeNull();
+    vscodeStore(agentDirs[1]!, CHAT, JSON.stringify({ sdkSessionId: UUID, model: { id: "fictional" } }));
+    expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toEqual([{ id: "t1", title: "FICTIONAL plan", status: "in_progress" }]);
+    expect(readSessionTodos(`ahp-chat:/${CHAT}`, home, agentDirs)).toEqual([{ id: "t1", title: "FICTIONAL plan", status: "in_progress" }]);
+  });
+
+  test("a VS Code store that names no uuid, or isn't JSON, leads nowhere", () => {
+    const agentDirs = [join(home, "agentSessionData")];
+    // a store outside session-state, which a name that isn't a uuid could reach
+    mkdirSync(join(home, "outside"), { recursive: true });
+    const outside = new Database(join(home, "outside", "session.db"));
+    outside.run(SCHEMA); outside.run("INSERT INTO todos (id, title) VALUES ('x', 'FICTIONAL elsewhere')"); outside.close();
+    vscodeStore(agentDirs[0]!, CHAT, JSON.stringify({ sdkSessionId: "../outside" }));
+    expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toBeNull();
+    forgetSessionTodos();
+    rmSync(join(agentDirs[0]!, CHAT), { recursive: true });
+    vscodeStore(agentDirs[0]!, CHAT, "not json");
+    expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toBeNull();
   });
 });
