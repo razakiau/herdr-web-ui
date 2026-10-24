@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
@@ -321,6 +321,8 @@ const patch = `(() => {
 })();`;
 
 const shots = process.env["HOST_CHATS_SHOTS"];
+// a sheet slides up: let its animations finish before a screenshot
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().map((each) => each.finished.catch(() => undefined))));
 try {
   await buildDemoApp(app);
   writeFileSync(join(app, "host-chats.js"), patch);
@@ -1039,6 +1041,35 @@ try {
 
         // 4b. attachments are chips, VS Code's way: a PNG picked and a file taken with "@" go with the
         // message as attachments, and the text carries no @path
+        // + opens the attach sheet (ZAC-207 redesign): Camera and Photos, then the chat's folder first
+        await view.locator(".composer-attach").click();
+        const attach = page.getByRole("dialog", { name: "Add to chat", exact: true });
+        await attach.waitFor();
+        if (shots) await settled(page); await page.screenshot({ path: join(shots, "composer-attach-sheet-390.png") });
+        assert.deepEqual((await attach.locator(".attach-tile").allInnerTexts()).map((text) => text.trim()), ["Camera", "Photos"], "two tiles: Camera, Photos");
+        const [photos] = await Promise.all([page.waitForEvent("filechooser"), attach.locator(".attach-tile", { hasText: "Photos" }).click()]);
+        assert.equal(await photos.element().getAttribute("accept"), "image/*", "Photos asks for images only");
+        await photos.setFiles([]);
+        await attach.waitFor({ state: "detached" });
+        await view.locator(".composer-attach").click();
+        await attach.waitFor();
+        const [device] = await Promise.all([page.waitForEvent("filechooser"), attach.getByRole("button", { name: "Upload from device" }).click()]);
+        assert.equal(device.isMultiple(), true, "Upload from device takes several files");
+        assert.equal(await device.element().getAttribute("accept"), null, "and any type");
+        await device.setFiles([]);
+        await view.locator(".composer-attach").click();
+        await attach.waitFor();
+        await attach.getByRole("button", { name: "Files in this folder" }).click();
+        await attach.getByRole("searchbox", { name: "Search files" }).fill("READ");
+        if (shots) { await attach.getByRole("button", { name: "README.md" }).waitFor(); await settled(page); await page.screenshot({ path: join(shots, "composer-attach-folder-390.png") }); }
+        await attach.getByRole("button", { name: "README.md" }).click();
+        await attach.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 1);
+        assert.equal((await view.locator(".composer-attachment-file").textContent())?.trim(), "README.md", "the folder pick is the same chip as an @ pick");
+        assert.equal(await view.locator(".composer-send").count(), 1, "a chip turns voice into Send");
+        await view.locator(".composer-attachment").getByRole("button", { name: /Remove/ }).click();
+        await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 0);
+        console.log("PASS + opens the attach sheet: Camera and Photos tiles, the device picker, and the folder's files as a chip");
         await view.locator('.composer input[type="file"]').setInputFiles({ name: "fictional-shot.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") });
         const chips = view.locator(".composer-attachments .composer-attachment");
         await view.locator(".composer-attachment.is-ready img").waitFor();
@@ -1057,6 +1088,12 @@ try {
         assert.deepEqual(withFiles, { session: SESSION, text: "FICTIONAL look", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT,
           attachments: [{ path: "/tmp/fictional-repo/.herdr-web-ui/fictional-shot.png", media_type: "image/png", name: "fictional-shot.png" }, { path: "README.md" }] }, "the send carries both chips as attachments");
         console.log("PASS a picked PNG and an @ file are chips and go as the message's attachments");
+        await view.locator(".composer-attach").click();
+        await attach.waitFor();
+        assert.deepEqual((await attach.getByRole("region", { name: "Recent in this chat" }).locator(".attach-recent").allInnerTexts()).map((text) => text.trim()), ["README.md"], "a file sent with the chat is one tap away next time");
+        if (shots) await settled(page); await page.screenshot({ path: join(shots, "composer-attach-recent-390.png") });
+        await page.keyboard.press("Escape");
+        await attach.waitFor({ state: "detached" });
 
         // 5. a busy chat: VS Code's send menu. Send steers by default, a second steer joins the first,
         // Add to Queue waits for the turn, and Stop and Send ends the turn and sends

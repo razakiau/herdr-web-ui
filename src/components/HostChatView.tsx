@@ -26,7 +26,9 @@ import {
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
 import { settingsTone, type HostSendPick } from "../lib/compose.ts";
-import { Composer, type SentAttachment } from "./Composer.tsx";
+import { Composer, type AttachApi, type SentAttachment } from "./Composer.tsx";
+import { AttachSheet, rememberAttached } from "./AttachSheet.tsx";
+import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import type { SubagentTarget } from "./SubagentRow.tsx";
@@ -111,6 +113,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const [choice, setChoice] = useState<HostChoice>(() => chosenFor(machineId, session));
   const [joined, setJoined] = useState(false);
   const [sheet, setSheet] = useState<"model" | "settings" | null>(null);
+  // the attach sheet is open with the composer's handle (Composer's attachMenu)
+  const [attaching, setAttaching] = useState<AttachApi | null>(null);
   const [config, setConfig] = useState<HostSessionConfig | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
@@ -206,6 +210,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const sendAs = useCallback(async (mode: HostSendPick | "send", text: string, attached: SentAttachment[] = []): Promise<boolean | string> => {
     // a leading config command (/plan, /autopilot on…) sets the chat's mode or approvals first, as
     // VS Code does on send; what is left goes as the message, and nothing goes when nothing is left
+    // a folder file sent with the chat is one tap away in the attach sheet next time
+    rememberAttached(machineId, session, attached.flatMap((each) => each.media_type === undefined ? [each.path] : []));
     const slash = resolveHostSlash(text.trim());
     const words = slash ? slash.text : text.trim();
     try {
@@ -335,6 +341,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}
       pendingNote={joined ? t("Added to your steer") : null}
       onSend={(text, _clear, _anyway, attached) => sendAs("send", text, attached)}
+      attachMenu={setAttaching}
       attachAsChips onUploadImage={(file) => uploadHostFile(machineId, session, file)}
       onAbort={() => { void stopHost(machineId, session).finally(reread); }} />
     {restoring !== null && restoringAt >= 0 && <CheckpointSheet first={restoringAt === 0 && chat?.cursor === null} files={filesSince(checkpointList!, restoring)}
@@ -346,6 +353,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
         if (text !== null) setPutBack(text);
         reread();
       }} />}
+    {attaching !== null && <AttachSheet machineId={machineId} session={session} api={attaching} onClose={() => setAttaching(null)} />}
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
       onModel={pickModel} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
   </div>;

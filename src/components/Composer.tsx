@@ -144,6 +144,19 @@ export interface ComposerProps {
   toolbarEnd?: ReactNode;
   /** drawn right after attach: a host chat's settings button (mode, permissions, agent) */
   settingsButton?: ReactNode;
+  /** a host chat's +: opens its attach sheet with the composer's handle instead of the device's picker */
+  attachMenu?: (api: AttachApi) => void;
+}
+
+/**
+ * What a host chat's attach sheet can do with the composer (ZAC-207 redesign): open the device's
+ * picker (images only, the camera), add a path of the chat's folder as an "@" pick's chip, or add a
+ * file it already holds (the clipboard's picture).
+ */
+export interface AttachApi {
+  pickFiles(opts?: { accept?: string; capture?: boolean }): void;
+  addPicked(path: string): void;
+  addFile(file: File): void;
 }
 
 /** A chip sent with a host chat's message: an uploaded file (its type and name), or an "@" pick (a path of the chat's folder). */
@@ -297,6 +310,7 @@ export function Composer({
   pills,
   toolbarEnd,
   settingsButton,
+  attachMenu,
   attachAsChips = false,
 }: ComposerProps) {
   const t = useT();
@@ -735,6 +749,13 @@ export function Composer({
     return () => cancelAnimationFrame(frame);
   }, [placeWaitingMentions, text]);
 
+  // an "@" pick or the attach sheet's folder pick: a chip with the folder's path, never uploaded
+  const addPicked = useCallback((path: string) => {
+    setAttachments((current) => current.some((item) => item.picked && item.path === path) ? current : [...current, {
+      id: ++attachmentSequence, file: new File([], path.split("/").pop() ?? path), previewUrl: "", path, state: "ready", leftOut: null, picked: true,
+    }]);
+  }, []);
+
   const selectCompletion = useCallback(
     (choice: SlashCommand | HostSlashItem | string, currentTrigger: ActiveTrigger) => {
       if (typeof choice === "object" && "insert" in choice) {
@@ -750,9 +771,7 @@ export function Composer({
         const completed = applyCompletion(text, currentTrigger, "");
         setTextAndCaret(completed.text, completed.caret);
         setMenuDismissed(true);
-        setAttachments((current) => current.some((item) => item.picked && item.path === path) ? current : [...current, {
-          id: ++attachmentSequence, file: new File([], path.split("/").pop() ?? path), previewUrl: "", path, state: "ready", leftOut: null, picked: true,
-        }]);
+        addPicked(path);
         return;
       }
       const replacement = currentTrigger.kind === "slash" ? slashCommandReplacement(choice as SlashCommand, agent, currentTrigger) : `@${choice as string} `;
@@ -772,7 +791,7 @@ export function Composer({
         });
       }
     },
-    [agent, attachAsChips, setTextAndCaret, text],
+    [addPicked, agent, attachAsChips, setTextAndCaret, text],
   );
 
   const pumpUploads = useCallback(() => {
@@ -1398,6 +1417,8 @@ export function Composer({
             onChange={(event) => {
               const picked = Array.from(event.currentTarget.files ?? []);
               event.currentTarget.value = "";
+              event.currentTarget.removeAttribute("accept");
+              event.currentTarget.removeAttribute("capture");
               void uploadImages(picked);
             }}
           />
@@ -1407,7 +1428,21 @@ export function Composer({
             aria-label={t("Attach files")}
             title={t("Attach files")}
             disabled={!connected || uploading}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (!attachMenu) { fileInputRef.current?.click(); return; }
+              attachMenu({
+                pickFiles: (opts) => {
+                  const input = fileInputRef.current;
+                  if (!input) return;
+                  // the sheet's choice holds for this one pick; the change event puts the input back
+                  if (opts?.accept) input.accept = opts.accept; else input.removeAttribute("accept");
+                  if (opts?.capture) input.setAttribute("capture", "environment"); else input.removeAttribute("capture");
+                  input.click();
+                },
+                addPicked,
+                addFile: (file) => { void uploadImages([file]); },
+              });
+            }}
           >
             <Plus aria-hidden="true" />
           </button>}

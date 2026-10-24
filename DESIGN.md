@@ -1529,6 +1529,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `--text-dim` line, and an `--accent` check on the choice. No row is an outlined card. The
   settings sheet's order is Permissions, Mode, Agent (a section the host has no values for is
   left out); the model sheet has no provider tab chips, its captions name the providers.
+  A host chat's `+` opens the attach sheet ("Add to chat", `AttachSheet.tsx`) in the same `.modal`
+  shell: two `--bg-elevated` `--radius-lg` tiles (Camera, Photos: the device picker narrowed to
+  pictures), then one grouped list: Files in this folder (a pushed page with a search over the
+  chat's folder, the same chip as an `@` pick), Paste from clipboard (only where the browser can
+  read it), Upload from device (any type, several files), and under it "Recent in this chat": the
+  last 3 folder files this chat sent, kept in this browser.
   On a phone (`<=768px`), while the card follows the transcript directly (no held message, pending
   row, prompt card or notice between them) and no greeting stands over it, the card floats over the
   transcript's end as an iPhone's input bar does: the composer rises `--composer-over`
