@@ -487,6 +487,11 @@
   border-top: 0;
 }
 
+/* a phone's pager with no Submit beside it stands in the middle, not at the left edge */
+.prompt-card-pager:not(.is-header):not(:has(.prompt-card-pager-submit)) {
+  justify-content: center;
+}
+
 /* a mouse window's foot holds only Submit, at the card's end */
 .prompt-card-pager:not(.is-header):not(:has(.icon-button)) {
   justify-content: flex-end;
@@ -664,8 +669,15 @@
   border-radius: inherit;
 }
 
+/* the message keeps its own height (a long one scrolls) and the answers sit at the sheet's foot, in
+   the thumb's reach: a short message left the space under the pager empty, and growing the message
+   instead drew a tall empty box (owner, ZAC-207, a phone screenshot) */
 .prompt-card.is-expanded .prompt-card-body {
   max-height: none;
+}
+
+.prompt-card.is-expanded .prompt-card-body + * {
+  margin-top: auto;
 }
 
 /* full screen on a wide window: the sheet's own margins, not the inline card's tight 12 px */

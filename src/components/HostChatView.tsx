@@ -97,6 +97,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     });
   };
   return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown expandable
+    attachSheet={{ machineId, session }}
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 

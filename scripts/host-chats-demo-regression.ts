@@ -99,7 +99,7 @@ const patch = `(() => {
     const ids = [...(state.older ? ["h0"] : []), "h1", "h1b", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
-      body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
+      body: state.shortBody ? "FICTIONAL see the \`map\` first" : "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
       multi_select: false, custom_option_index: 3,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
@@ -892,7 +892,7 @@ try {
 
         // 3b. a form of two: a pick goes on to the next page and is kept; Back shows it picked, a
         // change sticks, an optional page left empty goes as null, and Submit sends both at once
-        await page.evaluate(() => { const host = (window as unknown as { hostState: { answered: boolean; form: boolean } }).hostState; host.answered = false; host.form = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
+        await page.evaluate(() => { const host = (window as unknown as { hostState: { answered: boolean; form: boolean } }).hostState; host.answered = false; host.form = true; (host as unknown as { shortBody: boolean }).shortBody = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
         const formCard = page.locator(".prompt-dock .prompt-card");
         await formCard.locator(".prompt-card-pager-count", { hasText: "1 of 2" }).waitFor();
         // a wide window: the pager stands in the card's header beside the title, not in a footer row of its
@@ -910,6 +910,20 @@ try {
         await formSheet.waitFor({ state: "detached" });
         await page.setViewportSize({ width: 390, height: 844 });
         await formCard.locator(".prompt-card-pager:not(.is-header) .prompt-card-pager-count").waitFor();
+        // the phone's pager, with no Submit beside it, stands in the middle of the card
+        const pagerMid = await formCard.evaluate((card) => { const box = card.getBoundingClientRect(); const count = card.querySelector(".prompt-card-pager-count")!.getBoundingClientRect(); return Math.round((count.left + count.width / 2) - (box.left + box.width / 2)); });
+        assert.ok(Math.abs(pagerMid) <= 2, `the pager is centred on a phone (${pagerMid} px off)`);
+        // the card's + is the composer's attach sheet: a file of the chat's folder goes as a chip, sent as its @path
+        await formCard.locator(".prompt-card-attach").click();
+        const cardAttach = page.locator(".attach-sheet[role=dialog]");
+        await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
+        assert.deepEqual((await cardAttach.locator(".attach-tile").allInnerTexts()).map((text) => text.trim()), ["Camera", "Photos"], "the card offers the composer's sheet");
+        await cardAttach.getByRole("button", { name: "Files in this folder" }).click();
+        await cardAttach.getByRole("searchbox", { name: "Search files" }).fill("READ");
+        await cardAttach.getByRole("button", { name: "README.md" }).click();
+        await cardAttach.waitFor({ state: "detached" });
+        assert.equal((await formCard.locator(".prompt-card-files .composer-attachment-file").textContent())?.trim(), "README.md", "the folder pick is the composer's chip");
+        await formCard.locator(".prompt-card-files").getByRole("button", { name: /Remove/ }).click();
         const answeredBefore = (await posts("/api/machines/remote/host-chats/chat/answer")).length;
         assert.equal(await formCard.getByRole("button", { name: "Next question" }).isDisabled(), true, "a required page waits for its answer");
         await formCard.getByRole("button", { name: /FICTIONAL south/ }).click();
@@ -921,11 +935,23 @@ try {
         await formCard.getByRole("button", { name: /FICTIONAL east/ }).click();
         await formCard.locator(".prompt-card-pager-count", { hasText: "2 of 2" }).waitFor();
         if (shots) await formCard.screenshot({ path: join(shots, "r4-form-390.png") });
+        // full screen on a phone with a short message: the field and the pager sit at the sheet's foot,
+        // not mid-sheet over an empty band (owner, ZAC-207, a phone screenshot)
+        await formCard.getByRole("button", { name: "Open full screen" }).click();
+        await formSheet.waitFor();
+        await formSheet.evaluate((node) => Promise.all(node.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+        const footGap = await formSheet.evaluate((sheet) => Math.round(sheet.getBoundingClientRect().bottom - sheet.querySelector(".prompt-card-pager")!.getBoundingClientRect().bottom));
+        if (shots) await page.screenshot({ path: join(shots, "ask-form-expanded-short-390.png") });
+        assert.ok(footGap <= 40, `no empty band under the pager in full screen (${footGap} px)`);
+        const bodyHeight = await formSheet.locator(".prompt-card-body").evaluate((node) => Math.round(node.getBoundingClientRect().height));
+        assert.ok(bodyHeight <= 100, `a short message keeps its own height, not a tall empty box (${bodyHeight} px)`);
+        await formSheet.getByRole("button", { name: "Exit full screen" }).click();
+        await formSheet.waitFor({ state: "detached" });
         await formCard.getByRole("button", { name: "Submit", exact: true }).click();
         await formCard.waitFor({ state: "detached" });
         const sent = (await posts("/api/machines/remote/host-chats/chat/answer")).slice(answeredBefore);
         assert.deepEqual(sent.map((post) => post.body), [{ session: SESSION, request_id: "req-1", answers: { "q-1": { option_ids: ["opt-east"] }, "q-2": null } }], "one Submit, the changed pick and the empty optional page");
-        await page.evaluate(() => { (window as unknown as { hostState: { form: boolean } }).hostState.form = false; });
+        await page.evaluate(() => { (window as unknown as { hostState: { form: boolean; shortBody: boolean } }).hostState.form = false; (window as unknown as { hostState: { shortBody: boolean } }).hostState.shortBody = false; });
         console.log("PASS a form pages on the phone, keeps and changes its picks, and Submit sends them all at once");
 
         // 4. model · effort and agent picks, then Send
