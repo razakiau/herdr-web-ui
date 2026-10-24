@@ -1573,6 +1573,7 @@ export const JA: Record<string, string> = {
   "Couldn't list this folder's files": "このフォルダーのファイルを一覧表示できませんでした",
   "No picture on the clipboard": "クリップボードに画像がありません",
   "The browser didn't allow reading the clipboard": "ブラウザーがクリップボードの読み取りを許可しませんでした",
+  "Sources": "ソース",
   "Chat settings": "チャットの設定",
   "Chat settings: {0}, {1}, {2}": "チャットの設定: {0}、{1}、{2}",
   "Mode": "モード",

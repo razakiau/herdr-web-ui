@@ -155,11 +155,13 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const agentLabel = agent === null ? t("Agent") : catalog?.agents.find((each) => each.uri === agent)?.name ?? agentName(agent);
 
   // the chat's mode and permissions, as its host has them: read with each read of the chat, so a
-  // change made in VS Code shows here
-  useEffect(() => {
-    if (chat === null) return;
+  // change made in VS Code shows here. Every read, not every changed one: a permission switched in
+  // VS Code leaves the transcript's signature alone, and keyed on the chat object it never showed
+  const readConfig = useCallback(() => {
     void fetchHostConfig(machineId, session).then((value) => { if (mounted.current) setConfig((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value); }, () => undefined);
-  }, [chat, machineId, session]);
+  }, [machineId, session]);
+  useEffect(() => { if (source.last() !== null) readConfig(); }, [readConfig, source]);
+  useEffect(() => source.onRead(readConfig), [readConfig, source]);
   const pickConfig = (change: { mode?: string; approvals?: string }): void => {
     setSheetError(null);
     setConfig((current) => current === null ? current : { ...current, ...(change.mode ? { mode: change.mode } : {}), ...(change.approvals ? { approvals: change.approvals } : {}) });

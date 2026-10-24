@@ -273,6 +273,7 @@ const patch = `(() => {
       if (path === "/api/host-chats/files") return json({ files: ["src/fictional-build.ts", "README.md"].filter((file) => file.includes(url.searchParams.get("q") ?? "")) });
       // the session's mode and permissions, as the live host shapes them
       if (path === "/api/host-chats/session/config" && init?.method === "POST") { if (body.mode) state.mode = body.mode; if (body.approvals) state.approvals = body.approvals; return json({ ok: true }); }
+      if (path === "/api/host-chats/session/config") { window.configReads = (window.configReads ?? 0) + 1; }
       if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: localStorage.getItem("demo:no-approvals") === "1" ? [] : ["default", "assisted", "autoApprove"] });
       if (path === "/api/host-chats/chat/watch" || path === "/api/host-chats/chat/draft" || path === "/api/host-chats/chat/confirm") return json({ ok: true });
       if (path === "/api/host-chats/chat/answer") { if (state.holdAnswer) return json({ error: { code: "prompt_changed", message: "FICTIONAL changed" } }, 409); state.answered = true; return json({ ok: true }); }
@@ -922,8 +923,18 @@ try {
         const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        // the provider tab chips are gone (ZAC-207 redesign): captions and the search do their job
-        assert.equal(await sheet.locator(".host-picker-tabs").count(), 0, "no provider tab chips");
+        // the source filter (owner, ZAC-207): All plus one chip per source, each with that source's mark
+        const sources = sheet.getByRole("group", { name: "Sources", exact: true });
+        assert.deepEqual(await sources.getByRole("button").evaluateAll((chips) => chips.map((chip) => [...chip.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE || (node as Element).classList?.contains("host-picker-source-count")).map((node) => node.textContent?.trim()).join(" "))), ["All 4", "Copilot 1", "fictional 3"], "All, then a chip per source with its count");
+        assert.equal(await sources.getByRole("button").nth(2).locator("svg").count(), 1, "a router with no drawn mark still wears one (its initial)");
+        assert.equal(await sources.getByRole("button").nth(1).locator('svg[aria-label="copilot"]').count(), 1, "Copilot's chip wears Copilot's mark");
+        await sources.locator('[data-group="copilot"]').click();
+        assert.deepEqual(await sheet.locator(".host-picker-group").evaluateAll((groups) => groups.map((group) => group.getAttribute("aria-label"))), ["Copilot"], "a source shows only its models");
+        await sources.locator('[data-group=""]').click();
+        // a group's block is round at all four corners: its caption stands above it, not inside it
+        const corners = await sheet.locator(".host-picker-rows").first().evaluate((n) => { const cs = getComputedStyle(n); return [cs.borderTopLeftRadius, cs.borderBottomLeftRadius]; });
+        assert.ok(corners[0] !== "0px" && corners[0] === corners[1], `the block's top corners are as round as its bottom ones (${corners})`);
+        assert.equal(await sheet.locator(".host-picker-rows .host-picker-provider").count(), 0, "no caption inside a block");
         assert.equal(await sheet.locator(".host-picker-option, .host-model-row").first().evaluate((n) => getComputedStyle(n).borderTopWidth), "0px", "no outlined rows");
         // the search stays at the sheet's top while its list scrolls (the owner scrolled past Copilot's to reach OmniRoute's)
         const tabsAt = await sheet.locator(".modal-body").evaluate((body) => {
@@ -1005,6 +1016,15 @@ try {
         await settings.waitFor({ state: "detached" });
         await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("data-tone") === "raised", undefined, { timeout: 10_000 })
           .catch(() => assert.fail("the settings icon is raised for Allow all"));
+        // the theme's accent, never a fixed amber: the icon's colour is --accent, both normalised through a
+        // canvas (no probe element: adding one to the page disturbed the sheet that follows)
+        await page.waitForFunction(() => {
+          const icon = document.querySelector(".host-chat-settings");
+          const context = document.createElement("canvas").getContext("2d")!;
+          const norm = (colour: string): string => { context.fillStyle = "#000"; context.fillStyle = colour; return String(context.fillStyle); };
+          const accent = getComputedStyle(icon ?? document.documentElement).getPropertyValue("--accent").trim();
+          return icon !== null && accent !== "" && norm(getComputedStyle(icon).color) === norm(accent);
+        }, undefined, { timeout: 5_000 }).catch(() => assert.fail("a raised settings icon wears the theme's accent"));
         assert.ok(await view.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "the row fits with Allow all");
         await page.waitForFunction(() => document.querySelector(".modal-scrim, .host-picker") === null);
         await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
@@ -1015,8 +1035,11 @@ try {
         await settings.waitFor({ state: "detached" });
         await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("data-tone") === "quiet");
         // a host with no permission levels: the sheet has Mode and Agent only, and the icon stays quiet
+        // the chat re-reads its config with each read of the chat: wait for that fetch, not a fixed time (800 ms
+        // missed it on a loaded Mac, and the sheet then still had Permissions)
+        const readsBefore = await page.evaluate(() => (window as unknown as { configReads?: number }).configReads ?? 0);
         await page.evaluate(() => { localStorage.setItem("demo:no-approvals", "1"); (window as unknown as { rereadHost(): void }).rereadHost(); });
-        await page.waitForTimeout(800);
+        await page.waitForFunction((before) => ((window as unknown as { configReads?: number }).configReads ?? 0) > before, readsBefore, { timeout: 15_000 });
         await view.locator(".host-chat-settings").click();
         await settings.waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.host-picker[data-picker="settings"] .host-picker-provider').length === 2);
@@ -1193,6 +1216,16 @@ try {
         const sessionPillRow = view.locator(".session-pills");
         await sessionPillRow.waitFor();
         await sessionPillRow.locator(".session-pill-stat").waitFor();
+        // the pills' air before the next thing under them (the status line, else the composer): at 4 px
+        // they read as stuck to it (owner, ZAC-207)
+        const pillAir = await view.evaluate((root) => {
+          const row = root.querySelector(".session-pills")!;
+          const pill = row.querySelector(".session-pill")!.getBoundingClientRect();
+          let next = row.nextElementSibling;
+          while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
+          return Math.round(next!.getBoundingClientRect().top - pill.bottom);
+        });
+        assert.ok(pillAir >= 8, `the pills stand clear of what follows them (${pillAir} px)`);
         assert.deepEqual((await sessionPillRow.locator(".session-pill").allInnerTexts()).map((text) => text.trim().replace(/\s+/g, " ")), ["2 files +30 −3", "#12", "3 artifacts", "FICTIONAL docs"], "changes, the PR, the artifacts, the reference");
         const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
         await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");

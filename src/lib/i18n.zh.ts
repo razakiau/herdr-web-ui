@@ -1575,6 +1575,7 @@ export const ZH: Record<string, string> = {
   "Couldn't list this folder's files": "无法列出此文件夹中的文件",
   "No picture on the clipboard": "剪贴板上没有图片",
   "The browser didn't allow reading the clipboard": "浏览器不允许读取剪贴板",
+  "Sources": "来源",
   "Chat settings": "聊天设置",
   "Chat settings: {0}, {1}, {2}": "聊天设置：{0}，{1}，{2}",
   "Mode": "模式",
