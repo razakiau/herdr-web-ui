@@ -61,7 +61,17 @@ export type HostPromptRef =
 export interface HostContextUsage {
   currentTokens: number; tokenLimit: number;
   conversationTokens?: number; systemTokens?: number; toolDefinitionsTokens?: number;
+  /**
+   * VS Code's breakdown (stateToProgressAdapter contextAttributionToPromptTokenDetails): rows by
+   * category, each a share of the prompt in percent; what they leave is VS Code's "Other"
+   */
+  parts?: { category: "system" | "user"; label: string; share: number }[];
+  /** the window the model keeps for its answer (maxOutputTokens less what the turn wrote), VS Code's striped band */
+  reservedTokens?: number;
 }
+
+/** A model's tokens over the chat's turns (`turnTokenTotals`, sub-agents included), for a cost estimate. */
+export interface HostTokenTotal { model: string; input: number; cached: number; output: number }
 
 export interface HostChatRead {
   session: string; title: string; status: HostChatRow["status"];
@@ -89,6 +99,11 @@ export interface HostChatRead {
   confirmations: number;
   /** the context window as Copilot reports it (copilot.usageInfo); null when it says nothing usable */
   context: HostContextUsage | null;
+  /**
+   * The tokens the chat's loaded turns spent, by model (absent from a bridge before ZAC-224); `partial`
+   * when older turns are not loaded, so a sum of these is a floor
+   */
+  tokens?: { totals: HostTokenTotal[]; partial: boolean };
   /**
    * The ids the chat holds its messages under: its turns' (past, the loaded page, and the running
    * one) and its pending messages'. A phone whose send lost its answer sees here that it went.

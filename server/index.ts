@@ -68,7 +68,7 @@ import { handlePortalRequest, PortalService } from "./portal.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
-import { handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
+import { handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -1325,6 +1325,7 @@ export function createServer(
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       if (pathname === "/api/usage/omniroute") return handleOmniRouteRequest(request, omniRoute);
+      if (pathname === "/api/usage/omniroute/pricing") return handleOmniRoutePricing(request, omniRoute);
       if (pathname === "/api/references/state") return handleReferenceStateRequest(request, references);
       if (pathname === "/api/usage/login") { bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }

@@ -1539,7 +1539,18 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   chat's folder, the same chip as an `@` pick), Paste from clipboard (only where the browser can
   read it), Upload from device (any type, several files), and under it "Recent in this chat": the
   last 3 folder files this chat sent, kept in this browser. The ask card's `+` opens the same
-  sheet, and its picks are the composer's chips.
+  sheet, and its picks are the composer's chips. A chip goes on its own: with a chip in and no
+  words, Send is there and the message carries the file alone (ZAC-224).
+  The context meter opens "Context window", VS Code's popup in the same `.modal` shell and grouped
+  lists (ZAC-224): first a Session group with the chat's cost at list price, the turns' tokens by
+  model times OmniRoute's API prices (`/api/usage/omniroute/pricing`, subscriptions priced too),
+  `~` when every turn is counted, `≥` when older turns aren't loaded or a model has no price (the
+  note names it); then "{used} / {limit} tokens" with the percent, a bar whose `--accent` fill turns
+  `--notice` past 75% and `--status-blocked` from 90%, followed by a striped band for the space
+  kept for the answer (the model's output limit less this turn's output, "Reserved for response");
+  then System, User Context and Uncategorized rows, each a share of the window to one decimal as
+  VS Code shows it (Other is the unattributed rest, rows under 0.05% dropped); and on an idle
+  chat Compact Conversation, which sends `/compact` as VS Code's action does.
   A form's pager stands in the card's header on a window wider than 640px, and at the card's foot,
   centred (or left of Submit), on a phone. In full screen on a wide window the sheet is as tall as
   its content, up to the window; on a phone it is full height, the message keeps its own height (a

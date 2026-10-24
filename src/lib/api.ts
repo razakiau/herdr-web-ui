@@ -52,6 +52,7 @@ import type {
   UsageReport,
   WorkspaceCreated,
   PluginActionRequest,
+  ModelPrices,
   OmniRouteStatus,
   PluginActionResult,
   PluginActions,
@@ -100,6 +101,17 @@ export function fetchUsage(refresh = false): Promise<UsageReport> {
 /** The OmniRoute gateway this server reads plan limits from, if any (its environment, else Settings). */
 export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteStatus> {
   return getJson<OmniRouteStatus>("/api/usage/omniroute", { cache: "no-store", ...(signal ? { signal } : {}) });
+}
+
+/**
+ * The OmniRoute gateway's prices, for a chat's cost estimate: this server's (the one the browser
+ * talks to), whichever PC the chat is on; null with no gateway, or a server too old to have them.
+ * Asked once a page: the server keeps the table for hours.
+ */
+let prices: Promise<ModelPrices | null> | null = null;
+export function fetchModelPrices(): Promise<ModelPrices | null> {
+  prices ??= getJson<{ prices: ModelPrices | null }>("/api/usage/omniroute/pricing").then((answer) => answer.prices, () => { prices = null; return null; });
+  return prices;
 }
 
 /** Save (PUT `{url, token?}`) or forget (DELETE) the OmniRoute gateway this server reads; the server's environment refuses both. */

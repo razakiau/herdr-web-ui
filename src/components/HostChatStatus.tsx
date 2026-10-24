@@ -11,20 +11,70 @@ import { X } from "lucide-react";
 import type { HostChatRead, HostContextUsage } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { contextMeter, hostStatusLine } from "../lib/hostChats.ts";
+import { formatUsd } from "../lib/chatCost.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 
-const formatTokens = (value: number): string => value.toLocaleString();
+/** VS Code's counts in its popup: "136.4K", "1.2M" (chatContextUsageDetails formatTokenCount, one decimal) */
+export function formatTokenCount(count: number): string {
+  if (count >= 999_950) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
+  return String(count);
+}
 
-/** the parts Copilot breaks the window into, when it does */
+/** the older bridges' three parts, when the host gives no rows of its own (parts), and their category */
+const LEGACY_PART = {
+  systemTokens: "system",
+  toolDefinitionsTokens: "system",
+  conversationTokens: "user",
+} as const;
+
+/** the words a row or a heading of the popup is drawn with: VS Code's labels, translated */
 const CONTEXT_PART = {
-  conversationTokens: "Conversation",
-  systemTokens: "System",
-  toolDefinitionsTokens: "Tool definitions",
+  systemTokens: "System prompt",
+  toolDefinitionsTokens: "Tool Definitions",
+  conversationTokens: "Messages",
+  tool: "Tool Results",
+  skill: "Skills",
+  subagent: "Sub-agents",
+  mcpServer: "MCP Tools",
+  plugin: "Plugins",
+  other: "Other",
+  headingSystem: "System",
+  headingUser: "User Context",
+  headingOther: "Uncategorized",
 };
 
-interface MeterProps { read: HostChatRead | null; open: boolean; onOpen(): void; onClose(): void }
+type Row = { category: "system" | "user" | "other"; label: string; percent: number };
+
+/**
+ * VS Code's breakdown rows (chatContextUsageDetails renderTokenDetails): each a share of the prompt
+ * read as a share of the window, rows under 0.05% left out, and what the rows leave of the prompt
+ * as Uncategorized "Other".
+ */
+export function contextRows(usage: HostContextUsage): Row[] {
+  const used = Math.min(100, (usage.currentTokens / usage.tokenLimit) * 100);
+  const parts = usage.parts ?? (Object.keys(LEGACY_PART) as (keyof typeof LEGACY_PART)[]).flatMap((key) => {
+    const value = usage[key];
+    return value === undefined || usage.currentTokens <= 0 ? [] : [{ category: LEGACY_PART[key], label: CONTEXT_PART[key], share: Math.round((value / usage.currentTokens) * 100) }];
+  });
+  if (parts.length === 0) return [];
+  const total = parts.reduce((sum, part) => sum + part.share, 0);
+  const rows: Row[] = [...parts, ...(total < 100 ? [{ category: "other" as const, label: CONTEXT_PART.other, share: 100 - total }] : [])]
+    .map((part) => ({ category: part.category, label: part.label, percent: (part.share / 100) * used }));
+  return rows.filter((row) => row.percent >= 0.05);
+}
+
+const CATEGORY_TITLE = { system: CONTEXT_PART.headingSystem, user: CONTEXT_PART.headingUser, other: CONTEXT_PART.headingOther } as const;
+
+interface MeterProps {
+  read: HostChatRead | null; open: boolean; onOpen(): void; onClose(): void;
+  /** the chat's cost at list price, from OmniRoute's prices; absent while unknown */
+  cost?: { usd: number; partial: boolean; missing: string[] } | null;
+  /** VS Code's Compact Conversation: sends /compact; absent while the chat works */
+  onCompact?: () => void;
+}
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
 export function HostChatStatus({ read, workShown = false }: { read: HostChatRead | null; workShown?: boolean }) {
@@ -38,7 +88,7 @@ export function HostChatStatus({ read, workShown = false }: { read: HostChatRead
 }
 
 /** The context meter: a ring and the percent; the counts are in its title and its sheet. */
-export function HostContextMeter({ read, open, onOpen, onClose }: MeterProps) {
+export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact }: MeterProps) {
   const t = useT();
   const meter = contextMeter(read?.context ?? null);
   if (read === null || meter === null) return null;
@@ -55,11 +105,11 @@ export function HostContextMeter({ read, open, onOpen, onClose }: MeterProps) {
       </svg>
       <span className="host-chat-meter-label" aria-hidden="true">{percent}</span>
     </button>
-    {open && read.context && <ContextSheet usage={read.context} label={meter.label} onClose={onClose} />}
+    {open && read.context && <ContextSheet usage={read.context} cost={cost ?? null} onClose={onClose} onCompact={onCompact} />}
   </>;
 }
 
-function ContextSheet({ usage, label, onClose }: { usage: HostContextUsage; label: string; onClose(): void }) {
+function ContextSheet({ usage, cost, onClose, onCompact }: { usage: HostContextUsage; cost: MeterProps["cost"] | null; onClose(): void; onCompact?: (() => void) | undefined }) {
   const t = useT();
   const surface = useFocusTrap<HTMLDivElement>(true);
   useSheetSwipe(surface, onClose);
@@ -74,9 +124,11 @@ function ContextSheet({ usage, label, onClose }: { usage: HostContextUsage; labe
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
-  // what the host breaks the window into, when it does
-  const parts = (Object.keys(CONTEXT_PART) as (keyof typeof CONTEXT_PART)[])
-    .flatMap((key) => (usage[key] === undefined ? [] : [{ name: CONTEXT_PART[key], value: usage[key] }]));
+  const used = Math.min(100, (usage.currentTokens / usage.tokenLimit) * 100);
+  const reserved = usage.reservedTokens === undefined ? 0 : Math.max(0, Math.min(100 - used, (usage.reservedTokens / usage.tokenLimit) * 100));
+  const rows = contextRows(usage);
+  const groups = (["system", "user", "other"] as const).map((category) => ({ category, rows: rows.filter((row) => row.category === category) })).filter((group) => group.rows.length > 0);
+  const level = used >= 90 ? " is-full" : used >= 75 ? " is-high" : "";
   return createPortal(
     <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={surface} className="modal host-context-sheet" role="dialog" aria-modal="true" aria-label={t("Context window")} tabIndex={-1}>
@@ -84,12 +136,39 @@ function ContextSheet({ usage, label, onClose }: { usage: HostContextUsage; labe
           <h2 className="modal-title">{t("Context window")}</h2>
           <button type="button" className="icon-button" aria-label={t("Close")} title={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
-        <div className="modal-body">
-          <p className="host-context-total">{label}</p>
-          <dl className="host-context-parts">
-            {parts.map((part) => <div key={part.name}><dt>{t(part.name)}</dt><dd>{formatTokens(part.value)}</dd></div>)}
-            <div className="is-total"><dt>{t("Used")}</dt><dd>{t("{used} of {limit}", { used: formatTokens(usage.currentTokens), limit: formatTokens(usage.tokenLimit) })}</dd></div>
-          </dl>
+        <div className="modal-body host-context-body">
+          {cost && <section className="host-picker-group" aria-labelledby="host-context-cost">
+            <h3 className="host-picker-provider" id="host-context-cost">{t("Session")}</h3>
+            <div className="host-picker-rows">
+              <div className="host-context-row">
+                <span>{t("Cost at list price")}</span>
+                <strong className="host-context-cost">{cost.partial || cost.missing.length > 0 ? "≥ " : "~"}{formatUsd(cost.usd)}</strong>
+              </div>
+            </div>
+            <p className="host-context-note">{cost.missing.length > 0
+              ? t("OmniRoute has no price for {models}.", { models: cost.missing.join(", ") })
+              : cost.partial ? t("Older turns are not loaded, or reported no usage: at least this much.") : t("Tokens at OmniRoute's API prices, subscriptions included.")}</p>
+          </section>}
+          <section className={`host-context-window${level}`} aria-label={t("Context window")}>
+            <div className="host-context-head">
+              <span className="host-context-count">{t("{used} / {limit} tokens", { used: formatTokenCount(usage.currentTokens), limit: formatTokenCount(usage.tokenLimit) })}</span>
+              <span className="host-context-percent">{Math.round(used)}%</span>
+            </div>
+            <div className="host-context-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)} aria-label={t("Context window used")}>
+              <span className="host-context-used" style={{ width: `${used}%` }} />
+              {reserved > 0 && <span className="host-context-reserved" style={{ width: `${reserved}%` }} />}
+            </div>
+            {reserved > 0 && <p className="host-context-legend"><span className="host-context-swatch" aria-hidden="true" />{t("Reserved for response")}</p>}
+          </section>
+          {groups.map((group) => (
+            <section key={group.category} className="host-picker-group" aria-labelledby={`host-context-${group.category}`}>
+              <h3 className="host-picker-provider" id={`host-context-${group.category}`}>{t(CATEGORY_TITLE[group.category])}</h3>
+              <dl className="host-picker-rows host-context-parts">
+                {group.rows.map((row) => <div key={row.label} className="host-context-row"><dt>{t(row.label)}</dt><dd>{row.percent.toFixed(1)}%</dd></div>)}
+              </dl>
+            </section>
+          ))}
+          {onCompact && <button type="button" className="btn host-context-compact" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
         </div>
       </div>
     </div>,

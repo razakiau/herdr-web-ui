@@ -47,7 +47,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
 
@@ -236,6 +236,8 @@ export interface ReadContext {
   skills?(): HostCommand[];
   /** a model's whole context window as the host lists it (maxContextWindow), null when it has none */
   modelWindow?(id: string): number | null;
+  /** the most a model writes in one answer as the host lists it (maxOutputTokens), null when it has none */
+  modelOutput?(id: string): number | null;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -808,6 +810,12 @@ export function modelsFrom(root: RootState): HostModel[] {
   });
 }
 
+/** Each model's answer budget (maxOutputTokens), for the context window's reserved band. */
+export function modelOutputs(root: RootState): [string, number][] {
+  const agent = root.agents.find((each) => each.provider === PROVIDER);
+  return (agent?.models ?? []).flatMap((model) => typeof model.maxOutputTokens === "number" && model.maxOutputTokens > 0 ? [[model.id, model.maxOutputTokens] as [string, number]] : []);
+}
+
 /** A model choice on the wire: the effort goes under the model's own effort key. */
 export function modelSelection(root: RootState, model: { id: string; effort?: string }): ModelSelection {
   const key = modelsFrom(root).find((each) => each.id === model.id)?.efforts?.key;
@@ -921,7 +929,52 @@ function attributedContext(turn: Turn | ActiveTurn | undefined): HostContextUsag
   if (messages !== undefined) usage.conversationTokens = messages;
   if (system !== undefined) usage.systemTokens = system;
   if (tools.some((each) => each !== undefined)) usage.toolDefinitionsTokens = tools.reduce<number>((sum, each) => sum + (each ?? 0), 0);
+  const parts = attributedParts(attribution, currentTokens);
+  if (parts.length > 0) usage.parts = parts;
+  const buffer = count(attribution["bufferTokens"]);
+  if (buffer !== undefined && buffer > 0) usage.reservedTokens = buffer;
   return usage;
+}
+
+/** VS Code's row names for a kind summed into one row (stateToProgressAdapter kindToAggregateLabel). */
+const KIND_LABEL: Record<string, string> = {
+  tool: "Tool Results", toolDefinition: "Tool Definitions", skill: "Skills", subagent: "Sub-agents", mcpServer: "MCP Tools", plugin: "Plugins",
+};
+
+/**
+ * VS Code's breakdown of the attribution's entries (contextAttributionToPromptTokenDetails): a
+ * `system` entry is its own row unless it is a parent (its children are summed instead), every
+ * other kind is summed into one row, and what no entry covers is "Messages". Each row is a whole
+ * percent of the prompt, rows under 1% left out, as VS Code rounds them.
+ */
+function attributedParts(attribution: Record<string, unknown>, total: number): NonNullable<HostContextUsage["parts"]> {
+  const raw = Array.isArray(attribution["entries"]) ? attribution["entries"] : [];
+  const entries = raw.flatMap((each): { kind: string; id: string; label: string; tokens: number; parent?: string }[] => {
+    if (typeof each !== "object" || each === null) return [];
+    const entry = each as Record<string, unknown>;
+    const tokens = count(entry["tokens"]);
+    if (typeof entry["kind"] !== "string" || typeof entry["id"] !== "string" || typeof entry["label"] !== "string" || tokens === undefined) return [];
+    return [{ kind: entry["kind"], id: entry["id"], label: entry["label"], tokens, ...(typeof entry["parentId"] === "string" ? { parent: entry["parentId"] } : {}) }];
+  });
+  if (total <= 0 || entries.length === 0) return [];
+  const parents = new Set(entries.flatMap((entry) => entry.parent ? [entry.parent] : []));
+  const share = (tokens: number): number => Math.round((tokens / total) * 100);
+  const rows: NonNullable<HostContextUsage["parts"]> = [];
+  const kinds = new Map<string, number>();
+  let accounted = 0;
+  for (const entry of entries) {
+    if (entry.kind !== "system") { kinds.set(entry.kind, (kinds.get(entry.kind) ?? 0) + entry.tokens); continue; }
+    if (parents.has(entry.id)) continue;
+    accounted += entry.tokens;
+    if (share(entry.tokens) > 0) rows.push({ category: "system", label: entry.label, share: share(entry.tokens) });
+  }
+  for (const [kind, tokens] of kinds) {
+    accounted += tokens;
+    if (share(tokens) > 0) rows.push({ category: kind === "toolDefinition" ? "system" : "user", label: KIND_LABEL[kind] ?? kind, share: share(tokens) });
+  }
+  const messages = Math.max(0, total - accounted);
+  if (share(messages) > 0) rows.push({ category: "user", label: "Messages", share: share(messages) });
+  return rows;
 }
 
 /**
@@ -932,7 +985,7 @@ function attributedContext(turn: Turn | ActiveTurn | undefined): HostContextUsag
  * chat it read 127% (509K / 400K) where VS Code showed 36% (192K / 528K). The breakdown keeps the
  * attribution's shares, scaled to the tokens used. Null when the model or the counts are unknown.
  */
-function meteredContext(turn: Turn | ActiveTurn | undefined, attributed: HostContextUsage, window: ((id: string) => number | null) | undefined): HostContextUsage | null {
+function meteredContext(turn: Turn | ActiveTurn | undefined, attributed: HostContextUsage, window: ((id: string) => number | null) | undefined, budgetOf?: (id: string) => number | null): HostContextUsage | null {
   const model = turn?.message.model?.id;
   const limit = model && window ? window(model) : null;
   const input = count(turn?.usage?.inputTokens);
@@ -945,12 +998,18 @@ function meteredContext(turn: Turn | ActiveTurn | undefined, attributed: HostCon
     const each = attributed.currentTokens > 0 ? scale(attributed[key]) : undefined;
     if (each !== undefined) usage[key] = each;
   }
+  // the shares are of the prompt, whichever count it is read by
+  if (attributed.parts) usage.parts = attributed.parts;
+  // VS Code's band: the model's answer budget less what the turn already wrote (chatContextUsageWidget)
+  const budget = model && budgetOf ? budgetOf(model) : null;
+  const reserved = budget !== null ? Math.max(0, budget - (count(turn?.usage?.outputTokens) ?? 0)) : attributed.reservedTokens;
+  if (reserved !== undefined && reserved > 0) usage.reservedTokens = reserved;
   return usage;
 }
 
-export function contextUsageOf(session: SessionState | undefined, newest?: Turn | ActiveTurn, window?: (id: string) => number | null): HostContextUsage | null {
+export function contextUsageOf(session: SessionState | undefined, newest?: Turn | ActiveTurn, window?: (id: string) => number | null, output?: (id: string) => number | null): HostContextUsage | null {
   const attributed = attributedContext(newest);
-  if (attributed !== null) return meteredContext(newest, attributed, window) ?? attributed;
+  if (attributed !== null) return meteredContext(newest, attributed, window, output) ?? attributed;
   const info = (session as { _meta?: Record<string, unknown> } | undefined)?._meta?.["copilot.usageInfo"];
   if (typeof info !== "object" || info === null) return null;
   const value = info as Record<string, unknown>;
@@ -981,6 +1040,30 @@ function pendingOf(chat: ChatState): NonNullable<HostChatRead["pending"]> {
   ];
 }
 
+/**
+ * What the chat's loaded turns spent, by model: each turn's `turnTokenTotals` (VS Code's, sub-agents
+ * included; per turn, not running). Partial when older turns are still to load, or a finished
+ * turn reported none (a host that restarted keeps no usage of its own), so a sum is a floor.
+ */
+export function tokensOf(chat: ChatState): NonNullable<HostChatRead["tokens"]> {
+  const sums = new Map<string, HostTokenTotal>();
+  let missing = chat.turnsNextCursor != null;
+  for (const turn of [...chat.turns, ...(chat.activeTurn ? [chat.activeTurn] : [])]) {
+    const totals = (turn.usage as { _meta?: Record<string, unknown> } | undefined)?._meta?.["turnTokenTotals"];
+    if (!Array.isArray(totals)) { if (turn !== chat.activeTurn) missing = true; continue; }
+    for (const each of totals) {
+      if (typeof each !== "object" || each === null) continue;
+      const total = each as Record<string, unknown>;
+      const model = total["model"];
+      const input = count(total["inputTokens"]); const cached = count(total["cachedTokens"]) ?? 0; const output = count(total["outputTokens"]) ?? 0;
+      if (typeof model !== "string" || model === "" || input === undefined) continue;
+      const sum = sums.get(model) ?? { model, input: 0, cached: 0, output: 0 };
+      sums.set(model, { model, input: sum.input + input, cached: sum.cached + cached, output: sum.output + output });
+    }
+  }
+  return { totals: [...sums.values()], partial: missing };
+}
+
 export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext, restored: HostChatRead["restored"] = null): HostChatRead {
   const prompt = promptFrom(chat);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
@@ -1003,7 +1086,8 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     artifacts: artifactsOf((context?.session?.() as { _meta?: Record<string, unknown> } | undefined)?._meta),
     confirmations: pendingToolCalls(chat).length,
     // the running turn may have no usage yet: the newest turn that reported one
-    context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null), context?.modelWindow),
+    context: contextUsageOf(context?.session?.(), [...(chat.activeTurn ? [chat.activeTurn] : []), ...[...chat.turns].reverse()].find((turn) => attributedContext(turn) !== null), context?.modelWindow, context?.modelOutput),
+    tokens: tokensOf(chat),
     pending: pendingOf(chat),
     message_ids: [
       ...chat.turns.map((turn) => turn.id), ...(chat.activeTurn ? [chat.activeTurn.id] : []),
@@ -1017,7 +1101,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
-    read.background, read.work, read.artifacts, read.confirmations, read.context, read.restored,
+    read.background, read.work, read.artifacts, read.confirmations, read.context, read.tokens, read.restored,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];

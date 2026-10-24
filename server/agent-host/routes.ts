@@ -56,7 +56,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { workOf } from "./artifacts.ts";
-import { agentsFrom, ANSWER_REF, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { agentsFrom, ANSWER_REF, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -456,8 +456,9 @@ function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): R
   const models = modelsFrom(host.mirror().root);
   const names = new Map(models.map((model) => [model.id, model.name]));
   const windows = new Map(models.map((model) => [model.id, model.context]));
+  const outputs = new Map(modelOutputs(host.mirror().root));
   return {
-    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelWindow: (id) => windows.get(id) ?? null,
+    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelWindow: (id) => windows.get(id) ?? null, modelOutput: (id) => outputs.get(id) ?? null,
     ...(session ? { session: () => host.mirror().getSession(ownerOf(host, session)) } : {}),
     ...(skills ? { skills: () => skills } : {}),
   };

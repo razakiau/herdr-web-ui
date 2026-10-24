@@ -124,7 +124,9 @@ const patch = `(() => {
         { id: "a-ref", type: "website", label: "FICTIONAL docs", isArtifact: false, link: "https://example.invalid/docs" },
       ],
       work: state.work ?? [],
-      context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000 },
+      context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000, reservedTokens: 40000,
+        parts: [{ category: "system", label: "System prompt", share: 11 }, { category: "system", label: "Tool Definitions", share: 18 }, { category: "user", label: "Tool Results", share: 30 }, { category: "user", label: "Messages", share: 40 }] },
+      tokens: { totals: [{ model: "cc/fictional-opus", input: 1000000, cached: 900000, output: 10000 }, { model: "fictional/unpriced", input: 10, cached: 0, output: 10 }], partial: false },
       signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.work ?? null, state.resumed, state.restored ?? null]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
@@ -175,6 +177,8 @@ const patch = `(() => {
     if (SIX && machine === "pc-e" && path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
     if (SIX && machine === "pc-e" && path === "/api/host-chats/chats") return json({ chats: [{ session: "fictional-pc-e", title: "FICTIONAL waits on you", status: state.peAsks ? "asks" : "idle", modified_at: at(1), cwd: "/tmp/fictional-e", unread: false, archived: false }] });
     // ZAC-207: this server reads the PR pill's state (GitHub): the fixture's PR is merged
+    // OmniRoute's prices, from this server (whichever PC the chat is on)
+    if (url.pathname === "/api/usage/omniroute/pricing") { calls.prices = (calls.prices ?? 0) + 1; return json({ prices: { cc: { "fictional-opus": { input: 4, output: 20, cached: 0.2 } } } }); }
     if (path === "/api/references/state") return json({ states: Object.fromEntries(url.searchParams.getAll("url").map((each) => [each, { state: each.endsWith("/pull/12") ? "merged" : "unknown" }])) });
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
@@ -1255,8 +1259,23 @@ try {
         await view.locator('.composer-controls-right .host-chat-meter').click();
         const contextSheet = page.getByRole("dialog", { name: "Context window" });
         await contextSheet.waitFor();
-        assert.deepEqual((await contextSheet.locator("dt").allInnerTexts()).map((text) => text.trim()), ["Conversation", "System", "Tool definitions", "Used"], "the breakdown the host sent");
-        assert.match(await contextSheet.locator(".is-total dd").innerText(), /84,000 of 200,000/);
+        // VS Code's popup (owner, ZAC-224): the session's cost, the window's bar with its reserved band,
+        // then System, User Context and Uncategorized as shares of the window
+        await contextSheet.locator(".host-context-cost").waitFor();
+        // 100,000 new in x $4 + 900,000 cached x $0.20 + 10,000 out x $20 per million = $0.78; the unpriced model makes it a floor
+        assert.equal((await contextSheet.locator(".host-context-cost").innerText()).trim(), "≥ $0.78", "the cost at OmniRoute's prices");
+        assert.match(await contextSheet.locator(".host-context-note").innerText(), /no price for fictional\/unpriced/, "a model it cannot price is named");
+        assert.equal((await contextSheet.locator(".host-context-count").innerText()).trim(), "84.0K / 200.0K tokens", "VS Code's counts");
+        const windowBar = await contextSheet.locator(".host-context-bar").evaluate((node) => { const width = node.getBoundingClientRect().width; const part = (selector: string) => Math.round((node.querySelector(selector)!.getBoundingClientRect().width / width) * 100); return { used: part(".host-context-used"), reserved: part(".host-context-reserved") }; });
+        assert.deepEqual(windowBar, { used: 42, reserved: 20 }, "the bar: 42% used, the answer's 20% striped after it");
+        const groups = await contextSheet.locator(".host-picker-group").evaluateAll((nodes) => nodes.map((node) => [node.querySelector("h3")?.textContent?.trim(), [...node.querySelectorAll(".host-context-row")].map((row) => row.textContent?.replace(/\s+/g, " ").trim())]));
+        assert.deepEqual(groups, [
+          ["Session", ["Cost at list price≥ $0.78"]],
+          ["System", ["System prompt4.6%", "Tool Definitions7.6%"]],
+          ["User Context", ["Tool Results12.6%", "Messages16.8%"]],
+          ["Uncategorized", ["Other0.4%"]],
+        ], "each row is its share of the prompt read as a share of the window, as VS Code's");
+        assert.equal(await contextSheet.getByRole("button", { name: "Compact Conversation" }).count(), 0, "no Compact while the chat works");
         await fits("the context sheet");
         if (shots) await page.screenshot({ path: join(shots, "task-12-context-390.png") });
         await contextSheet.getByRole("button", { name: "Close" }).click();
@@ -2367,6 +2386,19 @@ try {
         await chat.locator(".host-chat-agent-name", { hasText: "Report" }).waitFor({ timeout: 5_000 }).catch(() => assert.fail("the agent's name shows by the model on a wide window"));
         assert.ok(await chat.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "the wide row fits");
         if (shots) await wide.screenshot({ path: join(shots, "desktop-chat-1440.png") });
+        // an idle chat's context popup offers VS Code's Compact Conversation, which sends /compact
+        await wide.evaluate(() => { const host = window as unknown as { hostState: { answered: boolean; work: unknown[] }; setHostBusy(busy: boolean): void }; host.hostState.answered = true; host.hostState.work = []; host.setHostBusy(false); });
+        await chat.locator(".prompt-card").waitFor({ state: "detached" });
+        await chat.locator(".composer-controls-right .host-chat-meter").click();
+        const contextPopup = wide.getByRole("dialog", { name: "Context window" });
+        await contextPopup.getByRole("button", { name: "Compact Conversation" }).waitFor({ timeout: 5_000 }).catch(() => assert.fail("an idle chat offers Compact"));
+        if (shots) { await contextPopup.locator(".host-context-cost").waitFor(); await settled(wide); await wide.screenshot({ path: join(shots, "context-1440.png") }); }
+        const sentBefore = await wide.evaluate(() => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.filter((post) => post.path.endsWith("/chat/send")).length);
+        await contextPopup.getByRole("button", { name: "Compact Conversation" }).click();
+        await contextPopup.waitFor({ state: "detached" });
+        await wide.waitForFunction((count) => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.filter((post) => post.path.endsWith("/chat/send")).length > count, sentBefore);
+        const compacted = await wide.evaluate(() => (window as unknown as { hostCalls: { posts: { path: string; body: { text: string } }[] } }).hostCalls.posts.filter((post) => post.path.endsWith("/chat/send")).at(-1)!.body.text);
+        assert.equal(compacted, "/compact", "Compact sends /compact, as VS Code's action does");
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a wide window: pills on the chat's column, the meter by Send");
       } finally { await wideContext.close(); }

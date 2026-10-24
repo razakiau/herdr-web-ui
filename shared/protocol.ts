@@ -334,6 +334,11 @@ export interface UsageReport {
  * its environment, else saved from Settings): its accounts are in /api/usage, keyed
  * `<provider>:omniroute:<connection>`.
  */
+/** A model's list price, USD per million tokens, as OmniRoute prices it; `cached` when cache reads cost less. */
+export interface ModelPrice { input: number; output: number; cached?: number }
+/** By provider (OmniRoute's ids: cc, gh, anthropic, openai…), then model. */
+export type ModelPrices = Record<string, Record<string, ModelPrice>>;
+
 export interface OmniRouteStatus {
   readonly configured: boolean;
   /** env: the server's environment, which Settings cannot change; saved: from Settings; null when not configured */

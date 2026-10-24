@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages } from "./omniroute.ts";
+import { handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -127,6 +127,31 @@ describe("OmniRouteUsage", () => {
     expect(service.status().ok).toBe(false);
     expect(service.status().problem).toBe("OmniRoute refused the token");
     expect(JSON.stringify(service.status())).not.toContain(TOKEN);
+  });
+
+  it("reads the price table with the token, keeps it six hours, and keeps the last one through a failure", async () => {
+    let now = NOW;
+    let down = false;
+    const seen: { url: string; auth: string | null }[] = [];
+    const table = { cc: { "claude-opus-5-5": { input: 4, output: 20, cached: 0.2, reasoning: 20 } } };
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN },
+      fetcher({ "/api/pricing": () => down ? new Response("", { status: 502 }) : Response.json(table) }, seen), () => now);
+    expect(await service.pricing()).toEqual({ cc: { "claude-opus-5-5": { input: 4, output: 20, cached: 0.2 } } });
+    expect(seen.map((each) => [new URL(each.url).pathname, each.auth])).toEqual([["/api/pricing", `Bearer ${TOKEN}`]]);
+    now += 60_000;
+    await service.pricing();
+    expect(seen.length).toBe(1);
+    now += 7 * 3600_000; down = true;
+    expect(await service.pricing()).toEqual({ cc: { "claude-opus-5-5": { input: 4, output: 20, cached: 0.2 } } });
+    expect(seen.length).toBe(2);
+    // no gateway: no prices, and nothing asked
+    expect(await new OmniRouteUsage({ url: "", token: "" }, fetcher({})).pricing()).toBeNull();
+  });
+
+  it("a price row needs a number input and output; anything else of the table is dropped", () => {
+    expect(pricesFrom({ a: { ok: { input: 1, output: 2 }, free: { input: 0, output: 0, cached: 0 }, bad: { input: "1", output: 2 }, neg: { input: -1, output: 2 } }, empty: {}, list: [] }))
+      .toEqual({ a: { ok: { input: 1, output: 2 }, free: { input: 0, output: 0, cached: 0 } } });
+    expect(pricesFrom(null)).toEqual({});
   });
 
   it("an unreachable OmniRoute says so", async () => {

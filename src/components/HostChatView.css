@@ -550,36 +550,121 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   width: min(100%, 24rem);
 }
 
-.host-context-total {
-  margin: 0 0 var(--space-3);
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--fw-medium);
+/* VS Code's context popup (chatContextUsageDetails), in the app's grouped lists: the session's
+   cost, the window's bar with its reserved band, then System, User Context and Uncategorized as
+   share of the window (owner, ZAC-224) */
+.host-context-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.host-context-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.host-context-row + .host-context-row {
+  border-top: var(--hairline) solid var(--border);
 }
 
 .host-context-parts {
-  display: grid;
-  gap: var(--space-2);
   margin: 0;
 }
 
-.host-context-parts > div {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
 .host-context-parts dt {
-  color: var(--text-dim);
+  color: var(--text);
 }
 
 .host-context-parts dd {
   margin: 0;
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
-.host-context-parts > .is-total {
-  padding-top: var(--space-2);
-  border-top: var(--hairline) solid var(--border);
+.host-context-cost {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-semibold);
+}
+
+.host-context-note {
+  margin: var(--space-2) var(--space-3) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-context-window {
+  --context-fill: var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.host-context-window.is-high {
+  --context-fill: var(--notice);
+}
+
+.host-context-window.is-full {
+  --context-fill: var(--status-blocked);
+}
+
+.host-context-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.host-context-count {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+.host-context-percent {
+  color: var(--text-dim);
+}
+
+.host-context-bar {
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+}
+
+.host-context-used {
+  background: var(--context-fill);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+
+/* the answer's share of the window, striped as VS Code draws it */
+.host-context-reserved,
+.host-context-swatch {
+  background: repeating-linear-gradient(-45deg, var(--context-fill) 0 2px, transparent 2px 4px);
+}
+
+.host-context-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-context-swatch {
+  flex: none;
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.host-context-compact {
+  align-self: stretch;
 }
 
 @media (max-width: 480px) {

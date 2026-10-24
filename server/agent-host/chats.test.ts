@@ -538,6 +538,48 @@ describe("what a host chat waits on, and its context", () => {
     expect(readFrom("s", "t", chat({ turns: [turn({ contextAttribution: { totalTokens: 3, limit: 0 } })] })).context).toBeNull();
   });
 
+  it("breaks the window down as VS Code's popup does: system rows, kinds summed, Messages for the rest", () => {
+    // the live shape (a Copilot CLI turn, 2026-10-24): a system rollup with children is skipped and its
+    // children summed; every other kind is one row; tokens no entry covers are Messages
+    const entries = [
+      { kind: "system", id: "sys", label: "System prompt", tokens: 25000 },
+      { kind: "system", id: "defs", label: "Tool definitions", tokens: 35000 },
+      { kind: "toolDefinition", id: "d1", label: "bash", tokens: 20000, parentId: "defs" },
+      { kind: "toolDefinition", id: "d2", label: "view", tokens: 15000, parentId: "defs" },
+      { kind: "tool", id: "t1", label: "bash", tokens: 8000 },
+      { kind: "tool", id: "t2", label: "view", tokens: 2000 },
+      { kind: "mcpServer", id: "m1", label: "a-memory", tokens: 300 },
+      { kind: "bogus" },
+    ];
+    const attribution = { totalTokens: 100000, limit: 400000, bufferTokens: 20000, categories: {}, entries };
+    const turn = { id: "turn-1", startedAt: AT, state: "complete", responseParts: [], message: user("FICTIONAL hi"), usage: { inputTokens: 1, outputTokens: 1, _meta: { contextAttribution: attribution } } };
+    const read = readFrom("s", "t", chat({ turns: [turn] }), ctx(undefined)).context!;
+    expect(read.parts).toEqual([
+      { category: "system", label: "System prompt", share: 25 },
+      { category: "system", label: "Tool Definitions", share: 35 },
+      { category: "user", label: "Tool Results", share: 10 },
+      // 0.3%: under VS Code's whole-percent rounding, left out
+      { category: "user", label: "Messages", share: 30 },
+    ]);
+    // no model budget known: the host's own buffer is the reserved band
+    expect(read.reservedTokens).toBe(20000);
+    // with the model's answer budget, VS Code's band: the budget less what the turn wrote
+    const metered = { ...turn, message: { ...turn.message, model: { id: "fictional-opus" } }, usage: { inputTokens: 90000, outputTokens: 4000, _meta: { contextAttribution: attribution } } };
+    const budgets = { ...ctx(undefined), modelWindow: () => 528000, modelOutput: (id: string) => (id === "fictional-opus" ? 64000 : null) };
+    const withBudget = readFrom("s", "t", chat({ turns: [metered] }), budgets).context!;
+    expect({ reserved: withBudget.reservedTokens, parts: withBudget.parts?.length }).toEqual({ reserved: 60000, parts: 4 });
+  });
+
+  it("sums the tokens each loaded turn spent by model, and says when that is only part of the chat", () => {
+    const totals = (model: string, input: number, cached: number, output: number) => ({ _meta: { turnTokenTotals: [{ model, inputTokens: input, cachedTokens: cached, outputTokens: output }] } });
+    const turn = (id: string, usage: unknown) => ({ id, startedAt: AT, state: "complete", responseParts: [], message: user("FICTIONAL hi"), usage });
+    const two = chat({ turns: [turn("a", totals("cc/opus", 1000, 800, 50)), turn("b", totals("cc/opus", 2000, 1900, 70))] });
+    expect(readFrom("s", "t", two).tokens).toEqual({ totals: [{ model: "cc/opus", input: 3000, cached: 2700, output: 120 }], partial: false });
+    // a finished turn with no totals (a restarted host keeps none), or older turns not loaded: a floor
+    expect(readFrom("s", "t", chat({ turns: [turn("a", totals("cc/opus", 1000, 0, 10)), turn("b", undefined)] })).tokens?.partial).toBe(true);
+    expect(readFrom("s", "t", { ...two, turnsNextCursor: "c1" }).tokens?.partial).toBe(true);
+  });
+
   it("with the model's window known, a turn's context is its input and output over that window, as VS Code's meter counts it", () => {
     // a live 'Migrating' turn: attribution said 508993 of 400000 (127%) while VS Code showed ~36%
     const attribution = { totalTokens: 508993, limit: 400000, promptTokenLimit: 400000, categories: { systemPrompt: 25027, systemTools: 20000, mcpTools: 23730, messages: 440236 } };

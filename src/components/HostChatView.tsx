@@ -11,6 +11,9 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ModelPrices } from "../../shared/protocol.ts";
+import { chatCost } from "../lib/chatCost.ts";
+import { fetchModelPrices } from "../lib/api.ts";
 import { Eye, GitFork, SlidersHorizontal } from "lucide-react";
 
 import "./ChatView.css";
@@ -120,6 +123,17 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
+  // OmniRoute's prices, once the context sheet is first opened: the cost is only shown there
+  const [prices, setPrices] = useState<ModelPrices | null>(null);
+  useEffect(() => {
+    if (!contextOpen || prices !== null) return;
+    void fetchModelPrices().then((value) => { if (mounted.current && value) setPrices(value); });
+  }, [contextOpen, prices]);
+  const cost = useMemo(() => {
+    const tokens = chat?.tokens;
+    if (!prices || !tokens || tokens.totals.length === 0) return null;
+    return { ...chatCost(tokens.totals, prices), partial: tokens.partial };
+  }, [chat?.tokens, prices]);
   // the checkpoint a tap asked to restore (its sheet is up), and the message a restore put back in the box
   const [restoring, setRestoring] = useState<string | null>(null);
   // Fork Conversation: the request being forked at, and why the last one failed
@@ -338,7 +352,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
-      toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />}
+      toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
+        onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}

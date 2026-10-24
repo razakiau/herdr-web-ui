@@ -9,7 +9,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OmniRouteStatus, ProviderUsage, UsageWindow } from "../shared/protocol.ts";
+import type { ModelPrice, ModelPrices, OmniRouteStatus, ProviderUsage, UsageWindow } from "../shared/protocol.ts";
 import { jsonResponse } from "./http.ts";
 import { FRESH_MS, MIN_REFRESH_MS, RETRY_MS } from "./usage.ts";
 
@@ -102,6 +102,25 @@ export function omniRouteUsages(limits: unknown, providers: unknown): ProviderUs
   });
 }
 
+/** How long a price table is kept: OmniRoute's own sync runs daily at most */
+const PRICES_MS = 6 * HOUR_MS;
+
+/** OmniRoute's prices as its cost calculator reads them (computeCostFromPricing), nothing else of the table. */
+export function pricesFrom(raw: unknown): ModelPrices {
+  const table: ModelPrices = {};
+  for (const [provider, models] of Object.entries(record(raw) ?? {})) {
+    const byModel: Record<string, ModelPrice> = {};
+    for (const [model, value] of Object.entries(record(models) ?? {})) {
+      const price = record(value);
+      const input = number(price?.["input"]), output = number(price?.["output"]), cached = number(price?.["cached"]);
+      if (input === null || output === null || input < 0 || output < 0) continue;
+      byModel[model] = { input, output, ...(cached !== null && cached >= 0 ? { cached } : {}) };
+    }
+    if (Object.keys(byModel).length > 0) table[provider] = byModel;
+  }
+  return table;
+}
+
 export interface OmniRouteConfig { url: string; token: string }
 
 /** An OmniRoute gateway's limits for /api/usage, and its state for Settings. */
@@ -112,6 +131,10 @@ export class OmniRouteUsage {
   private readAt: number | null = null;
   private nextAt = 0;
   private pending: Promise<readonly ProviderUsage[]> | null = null;
+  private prices: ModelPrices | null = null;
+  private pricesAt = 0;
+  private pricesRetryAt = 0;
+  private pricesPending: Promise<void> | null = null;
 
   constructor(private readonly config: OmniRouteConfig,
     private readonly fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
@@ -147,6 +170,23 @@ export class OmniRouteUsage {
       this.nextAt = now + RETRY_MS;
     }
     return this.entries;
+  }
+
+  /**
+   * OmniRoute's price table (GET /api/pricing: defaults, LiteLLM, models.dev and the user's own,
+   * merged), USD per million tokens by provider and model, for a chat's cost estimate. Read at most
+   * every PRICES_MS; a failed read keeps the last table. Null when no gateway is set or none was read.
+   */
+  async pricing(): Promise<ModelPrices | null> {
+    if (this.url === null) return null;
+    const now = this.now();
+    if (this.prices !== null && now < this.pricesAt + PRICES_MS) return this.prices;
+    if (now < this.pricesRetryAt) return this.prices;
+    this.pricesPending ??= this.get("/api/pricing").then((raw) => {
+      this.prices = pricesFrom(raw); this.pricesAt = this.now();
+    }, () => { this.pricesRetryAt = this.now() + RETRY_MS; }).finally(() => { this.pricesPending = null; });
+    await this.pricesPending;
+    return this.prices;
   }
 
   private async get(path: string): Promise<unknown> {
@@ -217,6 +257,8 @@ export class OmniRouteLink {
 
   report(refresh = false): Promise<readonly ProviderUsage[]> { return this.usage.report(refresh); }
 
+  pricing(): Promise<ModelPrices | null> { return this.usage.pricing(); }
+
   /** Saves `{url, token?}` and reads the gateway once; a blank token keeps the saved one for the same URL. */
   async save(value: unknown): Promise<OmniRouteStatus> {
     if (this.pinned) throw pinned();
@@ -254,6 +296,12 @@ function normalizeUrl(value: string): string {
   try { url = new URL(value.trim()); } catch { throw invalid(); }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw invalid();
   return url.href.replace(/\/+$/, "");
+}
+
+/** GET /api/usage/omniroute/pricing: the gateway's prices for a chat's cost estimate, `null` when there are none. */
+export async function handleOmniRoutePricing(request: Request, link: OmniRouteLink): Promise<Response> {
+  if (request.method !== "GET") return jsonResponse({ error: { code: "method_not_allowed", message: "Use GET" } }, 405, { allow: "GET" });
+  return jsonResponse({ prices: await link.pricing() }, 200, { "cache-control": "no-store" });
 }
 
 /** GET, PUT `{url, token?}` and DELETE on /api/usage/omniroute; only fixed words leave it. */
