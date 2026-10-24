@@ -21,6 +21,13 @@
   min-width: 0;
 }
 
+/* the mark is an inline span that rode the text baseline, 2.5 px above the chip's centre (owner,
+   ZAC-207): as a flex box it centres with the name, as in .composer-status */
+.host-chat-model .agent-mark {
+  display: inline-flex;
+  flex: none;
+}
+
 .host-chat-model .host-chat-pill-label {
   min-width: 0;
   overflow: hidden;

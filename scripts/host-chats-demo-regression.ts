@@ -1343,6 +1343,12 @@ try {
         assert.equal(await view.locator(".composer-voice").count(), 0, "voice becomes send on the first character");
         await view.locator(".composer-controls-right .voice-mic-wrap").waitFor();
         await box.fill("");
+        // the provider mark sits on the chip's centre line with the name (an inline svg rode the baseline, 2-3 px high)
+        const centres = await view.locator(".host-chat-model").evaluate((chip) => {
+          const mid = (node: Element | null) => { const box = node!.getBoundingClientRect(); return box.top + box.height / 2; };
+          return { chip: mid(chip), mark: mid(chip.querySelector(".agent-mark svg")), label: mid(chip.querySelector(".host-chat-pill-label")) };
+        });
+        assert.ok(Math.abs(centres.mark - centres.chip) <= 0.5 && Math.abs(centres.label - centres.chip) <= 0.5, `the model mark and name share the chip's centre (${JSON.stringify(centres)})`);
         // at 360 px with a custom agent picked: nothing overflows and the model name still says itself
         await page.setViewportSize({ width: 360, height: 780 });
         assert.ok(await view.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "nothing overflows at 360");
