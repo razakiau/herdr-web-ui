@@ -80,7 +80,7 @@ const patch = `(() => {
     const turns = [
       ...older,
       { role: "user", ts: at(9), parts: [{ kind: "text", text: "FICTIONAL look at the build" }] },
-      { role: "assistant", ts: at(9), end_ts: at(8), parts: [
+      { role: "assistant", ts: at(9), end_ts: at(8), model: "FICTIONAL Model A", parts: [
         { kind: "thinking", text: "FICTIONAL **the build** first, then the tests" },
         { kind: "tool", name: "Run in terminal", tool_id: "bash", summary: "Running FICTIONAL make test", input: "make test", output: "FICTIONAL ok", error: false, command: "make test", exit_code: 0 },
         { kind: "tool", name: "Read file", tool_id: "view", summary: "Reading", past: "Read", input: JSON.stringify({ path: "/tmp/fictional-repo/README.md" }), output: "", error: false },
@@ -280,8 +280,10 @@ const patch = `(() => {
         return json({ error: { code: "not_found", message: "no such edit" } }, 404);
       }
       // ZAC-207: the chat's changeset, as VS Code's Changes pill counts it, and a file's two sides
+      // (window.committedBuild: build.ts is no longer in it, as after a commit; ZAC-228)
+      if (path === "/api/host-chats/changes") window.changesReads = (window.changesReads ?? 0) + 1;
       if (path === "/api/host-chats/changes") return json({ changes: { label: "Branch Changes", status: "ready", added: 30, removed: 3, files: [
-        { id: "cs-build", path: "/tmp/fictional-repo/src/build.ts", kind: "edit", added: 28, removed: 3 },
+        ...(window.committedBuild ? [] : [{ id: "cs-build", path: "/tmp/fictional-repo/src/build.ts", kind: "edit", added: 28, removed: 3 }]),
         { id: "cs-fresh", path: "/tmp/fictional-repo/src/fresh.ts", kind: "create", added: 2, removed: 0 },
       ] } });
       if (path === "/api/host-chats/changes/diff") {
@@ -511,6 +513,7 @@ try {
         assert.equal(await second.locator(".work-block-time").count(), 0, "no group carries the time (ZAC-228)");
         assert.match(await second.getAttribute("class") ?? "", /is-folded/, "a finished turn's last group is folded too (ZAC-228)");
         assert.match(await agentTurn.locator(".chat-agent-meta .chat-meta-duration").innerText(), /^Worked for \d+m$/, "the turn's footer says once how long it worked (ZAC-228)");
+        assert.equal((await agentTurn.locator(".chat-agent-meta .chat-meta-model").innerText()).trim(), "FICTIONAL Model A", "and the model that answered");
         // ZAC-228: the answer closes with what it changed, View opens the diff sheet cut to it, and a
         // dashed checkpoint follows it; its footer's ⋯ copies and never restores
         const changed = agentTurn.locator(".chat-turn-changes");
@@ -696,6 +699,24 @@ try {
         assert.equal(await view.locator(".chat-turn-agent", { hasText: "FICTIONAL an earlier answer" }).count(), 1, "the earlier page stays");
         // no scrollback, terminal output, prompt state or skill list is read for it: it has no pane
         assert.deepEqual(await page.evaluate(() => (window as unknown as { hostCalls: { paneless?: string[] } }).hostCalls.paneless ?? []), [], "no pane request for a host chat");
+        const answerChanges = view.locator(".chat-turn-agent", { hasText: "FICTIONAL the build passes." }).locator(".chat-turn-changes");
+        // ZAC-228: the changeset no longer holds that file (committed): the line stays, View goes, never a dead button
+        await page.evaluate(() => { (window as unknown as { committedBuild: boolean }).committedBuild = true; });
+        // a turn made on the PC reads the changeset again (changesKey), as after a commit there
+        const recount = async () => {
+          const before = await page.evaluate(() => (window as unknown as { changesReads?: number }).changesReads ?? 0);
+          await page.evaluate(() => (window as unknown as { pushHostTurn(text: string): void }).pushHostTurn("FICTIONAL committed"));
+          await page.waitForFunction((count) => ((window as unknown as { changesReads?: number }).changesReads ?? 0) > count, before);
+        };
+        await recount();
+        await answerChanges.getByRole("button", { name: "View" }).waitFor({ state: "detached" });
+        assert.match((await answerChanges.innerText()).replace(/\s+/g, " ").trim(), /^1 file changed \+28 −3$/, "the line stays without View");
+        await page.evaluate(() => { (window as unknown as { committedBuild: boolean }).committedBuild = false; });
+        await recount();
+        await answerChanges.getByRole("button", { name: "View" }).waitFor();
+        // the two turns it took leave, as they never were, for the steps after
+        await page.evaluate(() => { const host = window as unknown as { hostState: { pushed: string[] }; rereadHost(): void }; host.hostState.pushed.splice(1); host.rereadHost(); });
+        await view.locator(".chat-turn-user", { hasText: "FICTIONAL from the PC" }).nth(1).waitFor({ state: "detached" });
         console.log("PASS a pushed change appears in the chat");
 
         // 2d. a subagent row (its own row, outside the work block) that opens to its own chat, and an

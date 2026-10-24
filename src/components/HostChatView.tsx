@@ -282,9 +282,10 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const checkpointList = chat?.checkpoints ?? null;
   const restoredTurn = chat?.restored?.turn ?? null;
   const [showChanges, setShowChanges] = useState<{ paths: string[]; at: number } | null>(null);
+  const [changedPaths, setChangedPaths] = useState<ReadonlySet<string> | null>(null);
   const checkpoints = useMemo(() => checkpointList === null ? null
     : { list: checkpointList, restored: restoredTurn, onPick: (turn: string) => setRestoring(turn), ...(onOpenChat ? { onFork: fork } : {}),
-      onViewChanges: (paths: string[]) => setShowChanges({ paths, at: Date.now() }) }, [checkpointList, restoredTurn, onOpenChat, fork]);
+      changedPaths, onViewChanges: (paths: string[]) => setShowChanges({ paths, at: Date.now() }) }, [checkpointList, restoredTurn, onOpenChat, fork, changedPaths]);
   const restoringAt = restoring === null || checkpointList === null ? -1 : checkpointList.findIndex((each) => each.turn === restoring);
   const restoreText = (turn: string): string | null => {
     const at = checkpointList?.findIndex((each) => each.turn === turn) ?? -1;
@@ -351,7 +352,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     }} />}
     <HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />
     {/* the pills stay while a question or approval is up: what the session made is often what the question is about */}
-    <HostSessionPills machineId={machineId} session={session} showChanges={showChanges} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
+    <HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />

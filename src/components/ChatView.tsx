@@ -199,7 +199,8 @@ export interface ChatViewProps {
   title?: string | null;
   /** a host chat's checkpoints (HostChatRead), the one restored, and what a tap on one does */
   checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void; /** VS Code's Fork Conversation at a request (never the first) */ onFork?(turn: string): void;
-    /** an answer's "View" on its changes line: the chat's diff sheet cut to these paths (ZAC-228) */ onViewChanges?(paths: string[]): void } | null;
+    /** an answer's "View" on its changes line: the chat's diff sheet cut to these paths (ZAC-228) */ onViewChanges?(paths: string[]): void;
+    /** the paths the chat's changeset holds now: View shows only for an answer with one of them (null: none) */ changedPaths?: ReadonlySet<string> | null } | null;
 }
 
 interface ChatState {
@@ -1260,6 +1261,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       {time}
       {/* how long it worked, once for the turn (VS Code's groups carry none) */}
       {worked !== null && <span className="chat-meta-duration">{t("Worked for {duration}", { duration: worked })}</span>}
+      {style === "vscode" && turn.model !== undefined && <span className="chat-meta-model">{turn.model}</span>}
       {style === "vscode" && answerText.length > 0 && <TurnMenu title={t("Answer")} items={[
         { id: "md", label: t("Copy as markdown"), icon: Copy, run: () => { void copyText(answerText).then(copied); } },
         { id: "txt", label: t("Copy as plain text"), icon: Copy, run: () => { void copyText(plainText(answerText)).then(copied); } },
@@ -1978,6 +1980,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   // ZAC-228: an answer's own edits are its host turn's, which the user row before it holds; the
   // checkpoint line under it restores to before the next user row
   const viewChanges = checkpoints?.onViewChanges;
+  const changedPaths = checkpoints?.changedPaths ?? null;
   const answerEnds = useCallback((index: number): { changes?: HostCheckpoint["files"]; onViewChanges?: (paths: string[]) => void; checkpointAfter?: string } => {
     if (rowCheckpoints === null || shownTurns[index]?.role !== "assistant") return {};
     if (shownTurns[index + 1]?.role === "assistant") return {};
@@ -1986,8 +1989,10 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     const own = user >= 0 ? rowCheckpoints.get(user) : undefined;
     if (own === undefined || own.faded || own.files.length === 0) return {};
     const next = rowCheckpoints.get(index + 1);
-    return { changes: own.files, ...(viewChanges ? { onViewChanges: viewChanges } : {}), ...(next?.turn && !next.faded ? { checkpointAfter: next.turn } : {}) };
-  }, [rowCheckpoints, shownTurns, viewChanges]);
+    // View opens the changeset cut to these files: with none of them left (committed, reverted, no changeset) it would open nothing
+    const viewable = viewChanges !== undefined && changedPaths !== null && own.files.some((file) => changedPaths.has(file.path));
+    return { changes: own.files, ...(viewable ? { onViewChanges: viewChanges } : {}), ...(next?.turn && !next.faded ? { checkpointAfter: next.turn } : {}) };
+  }, [rowCheckpoints, shownTurns, viewChanges, changedPaths]);
   const stickyRow = sticky === null ? undefined : timelineRows.find((row) => row.key === sticky);
   const stickyText = stickyRow === undefined ? "" : stickyRow.turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n").trim();
   // Back in a pane the reader left away from the end: the first answer read puts the turn they

@@ -476,6 +476,8 @@ export interface ConversationTurn {
   /** Last recorded assistant activity, never the next user's timestamp. */
   end_ts?: string;
   parts: ConversationPart[];
+  /** the model that answered, by its display name (a host chat's answers only, ZAC-228) */
+  model?: string;
 }
 
 /** Evidence of skill activity, not a claim that the skill's workflow completed. */

@@ -2252,6 +2252,8 @@ button.question-summary-answer { cursor: pointer; }
 
 /* how long a host turn worked, once in its footer (ZAC-228): VS Code's groups carry no time */
 .chat-meta-duration { font-variant-numeric: tabular-nums; }
+/* the model that answered (ZAC-228): the footer's last word, cut short before it can wrap the line */
+.chat-meta-model { min-width: 0; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
 
 /* an MCP call's server beside its tool (ZAC-228), and the captions of its opened input and output */
 .work-row-server { color: var(--text-dim); font-size: var(--fs-xs); }

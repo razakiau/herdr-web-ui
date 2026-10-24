@@ -64,11 +64,13 @@ export interface HostSessionPillsProps {
   changesKey?: string;
   /** an answer's "View" (ZAC-228): open the Changes sheet cut to these paths; `at` makes each tap a new request */
   showChanges?: { paths: string[]; at: number } | null;
+  /** the paths the chat's changeset holds now (null: none), so an answer's View shows only when it has something to open */
+  onChangedPaths?(paths: ReadonlySet<string> | null): void;
 }
 
 type Sheet = "changes" | "pullRequests" | "issues" | "artifacts" | "references" | "subagents" | "shells";
 
-export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId, session, changesKey, showChanges = null }: HostSessionPillsProps) {
+export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId, session, changesKey, showChanges = null, onChangedPaths }: HostSessionPillsProps) {
   const t = useT();
   const pills = useMemo(() => sessionPills(artifacts), [artifacts]);
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -94,6 +96,8 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onReveal
   const subagents = work.filter((each) => each.kind === "subagent");
   const shells = work.filter((each) => each.kind === "shell");
   const shownChanges = changes !== null && changes.files.length > 0 ? changes : null;
+  const changedKey = shownChanges === null ? "" : shownChanges.files.map((file) => file.path).join("\n");
+  useEffect(() => { onChangedPaths?.(changedKey === "" ? null : new Set(changedKey.split("\n"))); }, [changedKey, onChangedPaths]);
   // a sheet whose last entry went (the shell stopped, the subagent ended) closes with its pill
   const emptied = (sheet === "shells" && shells.length === 0) || (sheet === "subagents" && subagents.length === 0) || (sheet === "changes" && shownChanges === null);
   useEffect(() => { if (emptied) setSheet(null); }, [emptied]);

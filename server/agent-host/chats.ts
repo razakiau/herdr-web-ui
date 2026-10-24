@@ -571,7 +571,7 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
     return [
       { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
-      { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts },
+      { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts, ...(read.model !== null ? { model: context?.modelName(read.model) ?? read.model } : {}) },
     ];
   });
 }

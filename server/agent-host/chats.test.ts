@@ -59,6 +59,15 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("an answer names the model that wrote it, by the host's display name (ZAC-228)", () => {
+    const state = chat({ turns: [{ id: "t1", startedAt: AT, duration: 1, state: "complete", usage: undefined, message: { ...user("FICTIONAL go"), model: { id: "fictional/model-a" } },
+      responseParts: [{ kind: "markdown", id: "m1", content: "FICTIONAL done" }] }] });
+    const turns = turnsFrom(state, { chat: () => undefined, modelName: (id) => id === "fictional/model-a" ? "FICTIONAL Model A" : id });
+    expect(turns[1]).toMatchObject({ role: "assistant", model: "FICTIONAL Model A" });
+    expect(turns[0]).not.toHaveProperty("model");
+    expect(turnsFrom(chat({ turns: [{ id: "t1", startedAt: AT, duration: 1, state: "complete", usage: undefined, message: user("FICTIONAL go"), responseParts: [] }] }))[1]).not.toHaveProperty("model");
+  });
+
   it("a finished ask_user call reads as a question with its whole report, not as a tool row", () => {
     const ask = (toolCallId: string, toolName: string, input: unknown, out: string, success = true) => ({ kind: "toolCall", toolCall: {
       status: "completed", toolCallId, toolName, displayName: toolName, invocationMessage: toolName, toolInput: JSON.stringify(input),

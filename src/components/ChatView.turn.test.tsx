@@ -406,6 +406,11 @@ describe("the end of a host answer (ZAC-228)", () => {
     expect(draw(answer, { checkpointAfter: "t2", onCheckpoint: () => undefined })).not.toContain("chat-checkpoint-line");
   });
 
+  it("an answer's footer names its model", () => {
+    expect(plain(draw({ ...answer, model: "FICTIONAL Model A" }))).toContain("FICTIONAL Model A");
+    expect(draw(answer)).not.toContain("chat-meta-model");
+  });
+
   it("an answer's footer has one ⋯ and no restore or fork", () => {
     const html = draw(answer, { changes: files, onCheckpoint: () => undefined, onFork: () => undefined });
     expect(html.match(/aria-label="More actions"/g)?.length).toBe(1);
