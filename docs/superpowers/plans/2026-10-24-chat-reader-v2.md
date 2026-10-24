@@ -216,7 +216,37 @@ status CHECK IN ('pending','in_progress','done','blocked'), created_at, updated_
 - [ ] **Step 4: Run** → PASS; typecheck clean.
 - [ ] **Step 5: Commit** `feat(chat): end each answer with what it changed and a quiet footer (ZAC-228)`.
 
-### Task 7: Demo asserts, mutation proof, deploy
+### Task 7: MCP calls read like VS Code (owner, 2026-10-24)
+
+Today an MCP row says only `mcp_tool_call`: the host sends `summary` and `past` equal to the
+raw tool name. Live (591b2f3f): `{name: "mcp_tool_call", tool_id: "lab-search-mcp_tool_call",
+past: "mcp_tool_call", input: {tool_name: "mobbin-search_screens", arguments: {...}}}`.
+VS Code shows "Ran `<tool>`" with the server beside it, and opens to Input and Output blocks.
+
+**Files:**
+- Create: `src/lib/mcpCall.ts` (+ `mcpCall.test.ts`)
+- Modify: `src/components/ChatView.tsx` `VscodeWorkRow` (~698): label and detail for `kind === "mcp"`
+- Modify: `src/lib/toolGroupSummary.ts` (the group sentence counts MCP calls: "Ran 2 tools"), i18n, DESIGN.md
+
+**Interfaces:**
+- Produces: `export function mcpCall(part: { name: string; tool_id?: string; input: string; past?: string; summary: string }): { tool: string; server: string | null; args: unknown } | null`.
+  `server` = `tool_id` minus the `-<name>` suffix when it ends with it. A gateway proxy
+  (`name` is `mcp_tool_call` / `call_tool` / `mcp_tool_search`, i.e. input has a string
+  `tool_name` / `name`) gives the inner tool and `args` = its `arguments`; else `tool` = `name`,
+  `args` = the parsed input. `past`/`summary` equal to `name` count as absent.
+
+- [ ] **Step 1: Write the failing tests:** the live fixture above gives
+  `{tool: "mobbin-search_screens", server: "lab-search", args: {platform: "ios", …}}`;
+  `mcp_tool_search` with `{query}` gives `tool: "mcp_tool_search"`; a host `past` that differs
+  from the name (real words) wins in the row label; a rendered row reads "Ran
+  `mobbin-search_screens`" with a dim "lab-search" and, opened, an "Input" block of pretty JSON
+  and an "Output" block; a failed call reads "Failed `x`" with the error icon.
+- [ ] **Step 2: Run** `bun test src/lib/mcpCall.test.ts src/components/ChatView.turn.test.tsx` → FAIL.
+- [ ] **Step 3: Implement**, keeping MCP rows unfolded (`neverFolded`), as VS Code does.
+- [ ] **Step 4: Run** → PASS; typecheck clean.
+- [ ] **Step 5: Commit** `feat(chat): name the MCP tool and server a call ran, like VS Code (ZAC-228)`.
+
+### Task 8: Demo asserts, mutation proof, deploy
 
 **Files:**
 - Modify: `scripts/host-chats-demo-regression.ts` (fixtures + asserts), `.handoffs/herder-ui-web.md` (zhomelab), `ansible/roles/herdr_web/defaults/main.yml` (zhomelab pin)
@@ -225,7 +255,7 @@ status CHECK IN ('pending','in_progress','done','blocked'), created_at, updated_
   subagent card closed, open, nested; a 6-column table whose `.md-table-scroll` has
   `scrollWidth > clientWidth` while `document.documentElement.scrollWidth <= innerWidth`
   (including one inside a subagent card); the changes line and the footer ⋯ menu; the todo bar
-  closed ("Todos 3/7") and open (7 rows).
+  closed ("Todos 3/7") and open (7 rows); an MCP row reading "Ran `mobbin-search_screens`".
 - [ ] **Step 2: Run** `perl -e 'alarm 900; exec @ARGV' bun scripts/host-chats-demo-regression.ts`
   (async, ~5 min) → all PASS (54 old + new). Also `scripts/prompt-dock-demo-regression.ts` → 26 PASS.
 - [ ] **Step 3: Mutation run:** for each new assert, disable its feature (one at a time, file
