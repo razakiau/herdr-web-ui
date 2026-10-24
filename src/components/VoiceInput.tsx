@@ -3,7 +3,7 @@
  * of useVoiceInput. Dictated text is only inserted at the caret; nothing here ever sends.
  */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Check, Mic, Square, X } from "lucide-react";
+import { AudioLines, Check, Mic, Square, X } from "lucide-react";
 
 import "./VoiceInput.css";
 
@@ -230,8 +230,11 @@ export function useDictation(options: DictationOptions): Dictation {
   return { shown, connected: options.connected, voice: { ...voice, cancel }, forget, partial, press };
 }
 
-/** The mic: press to talk, held (release finishes) or tapped (tap again to finish). */
-export function MicButton({ dictation, className = "" }: { dictation: Dictation; className?: string }) {
+/**
+ * The mic: press to talk, held (release finishes) or tapped (tap again to finish). `round` is a host
+ * chat's empty box: the same press in the round button's place, a waveform where the mic glyph was.
+ */
+export function MicButton({ dictation, className = "", round = false }: { dictation: Dictation; className?: string; round?: boolean }) {
   const t = useT();
   const { voice, connected, press } = dictation;
   const recording = voice.state === "starting" || voice.state === "recording";
@@ -245,7 +248,7 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
       <span className="voice-mic-ring" ref={voice.bindRing} aria-hidden="true" />
       <button
         type="button"
-        className="voice-mic"
+        className={round ? "voice-mic composer-action composer-voice" : "voice-mic"}
         aria-label={label}
         aria-pressed={recording}
         title={reason ?? label}
@@ -261,7 +264,7 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
         onPointerCancel={() => voice.release()}
         onClick={() => { if (performance.now() - pointerUpAt.current > 500) press(); }}
       >
-        {recording ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
+        {recording ? <Square aria-hidden="true" /> : round ? <AudioLines aria-hidden="true" /> : <Mic aria-hidden="true" />}
       </button>
     </span>
   );

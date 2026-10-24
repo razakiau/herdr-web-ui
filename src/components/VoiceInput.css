@@ -66,6 +66,30 @@
   }
 }
 
+/* a host chat's empty box: voice in the round button's place, the same circle as Send, a raised
+   --text-strong disc so it reads as "talk" rather than "send" (ZAC-207 redesign) */
+.voice-mic.composer-voice {
+  width: var(--space-8);
+  height: var(--space-8);
+  border: 0;
+  background: var(--text-strong);
+  color: var(--bg);
+}
+
+.voice-mic.composer-voice::before {
+  display: none;
+}
+
+@media (hover: hover) {
+  .voice-mic.composer-voice:hover:not(:disabled):not([aria-pressed="true"]) {
+    background: var(--text);
+  }
+}
+
+.voice-mic.composer-voice[aria-pressed="true"] {
+  background: var(--accent);
+}
+
 /* always mounted: a transition (not keyframes) so a cancel mid-entrance reverses smoothly;
    visibility waits for the exit to finish */
 .voice-pill {

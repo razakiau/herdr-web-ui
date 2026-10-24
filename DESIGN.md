@@ -1512,11 +1512,39 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   column too (`--host-chat-gutter`): the session pills, the status line and the bars (not open in
   its workspace, forking, restored), and so do the sticky request and, just left of it, the turn
   rail. The rail names a turn beside its tick on hover or focus (`.chat-minimap-preview`). The
-  context meter (a ring that fills as the window is used, and the percent) stands before Send/Stop;
-  at `480px` and below the toolbar has no room for it and it ends the status line instead. The
-  status line does not repeat a running count the pills already show. Toolbar triggers are parted
-  by their own padding, not hairlines; a raised permission level keeps the notice colour on its
-  shield only.
+  status line does not repeat a running count the pills already show.
+  A host chat's toolbar (ZAC-207 redesign, `docs/superpowers/specs/2026-10-24-composer-redesign-design.md`)
+  is one quiet row on every width: attach `+`, the settings button (`.host-chat-settings`,
+  `SlidersHorizontal`, `--text-dim`; the theme's `--accent` while permissions are not Manual: a choice, not a warning, so never a fixed amber), the model chip
+  (provider mark, name, dim effort; no border or caret, `--bg-hover` on hover; the name is the
+  row's only words and ellipsizes last, after the effort word drops), on a mouse window a custom
+  agent's name in `--text-dim`, then the context meter (ring; its percent from `600px`) and one
+  round button. That button is voice (`.composer-voice`, `AudioLines` on a `--text-strong` disc)
+  while the box is empty and dictation is there, Send once text or a chip is in, Stop on a busy
+  chat with nothing typed (`roundButton`); with Send shown the mic sits quiet just before it. A
+  pane chat keeps its mic after attach and the status pill.
+  The settings and model sheets are grouped inset lists: a group is one `--bg-elevated`
+  `--radius-lg` block (`.host-picker-rows`, round at all four corners) under an 11 px caps caption
+  that stands on the sheet above it, never inside the block, rows at least 50 px with a hairline between
+  them inset past the icon, a 20 px `--text-dim` icon, the name in `--text-strong`, one
+  `--text-dim` line, and an `--accent` check on the choice. No row is an outlined card. The
+  settings sheet's order is Permissions, Mode, Agent (a section the host has no values for is
+  left out). The model sheet's captions name the providers; under its search a row of source chips
+  (All, then one per source: Copilot, OmniRoute, a custom endpoint…, each with its mark and count;
+  `.host-picker-sources`, scrolling sideways) narrows the list to one source, and none show when
+  the PC offers one source only.
+  A host chat's `+` opens the attach sheet ("Add to chat", `AttachSheet.tsx`) in the same `.modal`
+  shell: two `--bg-elevated` `--radius-lg` tiles (Camera, Photos: the device picker narrowed to
+  pictures), then one grouped list: Files in this folder (a pushed page with a search over the
+  chat's folder, the same chip as an `@` pick), Paste from clipboard (only where the browser can
+  read it), Upload from device (any type, several files), and under it "Recent in this chat": the
+  last 3 folder files this chat sent, kept in this browser. The ask card's `+` opens the same
+  sheet, and its picks are the composer's chips.
+  A form's pager stands in the card's header on a window wider than 640px, and at the card's foot,
+  centred (or left of Submit), on a phone. In full screen on a wide window the sheet is as tall as
+  its content, up to the window; on a phone it is full height, the message keeps its own height (a
+  long one scrolls) and the answers sit at the sheet's foot, so no empty band opens under the pager.
+  While the agent works, the quiet mic stays before Stop so a voice steer is one tap away.
   On a phone (`<=768px`), while the card follows the transcript directly (no held message, pending
   row, prompt card or notice between them) and no greeting stands over it, the card floats over the
   transcript's end as an iPhone's input bar does: the composer rises `--composer-over`

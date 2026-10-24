@@ -11,7 +11,7 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Eye, GitFork, ListChecks, MessageSquare, Rocket, ShieldCheck } from "lucide-react";
+import { Eye, GitFork, SlidersHorizontal } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
@@ -25,8 +25,10 @@ import {
   agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
-import type { HostSendPick } from "../lib/compose.ts";
-import { Composer, type SentAttachment } from "./Composer.tsx";
+import { settingsTone, type HostSendPick } from "../lib/compose.ts";
+import { Composer, type AttachApi, type SentAttachment } from "./Composer.tsx";
+import { AttachSheet, rememberAttached } from "./AttachSheet.tsx";
+import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import type { SubagentTarget } from "./SubagentRow.tsx";
@@ -95,6 +97,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     });
   };
   return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown expandable
+    attachSheet={{ machineId, session }}
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
@@ -110,7 +113,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const reread = (): void => setRefresh((key) => key + 1);
   const [choice, setChoice] = useState<HostChoice>(() => chosenFor(machineId, session));
   const [joined, setJoined] = useState(false);
-  const [sheet, setSheet] = useState<"model" | "agent" | "mode" | null>(null);
+  const [sheet, setSheet] = useState<"model" | "settings" | null>(null);
+  // the attach sheet is open with the composer's handle (Composer's attachMenu)
+  const [attaching, setAttaching] = useState<AttachApi | null>(null);
   const [config, setConfig] = useState<HostSessionConfig | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
@@ -151,11 +156,13 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const agentLabel = agent === null ? t("Agent") : catalog?.agents.find((each) => each.uri === agent)?.name ?? agentName(agent);
 
   // the chat's mode and permissions, as its host has them: read with each read of the chat, so a
-  // change made in VS Code shows here
-  useEffect(() => {
-    if (chat === null) return;
+  // change made in VS Code shows here. Every read, not every changed one: a permission switched in
+  // VS Code leaves the transcript's signature alone, and keyed on the chat object it never showed
+  const readConfig = useCallback(() => {
     void fetchHostConfig(machineId, session).then((value) => { if (mounted.current) setConfig((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value); }, () => undefined);
-  }, [chat, machineId, session]);
+  }, [machineId, session]);
+  useEffect(() => { if (source.last() !== null) readConfig(); }, [readConfig, source]);
+  useEffect(() => source.onRead(readConfig), [readConfig, source]);
   const pickConfig = (change: { mode?: string; approvals?: string }): void => {
     setSheetError(null);
     setConfig((current) => current === null ? current : { ...current, ...(change.mode ? { mode: change.mode } : {}), ...(change.approvals ? { approvals: change.approvals } : {}) });
@@ -167,7 +174,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     });
   };
 
-  const openSheet = (part: "model" | "agent" | "mode"): void => {
+  const openSheet = (part: "model" | "settings"): void => {
     setSheet(part);
     setSheetError(null);
     if (catalog === null) {
@@ -206,6 +213,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const sendAs = useCallback(async (mode: HostSendPick | "send", text: string, attached: SentAttachment[] = []): Promise<boolean | string> => {
     // a leading config command (/plan, /autopilot on…) sets the chat's mode or approvals first, as
     // VS Code does on send; what is left goes as the message, and nothing goes when nothing is left
+    // a folder file sent with the chat is one tap away in the attach sheet next time
+    rememberAttached(machineId, session, attached.flatMap((each) => each.media_type === undefined ? [each.path] : []));
     const slash = resolveHostSlash(text.trim());
     const words = slash ? slash.text : text.trim();
     try {
@@ -275,32 +284,23 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   // the host's default level until one is picked: the message is sent with it either way
   const shownEffort = model?.effort ?? (model && modelEntry?.id === model.id ? modelEntry.efforts?.default ?? null : null);
   const effortLabel = shownEffort ? shownEffort.charAt(0).toUpperCase() + shownEffort.slice(1) : null;
-  const ModeIcon = config?.mode === "plan" ? ListChecks : config?.mode === "autopilot" ? Rocket : MessageSquare;
-  const approvalsRaised = config?.approvals !== null && config?.approvals !== undefined && config.approvals !== "default";
+  // one settings button (ZAC-207 redesign): mode, permissions and agent in one sheet; it wears the
+  // notice colour for a raised permission level, as the mode pill's shield did
+  const settings = <button type="button" className="icon-button host-chat-settings" aria-haspopup="dialog" aria-expanded={sheet === "settings"}
+    data-tone={settingsTone(config?.approvals)}
+    aria-label={t("Chat settings: {0}, {1}, {2}", { 0: modeLabel ?? "—", 1: approvalsLabel ?? "—", 2: agentLabel })}
+    title={[modeLabel, approvalsLabel, agentLabel].filter(Boolean).join(" · ")} onClick={() => openSheet("settings")}>
+    <SlidersHorizontal aria-hidden="true" />
+  </button>;
   const pills = <span className="host-chat-pills">
     <button type="button" className="host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"}
       aria-label={t("Model: {model}", { model: detail ? `${modelLabel} · ${detail}` : modelLabel })} title={detail ? `${modelLabel} · ${detail}` : modelLabel} onClick={() => openSheet("model")}>
       {modelEntry && <ModelMarkIcon mark={providerMark(modelEntry)} size={14} />}
       <span className={`host-chat-pill-label${model === null ? " is-none" : modelEntry ? "" : " is-id"}`}>{modelEntry ? shortModelName(modelEntry) : modelLabel}</span>
       {effortLabel && <span className="host-chat-pill-aside">{effortLabel}</span>}
-      <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
     </button>
-    <button type="button" className="host-chat-pill host-chat-agent" aria-haspopup="dialog" aria-expanded={sheet === "agent"} aria-label={t("Agent: {agent}", { agent: agentLabel })} onClick={() => openSheet("agent")}>
-      <span className="host-chat-pill-label">{agentLabel}</span>
-      <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
-    </button>
-    {(modeLabel !== null || approvalsLabel !== null) && <button type="button" className="host-chat-pill host-chat-mode" aria-haspopup="dialog" aria-expanded={sheet === "mode"}
-      data-approvals={config?.approvals ?? undefined} title={[modeLabel, approvalsLabel].filter(Boolean).join(" · ")}
-      aria-label={t("Pick Mode and Permissions, {0}, {1}", { 0: modeLabel ?? "—", 1: approvalsLabel ?? "—" })} onClick={() => openSheet("mode")}>
-      <ModeIcon className="host-chat-pill-icon" aria-hidden="true" />
-      {modeLabel && <span className="host-chat-pill-label">{modeLabel}</span>}
-      {/* Manual is the default and says nothing; a raised level is named, as VS Code's summary does */}
-      {approvalsRaised && <>
-        <ShieldCheck className="host-chat-pill-shield" aria-hidden="true" />
-        <span className="host-chat-pill-aside is-raised">{approvalsLabel}</span>
-      </>}
-      <ChevronDown className="host-chat-pill-caret" aria-hidden="true" />
-    </button>}
+    {/* a mouse window names a custom agent by the model, as VS Code's toolbar does; a phone has it in the sheet */}
+    {agent !== null && <span className="host-chat-agent-name">{agentLabel}</span>}
   </span>;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
@@ -336,14 +336,15 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     <HostSessionPills machineId={machineId} session={session} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />
-    <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />
+    <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
-      pills={pills} sendMenu={sendMenu}
+      pills={pills} settingsButton={settings} sendMenu={sendMenu}
       pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}
       pendingNote={joined ? t("Added to your steer") : null}
       onSend={(text, _clear, _anyway, attached) => sendAs("send", text, attached)}
+      attachMenu={setAttaching}
       attachAsChips onUploadImage={(file) => uploadHostFile(machineId, session, file)}
       onAbort={() => { void stopHost(machineId, session).finally(reread); }} />
     {restoring !== null && restoringAt >= 0 && <CheckpointSheet first={restoringAt === 0 && chat?.cursor === null} files={filesSince(checkpointList!, restoring)}
@@ -355,6 +356,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
         if (text !== null) setPutBack(text);
         reread();
       }} />}
+    {attaching !== null && <AttachSheet machineId={machineId} session={session} api={attaching} onClose={() => setAttaching(null)} />}
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
       onModel={pickModel} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
   </div>;

@@ -19,6 +19,8 @@ import { useT, type Translate } from "../lib/i18n.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { Markdown } from "./Markdown.tsx";
+import { AttachSheet } from "./AttachSheet.tsx";
+import "./AttachSheet.css";
 
 /**
  * One card is one occurrence of a prompt on one pane: its owner mounts a new card (a `key`) for
@@ -75,7 +77,16 @@ export type PromptChoice = Omit<PromptAnswer, "pane_id" | "prompt_id"> & {
 };
 
 /** One page of a form as the card keeps it until Submit: the picks, the typed words, their files. */
-interface FormDraft { selected: number[]; custom: string; files: { id: number; file: File; preview: string }[] }
+/** a file in the answer field: one from the device (uploaded on send), or one of the chat's folder (sent as its `@path`) */
+type AnswerFile = { id: number; file: File; preview: string } | { id: number; path: string; preview: "" };
+const fileName = (each: AnswerFile): string => "file" in each ? each.file.name : each.path.split("/").pop() || each.path;
+/** the answer's text with every file leading it as `@path`: device files uploaded first (a failure stops the lot) */
+async function withFiles(text: string, files: readonly AnswerFile[], upload: (file: File) => Promise<string>, done: (text: string) => Promise<void>): Promise<{ ok: true } | { ok: false; error: string }> {
+  const folder = files.flatMap((each) => "path" in each ? [`@${each.path}`] : []);
+  const device = files.flatMap((each) => "file" in each ? [each.file] : []);
+  return customAnswerWithFiles(text, device, upload, async (uploaded) => { await done([...folder, uploaded].filter((part) => part.trim() !== "").join(" ")); });
+}
+interface FormDraft { selected: number[]; custom: string; files: AnswerFile[] }
 const draftAnswered = (draft: FormDraft): boolean => draft.selected.length > 0 || draft.custom.trim() !== "" || draft.files.length > 0;
 
 /**
@@ -85,14 +96,18 @@ const draftAnswered = (draft: FormDraft): boolean => draft.selected.length > 0 |
  */
 export interface PromptCardViewProps extends Omit<PromptCardProps, "paneId"> {
   submit(choice: PromptChoice): Promise<void>;
+  /** a host chat's card: + opens the composer's attach sheet (its folder, camera, photos) for this chat */
+  attachSheet?: { machineId: string; session: string };
 }
 
-export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false, onUploadFile, expandable = false }: PromptCardViewProps) {
+export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false, onUploadFile, expandable = false, attachSheet }: PromptCardViewProps) {
   const t = useT();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
   // a Copilot answer's files, as thumbnails in the field until it is sent
-  const [files, setFiles] = useState<{ id: number; file: File; preview: string }[]>([]);
+  const [files, setFiles] = useState<AnswerFile[]>([]);
+  // the composer's attach sheet, open over the card (ZAC-207: the card's + was a bare device picker)
+  const [attachOpen, setAttachOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<UserError | null>(null);
@@ -181,25 +196,33 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     }
     setPending(true);
     setError(null);
-    const result = await customAnswerWithFiles(text, files.map((each) => each.file), onUploadFile, async (withPaths) => { await answer({ custom_text: withPaths }, press); });
+    const result = await withFiles(text, files, onUploadFile, async (withPaths) => { await answer({ custom_text: withPaths }, press); });
     if (!shown.current) return;
     if (!result.ok) { setError({ message: result.error, detail: null }); setPending(false); }
   };
   const filesRef = useRef(files);
   filesRef.current = files;
-  useEffect(() => () => { for (const each of filesRef.current) URL.revokeObjectURL(each.preview); }, []);
+  useEffect(() => () => { for (const each of filesRef.current) if (each.preview) URL.revokeObjectURL(each.preview); }, []);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const addFiles = (picked: readonly File[]): void => {
-    const kept: { id: number; file: File; preview: string }[] = [];
+    const kept: AnswerFile[] = [];
     for (const file of picked) {
       try { assertAttachable(file); } catch (cause) { setError(userErrorMessage(cause)); continue; }
       kept.push({ id: ++answerFileSequence, file, preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : "" });
     }
     if (kept.length > 0) setFiles((current) => [...current, ...kept]);
   };
+  const addPath = (path: string): void => setFiles((current) => current.some((each) => "path" in each && each.path === path) ? current : [...current, { id: ++answerFileSequence, path, preview: "" }]);
+  const pickDevice = (opts?: { accept?: string; capture?: boolean }): void => {
+    const input = fileInput.current;
+    if (!input) return;
+    if (opts?.accept) input.setAttribute("accept", opts.accept); else input.removeAttribute("accept");
+    if (opts?.capture) input.setAttribute("capture", "environment"); else input.removeAttribute("capture");
+    input.click();
+  };
   const removeFile = (id: number): void => {
     setFiles((current) => current.filter((each) => {
-      if (each.id === id) URL.revokeObjectURL(each.preview);
+      if (each.id === id && each.preview) URL.revokeObjectURL(each.preview);
       return each.id !== id;
     }));
   };
@@ -288,7 +311,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       if (!draftAnswered(draft)) { entries.push(null); continue; }
       let text = draft.custom.trim();
       if (draft.files.length > 0 && onUploadFile) {
-        const result = await customAnswerWithFiles(text, draft.files.map((each) => each.file), onUploadFile, async (withPaths) => { text = withPaths; });
+        const result = await withFiles(text, draft.files, onUploadFile, async (withPaths) => { text = withPaths; });
         if (!shown.current) return;
         if (!result.ok) { setError({ message: result.error, detail: null }); setPending(false); return; }
       }
@@ -307,6 +330,13 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
   const planFile = prompt.plan_file;
 
   const collapse = (): void => setExpanded(false);
+  // width alone: a wide tablet's coarse pointer reaches the header as well as the foot
+  const pagerAtFoot = useMediaQuery("(max-width: 640px)");
+  const pager = form === null ? null : <>
+    <button type="button" className="icon-button" aria-label={t("Previous question")} title={t("Previous question")} disabled={pending || page === 0} onClick={() => goTo(page - 1)}><ChevronLeft aria-hidden="true" /></button>
+    <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
+    <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
+  </>;
   const card = (
     <section className={`prompt-card${folded && !expanded ? " is-folded" : ""}${expanded ? " is-expanded" : ""}`} ref={cardRef} role="region" aria-label={t("Agent is asking")}
       onKeyDown={(event) => { down.current = null; keyed.current = event.key === "Enter" || event.key === " " ? event.target : null; }}
@@ -319,6 +349,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         {/* read, not drawn: the card says it waits on you */}
         <span className="visually-hidden">{t("input needed")}</span>
         {markdown ? <h2 className="prompt-card-markdown"><Markdown style="vscode">{q.title}</Markdown></h2> : <h2>{q.title}</h2>}
+        {pager !== null && !pagerAtFoot && !folded && <nav className="prompt-card-pager is-header" aria-label={t("Questions")}>{pager}</nav>}
         {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
         {planFile && openFile && (
           <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
@@ -447,9 +478,11 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
               <input ref={fileInput} type="file" multiple hidden onChange={(event) => {
                 const picked = Array.from(event.currentTarget.files ?? []);
                 event.currentTarget.value = "";
+                event.currentTarget.removeAttribute("accept");
+                event.currentTarget.removeAttribute("capture");
                 addFiles(picked);
               }} />
-              <button type="button" className="icon-button prompt-card-attach" aria-label={t("Attach files")} title={t("Attach files")} disabled={pending} onClick={() => fileInput.current?.click()}>
+              <button type="button" className="icon-button prompt-card-attach" aria-label={t("Attach files")} title={t("Attach files")} disabled={pending} onClick={() => { if (attachSheet) setAttachOpen(true); else pickDevice(); }}>
                 <Plus aria-hidden="true" />
               </button>
               {dictation.shown && <MicButton dictation={dictation} className="prompt-card-mic" />}
@@ -458,14 +491,16 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
               <Send aria-hidden="true" /> {t("Send")}
             </button>}
           </div>
+          {attachOpen && attachSheet && <AttachSheet machineId={attachSheet.machineId} session={attachSheet.session} onClose={() => setAttachOpen(false)}
+            api={{ pickFiles: pickDevice, addPicked: addPath, addFile: (file) => addFiles([file]) }} />}
           {attaching && dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
           {files.length > 0 && (
             <div className="composer-attachments prompt-card-files" aria-label={t("Attached files")}>
               {files.map((each) => (
                 <div className="composer-attachment is-ready" key={each.id}>
-                  {each.preview ? <img src={each.preview} alt={each.file.name} />
-                    : <span className="composer-attachment-file" title={each.file.name}><FileText aria-hidden="true" /><span>{each.file.name}</span></span>}
-                  <button type="button" aria-label={t("Remove {file}", { file: each.file.name })} disabled={pending} onClick={() => removeFile(each.id)}>
+                  {each.preview ? <img src={each.preview} alt={fileName(each)} />
+                    : <span className="composer-attachment-file" title={"path" in each ? each.path : each.file.name}><FileText aria-hidden="true" /><span>{fileName(each)}</span></span>}
+                  <button type="button" aria-label={t("Remove {file}", { file: fileName(each) })} disabled={pending} onClick={() => removeFile(each.id)}>
                     <X aria-hidden="true" />
                   </button>
                 </div>
@@ -489,11 +524,12 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
           appears together with its words is not read; one that is there and gets them is */}
       {/* a form's pager (VS Code's carousel footer): back and forth, every answer kept; Next waits on a
           required question's answer, an optional one may stay empty; Submit sends the lot */}
-      {form !== null && (
-        <nav className="prompt-card-pager" aria-label={t("Questions")}>
-          <button type="button" className="icon-button" aria-label={t("Previous question")} title={t("Previous question")} disabled={pending || page === 0} onClick={() => goTo(page - 1)}><ChevronLeft aria-hidden="true" /></button>
-          <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
-          <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
+      {/* on a mouse window the pager sits in the header beside the title, as VS Code's carousel does: a
+          footer row of its own held three small controls under a wide card (owner, ZAC-207). A phone
+          keeps it at the foot, in the thumb's reach; Submit stays at the foot on both */}
+      {form !== null && (pagerAtFoot ? pager : lastPage) && (
+        <nav className="prompt-card-pager" aria-label={pagerAtFoot ? t("Questions") : undefined}>
+          {pagerAtFoot && pager}
           {lastPage && <button type="button" className="btn btn-primary prompt-card-pager-submit" disabled={pending} onClick={(event) => void submitForm(event)}>{t("Submit")}</button>}
         </nav>
       )}

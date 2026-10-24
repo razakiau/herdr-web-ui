@@ -25,10 +25,17 @@ describe("activeTrigger", () => {
     }
   });
 
-  it("finds file mentions with at least one query character anywhere on a line", () => {
+  it("finds file mentions anywhere on a line", () => {
     expect(activeTrigger("see @src/com", 12)).toEqual({ kind: "file", query: "src/com", start: 4, end: 12 });
-    expect(activeTrigger("@", 1)).toBeNull();
     expect(activeTrigger("one\nopen @lib", 13)).toEqual({ kind: "file", query: "lib", start: 9, end: 13 });
+  });
+
+  it("opens the file list on a bare @ at a word start, as VS Code's does", () => {
+    expect(activeTrigger("@", 1)).toEqual({ kind: "file", query: "", start: 0, end: 1 });
+    expect(activeTrigger("look at @", 9)).toEqual({ kind: "file", query: "", start: 8, end: 9 });
+    expect(activeTrigger("one\n@", 5)).toEqual({ kind: "file", query: "", start: 4, end: 5 });
+    // an address being typed is not a mention until it has a letter after the @
+    expect(activeTrigger("mail me@", 8)).toBeNull();
   });
 
   it("uses the caret prefix as the query while replacing the complete token", () => {

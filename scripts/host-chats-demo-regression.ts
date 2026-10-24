@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
@@ -99,7 +99,7 @@ const patch = `(() => {
     const ids = [...(state.older ? ["h0"] : []), "h1", "h1b", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
-      body: "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
+      body: state.shortBody ? "FICTIONAL see the \`map\` first" : "FICTIONAL see the \`map\` first" + Array.from({ length: 40 }, (_, index) => "\\n\\n- FICTIONAL step " + (index + 1)).join(""), options: [{ label: "FICTIONAL north", description: "FICTIONAL the short way, through the pass", recommended: true }, { label: "FICTIONAL south", description: null }, { label: "FICTIONAL east", description: "FICTIONAL **plain** here" }, { label: "Other…", description: null }],
       multi_select: false, custom_option_index: 3,
       host: { request_id: "req-1", question_id: "q-1", option_ids: ["opt-north", "opt-south", "opt-east", ""] },
     };
@@ -146,6 +146,7 @@ const patch = `(() => {
   // a turn that ends takes its steering and queued messages with it, as a host does
   window.setHostBusy = (busy) => { state.busy = busy; if (!busy) state.pending = []; push({ type: "host-chat-changed", session: SESSION }); };
   // a turn made on the PC: only its push tells the phone
+  window.rereadHost = () => push({ type: "host-chat-changed", session: SESSION });
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
   window.EventSource = class extends EventTarget {
     constructor(url, options) {
@@ -272,7 +273,8 @@ const patch = `(() => {
       if (path === "/api/host-chats/files") return json({ files: ["src/fictional-build.ts", "README.md"].filter((file) => file.includes(url.searchParams.get("q") ?? "")) });
       // the session's mode and permissions, as the live host shapes them
       if (path === "/api/host-chats/session/config" && init?.method === "POST") { if (body.mode) state.mode = body.mode; if (body.approvals) state.approvals = body.approvals; return json({ ok: true }); }
-      if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: ["default", "assisted", "autoApprove"] });
+      if (path === "/api/host-chats/session/config") { window.configReads = (window.configReads ?? 0) + 1; }
+      if (path === "/api/host-chats/session/config") return json({ mode: state.mode, approvals: state.approvals, modes: ["interactive", "plan", "autopilot"], approvalModes: localStorage.getItem("demo:no-approvals") === "1" ? [] : ["default", "assisted", "autoApprove"] });
       if (path === "/api/host-chats/chat/watch" || path === "/api/host-chats/chat/draft" || path === "/api/host-chats/chat/confirm") return json({ ok: true });
       if (path === "/api/host-chats/chat/answer") { if (state.holdAnswer) return json({ error: { code: "prompt_changed", message: "FICTIONAL changed" } }, 409); state.answered = true; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/send") {
@@ -320,6 +322,8 @@ const patch = `(() => {
 })();`;
 
 const shots = process.env["HOST_CHATS_SHOTS"];
+// a sheet slides up: let its animations finish before a screenshot
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().map((each) => each.finished.catch(() => undefined))));
 try {
   await buildDemoApp(app);
   writeFileSync(join(app, "host-chats.js"), patch);
@@ -772,9 +776,10 @@ try {
         // the status line says what the chat waits on, VS Code's words; on a phone it ends with the
         // context meter (a wide window has it by Send: the wide pass below)
         assert.equal((await view.locator(".host-chat-status-line").textContent())?.trim(), "Waiting for your response", "an open question: Waiting for your response");
-        const meter = view.locator('.host-chat-status .host-chat-meter[data-place="status"]');
-        assert.equal(await meter.isVisible(), true, "a phone shows the status line's meter");
-        assert.equal(await view.locator('.host-chat-meter[data-place="toolbar"]').isVisible(), false, "and not the toolbar's");
+        // the meter sits in the composer's row on a phone too (ZAC-207 redesign): the row has room now
+        const meter = view.locator('.composer-controls-right .host-chat-meter');
+        assert.equal(await meter.isVisible(), true, "a phone shows the meter by the round button");
+        assert.equal(await view.locator('.host-chat-status .host-chat-meter').count(), 0, "and none in the status line");
         assert.equal((await meter.locator(".host-chat-meter-label").textContent())?.trim(), "42%", "the meter shows the percent of copilot.usageInfo");
         assert.equal(await meter.getAttribute("title"), "Context window: 42% · 84K / 200K", "the counts are in its title");
         await fits("the card");
@@ -811,6 +816,7 @@ try {
         assert.ok(sized.fieldBottom <= sized.viewport, `the answer field is on screen without scrolling (bottom ${sized.fieldBottom} of ${sized.viewport})`);
         await fits("the expanded card");
         if (shots) await page.screenshot({ path: join(shots, "task-10-card-expanded-390.png") });
+        if (shots) { await page.setViewportSize({ width: 1440, height: 900 }); await settled(page); await page.screenshot({ path: join(shots, "card-expanded-1440.png") }); await page.setViewportSize({ width: 390, height: 844 }); await settled(page); }
         await opened.getByRole("button", { name: "Exit full screen" }).click();
         await expanded.waitFor({ state: "detached" });
         assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL kept", "collapsing returns the card inline with its text");
@@ -886,9 +892,42 @@ try {
 
         // 3b. a form of two: a pick goes on to the next page and is kept; Back shows it picked, a
         // change sticks, an optional page left empty goes as null, and Submit sends both at once
-        await page.evaluate(() => { const host = (window as unknown as { hostState: { answered: boolean; form: boolean } }).hostState; host.answered = false; host.form = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
+        await page.evaluate(() => { const host = (window as unknown as { hostState: { answered: boolean; form: boolean } }).hostState; host.answered = false; host.form = true; (host as unknown as { shortBody: boolean }).shortBody = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
         const formCard = page.locator(".prompt-dock .prompt-card");
         await formCard.locator(".prompt-card-pager-count", { hasText: "1 of 2" }).waitFor();
+        // a wide window: the pager stands in the card's header beside the title, not in a footer row of its
+        // own under a wide card (owner, ZAC-207); a phone keeps it at the foot, in the thumb's reach
+        assert.equal(await formCard.locator(".prompt-card-header .prompt-card-pager-count").count(), 0, "a phone keeps the pager at the foot");
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await formCard.locator(".prompt-card-header .prompt-card-pager-count").waitFor({ timeout: 5_000 }).catch(() => assert.fail("the pager is in the header on a wide window"));
+        await formCard.getByRole("button", { name: "Open full screen" }).click();
+        const formSheet = page.getByRole("dialog", { name: "Agent is asking" });
+        await formSheet.waitFor();
+        const pad = await formSheet.locator(".prompt-card").evaluate((n) => parseFloat(getComputedStyle(n).paddingLeft));
+        assert.ok(pad >= 20, `full screen on a wide window has the sheet's margins (${pad} px)`);
+        // a short question: the sheet is as tall as its content, with no dead band between the message
+        // and the options (owner, ZAC-207, a desktop screenshot)
+        const wideGap = await formSheet.evaluate((sheet) => Math.round(sheet.querySelector(".prompt-card-options")!.getBoundingClientRect().top - sheet.querySelector(".prompt-card-body")!.getBoundingClientRect().bottom));
+        assert.ok(wideGap <= 24, `full screen on a wide window fits a short question (${wideGap} px between the message and the options)`);
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "ask-form-expanded-1440.png") }); }
+        await formSheet.getByRole("button", { name: "Exit full screen" }).click();
+        await formSheet.waitFor({ state: "detached" });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await formCard.locator(".prompt-card-pager:not(.is-header) .prompt-card-pager-count").waitFor();
+        // the phone's pager, with no Submit beside it, stands in the middle of the card
+        const pagerMid = await formCard.evaluate((card) => { const box = card.getBoundingClientRect(); const count = card.querySelector(".prompt-card-pager-count")!.getBoundingClientRect(); return Math.round((count.left + count.width / 2) - (box.left + box.width / 2)); });
+        assert.ok(Math.abs(pagerMid) <= 2, `the pager is centred on a phone (${pagerMid} px off)`);
+        // the card's + is the composer's attach sheet: a file of the chat's folder goes as a chip, sent as its @path
+        await formCard.locator(".prompt-card-attach").click();
+        const cardAttach = page.locator(".attach-sheet[role=dialog]");
+        await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
+        assert.deepEqual((await cardAttach.locator(".attach-tile").allInnerTexts()).map((text) => text.trim()), ["Camera", "Photos"], "the card offers the composer's sheet");
+        await cardAttach.getByRole("button", { name: "Files in this folder" }).click();
+        await cardAttach.getByRole("searchbox", { name: "Search files" }).fill("READ");
+        await cardAttach.getByRole("button", { name: "README.md" }).click();
+        await cardAttach.waitFor({ state: "detached" });
+        assert.equal((await formCard.locator(".prompt-card-files .composer-attachment-file").textContent())?.trim(), "README.md", "the folder pick is the composer's chip");
+        await formCard.locator(".prompt-card-files").getByRole("button", { name: /Remove/ }).click();
         const answeredBefore = (await posts("/api/machines/remote/host-chats/chat/answer")).length;
         assert.equal(await formCard.getByRole("button", { name: "Next question" }).isDisabled(), true, "a required page waits for its answer");
         await formCard.getByRole("button", { name: /FICTIONAL south/ }).click();
@@ -900,11 +939,23 @@ try {
         await formCard.getByRole("button", { name: /FICTIONAL east/ }).click();
         await formCard.locator(".prompt-card-pager-count", { hasText: "2 of 2" }).waitFor();
         if (shots) await formCard.screenshot({ path: join(shots, "r4-form-390.png") });
+        // full screen on a phone with a short message: the field and the pager sit at the sheet's foot,
+        // not mid-sheet over an empty band (owner, ZAC-207, a phone screenshot)
+        await formCard.getByRole("button", { name: "Open full screen" }).click();
+        await formSheet.waitFor();
+        await formSheet.evaluate((node) => Promise.all(node.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+        const footGap = await formSheet.evaluate((sheet) => Math.round(sheet.getBoundingClientRect().bottom - sheet.querySelector(".prompt-card-pager")!.getBoundingClientRect().bottom));
+        if (shots) await page.screenshot({ path: join(shots, "ask-form-expanded-short-390.png") });
+        assert.ok(footGap <= 40, `no empty band under the pager in full screen (${footGap} px)`);
+        const bodyHeight = await formSheet.locator(".prompt-card-body").evaluate((node) => Math.round(node.getBoundingClientRect().height));
+        assert.ok(bodyHeight <= 100, `a short message keeps its own height, not a tall empty box (${bodyHeight} px)`);
+        await formSheet.getByRole("button", { name: "Exit full screen" }).click();
+        await formSheet.waitFor({ state: "detached" });
         await formCard.getByRole("button", { name: "Submit", exact: true }).click();
         await formCard.waitFor({ state: "detached" });
         const sent = (await posts("/api/machines/remote/host-chats/chat/answer")).slice(answeredBefore);
         assert.deepEqual(sent.map((post) => post.body), [{ session: SESSION, request_id: "req-1", answers: { "q-1": { option_ids: ["opt-east"] }, "q-2": null } }], "one Submit, the changed pick and the empty optional page");
-        await page.evaluate(() => { (window as unknown as { hostState: { form: boolean } }).hostState.form = false; });
+        await page.evaluate(() => { (window as unknown as { hostState: { form: boolean; shortBody: boolean } }).hostState.form = false; (window as unknown as { hostState: { shortBody: boolean } }).hostState.shortBody = false; });
         console.log("PASS a form pages on the phone, keeps and changes its picks, and Submit sends them all at once");
 
         // 4. model · effort and agent picks, then Send
@@ -918,18 +969,30 @@ try {
         const sheet = page.getByRole("dialog", { name: "Model", exact: true });
         await sheet.waitFor();
         await sheet.locator('[data-model="fictional/model-b"]').waitFor();
-        assert.deepEqual(await sheet.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label") ?? tab.textContent)), ["All, 4 models", "Copilot, 1 model", "fictional, 3 models"], "a tab per group, Copilot first, each with its count");
-        // the provider tabs stay at the sheet's top while its list scrolls (the owner scrolled past Copilot's to reach OmniRoute's)
+        // the source filter (owner, ZAC-207): All plus one chip per source, each with that source's mark
+        const sources = sheet.getByRole("group", { name: "Sources", exact: true });
+        assert.deepEqual(await sources.getByRole("button").evaluateAll((chips) => chips.map((chip) => [...chip.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE || (node as Element).classList?.contains("host-picker-source-count")).map((node) => node.textContent?.trim()).join(" "))), ["All 4", "Copilot 1", "fictional 3"], "All, then a chip per source with its count");
+        assert.equal(await sources.getByRole("button").nth(2).locator("svg").count(), 1, "a router with no drawn mark still wears one (its initial)");
+        assert.equal(await sources.getByRole("button").nth(1).locator('svg[aria-label="copilot"]').count(), 1, "Copilot's chip wears Copilot's mark");
+        await sources.locator('[data-group="copilot"]').click();
+        assert.deepEqual(await sheet.locator(".host-picker-group").evaluateAll((groups) => groups.map((group) => group.getAttribute("aria-label"))), ["Copilot"], "a source shows only its models");
+        await sources.locator('[data-group=""]').click();
+        // a group's block is round at all four corners: its caption stands above it, not inside it
+        const corners = await sheet.locator(".host-picker-rows").first().evaluate((n) => { const cs = getComputedStyle(n); return [cs.borderTopLeftRadius, cs.borderBottomLeftRadius]; });
+        assert.ok(corners[0] !== "0px" && corners[0] === corners[1], `the block's top corners are as round as its bottom ones (${corners})`);
+        assert.equal(await sheet.locator(".host-picker-rows .host-picker-provider").count(), 0, "no caption inside a block");
+        assert.equal(await sheet.locator(".host-picker-option, .host-model-row").first().evaluate((n) => getComputedStyle(n).borderTopWidth), "0px", "no outlined rows");
+        // the search stays at the sheet's top while its list scrolls (the owner scrolled past Copilot's to reach OmniRoute's)
         const tabsAt = await sheet.locator(".modal-body").evaluate((body) => {
           body.style.flex = "none"; body.style.height = "160px";
           body.scrollTop = body.scrollHeight;
           const scrolled = body.scrollTop;
-          const box = body.querySelector(".host-picker-tabs")!.getBoundingClientRect();
+          const box = body.querySelector(".host-picker-head")!.getBoundingClientRect();
           const frame = body.getBoundingClientRect();
           return { scrolled, top: Math.round(box.top - frame.top), shown: box.top >= frame.top - 1 && box.bottom <= frame.bottom };
         });
         assert.ok(tabsAt.scrolled > 100, `the list really scrolled: ${JSON.stringify(tabsAt)}`);
-        assert.ok(tabsAt.shown, `the provider tabs stay in view at the list's end: ${JSON.stringify(tabsAt)}`);
+        assert.ok(tabsAt.shown, `the search stays in view at the list's end: ${JSON.stringify(tabsAt)}`);
         await sheet.locator(".modal-body").evaluate((body) => { body.style.flex = ""; body.style.height = ""; body.scrollTop = 0; });
         assert.deepEqual(await sheet.locator(".host-picker-group").evaluateAll((groups) => groups.map((group) => group.getAttribute("aria-label"))),
           ["Copilot", "fictional · Anthropic", "fictional · FICTIONAL Go", "fictional"], "Copilot's own, then the router split by the vendor its names carry");
@@ -961,58 +1024,79 @@ try {
         await sheet.waitFor({ state: "detached" });
         assert.match(await modelPill.textContent() ?? "", /FICTIONAL Model B/, "the pill says the model");
         assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "and its effort beside the name");
-        await view.locator(".host-chat-agent").click();
-        const agents = page.getByRole("dialog", { name: "Agent", exact: true });
-        await agents.waitFor();
-        assert.equal(await agents.locator(".host-picker-option[data-agent]").first().textContent(), "Agent", '"Agent" comes first');
-        await agents.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
-        // the sheet slides up from the bottom edge: measured and drawn once it has settled
+        // agent, mode and permissions live in one settings sheet behind the settings icon (ZAC-207 redesign)
+        const settingsButton = view.locator(".host-chat-settings");
+        assert.equal(await settingsButton.getAttribute("data-tone"), "quiet", "Manual leaves the settings icon quiet");
+        assert.equal(await settingsButton.getAttribute("aria-label"), "Chat settings: Interactive, Manual, Agent", "the icon reads the mode, permissions and agent");
+        await settingsButton.click();
+        const settings = page.getByRole("dialog", { name: "Chat settings", exact: true });
+        await settings.waitFor();
+        const settingsSheet = page.locator('.host-picker[data-picker="settings"]');
+        assert.deepEqual(await settingsSheet.locator(".host-picker-provider").allTextContents(), ["Permissions", "Mode", "Agent"], "permissions, then mode, then agent");
+        assert.equal(await settingsSheet.locator('.host-picker-option[data-approvals="autoApprove"] .host-picker-option-id').textContent(), "Copilot runs all tools without asking for approval.");
+        assert.equal(await settingsSheet.locator(".host-picker-option.is-picked .host-picker-check").count(), 3, "one checkmark per section");
+        assert.equal(await settingsSheet.locator(".host-picker-option").first().evaluate((n) => getComputedStyle(n).borderTopWidth), "0px", "no outlined cards");
+        assert.ok(await settingsSheet.locator(".host-picker-option").first().evaluate((n) => n.getBoundingClientRect().height >= 50), "rows are at least 50 px");
+        assert.equal(await settings.locator(".host-picker-option[data-agent]").first().locator(".host-picker-option-name").textContent(), "Agent", '"Agent" comes first');
+        await settings.getByText("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.", { exact: true }).waitFor();
         await page.waitForFunction(() => {
           const surface = document.querySelector(".host-picker");
           return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
         });
         await fits("the open sheet");
-        if (shots) await page.screenshot({ path: join(shots, "task-5-sheet-390.png") });
-        await agents.locator(`[data-agent="${REPORT}"]`).click();
-        await agents.waitFor({ state: "detached" });
-        // the chat's mode and permissions: a third pill, set once on the chat (session/config)
-        const modePill = view.locator(".host-chat-mode");
-        assert.equal(await modePill.getAttribute("title"), "Interactive · Manual", "the trigger's tooltip says the mode and the permissions");
-        assert.equal(await modePill.getAttribute("aria-label"), "Pick Mode and Permissions, Interactive, Manual", "both are read out");
-        await modePill.click();
-        const modes = page.getByRole("dialog", { name: "Agent mode", exact: true });
-        await modes.waitFor();
-        await page.waitForFunction(() => {
-          const surface = document.querySelector(".host-picker");
-          return surface !== null && surface.getBoundingClientRect().bottom <= window.innerHeight + 1 && surface.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
-        });
-        await fits("the open mode sheet");
         if (shots) await page.screenshot({ path: join(shots, "task-9-mode-390.png") });
-        await modes.locator('[data-mode="plan"]').click();
-        await modes.waitFor({ state: "detached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title") === "Plan · Manual");
+        await settings.locator(`[data-agent="${REPORT}"]`).click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.endsWith("Report"));
+        await settingsButton.click();
+        await settings.waitFor();
+        await settings.locator('[data-mode="plan"]').click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.startsWith("Chat settings: Plan, Manual"));
         assert.deepEqual((await posts("/api/machines/remote/host-chats/session/config")).map((post) => post.body), [{ session: SESSION, mode: "plan" }], "picking Plan posts the mode alone");
-        console.log("PASS the model pill wears the Claude mark, search narrows to GLM, and Plan is the chat's mode");
-        // Allow all at 390 px: the row fits before Send (no sideways scroll), the level is a shield glyph in the notice's color
-        await modePill.click();
-        const modes2 = page.getByRole("dialog", { name: "Agent mode", exact: true });
-        await modes2.waitFor();
-        await modes2.locator('[data-approvals="autoApprove"]').click();
-        await modes2.waitFor({ state: "detached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("data-approvals") === "autoApprove", undefined, { timeout: 10_000 })
-          .catch(() => assert.fail("the mode pill shows Allow all"));
-        const row = await view.locator(".composer-pickers").evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
-        assert.ok(row.scroll <= row.client + 1, `the pickers fit before Send with Allow all (${row.scroll} > ${row.client})`);
-        assert.equal(await modePill.locator(".host-chat-pill-shield").count(), 1, "a raised level wears a shield");
+        console.log("PASS the model chip wears the Claude mark, search narrows to GLM, and Plan is the chat's mode from the settings sheet");
+        // Allow all: the settings icon turns the notice colour; the row still fits
+        await settingsButton.click();
+        await settings.waitFor();
+        await settings.locator('[data-approvals="autoApprove"]').click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("data-tone") === "raised", undefined, { timeout: 10_000 })
+          .catch(() => assert.fail("the settings icon is raised for Allow all"));
+        // the theme's accent, never a fixed amber: the icon's colour is --accent, both normalised through a
+        // canvas (no probe element: adding one to the page disturbed the sheet that follows)
+        await page.waitForFunction(() => {
+          const icon = document.querySelector(".host-chat-settings");
+          const context = document.createElement("canvas").getContext("2d")!;
+          const norm = (colour: string): string => { context.fillStyle = "#000"; context.fillStyle = colour; return String(context.fillStyle); };
+          const accent = getComputedStyle(icon ?? document.documentElement).getPropertyValue("--accent").trim();
+          return icon !== null && accent !== "" && norm(getComputedStyle(icon).color) === norm(accent);
+        }, undefined, { timeout: 5_000 }).catch(() => assert.fail("a raised settings icon wears the theme's accent"));
+        assert.ok(await view.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "the row fits with Allow all");
         await page.waitForFunction(() => document.querySelector(".modal-scrim, .host-picker") === null);
         await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
         if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "composer-allow-all-390.png") });
-        await modePill.click();
-        await modes2.waitFor();
-        await modes2.locator('[data-approvals="default"]').click();
-        await modes2.waitFor({ state: "detached" });
-        console.log("PASS Allow all keeps the composer's pickers on one row before Send, as a shield");
-        assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/);
+        await settingsButton.click();
+        await settings.waitFor();
+        await settings.locator('[data-approvals="default"]').click();
+        await settings.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("data-tone") === "quiet");
+        // a host with no permission levels: the sheet has Mode and Agent only, and the icon stays quiet
+        // the chat re-reads its config with each read of the chat: wait for that fetch, not a fixed time (800 ms
+        // missed it on a loaded Mac, and the sheet then still had Permissions)
+        const readsBefore = await page.evaluate(() => (window as unknown as { configReads?: number }).configReads ?? 0);
+        await page.evaluate(() => { localStorage.setItem("demo:no-approvals", "1"); (window as unknown as { rereadHost(): void }).rereadHost(); });
+        await page.waitForFunction((before) => ((window as unknown as { configReads?: number }).configReads ?? 0) > before, readsBefore, { timeout: 15_000 });
+        await view.locator(".host-chat-settings").click();
+        await settings.waitFor();
+        await page.waitForFunction(() => document.querySelectorAll('.host-picker[data-picker="settings"] .host-picker-provider').length === 2);
+        assert.deepEqual(await settingsSheet.locator(".host-picker-provider").allTextContents(), ["Mode", "Agent"], "no permission levels, no Permissions section");
+        assert.equal(await view.locator(".host-chat-settings").getAttribute("data-tone"), "quiet");
+        await page.keyboard.press("Escape");
+        await settings.waitFor({ state: "detached" });
+        await page.evaluate(() => { localStorage.removeItem("demo:no-approvals"); (window as unknown as { rereadHost(): void }).rereadHost(); });
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.includes("Manual"));
+        console.log("PASS Allow all raises the settings icon; a host without permission levels shows Mode and Agent");
+        assert.match(await view.locator(".host-chat-settings").getAttribute("aria-label") ?? "", /Report$/);
         const drafts = await posts("/api/machines/remote/host-chats/chat/draft");
         assert.deepEqual(drafts.at(-1)?.body, { session: SESSION, model: { id: "fictional/model-b", effort: "high" } }, "the model pick is written to the chat's draft");
         const box = view.getByRole("textbox", { name: "Message" });
@@ -1026,10 +1110,46 @@ try {
 
         // 4b. attachments are chips, VS Code's way: a PNG picked and a file taken with "@" go with the
         // message as attachments, and the text carries no @path
+        // + opens the attach sheet (ZAC-207 redesign): Camera and Photos, then the chat's folder first
+        await view.locator(".composer-attach").click();
+        const attach = page.locator(".attach-sheet[role=dialog]");
+        await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "composer-attach-sheet-390.png") }); }
+        assert.deepEqual((await attach.locator(".attach-tile").allInnerTexts()).map((text) => text.trim()), ["Camera", "Photos"], "two tiles: Camera, Photos");
+        const [photos] = await Promise.all([page.waitForEvent("filechooser"), attach.locator(".attach-tile", { hasText: "Photos" }).click()]);
+        assert.equal(await photos.element().getAttribute("accept"), "image/*", "Photos asks for images only");
+        await photos.setFiles([]);
+        await attach.waitFor({ state: "detached" });
+        await view.locator(".composer-attach").click();
+        await attach.waitFor();
+        const [device] = await Promise.all([page.waitForEvent("filechooser"), attach.getByRole("button", { name: "Upload from device" }).click()]);
+        assert.equal(device.isMultiple(), true, "Upload from device takes several files");
+        assert.equal(await device.element().getAttribute("accept"), null, "and any type");
+        await device.setFiles([]);
+        await view.locator(".composer-attach").click();
+        await attach.waitFor();
+        await attach.getByRole("button", { name: "Files in this folder" }).click();
+        await page.getByRole("dialog", { name: "Files in this folder", exact: true }).waitFor();
+        await page.keyboard.press("Escape");
+        await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
+        await attach.getByRole("button", { name: "Files in this folder" }).click();
+        await attach.getByRole("searchbox", { name: "Search files" }).fill("READ");
+        if (shots) { await attach.getByRole("button", { name: "README.md" }).waitFor(); await settled(page); await page.screenshot({ path: join(shots, "composer-attach-folder-390.png") }); }
+        await attach.getByRole("button", { name: "README.md" }).click();
+        await attach.waitFor({ state: "detached" });
+        await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 1);
+        assert.equal((await view.locator(".composer-attachment-file").textContent())?.trim(), "README.md", "the folder pick is the same chip as an @ pick");
+        assert.equal(await view.locator(".composer-send").count(), 1, "a chip turns voice into Send");
+        await view.locator(".composer-attachment").getByRole("button", { name: /Remove/ }).click();
+        await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 0);
+        console.log("PASS + opens the attach sheet: Camera and Photos tiles, the device picker, and the folder's files as a chip");
         await view.locator('.composer input[type="file"]').setInputFiles({ name: "fictional-shot.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") });
         const chips = view.locator(".composer-attachments .composer-attachment");
         await view.locator(".composer-attachment.is-ready img").waitFor();
         assert.equal(await box.inputValue(), "", "an uploaded file puts no @path in the box");
+        // a bare "@" lists the chat's folder before any letter, as VS Code's does
+        await box.fill("FICTIONAL look @");
+        await view.locator(".composer-menu").getByText("README.md").waitFor({ timeout: 3_000 });
         await box.fill("FICTIONAL look @READ");
         await view.locator(".composer-menu").getByText("README.md").click();
         await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 2);
@@ -1044,13 +1164,25 @@ try {
         assert.deepEqual(withFiles, { session: SESSION, text: "FICTIONAL look", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT,
           attachments: [{ path: "/tmp/fictional-repo/.herdr-web-ui/fictional-shot.png", media_type: "image/png", name: "fictional-shot.png" }, { path: "README.md" }] }, "the send carries both chips as attachments");
         console.log("PASS a picked PNG and an @ file are chips and go as the message's attachments");
+        await view.locator(".composer-attach").click();
+        await attach.waitFor();
+        assert.deepEqual((await attach.getByRole("region", { name: "Recent in this chat" }).locator(".attach-recent").allInnerTexts()).map((text) => text.trim()), ["README.md"], "a file sent with the chat is one tap away next time");
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "composer-attach-recent-390.png") }); }
+        await page.keyboard.press("Escape");
+        await attach.waitFor({ state: "detached" });
 
         // 5. a busy chat: VS Code's send menu. Send steers by default, a second steer joins the first,
         // Add to Queue waits for the turn, and Stop and Send ends the turn and sends
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
         assert.equal(await view.locator(".composer-send-menu").count(), 0, "no send menu while the box is empty");
+        // steering by voice: a busy chat's empty box offers the mic beside Stop, no typed character first (owner, ZAC-207)
+        await view.locator(".composer-stop").waitFor();
+        assert.equal(await view.locator(".composer-controls .voice-mic:not(.composer-voice)").count(), 1, "the mic is there while the chat works");
         await box.fill("FICTIONAL steer one");
         await view.locator(".composer-send-menu").waitFor();
+        // the caret is Send's own split half, not a separate button a gap away
+        const caretGap = await view.evaluate((root) => Math.round(root.querySelector(".composer-send-menu")!.getBoundingClientRect().left - root.querySelector(".composer-send")!.getBoundingClientRect().right));
+        assert.ok(caretGap <= 2, `the send menu's caret sits against Send (${caretGap} px)`);
         await view.getByRole("button", { name: "Send message" }).click();
         const steering = view.locator('.host-pending-group[data-kind="steering"]');
         await steering.locator(".host-pending-divider", { hasText: "Steering" }).waitFor();
@@ -1089,7 +1221,7 @@ try {
         await queuedRows.locator(".host-pending-row", { hasText: "FICTIONAL later" }).waitFor();
         await queuedRows.locator(".host-pending-divider", { hasText: "Queued" }).waitFor();
         assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "the pills still show model-b · high after the send");
-        assert.match(await view.locator(".host-chat-agent").textContent() ?? "", /Report/, "and Report");
+        assert.match(await view.locator(".host-chat-settings").getAttribute("aria-label") ?? "", /Report$/, "and Report");
         assert.deepEqual(bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)), { session: SESSION, text: "FICTIONAL later", mode: "queue", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Add to Queue posts mode queue with the pills' model and agent");
         await menu.waitFor({ state: "detached" });
         if (shots) await page.screenshot({ path: join(shots, "task-8-pending-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
@@ -1114,7 +1246,7 @@ try {
         assert.deepEqual(shimmer, { clip: "text", name: "work-shimmer", image: true }, "the live title shimmers");
         if (shots) await page.screenshot({ path: join(shots, "r4-working-390.png") });
         assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");
-        await view.locator('.host-chat-meter[data-place="status"]').click();
+        await view.locator('.composer-controls-right .host-chat-meter').click();
         const contextSheet = page.getByRole("dialog", { name: "Context window" });
         await contextSheet.waitFor();
         assert.deepEqual((await contextSheet.locator("dt").allInnerTexts()).map((text) => text.trim()), ["Conversation", "System", "Tool definitions", "Used"], "the breakdown the host sent");
@@ -1136,6 +1268,16 @@ try {
         const sessionPillRow = view.locator(".session-pills");
         await sessionPillRow.waitFor();
         await sessionPillRow.locator(".session-pill-stat").waitFor();
+        // the pills' air before the next thing under them (the status line, else the composer): at 4 px
+        // they read as stuck to it (owner, ZAC-207)
+        const pillAir = await view.evaluate((root) => {
+          const row = root.querySelector(".session-pills")!;
+          const pill = row.querySelector(".session-pill")!.getBoundingClientRect();
+          let next = row.nextElementSibling;
+          while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
+          return Math.round(next!.getBoundingClientRect().top - pill.bottom);
+        });
+        assert.ok(pillAir >= 8, `the pills stand clear of what follows them (${pillAir} px)`);
         assert.deepEqual((await sessionPillRow.locator(".session-pill").allInnerTexts()).map((text) => text.trim().replace(/\s+/g, " ")), ["2 files +30 −3", "#12", "3 artifacts", "FICTIONAL docs"], "changes, the PR, the artifacts, the reference");
         const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
         await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");
@@ -1259,7 +1401,7 @@ try {
         // back to Interactive (as if set in VS Code), so /plan has something to change; the turn ends
         await page.evaluate(() => { (window as unknown as { hostState: { mode: string } }).hostState.mode = "interactive"; });
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false));
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title")?.startsWith("Interactive"));
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.startsWith("Chat settings: Interactive"));
         const slashConfigsBefore = (await posts("/api/machines/remote/host-chats/session/config")).length;
         const slashSendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
         await box.fill("/");
@@ -1271,24 +1413,49 @@ try {
         assert.ok(labels.indexOf("/fictional-skill") > labels.findIndex((label) => label.startsWith("/plan")), "the config commands come first");
         await slashMenu.getByText("Create an implementation plan before coding").first().waitFor();
         await fits("the / menu");
-        // the pills say their words: none is cut at 390 px (the old status slot squeezed them to "FICTION…", "R…", "In…")
-        const cut = await view.locator(".host-chat-pill-label, .host-chat-pill-aside").evaluateAll((spans) => spans.filter((span) => span.scrollWidth > span.clientWidth + 1).map((span) => span.textContent));
-        assert.deepEqual(cut, [], "no pill's words are cut");
-        assert.equal(await view.locator(".composer-pickers").evaluate((row) => row.scrollWidth <= row.clientWidth + 1), true, "the pickers fit the row at 390 px: nothing scrolls out of sight");
+        await box.fill("");
+        await page.waitForFunction(() => document.querySelector(".composer-menu") === null);
+        // one quiet row (ZAC-207 redesign): + · settings · the model chip · the ring · one round button
+        const order = await view.locator(".composer-controls-left > *, .composer-controls-right > *").evaluateAll((nodes) =>
+          nodes.filter((n) => (n as HTMLElement).offsetParent !== null)
+            .map((n) => n.className.toString().match(/composer-attach|host-chat-settings|composer-pickers|host-chat-meter|composer-voice|composer-send|composer-stop/)?.[0])
+            .filter(Boolean));
+        assert.deepEqual(order, ["composer-attach", "host-chat-settings", "composer-pickers", "host-chat-meter", "composer-voice"], `the row reads + · settings · model · ring · voice on an empty box (${order.join(", ")})`);
+        assert.equal(await view.locator(".host-chat-model .agent-mark, .host-chat-model .model-mark-sparkle").count(), 1, "the model chip keeps its provider mark");
+        assert.equal(await view.locator(".host-chat-agent, .host-chat-mode").count(), 0, "agent and mode pills are gone");
+        await box.fill("x");
+        await view.locator(".composer-send").waitFor();
+        assert.equal(await view.locator(".composer-voice").count(), 0, "voice becomes send on the first character");
+        await view.locator(".composer-controls-right .voice-mic-wrap").waitFor();
+        await box.fill("");
+        // the provider mark sits on the chip's centre line with the name (an inline svg rode the baseline, 2-3 px high)
+        const centres = await view.locator(".host-chat-model").evaluate((chip) => {
+          const mid = (node: Element | null) => { const box = node!.getBoundingClientRect(); return box.top + box.height / 2; };
+          return { chip: mid(chip), mark: mid(chip.querySelector(".agent-mark svg")), label: mid(chip.querySelector(".host-chat-pill-label")) };
+        });
+        assert.ok(Math.abs(centres.mark - centres.chip) <= 0.5 && Math.abs(centres.label - centres.chip) <= 0.5, `the model mark and name share the chip's centre (${JSON.stringify(centres)})`);
+        // at 360 px with a custom agent picked: nothing overflows and the model name still says itself
+        await page.setViewportSize({ width: 360, height: 780 });
+        assert.ok(await view.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "nothing overflows at 360");
+        const shownChars = await view.locator(".host-chat-model .host-chat-pill-label").evaluate((n) => {
+          const full = n.textContent ?? ""; const per = n.scrollWidth / Math.max(1, full.length); return Math.floor(n.clientWidth / per);
+        });
+        assert.ok(shownChars >= 8, `the model name shows at least 8 characters at 360 (${shownChars})`);
+        await page.setViewportSize({ width: 390, height: 844 });
+        console.log("PASS the row is + · settings · model · ring · voice, voice turns to send on a character, and fits 360");
         // a closed sheet slides out as a copy in an inert shadow host at the end of <body> (lib/sheets.ts leave): the picture waits for it to go
         await page.waitForFunction(() => ![...document.body.children].some((node) => node instanceof HTMLElement && node.inert && node.shadowRoot === null && node.getAttribute("aria-hidden") === "true" && node.childElementCount === 0));
         if (shots) await page.screenshot({ path: join(shots, "task-9b-slash-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
         if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "task-9c-composer-390.png") });
         // a desktop window: the same row with room, every word and caret shown
         await page.setViewportSize({ width: 1280, height: 844 });
-        await page.waitForFunction(() => getComputedStyle(document.querySelector(".host-chat-mode .host-chat-pill-label")!).display !== "none");
         if (shots) await view.locator(".composer-surface").screenshot({ path: join(shots, "task-9c-composer-1280.png") });
         await page.setViewportSize({ width: 390, height: 844 });
         await box.fill("/plan FICTIONAL task");
         await box.press("Escape");
         await view.getByRole("button", { name: "Send message" }).click();
         await view.locator(".chat-turn-user", { hasText: "FICTIONAL task" }).waitFor({ state: "attached" });
-        await page.waitForFunction(() => document.querySelector(".host-chat-mode")?.getAttribute("title")?.startsWith("Plan"));
+        await page.waitForFunction(() => document.querySelector(".host-chat-settings")?.getAttribute("aria-label")?.startsWith("Chat settings: Plan"));
         const configs = (await posts("/api/machines/remote/host-chats/session/config")).slice(slashConfigsBefore);
         assert.deepEqual(configs.map((post) => post.body), [{ session: SESSION, mode: "plan" }], "/plan sets the mode, once");
         assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/send")).slice(slashSendsBefore).map((post) => post.body["text"]), ["FICTIONAL task"], "and the rest is the message, once");
@@ -1751,7 +1918,7 @@ try {
         await made.locator(".chat-empty").waitFor();
         assert.equal(await made.locator('.chat-empty svg[aria-label="copilot"]').count(), 1, "the empty chat wears Copilot's mark");
         assert.equal(await page.locator('svg[aria-label="vscode"]').count(), 0, "no VS Code mark anywhere");
-        for (const pill of [".host-chat-model", ".host-chat-agent"]) assert.equal(await made.locator(`.composer ${pill}`).count(), 1, `the composer's ${pill} pill`);
+        for (const pill of [".host-chat-model", ".host-chat-settings"]) assert.equal(await made.locator(`.composer ${pill}`).count(), 1, `the composer's ${pill} pill`);
         assert.equal(await made.locator(".composer .composer-attach").count(), 1, "attach, as any chat");
         assert.equal(await made.locator(".composer .voice-mic").count(), 1, "dictation, as any chat");
         // the first message goes from that composer, once, as a chat/send of that chat
@@ -2192,14 +2359,20 @@ try {
         await chat.locator(".session-pill").first().waitFor();
         const edges = await chat.evaluate((node) => {
           const left = (selector: string) => { const box = node.querySelector(selector)?.getBoundingClientRect(); return box ? Math.round(box.left) : null; };
-          const toolbar = node.querySelector<HTMLElement>('.composer-controls-right .host-chat-meter[data-place="toolbar"]');
-          const status = node.querySelector<HTMLElement>('.host-chat-meter[data-place="status"]');
+          const toolbar = node.querySelector<HTMLElement>('.composer-controls-right .host-chat-meter');
+          const status = node.querySelector<HTMLElement>('.host-chat-status .host-chat-meter');
           return { composer: left(".composer-surface"), pill: left(".session-pill"),
-            meter: toolbar !== null && toolbar.offsetParent !== null && toolbar.nextElementSibling?.classList.contains("composer-action") === true && (status === null || status.offsetParent === null) };
+            meter: toolbar !== null && toolbar.offsetParent !== null && toolbar.parentElement?.lastElementChild?.matches(".composer-action, .voice-mic-wrap") === true && (status === null || status.offsetParent === null) };
         });
         assert.notEqual(edges.composer, null);
         assert.equal(edges.pill, edges.composer, `the first pill starts where the composer does (${JSON.stringify(edges)})`);
         assert.equal(edges.meter, true, "the context meter is in the composer's toolbar");
+        assert.match((await chat.locator(".composer-controls-right .host-chat-meter").innerText()).trim(), /\d+%/, "a wide row says the meter's percent");
+        // a mouse window names a picked custom agent beside the model, as VS Code's toolbar does
+        await chat.locator(".host-chat-settings").click();
+        await wide.getByRole("dialog", { name: "Chat settings", exact: true }).locator(`[data-agent="${REPORT}"]`).click();
+        await chat.locator(".host-chat-agent-name", { hasText: "Report" }).waitFor({ timeout: 5_000 }).catch(() => assert.fail("the agent's name shows by the model on a wide window"));
+        assert.ok(await chat.locator(".composer-surface").evaluate((n) => n.scrollWidth <= n.clientWidth + 1), "the wide row fits");
         if (shots) await wide.screenshot({ path: join(shots, "desktop-chat-1440.png") });
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a wide window: pills on the chat's column, the meter by Send");

@@ -479,6 +479,24 @@
   border-top: var(--hairline) solid var(--border);
 }
 
+/* in the header (a mouse window): no rule above it, the count between the arrows, tight to the title's end */
+.prompt-card-pager.is-header {
+  flex: none;
+  gap: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* a phone's pager with no Submit beside it stands in the middle, not at the left edge */
+.prompt-card-pager:not(.is-header):not(:has(.prompt-card-pager-submit)) {
+  justify-content: center;
+}
+
+/* a mouse window's foot holds only Submit, at the card's end */
+.prompt-card-pager:not(.is-header):not(:has(.icon-button)) {
+  justify-content: flex-end;
+}
+
 .prompt-card-pager-count {
   min-width: 4.5em;
   color: var(--text-dim);
@@ -632,14 +650,16 @@
   padding: var(--space-2) 0 0;
 }
 
-/* Opened: the same card at full height in the app's sheet. The question scrolls on its own and
-   the options and the answer field stay at the bottom, over the keyboard (--app-height). */
+/* Opened: the same card in the app's sheet. The question scrolls on its own and the options and
+   the answer field stay at the bottom, over the keyboard (--app-height). On a wide window the sheet
+   is as tall as its content, up to the window: a fixed height left a short question over a dead
+   band (owner, ZAC-207, a desktop screenshot). A phone keeps the full-height sheet (below). */
 .prompt-card-sheet {
   display: flex;
   flex-direction: column;
   width: min(100%, 48rem);
-  height: min(calc(var(--app-height, 100dvh) - 2 * var(--space-4)), 60rem);
-  max-height: none;
+  height: auto;
+  max-height: min(calc(var(--app-height, 100dvh) - 2 * var(--space-4)), 60rem);
   padding: 0;
   overflow: hidden;
 }
@@ -651,8 +671,23 @@
   border-radius: inherit;
 }
 
+/* the message keeps its own height (a long one scrolls) and the answers sit at the sheet's foot, in
+   the thumb's reach: a short message left the space under the pager empty, and growing the message
+   instead drew a tall empty box (owner, ZAC-207, a phone screenshot) */
 .prompt-card.is-expanded .prompt-card-body {
   max-height: none;
+}
+
+.prompt-card.is-expanded .prompt-card-body + * {
+  margin-top: auto;
+}
+
+/* full screen on a wide window: the sheet's own margins, not the inline card's tight 12 px */
+@media (min-width: 641px) {
+  .prompt-card.is-expanded {
+    padding: var(--space-5) var(--space-6) var(--space-2);
+    gap: var(--space-3);
+  }
 }
 
 @media (max-width: 640px) {

@@ -183,6 +183,23 @@ export function composerSendShown(state: { working: boolean; text: string }): bo
   return !state.working || state.text.trim().length > 0;
 }
 
+/**
+ * A host chat's one round button: voice while the box is empty and dictation is there, Send once
+ * anything would go (text or a chip), Stop on a busy chat with nothing typed. Without dictation an
+ * empty box keeps Send (disabled), never a voice button that cannot listen.
+ */
+export function roundButton(state: { working: boolean; text: string; attachments: number; voice: boolean }): "stop" | "voice" | "send" {
+  const content = state.text.trim() !== "" || state.attachments > 0;
+  if (state.working && !content) return "stop";
+  if (!content && state.voice) return "voice";
+  return "send";
+}
+
+/** The settings icon says a raised permission level the way the mode pill's shield did. */
+export function settingsTone(approvals: string | null | undefined): "quiet" | "raised" {
+  return approvals && approvals !== "default" ? "raised" : "quiet";
+}
+
 /** While an agent works, Send accepts a follow-up for its next turn. A shell sends immediately. */
 export function composerDelivery(agent: string | null, status?: AgentStatus): "queue" | "immediate" {
   return agent !== null && status === "working" ? "queue" : "immediate";
