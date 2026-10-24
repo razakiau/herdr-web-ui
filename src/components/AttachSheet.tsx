@@ -54,13 +54,17 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
       if (event.key !== "Escape" || nativeModalOver(surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
-      onClose();
+      if (page === "folder") setPage("main");
+      else onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [onClose, page]);
   useEffect(() => {
     if (page !== "folder") return;
+    // a new query hides the last one's results: a tap must never land on a stale row
+    setFiles(null);
+    setFailed(false);
     let live = true;
     const timer = window.setTimeout(() => {
       void fetchHostFiles(machineId, session, query).then((next) => { if (live) { setFiles(next); setFailed(false); } }, () => { if (live) { setFiles([]); setFailed(true); } });
@@ -89,7 +93,7 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
   const title = page === "folder" ? t("Files in this folder") : t("Add to chat");
   return createPortal(
     <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={surface} className="modal host-picker attach-sheet" role="dialog" aria-modal="true" aria-label={t("Add to chat")} tabIndex={-1} data-page={page}>
+      <div ref={surface} className="modal host-picker attach-sheet" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1} data-page={page}>
         <header className="modal-header">
           {page === "folder" && <button type="button" className="icon-button" aria-label={t("Back")} title={t("Back")} onClick={() => setPage("main")}><ChevronLeft aria-hidden="true" /></button>}
           <h2 className="modal-title" id={`${id}-title`}>{title}</h2>
@@ -102,18 +106,16 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
               <button type="button" className="attach-tile" onClick={() => device({ accept: "image/*" })}><Image aria-hidden="true" />{t("Photos")}</button>
             </div>
             <div className="host-picker-group">
-              <button type="button" className="host-picker-option" onClick={() => { setPage("folder"); setFiles(null); }}>
+              <button type="button" className="host-picker-option" onClick={() => setPage("folder")}>
                 <FolderOpen className="host-picker-option-icon" aria-hidden="true" />
                 <span className="host-picker-option-text"><span className="host-picker-option-name">{t("Files in this folder")}</span></span>
                 <ChevronRight className="host-picker-check attach-chevron" aria-hidden="true" />
               </button>
               {canReadClipboard() && <button type="button" className="host-picker-option" onClick={() => { void paste(); }}>
                 <Clipboard className="host-picker-option-icon" aria-hidden="true" />
-                <span className="host-picker-option-text">
-                  <span className="host-picker-option-name">{t("Paste from clipboard")}</span>
-                  {clipNote && <span className="host-picker-option-id" role="status">{clipNote}</span>}
-                </span>
+                <span className="host-picker-option-text"><span className="host-picker-option-name">{t("Paste from clipboard")}</span></span>
               </button>}
+              {clipNote && <p className="host-picker-state attach-note" role="status">{clipNote}</p>}
               <button type="button" className="host-picker-option" onClick={() => device()}>
                 <Upload className="host-picker-option-icon" aria-hidden="true" />
                 <span className="host-picker-option-text"><span className="host-picker-option-name">{t("Upload from device")}</span></span>

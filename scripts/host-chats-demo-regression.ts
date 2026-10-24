@@ -1043,8 +1043,8 @@ try {
         // message as attachments, and the text carries no @path
         // + opens the attach sheet (ZAC-207 redesign): Camera and Photos, then the chat's folder first
         await view.locator(".composer-attach").click();
-        const attach = page.getByRole("dialog", { name: "Add to chat", exact: true });
-        await attach.waitFor();
+        const attach = page.locator(".attach-sheet[role=dialog]");
+        await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
         if (shots) await settled(page); await page.screenshot({ path: join(shots, "composer-attach-sheet-390.png") });
         assert.deepEqual((await attach.locator(".attach-tile").allInnerTexts()).map((text) => text.trim()), ["Camera", "Photos"], "two tiles: Camera, Photos");
         const [photos] = await Promise.all([page.waitForEvent("filechooser"), attach.locator(".attach-tile", { hasText: "Photos" }).click()]);
@@ -1059,6 +1059,10 @@ try {
         await device.setFiles([]);
         await view.locator(".composer-attach").click();
         await attach.waitFor();
+        await attach.getByRole("button", { name: "Files in this folder" }).click();
+        await page.getByRole("dialog", { name: "Files in this folder", exact: true }).waitFor();
+        await page.keyboard.press("Escape");
+        await page.getByRole("dialog", { name: "Add to chat", exact: true }).waitFor();
         await attach.getByRole("button", { name: "Files in this folder" }).click();
         await attach.getByRole("searchbox", { name: "Search files" }).fill("READ");
         if (shots) { await attach.getByRole("button", { name: "README.md" }).waitFor(); await settled(page); await page.screenshot({ path: join(shots, "composer-attach-folder-390.png") }); }

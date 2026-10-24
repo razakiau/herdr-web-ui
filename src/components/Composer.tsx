@@ -1118,6 +1118,8 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
+  // a chip alone does not turn Stop into Send: the bridge refuses a message with no text
+  // (routes.ts missing_text), so on a busy chat Stop stays until words are typed
   const sendShown = sending || composerSendShown({ working: isWorking, text });
   // VS Code offers its send menu while the chat works and the box has text
   const hostMenuShown = sendMenu !== undefined && isWorking && text.trim().length > 0;
@@ -1429,7 +1431,13 @@ export function Composer({
             title={t("Attach files")}
             disabled={!connected || uploading}
             onClick={() => {
-              if (!attachMenu) { fileInputRef.current?.click(); return; }
+              if (!attachMenu) {
+                // a dismissed Camera/Photos picker fires no change: never let its filter narrow this pick
+                fileInputRef.current?.removeAttribute("accept");
+                fileInputRef.current?.removeAttribute("capture");
+                fileInputRef.current?.click();
+                return;
+              }
               attachMenu({
                 pickFiles: (opts) => {
                   const input = fileInputRef.current;
