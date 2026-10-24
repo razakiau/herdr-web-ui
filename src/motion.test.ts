@@ -43,6 +43,16 @@ describe("motion", () => {
     }
   });
 
+  // one sign for "in progress" (owner, ZAC-228): the sidebar's dot, a tab's dot and glyph and a
+  // working group's dot all breathe with the same keyframes, so lib/breath.ts keeps them in step
+  it("breathes every working dot as the sidebar's does", () => {
+    const rules = (file: string) => readFileSync(join(import.meta.dir, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const breathes = (css: string, selector: string) => new RegExp(`${selector.replace(/[[\]"=.]/g, "\\$&")}[^{]*{[^}]*animation:\\s*sidebar-breathe`).test(css);
+    expect(breathes(rules("components/Sidebar.css"), '.sidebar-status[data-status="working"] .sidebar-status-dot')).toBe(true);
+    expect(breathes(rules("components/TabStrip.css"), '.tab-strip-dot[data-status="working"]')).toBe(true);
+    expect(breathes(rules("components/ChatView.css"), ".work-block-dot")).toBe(true);
+  });
+
   it("reads a declaration whole, however it is split across lines", () => {
     expect(smoothEndless(".a {\n  animation: pulse 1.6s\n    ease-in-out\n    infinite;\n}")).toEqual(["animation: pulse 1.6s ease-in-out infinite"]);
     expect(smoothEndless(".a { animation:\n  pulse var(--dur-pulse) var(--ease-pulse)\n  infinite }")).toEqual([]);

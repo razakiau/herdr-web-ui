@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Ellipsis, FileDiff, GitFork, Layers, LoaderCircle, RotateCcw, Target,
+  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Ellipsis, FileDiff, GitFork, Layers, RotateCcw, Target,
   type LucideProps,
 } from "lucide-react";
 
@@ -93,6 +93,7 @@ import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationR
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
 import { providerMark } from "../lib/modelProvider.ts";
+import { alignBreath } from "../lib/breath.ts";
 import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
@@ -775,13 +776,14 @@ function VscodeWorkBlockView({ paneId, parts, live, waiting, defaultOpen, stateK
   const standalone = parts.filter((part): part is ToolPartType => part.kind === "tool" && apart(part));
   const { title, added, removed } = toolGroupSummary(folded, t);
   const failed = folded.some((part) => part.kind === "tool" && part.error === true);
-  const Icon = failed ? CircleX : live ? LoaderCircle : Check;
+  const Icon = failed ? CircleX : Check;
   const heading = waiting ? t("Needs you") : live ? t("Working…") : title;
   const space = heading.indexOf(" ");
   return <>
     {visible.length > 0 && <section className={`work-block is-vscode${live ? " is-live" : ""}${waiting ? " is-waiting" : ""}${open ? "" : " is-folded"}${failed ? " is-failed" : ""}`}>
       <button type="button" className="work-block-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon className="work-block-icon" aria-hidden="true" />
+        {/* running, the sidebar's breathing dot (owner, ZAC-228): one sign for "in progress" everywhere */}
+        {live && !failed ? <span className="work-block-dot" aria-hidden="true" onAnimationStart={alignBreath} /> : <Icon className="work-block-icon" aria-hidden="true" />}
         <span className="work-block-title">{space < 0 || live ? heading : <>{heading.slice(0, space)}<span className="work-title-detail">{heading.slice(space)}</span></>}</span>
         <span className="work-block-meta">
           {(added > 0 || removed > 0) && <span className="work-block-lines"><span className="chat-diff-add">+{added}</span> <span className="chat-diff-del">−{removed}</span></span>}

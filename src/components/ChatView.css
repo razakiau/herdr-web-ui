@@ -1811,12 +1811,28 @@
   text-decoration-color: var(--text-dim);
   text-underline-offset: 0.2em;
 }
-/* running, VS Code's turning ring says it works (owner, ZAC-228: the blue wrench read cheap); the
-   classic pulsing dot is not drawn twice (a blocked turn keeps its red dot) */
+/* running, the sidebar's working dot, breathing in step with it (Sidebar.css sidebar-breathe): one
+   sign for "in progress" everywhere (owner, ZAC-228: a wrench, then a spinner, read wrong here). It
+   sits in the icon's square, so the title doesn't move when the group ends; the classic dot before
+   the title is not drawn twice, and a blocked turn keeps its red one */
 .work-block.is-vscode.is-live:not(.is-waiting) .work-block-title::before { display: none; }
-.work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon { color: var(--text-dim); animation: work-spin var(--dur-spin) var(--ease-spin) infinite; }
-@keyframes work-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .work-block.is-vscode.is-live .work-block-icon { animation: none; } }
+.work-block-dot {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--fs-md);
+  height: var(--fs-md);
+  animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite;
+}
+.work-block-dot::before {
+  content: "";
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--status-working);
+}
+.work-block.is-waiting .work-block-dot { animation: none; }
+.work-block.is-waiting .work-block-dot::before { background: var(--status-blocked); }
 
 /* ---------- a subagent's row (vscode style only; SubagentRow.tsx) ---------- */
 /* the turn's column lays its rows out at their own width: these take the column's, so a long

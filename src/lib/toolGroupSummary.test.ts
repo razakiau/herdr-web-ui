@@ -5,6 +5,7 @@ import { translate } from "./i18n.ts";
 import { neverFolded, toolGroupSummary, toolKind, turnStyle } from "./toolGroupSummary.ts";
 import { toolIcon } from "./toolIcons.ts";
 import { BookOpen, CircleSlash, CircleX, Pencil, Plug, Search, SquareTerminal, Wrench } from "lucide-react";
+import { McpIcon } from "../components/McpIcon.tsx";
 
 type Tool = Extract<ConversationPart, { kind: "tool" }>;
 const en = (key: string, vars?: Record<string, string | number>) => translate("en", key, vars);
@@ -124,7 +125,7 @@ describe("toolIcon", () => {
     expect(toolIcon("read", "done")).toBe(BookOpen);
     expect(toolIcon("search_files", "running")).toBe(Search);
     expect(toolIcon("edit", "done")).toBe(Pencil);
-    expect(toolIcon("mcp", "done")).toBe(Plug);
+    expect(toolIcon("mcp", "done")).toBe(McpIcon as unknown as typeof Plug);
     expect(toolIcon("other", "done")).toBe(Wrench);
     expect(toolIcon("command", "failed")).toBe(CircleX);
     expect(toolIcon("read", "skipped")).toBe(CircleSlash);

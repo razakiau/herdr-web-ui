@@ -36,6 +36,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
+import { alignBreath } from "../lib/breath.ts";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { paneDrag } from "../lib/paneDrag.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
@@ -137,8 +138,8 @@ function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; 
         else actions.askDelete(target);
       } : undefined}>
       {status !== "idle" && (settings.statusIndicators === "classic"
-        ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" />
-        : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true">{indicatorGlyph(status, settings.statusIndicators)}</span>)}
+        ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" onAnimationStart={alignBreath} />
+        : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true" onAnimationStart={alignBreath}>{indicatorGlyph(status, settings.statusIndicators)}</span>)}
       <AgentMark agent="copilot" size={14} />
       {hosted && <Server className="host-chat-tab-glyph" aria-hidden="true" />}
       <span className="tab-strip-label">{title}</span>
@@ -578,8 +579,8 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                   onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); requestClose(tab); } }}
                 >
                   {(status === "working" || status === "blocked" || status === "waiting" || status === "done") && (settings.statusIndicators === "classic"
-                    ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" />
-                    : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true">{indicatorGlyph(status, settings.statusIndicators)}</span>)}
+                    ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" onAnimationStart={alignBreath} />
+                    : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true" onAnimationStart={alignBreath}>{indicatorGlyph(status, settings.statusIndicators)}</span>)}
                   <span className="tab-strip-label">{name}</span>
                 </button>
               )}

@@ -1091,7 +1091,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   folder, and opens the new shell pane unless another pane was opened meanwhile; a refusal shows
   in the strip. An agent tab comes from the tab menu's New tab with agent…, which opens the dialog.
   Tabs retain their names, status dots, active underline, keyboard navigation, rename field and
-  close confirmation. A right-click opens tab actions at the pointer, including Move tab left/right
+  close confirmation. A working tab's dot breathes as the sidebar's does, in step with it (ZAC-228). A right-click opens tab actions at the pointer, including Move tab left/right
   when a neighbouring position exists. Tabs have no close buttons or chevrons. Touch and narrow layouts show a `⋯` beside
   the selected tab for a trimmed menu, and there a tab is at least `--touch-target` tall and wide, so a one- or
   two-character name (탭 1) is still a finger's target with the `⋯` a target of its own beside it; a desktop with a mouse draws the same `⋯` on the selected tab, hidden in its place
@@ -1427,7 +1427,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   between the agent's words, and only the running turn's last group is open, until the agent
   writes after it. A settled turn's groups are all folded, whatever text they hold, because the
   words stand outside them. No group head carries a time: the turn's footer says once
-  "Worked for 7s" (`.chat-meta-duration`) after the copy buttons and the time of day.
+  "Worked for 7s" (`.chat-meta-duration`) after the copy buttons and the time of day, then the
+  model with its maker's mark (`.chat-meta-model`), dots between the three.
+  A group head's icon says how it ended (check, `CircleX`); while it runs it is the sidebar's
+  breathing `--status-working` dot (`.work-block-dot`, `sidebar-breathe`, in step through
+  `lib/breath.ts`), the one sign for "in progress" that the sidebar and a tab's dot share. A
+  spinner stays the subagent card's. An MCP call's row wears MCP's own mark (`McpIcon.tsx`,
+  Simple Icons, CC0) and reads "Ran `tool` server".
 
 ### Subagent card (`.subagent-card`, `SubagentRow.tsx`)
 - A host chat's subagent is a hairline `--bg-panel` card, `--radius-lg`, on the turn's column

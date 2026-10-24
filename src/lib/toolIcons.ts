@@ -1,4 +1,6 @@
-import { BookOpen, CircleAlert, CircleSlash, CircleX, FolderSearch, Pencil, Plug, Search, SquareTerminal, Wrench, type LucideIcon } from "lucide-react";
+import { BookOpen, CircleAlert, CircleSlash, CircleX, FolderSearch, Pencil, Search, SquareTerminal, Wrench, type LucideIcon } from "lucide-react";
+
+import { McpIcon } from "../components/McpIcon.tsx";
 
 import type { ToolKind } from "./toolGroupSummary.ts";
 
@@ -14,7 +16,8 @@ const KIND_ICON: Record<ToolKind, LucideIcon> = {
   list: FolderSearch,
   problems: CircleAlert,
   edit: Pencil,
-  mcp: Plug,
+  // MCP's own mark, not VS Code's plug codicon (owner, ZAC-228)
+  mcp: McpIcon as unknown as LucideIcon,
   other: Wrench,
 };
 

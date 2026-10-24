@@ -421,6 +421,16 @@ describe("the end of a host answer (ZAC-228)", () => {
     expect(html).not.toContain("mcp_tool_call");
   });
 
+  it("a running group wears the sidebar's breathing dot, a finished one its check", () => {
+    const work = agent([{ kind: "tool", name: "bash", tool_id: "bash", summary: "Running", input: JSON.stringify({ command: "ls" }), output: "", error: false }]);
+    const live = draw(work, { live: true });
+    expect(live).toContain('class="work-block-dot"');
+    expect(live).not.toContain("work-block-icon");
+    const done = draw({ ...work, parts: [...work.parts, { kind: "text", text: "FICTIONAL done" }] });
+    expect(done).not.toContain("work-block-dot");
+    expect(done).toContain("lucide-check work-block-icon");
+  });
+
   it("an answer's footer has one ⋯ and no restore or fork", () => {
     const html = draw(answer, { changes: files, onCheckpoint: () => undefined, onFork: () => undefined });
     expect(html.match(/aria-label="More actions"/g)?.length).toBe(1);

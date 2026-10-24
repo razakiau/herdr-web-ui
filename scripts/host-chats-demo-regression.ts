@@ -656,6 +656,7 @@ try {
         // ZAC-228: an MCP call reads as VS Code's "Ran `tool`" and its server, and opens to its input and output
         const mcpRow = view.locator(".work-standalone .work-row", { hasText: "FICTIONAL-search_screens" });
         assert.equal((await mcpRow.locator(".work-row-text").innerText()).replace(/\s+/g, " ").trim(), "Ran FICTIONAL-search_screens lab-search", "the tool it ran and its server, not the proxy's name");
+        assert.equal(await mcpRow.locator("svg.mcp-icon.work-row-icon").count(), 1, "MCP's own mark, not a plug (owner)");
         await mcpRow.locator(".work-row-head").click();
         assert.deepEqual(await mcpRow.locator(".work-row-section").allInnerTexts(), ["INPUT", "OUTPUT"], "opened: its input, then its output");
         assert.match(await mcpRow.locator(".work-row-command").innerText(), /"query": "FICTIONAL composer"/, "the arguments the tool was given");
@@ -1352,11 +1353,11 @@ try {
         await working.waitFor();
         const shimmer = await working.evaluate((node) => { const style = getComputedStyle(node); return { clip: style.backgroundClip || (style as unknown as Record<string, string>)["webkitBackgroundClip"], name: style.animationName, image: style.backgroundImage.startsWith("linear-gradient") }; });
         assert.deepEqual(shimmer, { clip: "text", name: "work-shimmer", image: true }, "the live title shimmers");
-        // its icon is VS Code's turning ring, not a wrench (owner, ZAC-228)
-        const liveIcon = view.locator(".work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon").last();
-        if (await liveIcon.count() > 0) {
-          assert.match(await liveIcon.getAttribute("class") ?? "", /lucide-loader-circle/, "the live group turns a ring");
-          assert.equal(await liveIcon.evaluate((node) => getComputedStyle(node).animationName), "work-spin", "and it turns");
+        // running, it wears the sidebar's breathing dot, not an icon (owner, ZAC-228)
+        const liveDot = view.locator(".work-block.is-vscode.is-live:not(.is-waiting) .work-block-dot").last();
+        if (await liveDot.count() > 0) {
+          assert.equal(await liveDot.evaluate((node) => getComputedStyle(node).animationName), "sidebar-breathe", "the live group's dot breathes as the sidebar's does");
+          assert.equal(await view.locator(".work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon").count(), 0, "and draws no icon beside it");
         }
         if (shots) await page.screenshot({ path: join(shots, "r4-working-390.png") });
         assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");

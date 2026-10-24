@@ -131,14 +131,17 @@
   border-radius: var(--radius-pill);
 }
 
-.tab-strip-dot[data-status="working"] { background: var(--status-working); }
+/* running breathes as the sidebar's dot does, in step with it (lib/breath.ts): a still blue dot
+   read as finished-and-unread (owner, ZAC-228) */
+.tab-strip-dot[data-status="working"] { background: var(--status-working); animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite; }
 .tab-strip-dot[data-status="blocked"] { background: var(--status-blocked); }
 .tab-strip-dot[data-status="done"] { background: var(--status-done); }
 /* waiting on its background work: something still runs, the agent does not */
 .tab-strip-dot[data-status="waiting"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-working); }
 
-/* Settings -> Status indicators, Dots or Symbols: the sidebar's herdr glyph and color, held still
-   (Sidebar.css .sidebar-status-glyph). Same specificity as the dot's rules, so order wins. */
+/* Settings -> Status indicators, Dots or Symbols: the sidebar's herdr glyph and color
+   (Sidebar.css .sidebar-status-glyph); RUN breathes there and here. Same specificity as the dot's
+   rules, so order wins. */
 .tab-strip-glyph {
   width: auto;
   height: auto;
