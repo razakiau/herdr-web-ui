@@ -33,6 +33,7 @@ import { AttachSheet, rememberAttached } from "./AttachSheet.tsx";
 import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { HostSessionPills } from "./HostSessionPills.tsx";
+import { HostTodoBar } from "./HostTodoBar.tsx";
 import type { SubagentTarget } from "./SubagentRow.tsx";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
@@ -346,6 +347,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       await redoHostCheckpoint(machineId, session);
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
+    <HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />
     {/* the pills stay while a question or approval is up: what the session made is often what the question is about */}
     <HostSessionPills machineId={machineId} session={session} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}

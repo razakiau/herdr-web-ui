@@ -1253,6 +1253,8 @@ export const KO: Record<string, string> = {
   "1 confirmation pending": "확인 1개 대기 중",
   "1 subagent running": "하위 에이전트 1개 실행 중",
   "1 subagent": "하위 에이전트 1개",
+  "Todos {done}/{total}": "할 일 {done}/{total}",
+  "Updated todos": "할 일 업데이트함",
   "Context window": "컨텍스트 창",
   "Context window: {usage}": "컨텍스트 창: {usage}",
   "Waiting for your response": "응답을 기다리는 중",

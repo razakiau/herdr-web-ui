@@ -1,5 +1,6 @@
 import type { ConversationPart } from "../../shared/protocol.ts";
 import type { TodoItem, TodoStatus } from "../../shared/todos.ts";
+import { t } from "./i18n.ts";
 export { parseTodoAnswer, type TodoItem, type TodoStatus } from "../../shared/todos.ts";
 
 /**
@@ -13,10 +14,12 @@ export { parseTodoAnswer, type TodoItem, type TodoStatus } from "../../shared/to
  */
 
 type Tool = Extract<ConversationPart, { kind: "tool" }>;
-type Kind = "whole" | "codex-plan" | "ops";
+type Kind = "whole" | "codex-plan" | "ops" | "host";
 
 function toolKind(name: string): Kind | null {
   if (name === "TodoWrite") return "whole";
+  // VS Code's (agent host): the list itself is the session's, read beside the chat (HostTodoBar)
+  if (name === "manage_todo_list" || name === "update_todo") return "host";
   if (name === "update_plan") return "codex-plan";
   if (name === "todo" || name === "todo_write" || /^mcp__.+__todo$/.test(name)) return "ops";
   return null;
@@ -34,7 +37,7 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function args(part: Tool): Record<string, unknown> {
+function args(part: Pick<Tool, "input">): Record<string, unknown> {
   try { return record(JSON.parse(part.input)); } catch { return {}; }
 }
 
@@ -54,9 +57,11 @@ function phases(list: unknown): TodoItem[] {
 }
 
 /** One line for a todo call in the work block, instead of its raw input. */
-export function todoCallSummary(part: Tool): string | null {
-  const kind = toolKind(part.name);
+export function todoCallSummary(part: Pick<Tool, "name" | "input"> & { tool_id?: string }): string | null {
+  const kind = toolKind(part.name) ?? (part.tool_id !== undefined ? toolKind(part.tool_id) : null);
   if (kind === null) return null;
+  // no count: the store keeps only the list as it is now, so a past call's would be wrong
+  if (kind === "host") return t("Updated todos");
   const input = args(part);
   if (kind === "whole" || kind === "codex-plan") {
     const list = Array.isArray(input[kind === "whole" ? "todos" : "plan"]) ? input[kind === "whole" ? "todos" : "plan"] as unknown[] : [];

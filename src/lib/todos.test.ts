@@ -52,4 +52,12 @@ describe("todoCallSummary", () => {
     expect(todoCallSummary(call("TodoWrite", { todos: [{ content: "a", status: "completed" }, { content: "b", status: "pending" }] }))).toBe("1/2 done");
     expect(todoCallSummary(call("Bash", { command: "ls" }))).toBeNull();
   });
+
+  it("reads VS Code's todo tools as one line with no count (the list a past call left is gone)", () => {
+    const vscode = call("manage_todo_list", { todoList: [{ id: 1, title: "a", status: "completed" }, { id: 2, title: "b", status: "not-started" }] });
+    expect(todoCallSummary(vscode)).toBe("Updated todos");
+    expect(todoCallSummary(call("update_todo", { id: 2, status: "completed" }))).toBe("Updated todos");
+    // a host part names the tool by its display name; its tool_id is the tool
+    expect(todoCallSummary({ ...call("Manage and track todo items", {}), tool_id: "manage_todo_list" })).toBe("Updated todos");
+  });
 });

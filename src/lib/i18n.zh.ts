@@ -1257,6 +1257,8 @@ export const ZH: Record<string, string> = {
   "1 confirmation pending": "1 个确认待处理",
   "1 subagent running": "1 个子代理正在运行",
   "1 subagent": "1 个子代理",
+  "Todos {done}/{total}": "待办 {done}/{total}",
+  "Updated todos": "已更新待办",
   "Context window": "上下文窗口",
   "Context window: {usage}": "上下文窗口：{usage}",
   "Waiting for your response": "正在等待你的回复",

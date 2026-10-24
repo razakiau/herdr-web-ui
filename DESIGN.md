@@ -1513,6 +1513,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   its workspace, forking, restored), and so do the sticky request and, just left of it, the turn
   rail. The rail names a turn beside its tick on hover or focus (`.chat-minimap-preview`). The
   status line does not repeat a running count the pills already show.
+  Above the pills, a host chat's todo list (`.todo-bar`, ZAC-228; VS Code's todo widget) is one
+  `--bg-panel` card on that column: closed, `ListChecks`, "Todos 3/7" in `--text-strong`, the task
+  in progress (else the next pending) in `--text-dim` ellipsized, a caret, and a 3 px `--accent`
+  progress line under it; open, one row per todo (done dim and struck through, in progress
+  `--status-working`, blocked `--notice`). It is gone with no todos, and once all are done in an
+  idle chat. A call to VS Code's todo tools reads "Updated todos" in the work, with no count.
   A host chat's toolbar (ZAC-207 redesign, `docs/superpowers/specs/2026-10-24-composer-redesign-design.md`)
   is one quiet row on every width: attach `+`, the settings button (`.host-chat-settings`,
   `SlidersHorizontal`, `--text-dim`; the theme's `--accent` while permissions are not Manual: a choice, not a warning, so never a fixed amber), the model chip

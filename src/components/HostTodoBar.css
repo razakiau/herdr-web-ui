@@ -1,0 +1,34 @@
+/* VS Code's todo list above the input: one quiet line closed, the list open (ZAC-228) */
+.todo-bar {
+  margin: 0 var(--host-chat-gutter, var(--space-4)) var(--space-2);
+  border: var(--hairline) solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-panel); overflow: hidden;
+}
+.todo-bar-head {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 2.25rem;
+  padding: 0 var(--space-3); border: 0; background: transparent; color: var(--text);
+  font: inherit; font-size: var(--fs-sm); text-align: start; cursor: pointer;
+}
+.todo-bar-head:hover { background: var(--bg-hover); }
+.todo-bar-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.todo-bar-icon { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.todo-bar-title { flex: none; color: var(--text-strong); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
+.todo-bar-current { flex: 1; min-width: 0; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }
+.todo-bar-caret { flex: none; width: 1em; height: 1em; margin-inline-start: auto; color: var(--text-dim); transition: transform 0.15s ease; }
+.todo-bar-head[aria-expanded="true"] .todo-bar-caret { transform: rotate(180deg); }
+.todo-bar-track { height: 3px; background: var(--border); }
+.todo-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.todo-bar-list { margin: 0; padding: var(--space-1) 0 var(--space-2); list-style: none; max-height: 40vh; overflow-y: auto; }
+.todo-bar-row {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3); font-size: var(--fs-sm); color: var(--text);
+}
+.todo-bar-row-icon { flex: none; width: 1em; height: 1em; margin-top: 0.2em; color: var(--text-dim); }
+.todo-bar-row[data-status="done"] { color: var(--text-dim); }
+.todo-bar-row[data-status="done"] .todo-bar-row-title { text-decoration: line-through; }
+.todo-bar-row[data-status="in_progress"] .todo-bar-row-icon { color: var(--status-working); }
+.todo-bar-row[data-status="in_progress"] { color: var(--text-strong); }
+.todo-bar-row[data-status="blocked"] .todo-bar-row-icon { color: var(--notice); }
+@media (prefers-reduced-motion: reduce) {
+  .todo-bar-caret, .todo-bar-fill { transition: none; }
+}

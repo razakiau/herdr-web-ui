@@ -1255,6 +1255,8 @@ export const JA: Record<string, string> = {
   "1 confirmation pending": "1 件の確認が保留中",
   "1 subagent running": "1 個のサブエージェントを実行中",
   "1 subagent": "1 個のサブエージェント",
+  "Todos {done}/{total}": "ToDo {done}/{total}",
+  "Updated todos": "ToDo を更新しました",
   "Context window": "コンテキスト ウィンドウ",
   "Context window: {usage}": "コンテキスト ウィンドウ: {usage}",
   "Waiting for your response": "応答を待っています",
