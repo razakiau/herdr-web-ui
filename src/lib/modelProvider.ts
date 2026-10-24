@@ -7,7 +7,7 @@
  */
 import type { HostModel } from "../../shared/host-chats.ts";
 
-export type ModelMark = "grok" | "claude" | "gemini" | "kimi" | "microsoft" | "openai" | "deepseek" | "zhipu" | "qwen" | "minimax" | "copilot" | "sparkle";
+export type ModelMark = "grok" | "claude" | "gemini" | "kimi" | "microsoft" | "openai" | "deepseek" | "zai" | "qwen" | "minimax" | "xiaomimimo" | "hunyuan" | "copilot" | "sparkle";
 
 /** The first pattern that matches wins, in VS Code's order, then the providers it has no icon for. */
 const MARKS: [RegExp, ModelMark][] = [
@@ -18,9 +18,13 @@ const MARKS: [RegExp, ModelMark][] = [
   [/microsoft|\bmai\b/, "microsoft"],
   [/openai|chatgpt|gpt|codex|\bo[134]\b/, "openai"],
   [/deepseek/, "deepseek"],
-  [/glm|zhipu/, "zhipu"],
+  // GLM is sold as Z.ai now; Zhipu's old corporate mark read as wrong (owner, ZAC-223)
+  [/glm|zhipu|z\.ai/, "zai"],
   [/qwen/, "qwen"],
   [/minimax/, "minimax"],
+  [/mimo|xiaomi/, "xiaomimimo"],
+  // Tencent's Hy4 / Hy3 ids, not any word that starts with "hy" (HydraFusion stays the sparkle)
+  [/hunyuan|\bhy\d/, "hunyuan"],
   [/copilot|^auto$/, "copilot"],
 ];
 

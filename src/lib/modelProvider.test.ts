@@ -7,7 +7,10 @@ const model = (id: string, name: string, provider = "copilotcli", extra: Partial
 describe("providerMark: VS Code's order, names with a provider in parentheses too", () => {
   it.each([
     ["Claude Opus 5.5 (Anthropic)", "claude"],
-    ["GLM-5.3 (OpenCode Go)", "zhipu"],
+    ["GLM-5.3 (OpenCode Go)", "zai"],
+    ["MiMo-V2.6-Pro (OpenCode Go)", "xiaomimimo"],
+    ["Hy4 preview (OpenCode Go)", "hunyuan"],
+    ["Hunyuan T2", "hunyuan"],
     ["GPT 5.6 Sol (OpenAI)", "openai"],
     ["DeepSeek V4 Pro (New) (OpenCode Go)", "deepseek"],
     ["HydraFusion", "sparkle"],
