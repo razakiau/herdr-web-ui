@@ -53,6 +53,14 @@ describe("motion", () => {
     expect(breathes(rules("components/ChatView.css"), ".work-block-dot")).toBe(true);
   });
 
+  // a VS Code-style group draws its own dot: the classic dot before the title stays hidden, waiting
+  // or not, or a group that needs you reads "● ● Needs you" (live crawl on a phone, ZAC-228)
+  it("never draws the classic title dot on a VS Code group, waiting or not", () => {
+    const css = readFileSync(join(import.meta.dir, "components/ChatView.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).toMatch(/\.work-block\.is-vscode\.is-live \.work-block-title::before\s*{\s*display:\s*none;?\s*}/);
+    expect(css).not.toContain(".work-block.is-vscode.is-live:not(.is-waiting) .work-block-title::before");
+  });
+
   it("reads a declaration whole, however it is split across lines", () => {
     expect(smoothEndless(".a {\n  animation: pulse 1.6s\n    ease-in-out\n    infinite;\n}")).toEqual(["animation: pulse 1.6s ease-in-out infinite"]);
     expect(smoothEndless(".a { animation:\n  pulse var(--dur-pulse) var(--ease-pulse)\n  infinite }")).toEqual([]);

@@ -1823,8 +1823,9 @@
 /* running, the sidebar's working dot, breathing in step with it (Sidebar.css sidebar-breathe): one
    sign for "in progress" everywhere (owner, ZAC-228: a wrench, then a spinner, read wrong here). It
    sits in the icon's square, so the title doesn't move when the group ends; the classic dot before
-   the title is not drawn twice, and a blocked turn keeps its red one */
-.work-block.is-vscode.is-live:not(.is-waiting) .work-block-title::before { display: none; }
+   the title is not drawn twice, and a blocked turn's own dot turns red */
+/* one dot: the group's own, waiting or not (a waiting group read "● ● Needs you" on a phone, ZAC-228) */
+.work-block.is-vscode.is-live .work-block-title::before { display: none; }
 .work-block-dot {
   flex: none;
   display: inline-grid;

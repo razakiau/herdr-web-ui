@@ -716,7 +716,9 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   const { verb } = useMemo(() => workRowLabel({ name: part.name, input: part.input }, summary), [part.name, part.input, summary]);
   // a file the call read, listed or changed, unless the host's own words name it already
   const file = (kind === "read" || kind === "edit" || kind === "list") ? toolFile(part) : null;
-  const named = part.past !== undefined && parseInline(part.past, false).some(function names(node: InlineNode): boolean {
+  // the words the row shows: the host's past tense, or, while it runs, its invocation
+  const hostWords = part.past ?? (part.tool_id !== undefined && part.state === "running" ? summary : undefined);
+  const named = hostWords !== undefined && parseInline(hostWords, false).some(function names(node: InlineNode): boolean {
     return node.type === "file" || ("children" in node && node.children.some(names));
   });
   // a host call's edits list each file it changed, its diff a tap away: the pill would name one again
@@ -734,6 +736,9 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
     ? part.intention !== undefined && part.state !== "skipped" ? <>{part.intention} <code>{command}</code></>
       : <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : "Ran")} <code>{command}</code></>
     : part.past !== undefined && part.past.trim().length > 0 ? <RowText text={part.past} />
+      // a host call still running has only its invocation words ("Creating [payload.json](…)"):
+      // VS Code shows those alone, its link as the file's name (live crawl, ZAC-228)
+      : part.tool_id !== undefined && part.state === "running" && summary.trim().length > 0 ? <RowText text={summary} />
       : pill !== null && verb !== null ? <>{t(verb)}</>
         : verb !== null ? <>{t(verb)} {summary}</>
           : <>{part.name}{summary.length > 0 && summary !== part.name && <> {summary}</>}</>;

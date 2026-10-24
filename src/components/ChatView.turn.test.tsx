@@ -421,6 +421,17 @@ describe("the end of a host answer (ZAC-228)", () => {
     expect(html).not.toContain("mcp_tool_call");
   });
 
+  it("a running call reads the host's own words, a link as its name, never its tool name before them", () => {
+    // live crawl on a phone (ZAC-228): "Create File Creating [payload.json](file:///home/coder/pr…"
+    const running = agent([{ kind: "tool", name: "Create File", tool_id: "create_file", summary: "Creating [payload.json](file:///home/coder/project/payload.json)",
+      input: JSON.stringify({ filePath: "/home/coder/project/payload.json" }), output: "", error: false, state: "running" }]);
+    const html = plain(draw(running, { live: true }));
+    expect(html).toContain("Creating payload.json");
+    expect(html.match(/payload\.json/g)?.length).toBe(1);
+    expect(html).not.toContain("Create File Creating");
+    expect(html).not.toContain("](file://");
+  });
+
   it("folds three MCP calls in a row into one line, and leaves two, or one waiting for you, alone", () => {
     const call = (tool: string, extra: Record<string, unknown> = {}) => ({ kind: "tool" as const, name: "mcp_tool_call", tool_id: "lab-search-mcp_tool_call", summary: "mcp_tool_call",
       input: JSON.stringify({ tool_name: tool, arguments: {} }), output: "", error: false, ...extra });
