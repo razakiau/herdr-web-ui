@@ -1428,6 +1428,21 @@ describe("host chat attachments", () => {
     ]);
   });
 
+  it("attachments alone go with no words; no words and no attachment is still refused", async () => {
+    const { folder, r } = await inFolder();
+    writeFileSync(join(folder, "notes.md"), "FICTIONAL");
+    for (const text of [undefined, "", "  "]) {
+      const empty = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), ...(text === undefined ? {} : { text }), attachments: [] });
+      expect({ text, status: empty.status, code: empty.json.error.code }).toEqual({ text, status: 400, code: "missing_text" });
+    }
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    const sent = await call(r, "/api/host-chats/chat/send", { id: crypto.randomUUID(), session: sessionUri(1), attachments: [{ path: "notes.md" }] });
+    expect(sent.status).toBe(200);
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    const message = only(r.fake, "chat/turnStarted")["message"];
+    expect({ text: message["text"], labels: message["attachments"].map((each: { label: string }) => each.label) }).toEqual({ text: "", labels: ["notes.md"] });
+  });
+
   it("an attachment outside the chat's folder, or one that is gone, is refused and nothing is sent", async () => {
     const { folder, r } = await inFolder();
     const elsewhere = temp();

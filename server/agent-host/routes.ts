@@ -372,7 +372,9 @@ function modeOf(value: unknown): SendMode {
   return SEND_MODES.includes(value as SendMode) ? value as SendMode : refuse(badRequest("invalid_mode", `mode must be one of ${SEND_MODES.join(", ")}`));
 }
 
-function messageText(value: unknown): string {
+function messageText(value: unknown, attached = false): string {
+  // a message of attachments alone goes with no words, as VS Code sends a picked file on its own
+  if (attached && (value === undefined || (text(value) && value.trim() === ""))) return "";
   return text(value) && value.trim() !== "" ? value : refuse(badRequest("missing_text", "text is required"));
 }
 
@@ -837,7 +839,8 @@ function send(host: AgentHost, session: string, channel: string, chat: ChatState
 async function sendMessage(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const id = idOf(call.body["id"]);
-  const words = messageText(call.body["text"]);
+  const listed = Array.isArray(call.body["attachments"]) && call.body["attachments"].length > 0;
+  const words = messageText(call.body["text"], listed);
   const model = modelOf(call.body["model"]);
   const agent = agentOf(call.body["agent"]);
   const mode = modeOf(call.body["mode"]);

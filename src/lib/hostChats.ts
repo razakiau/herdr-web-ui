@@ -246,6 +246,12 @@ export const HOST_ATTEMPT_TTL_MS = 10 * 60_000;
  * The id an attempt goes under: the previous attempt's when it was for the same `key` (the same
  * words sent again after a failure, so the bridge dispatches them once), else a new one.
  */
+/** What makes two sends the same message: the words, then the attached paths. */
+export function sendKey(body: Pick<HostSend, "text" | "attachments">): string {
+  const paths = (body.attachments ?? []).map((each) => each.path);
+  return paths.length === 0 ? body.text.trim() : `${body.text.trim()}\u0000${paths.join("\u0000")}`;
+}
+
 export function attemptFor(previous: { key: string; id: string } | null, key: string, mint: () => string = newId): { key: string; id: string } {
   return previous !== null && previous.key === key ? previous : { key, id: mint() };
 }
@@ -317,7 +323,8 @@ export async function sendHost(machineId: string, body: Omit<HostSend, "id">, la
   // the same words again after a failure go under the same id (kept with the draft, so leaving
   // the screen keeps it too); other words, or the next message after a sent one, get a new one
   const previous = storedAttempt(machineId, body.session);
-  const attempt = attemptFor(previous, body.text.trim());
+  // the words, and the files when they go alone: a retry of the same chip is the same message
+  const attempt = attemptFor(previous, sendKey(body));
   // the first try's time stands: a retry does not stretch the window it is reused in
   if (attempt !== previous) keepAttempt(machineId, body.session, attempt);
   const full: HostSend = { ...body, id: attempt.id, ...carriedChoice(chosenFor(machineId, body.session), last) };

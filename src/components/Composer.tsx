@@ -388,6 +388,8 @@ export function Composer({
   /** a command the agent runs but the chat cannot finish, while it is what the box holds */
   const terminalOnly = useMemo(() => terminalOnlyCommand(agent, text), [agent, text]);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
+  // something to send: words, or (where the host takes them on their own) a chip that is ready
+  const hasContent = text.trim().length > 0 || (attachAsChips && attachments.some((attachment) => attachment.state === "ready" && attachment.path !== null));
   /** a finished upload whose path waits for the message to be shortened: Send waits with it */
   const roomless = attachments.find((attachment) => attachment.state === "no-room");
   const agentLabel = agentDisplayLabel(agent);
@@ -900,7 +902,7 @@ export function Composer({
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. False: nothing went out */
   const send = useCallback((clearDraft?: string, sendAnyway = false, pick?: HostSendPick): boolean => {
     if (composingRef.current) return false;
-    if (!connected || uploading || roomless || sending || text.trim().length === 0) return false;
+    if (!connected || uploading || roomless || sending || !hasContent) return false;
     const sent = text;
     const sentAttachments = attachments;
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -934,7 +936,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [agentStatus, attachAsChips, attachments, connected, dictation.forget, draftKey, onSend, roomless, sendMenu, sending, text, uploading]);
+  }, [agentStatus, attachAsChips, attachments, connected, dictation.forget, draftKey, hasContent, onSend, roomless, sendMenu, sending, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
@@ -1118,11 +1120,11 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  // a chip alone does not turn Stop into Send: the bridge refuses a message with no text
-  // (routes.ts missing_text), so on a busy chat Stop stays until words are typed
-  const sendShown = sending || composerSendShown({ working: isWorking, text });
-  // VS Code offers its send menu while the chat works and the box has text
-  const hostMenuShown = sendMenu !== undefined && isWorking && text.trim().length > 0;
+  // a host chat's chip alone is a message (the bridge sends attachments without words), so it turns
+  // Stop into Send as words do
+  const sendShown = sending || composerSendShown({ working: isWorking, text: hasContent ? "x" : "" });
+  // VS Code offers its send menu while the chat works and the box has something to send
+  const hostMenuShown = sendMenu !== undefined && isWorking && hasContent;
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1212,7 +1214,7 @@ export function Composer({
               not tell empty, sent over only in the same Claude terminal the refusal was for */}
           {typeof note === "object" && ("failure" in note
             ? offersRetry(note.failure) && <button type="button" className="composer-note-action" disabled={!connected} onClick={() => retryUpload(note.attachment)}>{t("Try again")}</button>
-            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || !hasContent}
               onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>)}
         </div>
       )}
@@ -1534,7 +1536,7 @@ export function Composer({
               aria-label={t("Send message")}
               title={sending ? t("Sending…") : t("Send message")}
               aria-busy={sending || undefined}
-              disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+              disabled={!connected || uploading || roomless !== undefined || sending || !hasContent}
               // focus stays in the text box: leaving it closes the soft keyboard and moves the button
               // out from under the tap before the click lands
               onPointerDown={(event) => {

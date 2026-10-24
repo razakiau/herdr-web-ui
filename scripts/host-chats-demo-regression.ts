@@ -1005,7 +1005,7 @@ try {
         }
         await sheet.getByRole("searchbox", { name: "Search models" }).fill("glm");
         assert.deepEqual(await sheet.locator("[data-model]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-model"))), ["fictional/glm-x"], "the search keeps the GLM row only");
-        assert.equal(await sheet.locator('[data-model="fictional/glm-x"] svg[aria-label="zhipu"]').count(), 1, "GLM wears Zhipu's mark");
+        assert.equal(await sheet.locator('[data-model="fictional/glm-x"] svg[aria-label="zai"]').count(), 1, "GLM wears Z.ai's mark (ZAC-223)");
         await sheet.getByRole("searchbox", { name: "Search models" }).fill("");
         assert.match(await sheet.locator('[data-model="fictional/model-b"] .host-model-detail').textContent() ?? "", /^Medium · 1M$/, "a row says its default thinking level and its context");
         // a row with a thinking level shows it can open, not only a dotted underline (the owner missed it, 2026-10-20)
@@ -1140,9 +1140,15 @@ try {
         await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 1);
         assert.equal((await view.locator(".composer-attachment-file").textContent())?.trim(), "README.md", "the folder pick is the same chip as an @ pick");
         assert.equal(await view.locator(".composer-send").count(), 1, "a chip turns voice into Send");
-        await view.locator(".composer-attachment").getByRole("button", { name: /Remove/ }).click();
+        // a chip alone is a message: Send is live, and the file goes with no words (VS Code sends a
+        // picked file on its own; the bridge takes attachments without text)
+        assert.equal(await view.getByRole("button", { name: "Send message" }).isDisabled(), false, "a chip alone can be sent");
+        const sendsBeforeChip = (await posts("/api/machines/remote/host-chats/chat/send")).length;
+        await view.getByRole("button", { name: "Send message" }).click();
         await page.waitForFunction(() => document.querySelectorAll(".composer-attachments .composer-attachment").length === 0);
-        console.log("PASS + opens the attach sheet: Camera and Photos tiles, the device picker, and the folder's files as a chip");
+        const chipAlone = (await posts("/api/machines/remote/host-chats/chat/send")).slice(sendsBeforeChip);
+        assert.deepEqual(chipAlone.map((post) => ({ text: post.body.text, attachments: post.body.attachments })), [{ text: "", attachments: [{ path: "README.md" }] }], "the chip went alone, with no words");
+        console.log("PASS + opens the attach sheet: Camera and Photos tiles, the device picker, and the folder's files as a chip that can go alone");
         await view.locator('.composer input[type="file"]').setInputFiles({ name: "fictional-shot.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") });
         const chips = view.locator(".composer-attachments .composer-attachment");
         await view.locator(".composer-attachment.is-ready img").waitFor();
