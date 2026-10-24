@@ -74,6 +74,7 @@ import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
+import { VOICE_REQUEST_TIMEOUT_SECONDS } from "../shared/voice.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
@@ -1329,7 +1330,7 @@ export function createServer(
       if (pathname === "/api/usage/login") { bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
-      if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
+      if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, VOICE_REQUEST_TIMEOUT_SECONDS); return handleVoiceRequest(request, pathname, voice); }
 
       if (pathname === "/api/presence") return handlePresenceRequest(request, pages);
 
