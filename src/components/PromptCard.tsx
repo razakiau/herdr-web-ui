@@ -307,6 +307,13 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
   const planFile = prompt.plan_file;
 
   const collapse = (): void => setExpanded(false);
+  // width alone: a wide tablet's coarse pointer reaches the header as well as the foot
+  const pagerAtFoot = useMediaQuery("(max-width: 640px)");
+  const pager = form === null ? null : <>
+    <button type="button" className="icon-button" aria-label={t("Previous question")} title={t("Previous question")} disabled={pending || page === 0} onClick={() => goTo(page - 1)}><ChevronLeft aria-hidden="true" /></button>
+    <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
+    <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
+  </>;
   const card = (
     <section className={`prompt-card${folded && !expanded ? " is-folded" : ""}${expanded ? " is-expanded" : ""}`} ref={cardRef} role="region" aria-label={t("Agent is asking")}
       onKeyDown={(event) => { down.current = null; keyed.current = event.key === "Enter" || event.key === " " ? event.target : null; }}
@@ -319,6 +326,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
         {/* read, not drawn: the card says it waits on you */}
         <span className="visually-hidden">{t("input needed")}</span>
         {markdown ? <h2 className="prompt-card-markdown"><Markdown style="vscode">{q.title}</Markdown></h2> : <h2>{q.title}</h2>}
+        {pager !== null && !pagerAtFoot && !folded && <nav className="prompt-card-pager is-header" aria-label={t("Questions")}>{pager}</nav>}
         {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
         {planFile && openFile && (
           <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
@@ -489,11 +497,12 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
           appears together with its words is not read; one that is there and gets them is */}
       {/* a form's pager (VS Code's carousel footer): back and forth, every answer kept; Next waits on a
           required question's answer, an optional one may stay empty; Submit sends the lot */}
-      {form !== null && (
-        <nav className="prompt-card-pager" aria-label={t("Questions")}>
-          <button type="button" className="icon-button" aria-label={t("Previous question")} title={t("Previous question")} disabled={pending || page === 0} onClick={() => goTo(page - 1)}><ChevronLeft aria-hidden="true" /></button>
-          <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
-          <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
+      {/* on a mouse window the pager sits in the header beside the title, as VS Code's carousel does: a
+          footer row of its own held three small controls under a wide card (owner, ZAC-207). A phone
+          keeps it at the foot, in the thumb's reach; Submit stays at the foot on both */}
+      {form !== null && (pagerAtFoot ? pager : lastPage) && (
+        <nav className="prompt-card-pager" aria-label={pagerAtFoot ? t("Questions") : undefined}>
+          {pagerAtFoot && pager}
           {lastPage && <button type="button" className="btn btn-primary prompt-card-pager-submit" disabled={pending} onClick={(event) => void submitForm(event)}>{t("Submit")}</button>}
         </nav>
       )}
