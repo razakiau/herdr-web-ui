@@ -529,6 +529,17 @@ try {
         // the row keeps to the turn's width, so the ⋯ stays on screen and the model's name gives way
         const metaOver = await agentTurn.locator(".chat-agent-meta").evaluate((meta) => Math.round(meta.querySelector(".chat-more-btn")!.getBoundingClientRect().right - meta.closest(".chat-turn-agent")!.getBoundingClientRect().right));
         assert.ok(metaOver <= 0, `the footer's ⋯ is inside the turn (${metaOver} px over)`);
+        // the model never squeezes to nothing: on a phone the copies, time, duration and ⋯ took the
+        // whole row and "Claude Opus 5.5" was 0 px wide (live crawl at 390 px, ZAC-228)
+        const modelName = await agentTurn.locator(".chat-agent-meta .chat-meta-model-name").evaluate((node) => Math.round(node.getBoundingClientRect().width));
+        // the dot sits midway: on a phone it was 4 px after the time and 8 px before the next fact
+        const dotSides = await agentTurn.locator(".chat-agent-meta .chat-meta-duration").evaluate((node) => {
+          const before = parseFloat(getComputedStyle(node, "::before").marginLeft) + parseFloat(getComputedStyle(node.parentElement!).columnGap || "0");
+          const after = parseFloat(getComputedStyle(node, "::before").marginRight);
+          return { before: Math.round(before), after: Math.round(after) };
+        });
+        assert.equal(dotSides.before, dotSides.after, `the dot between the footer's facts sits midway (${dotSides.before} / ${dotSides.after} px)`);
+        assert.ok(modelName >= 60, `the model's name stays readable (${modelName} px)`);
         // ZAC-228: the answer closes with what it changed, View opens the diff sheet cut to it, and a
         // dashed checkpoint follows it; its footer's ⋯ copies and never restores
         const changed = agentTurn.locator(".chat-turn-changes");

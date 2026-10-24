@@ -1,14 +1,15 @@
 /**
  * A subagent a Copilot turn started, as VS Code draws it (chatSubagentOpenChat.ts at 6d62b1d): its
- * own row, never folded into the turn's tool group. The comment-discussion icon (a spinner while it
- * runs), the agent's name, its task, its model when not the chat's (the bridge says which), and on
+ * own row, never folded into the turn's tool group. The comment-discussion icon (while it runs, the
+ * breathing dot every "in progress" wears), the agent's name, its task, its model when not the chat's (the bridge says which), and on
  * the right "Working for 3s" / "Worked for 5m 43s". While it runs, a connector line and what it does
  * now. Opened, it reads the subagent's own chat (`readChat`) and draws its turns with the same Turn.
  */
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CircleX, LoaderCircle, MessagesSquare } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleX, MessagesSquare } from "lucide-react";
 
 import type { ConversationPart, ConversationTurn } from "../../shared/protocol.ts";
+import { alignBreath } from "../lib/breath.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { splitTurn } from "../lib/workBlocks.ts";
@@ -119,9 +120,11 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
   const ms = elapsed(part, now);
   const duration = ms === null ? null : formatElapsedTime(ms, t);
   const time = duration === null ? null : running ? t("Working for {duration}", { duration }) : t("Worked for {duration}", { duration });
-  const Icon = running ? LoaderCircle : part.status === "failed" ? CircleX : MessagesSquare;
+  const Icon = part.status === "failed" ? CircleX : MessagesSquare;
   const head = <>
-    <Icon className={`subagent-row-icon${running ? " is-spinning" : ""}`} aria-hidden="true" />
+    {running
+      ? <span className="work-block-dot subagent-row-dot" aria-hidden="true" onAnimationStart={alignBreath} />
+      : <Icon className="subagent-row-icon" aria-hidden="true" />}
     <span className="subagent-row-main">
       <span className="subagent-row-name">{part.agent}</span>
       {part.description.length > 0 && <span className="subagent-row-description" title={part.description}>{part.description}</span>}

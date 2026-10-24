@@ -45,17 +45,19 @@ describe("SubagentRow", () => {
     expect(done).not.toContain("lucide-loader-circle");
     const running = render(createElement(SubagentRow, { part: part({ status: "running", ended: null }), live: true, now: Date.parse(AT) + 3_400 }));
     expect(text(running)).toContain("Working for 3s");
-    expect(running).toContain("lucide-loader-circle");
+    // the breathing dot every "in progress" wears, not a spinner: stepped, a spinner ratcheted like a gear (owner, ZAC-228)
+    expect(running).toContain('class="work-block-dot subagent-row-dot"');
+    expect(running).not.toContain("lucide-loader-circle");
     expect(running).not.toContain("lucide-messages-square");
   });
 
-  it("a background subagent spins and counts on after its turn has ended (ZAC-207)", () => {
+  it("a background subagent breathes and counts on after its turn has ended (ZAC-207)", () => {
     const row = render(createElement(SubagentRow, { part: part({ status: "running", ended: null, background: true, activity: "FICTIONAL reading" }), live: false, now: Date.parse(AT) + 63_000 }));
-    expect(row).toContain("lucide-loader-circle");
+    expect(row).toContain("subagent-row-dot");
     expect(text(row)).toContain("Working for 1m 3s");
     expect(text(row)).toContain("FICTIONAL reading");
     // a sync one whose turn is over is not shown as working
-    expect(render(createElement(SubagentRow, { part: part({ status: "running", ended: null }), live: false, now: Date.parse(AT) + 63_000 }))).not.toContain("lucide-loader-circle");
+    expect(render(createElement(SubagentRow, { part: part({ status: "running", ended: null }), live: false, now: Date.parse(AT) + 63_000 }))).not.toContain("subagent-row-dot");
   });
 
   it("subagent_model_only_when_different, and only once opened (ZAC-228)", () => {

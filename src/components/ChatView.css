@@ -1888,9 +1888,6 @@ button.subagent-row-head:focus-visible { outline: 2px solid var(--accent); outli
   color: var(--text-dim);
 }
 .subagent-row.is-failed .subagent-row-icon { color: var(--status-blocked); }
-.subagent-row-icon.is-spinning { animation: subagent-spin var(--dur-spin) var(--ease-spin) infinite; }
-@keyframes subagent-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .subagent-row-icon.is-spinning { animation: none; } }
 .subagent-row-main {
   flex: 1 1 0;
   display: flex;
@@ -2289,13 +2286,21 @@ button.question-summary-answer { cursor: pointer; }
 /* time · how long it worked · the model: VS Code's dots between the footer's facts (owner: they
    ran together with the gap alone) */
 .chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-model) + :is(.chat-meta-duration, .chat-meta-model)::before {
-  content: "·"; margin-inline: var(--space-1) var(--space-2); color: var(--text-dim);
+  /* the row's gap is the space before the dot, this the space after: even on both sides */
+  content: "·"; margin-inline: 0 var(--space-2); color: var(--text-dim);
+}
+/* touch drops the row's gap (Copy's target reaches the next fact), so the dot carries both sides */
+@media (pointer: coarse) {
+  .chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-model) + :is(.chat-meta-duration, .chat-meta-model)::before { margin-inline: var(--space-2); }
 }
 /* each fact stays on one line: on a phone "09:05 AM" and "Worked for 1h 13m" broke in two and
    stacked beside each other (live crawl at 390 px, ZAC-228); the model's name is what gives way */
 .chat-agent-meta { align-self: stretch; min-width: 0; }
 .chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-btn) { flex: none; white-space: nowrap; }
-.chat-agent-meta .chat-meta-model { flex: 0 1 auto; overflow: hidden; }
+.chat-agent-meta { flex-wrap: wrap; row-gap: 0; }
+/* ...but never to nothing: on a phone "yesterday at 09:05 AM · Worked for 1h 13m" left the
+   model 0 px (live crawl at 390 px, ZAC-228), so it takes the next line instead */
+.chat-agent-meta .chat-meta-model { flex: 0 1 auto; min-width: min(9em, 100%); overflow: hidden; }
 .chat-agent-meta .chat-meta-model .agent-mark { flex: none; }
 
 /* an MCP call's server beside its tool (ZAC-228), and the captions of its opened input and output */

@@ -1431,8 +1431,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   model with its maker's mark (`.chat-meta-model`), dots between the three.
   A group head's icon says how it ended (check, `CircleX`); while it runs it is the sidebar's
   breathing `--status-working` dot (`.work-block-dot`, `sidebar-breathe`, in step through
-  `lib/breath.ts`), the one sign for "in progress" that the sidebar and a tab's dot share. A
-  spinner stays the subagent card's. An MCP call's row wears MCP's own mark (`McpIcon.tsx`,
+  `lib/breath.ts`), the one sign for "in progress" that the sidebar, a tab's dot and a running subagent's
+  row share (its old stepped spinner ratcheted like a gear, owner ZAC-228). An MCP call's row wears MCP's own mark (`McpIcon.tsx`,
   Simple Icons, CC0) and reads "Ran `tool` server". Three or more MCP calls in a row fold into
   one such line, "Ran 3 MCP tools lab-search" (its failures in red after it), that opens to each
   call; a call waiting for an answer is never folded into one.
@@ -2096,7 +2096,7 @@ The values are the ones in `src/styles.css`.
 | Breathe | `--dur-breathe` | `2400ms` | The sidebar's working dot: fades from full to opacity 0.35 over half the cycle and back over the other half, fourteen steps each way (about 12 a second); the old one held, dropped in a tenth of the cycle and held again, and read as blinking (ZAC-228); every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
 | Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
-| Spin easing | `--ease-spin` | `steps(8)` | Every endless spinner (palette, Send, usage refresh, subagent row) |
+| Spin easing | `--ease-spin` | `steps(8)` | Every endless spinner (palette, Send, usage refresh) |
 | Breathe easing | `--ease-breathe` | `steps(14)` | The sidebar's working dot |
 | Shimmer easing | `--ease-shimmer` | `steps(10, jump-none)` | The chat's "Working" shimmer |
 | Spring easing | `--ease-spring` | `cubic-bezier(0.32, 0.72, 0, 1)` | Voice recording pill enter (180ms, scale 0.96->1 + opacity, from the mic button) and exit (120ms); a phone's sheet rising and springing back |
