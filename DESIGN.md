@@ -2093,11 +2093,11 @@ The values are the ones in `src/styles.css`.
 | Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
 | Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting dots (trough opacity 0.35; text never pulses) |
 | Spin | `--dur-spin` | `1600ms` | One turn of a stepped spinner (the command palette's busy arc); the step count sets the frame rate |
-| Breathe | `--dur-breathe` | `2000ms` | The sidebar's working dot: full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
+| Breathe | `--dur-breathe` | `2400ms` | The sidebar's working dot: fades from full to opacity 0.35 over half the cycle and back over the other half, fourteen steps each way (about 12 a second); the old one held, dropped in a tenth of the cycle and held again, and read as blinking (ZAC-228); every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
 | Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
 | Spin easing | `--ease-spin` | `steps(8)` | Every endless spinner (palette, Send, usage refresh, subagent row) |
-| Breathe easing | `--ease-breathe` | `steps(6)` | The sidebar's working dot |
+| Breathe easing | `--ease-breathe` | `steps(14)` | The sidebar's working dot |
 | Shimmer easing | `--ease-shimmer` | `steps(10, jump-none)` | The chat's "Working" shimmer |
 | Spring easing | `--ease-spring` | `cubic-bezier(0.32, 0.72, 0, 1)` | Voice recording pill enter (180ms, scale 0.96->1 + opacity, from the mic button) and exit (120ms); a phone's sheet rising and springing back |
 | Sheet in | `--dur-sheet` | `360ms` | A phone's sheet rising, and springing back after a short drag |

@@ -124,11 +124,10 @@ export interface ComposerProps {
    * text), an "@" pick becomes one too, and Send hands the chips to `onSend`/`onPick` with the text.
    */
   attachAsChips?: boolean;
-  /** A host chat's messages waiting for the running turn: rows above the box under "Steering" and "Queued". */
-  pending?: { id: string; kind: "steering" | "queued"; text: string }[];
-  onRemovePending?: (id: string) => void;
-  /** a note under the pending rows (a steer that joined the one set: "Added to your steer") */
+  /** a note over the box after a send (a steer that joined the waiting one: "Added to your steer"); the waiting messages themselves are the transcript's (HostPendingRequests) */
   pendingNote?: string | null;
+  /** a strip tucked under the box's top edge, part of the composer (a host chat's todos) */
+  tray?: ReactNode;
   /** where the box's draft is kept, in place of the pane's (a host chat has no pane) */
   draftKey?: string;
   /** the words dictation listens for beside the agent's name (a host chat's agents) */
@@ -301,9 +300,8 @@ export function Composer({
   onAbort,
   onUploadImage,
   sendMenu,
-  pending,
-  onRemovePending,
   pendingNote = null,
+  tray,
   draftKey: hostDraftKey,
   keywords,
   hostMenus,
@@ -1170,7 +1168,6 @@ export function Composer({
     <div className={`composer${notices ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
       {greeting}
       {notices}
-      {pending && pending.length > 0 && <HostPending pending={pending} onRemove={onRemovePending} />}
       {pendingNote !== null && <p className="composer-note host-pending-note" role="status"><span className="composer-note-text">{pendingNote}</span></p>}
       {/* no Tab key on a phone: the suggestion can be a chip there that fills the box, when Settings asks for it */}
       {settings.suggestionChip && offered !== null && text === "" && (
@@ -1219,6 +1216,7 @@ export function Composer({
         </div>
       )}
 
+      {tray}
       <div
         ref={surfaceRef}
         className={`composer-surface${dragging ? " is-dragging" : ""}`}
@@ -1598,30 +1596,4 @@ export function Composer({
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
     </div>
   );
-}
-
-/** A host chat's messages waiting for its running turn, under VS Code's "Steering" and "Queued" dividers. */
-function HostPending({ pending, onRemove }: { pending: NonNullable<ComposerProps["pending"]>; onRemove?: (id: string) => void }) {
-  const t = useT();
-  // a tap on a row's text shows all of it, wrapped; another folds it back to one line
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
-  const toggle = (id: string): void => setOpen((current) => {
-    const next = new Set(current);
-    if (!next.delete(id)) next.add(id);
-    return next;
-  });
-  const groups = (["steering", "queued"] as const).map((kind) => ({ kind, rows: pending.filter((each) => each.kind === kind) })).filter((group) => group.rows.length > 0);
-  return <div className="host-pending" aria-label={t("Waiting messages")} role="group">
-    {groups.map((group) => <section key={group.kind} className="host-pending-group" data-kind={group.kind}>
-      <p className="host-pending-divider">{t(group.kind === "steering" ? "Steering" : "Queued")}</p>
-      <ul className="host-pending-list">
-        {group.rows.map((row) => <li key={row.id} className="host-pending-row" data-pending={row.id} data-open={open.has(row.id) || undefined}>
-          <button type="button" className="host-pending-text" aria-expanded={open.has(row.id)} onClick={() => toggle(row.id)}>{row.text}</button>
-          {onRemove && <button type="button" className="icon-button host-pending-remove" aria-label={t("Remove from Queue")} title={t("Remove from Queue")} onClick={() => onRemove(row.id)}>
-            <X aria-hidden="true" />
-          </button>}
-        </li>)}
-      </ul>
-    </section>)}
-  </div>;
 }

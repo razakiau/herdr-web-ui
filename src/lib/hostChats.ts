@@ -389,6 +389,11 @@ export async function removeHostPending(machineId: string, session: string, id: 
   await post(machineId, "host-chats/chat/pending/remove", { session, id });
 }
 
+/** VS Code's Send Immediately on a waiting message: the turn stops and the message starts the next one. */
+export async function sendHostPendingNow(machineId: string, session: string, id: string): Promise<void> {
+  await post(machineId, "host-chats/chat/pending/send_now", { session, id });
+}
+
 /**
  * The chat's pending pick once a read says what the chat used last: a pick the chat now uses is
  * let go (the pills then show the chat's own, the same values, and follow a change made in VS

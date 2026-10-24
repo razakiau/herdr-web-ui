@@ -1567,6 +1567,8 @@ export const JA: Record<string, string> = {
   "Steering": "誘導",
   "Queued": "キュー済み",
   "Remove from Queue": "キューから削除",
+  "Sent after the next tool call": "次のツール呼び出しの後に送信されます",
+  "Sent after the current request completes": "現在のリクエストの完了後に送信されます",
   "Waiting messages": "待機中のメッセージ",
   "Added to your steer": "誘導に追加しました",
   "Search models": "モデルを検索",

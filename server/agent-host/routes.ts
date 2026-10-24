@@ -271,6 +271,7 @@ const POSTS: Record<string, Handler> = {
   "chat/checkpoint/restore": restoreCheckpoint,
   "chat/checkpoint/redo": redoCheckpoint,
   "chat/pending/remove": removePending,
+  "chat/pending/send_now": sendPendingNow,
   "chat/background/stop": stopBackground,
   "chat/answer": answerQuestion,
   "chat/confirm": confirmTool,
@@ -1010,17 +1011,50 @@ async function redoCheckpoint(call: Call): Promise<Response> {
   return jsonResponse({ files: new Set(restored.undone.map(fileOf)).size });
 }
 
+/** The chat's pending message under `id`, and its kind; null when the chat holds none. */
+function pendingById(chat: ChatState, id: string): { kind: PendingMessageKind; message: Message } | null {
+  if (chat.steeringMessage?.id === id) return { kind: PendingMessageKind.Steering, message: chat.steeringMessage.message as Message };
+  // VS Code's host also lists its steer in the queue, as kind "steering", and removes by kind
+  const listed = (chat.queuedMessages ?? []).find((pending) => pending.id === id) as { kind?: string; message: Message } | undefined;
+  if (!listed) return null;
+  return { kind: listed.kind === "steering" ? PendingMessageKind.Steering : PendingMessageKind.Queued, message: listed.message };
+}
+
 async function removePending(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const id = call.body["id"];
   if (!text(id) || id === "") return badRequest("missing_id", "id is required");
   const { channel, chat } = await watched(call, session);
-  // VS Code's host also lists its steer in the queue, as kind "steering", and removes by kind
-  const listed = (chat.queuedMessages ?? []).find((pending) => pending.id === id) as { kind?: string } | undefined;
-  const kind = chat.steeringMessage?.id === id || listed?.kind === "steering" ? PendingMessageKind.Steering
-    : listed ? PendingMessageKind.Queued : null;
-  if (kind === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
-  call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind, id } as StateAction);
+  const held = pendingById(chat, id);
+  if (held === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
+  call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind: held.kind, id } as StateAction);
+  return jsonResponse({ ok: true });
+}
+
+/**
+ * VS Code's Send Immediately on a waiting message (chatServiceImpl sendPendingRequestImmediately,
+ * server-managed queue): take it off first, so the host does not also send it as the turn ends,
+ * cancel the running turn, then start a turn with it under its own id. A turn that does not end in
+ * time puts it back as it was, so a refused send loses nothing.
+ */
+async function sendPendingNow(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const id = call.body["id"];
+  if (!text(id) || id === "") return badRequest("missing_id", "id is required");
+  const { channel, chat } = await watched(call, session);
+  const held = pendingById(chat, id);
+  if (held === null) return conflictResponse("pending_gone", "the chat no longer holds that message");
+  call.host.dispatch(channel, { type: ActionType.ChatPendingMessageRemoved, kind: held.kind, id } as StateAction);
+  if (chat.activeTurn !== undefined) {
+    call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+    await ended(call, session);
+  }
+  const now = call.host.chat(session);
+  if (!now || now.activeTurn !== undefined) {
+    call.host.dispatch(channel, { type: ActionType.ChatPendingMessageSet, kind: held.kind, id, message: held.message } as StateAction);
+    return conflictResponse("turn_still_running", "the turn did not stop in time: the message waits as it was");
+  }
+  send(call.host, session, channel, now, held.message, id);
   return jsonResponse({ ok: true });
 }
 

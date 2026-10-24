@@ -5,7 +5,7 @@ import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { chatAge } from "./hostChats.ts";
-import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
+import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, sendHostPendingNow, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -127,9 +127,11 @@ describe("the phone's model and agent choice", () => {
     calls = record(200, { ok: true });
     await stopHost("desk", "s1");
     await removeHostPending("desk", "s1", "p1");
+    await sendHostPendingNow("desk", "s1", "p2");
     expect(calls).toEqual([
       { url: "/api/machines/desk/host-chats/chat/stop", body: { session: "s1" } },
       { url: "/api/machines/desk/host-chats/chat/pending/remove", body: { session: "s1", id: "p1" } },
+      { url: "/api/machines/desk/host-chats/chat/pending/send_now", body: { session: "s1", id: "p2" } },
     ]);
   });
 

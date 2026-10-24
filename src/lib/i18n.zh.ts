@@ -1569,6 +1569,8 @@ export const ZH: Record<string, string> = {
   "Steering": "引导中",
   "Queued": "已排队",
   "Remove from Queue": "从队列中移除",
+  "Sent after the next tool call": "将在下一次工具调用后发送",
+  "Sent after the current request completes": "将在当前请求完成后发送",
   "Waiting messages": "等待中的消息",
   "Added to your steer": "已添加到你的引导",
   "Search models": "搜索模型",

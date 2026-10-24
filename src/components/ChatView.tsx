@@ -204,6 +204,8 @@ export interface ChatViewProps {
   checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void; /** VS Code's Fork Conversation at a request (never the first) */ onFork?(turn: string): void;
     /** an answer's "View" on its changes line: the chat's diff sheet cut to these paths (ZAC-228) */ onViewChanges?(paths: string[]): void;
     /** the paths the chat's changeset holds now: View shows only for an answer with one of them (null: none) */ changedPaths?: ReadonlySet<string> | null } | null;
+  /** drawn after the last turn, in the transcript (a host chat's waiting messages, VS Code's pending requests) */
+  tail?: ReactNode;
 }
 
 interface ChatState {
@@ -1380,7 +1382,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, revealSubagent, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, source, label, active = true, visible: paneVisible = true, pageScroll, revealSubagent, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, checkpoints = null, tail = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -2179,6 +2181,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
           : <PendingWorkHead className="chat-activity" title={activity === "thinking" ? t("Thinking…") : t("Working…")} />)}
       {loaded && empty && error === null && prompt === null && activity === "idle" && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
+      {tail}
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;

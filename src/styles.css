@@ -206,8 +206,8 @@
   /* one turn of a stepped spinner: it draws its steps and nothing else, so the step count is
      the frame rate and this only sets how fast it looks */
   --dur-spin: 1600ms;
-  /* one breath of the sidebar's working dot: held full, dimmed, held, back (Sidebar.css) */
-  --dur-breathe: 2000ms;
+  /* one breath of the sidebar's working dot: dims for half, brightens for half (Sidebar.css) */
+  --dur-breathe: 2400ms;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
   /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
@@ -215,10 +215,11 @@
      video playing beside the app; two steps draw about one frame a second */
   --ease-pulse: steps(2, jump-none);
   /* the other endless easings, stepped for the same reason: a spinner's eight steps per turn
-     are its frame rate, the sidebar's breath has six, the "Working" shimmer ten. Every endless
+     are its frame rate, the sidebar's breath fourteen per half (about 12 a second, small enough
+     steps of opacity to read as a fade, not a blink), the "Working" shimmer ten. Every endless
      animation takes one of these four, so Smooth animations (below) reaches all of them */
   --ease-spin: steps(8);
-  --ease-breathe: steps(6);
+  --ease-breathe: steps(14);
   --ease-shimmer: steps(10, jump-none);
   /* a phone's sheet rises on the spring and drops faster than it rose */
   --dur-sheet: 360ms;

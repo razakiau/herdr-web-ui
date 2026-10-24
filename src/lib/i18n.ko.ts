@@ -1565,6 +1565,8 @@ export const KO: Record<string, string> = {
   "Steering": "방향 지정",
   "Queued": "대기 중",
   "Remove from Queue": "대기열에서 제거",
+  "Sent after the next tool call": "다음 도구 호출 후에 보냅니다",
+  "Sent after the current request completes": "현재 요청이 끝난 후에 보냅니다",
   "Waiting messages": "대기 중인 메시지",
   "Added to your steer": "방향 지정에 추가됨",
   "Search models": "모델 검색",

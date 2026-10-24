@@ -24,7 +24,7 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending,
+  agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
 import { settingsTone, type HostSendPick } from "../lib/compose.ts";
@@ -34,6 +34,7 @@ import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
+import { HostPendingRequests } from "./HostPendingRequests.tsx";
 import type { SubagentTarget } from "./SubagentRow.tsx";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
@@ -283,6 +284,14 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const restoredTurn = chat?.restored?.turn ?? null;
   const [showChanges, setShowChanges] = useState<{ paths: string[]; at: number } | null>(null);
   const [changedPaths, setChangedPaths] = useState<ReadonlySet<string> | null>(null);
+  // VS Code's pending requests, at the transcript's end (ChatView is memoized: the element is kept
+  // while the waiting messages are the same, so a parent render does not redraw the chat)
+  const pendingKey = JSON.stringify(chat?.pending ?? []);
+  const pendingTail = useMemo(() => <HostPendingRequests pending={JSON.parse(pendingKey) as HostChatRead["pending"]}
+    onSendNow={async (id) => { try { await sendHostPendingNow(machineId, session, id); setSent((key) => key + 1); return null; } catch (cause) { return sendErrorText(cause, t); } finally { reread(); } }}
+    onEdit={(row) => { void removeHostPending(machineId, session, row.id).then(() => { if (mounted.current) setPutBack(row.text); }, () => undefined).finally(reread); }}
+    onRemove={(id) => { void removeHostPending(machineId, session, id).finally(reread); }} />,
+  [machineId, pendingKey, session, t]);
   const checkpoints = useMemo(() => checkpointList === null ? null
     : { list: checkpointList, restored: restoredTurn, onPick: (turn: string) => setRestoring(turn), ...(onOpenChat ? { onFork: fork } : {}),
       changedPaths, onViewChanges: (paths: string[]) => setShowChanges({ paths, at: Date.now() }) }, [checkpointList, restoredTurn, onOpenChat, fork, changedPaths]);
@@ -326,7 +335,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
       <OpenFileContext.Provider value={onOpenFile ?? null}>
         <ChatView paneId="" source={source} label={label} refreshKey={refresh} sentKey={sent} revealSubagent={revealSubagent}
-          connected ended={false} agent="copilot" agentStatus={status} checkpoints={checkpoints} />
+          connected ended={false} agent="copilot" agentStatus={status} checkpoints={checkpoints}
+          tail={pendingTail} />
       </OpenFileContext.Provider>
     </div>
     <div className="prompt-dock" aria-live="polite">
@@ -350,7 +360,6 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       await redoHostCheckpoint(machineId, session);
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
-    <HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />
     {/* the pills stay while a question or approval is up: what the session made is often what the question is about */}
     <HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
@@ -361,7 +370,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
-      pending={chat?.pending ?? []} onRemovePending={(id) => { void removeHostPending(machineId, session, id).finally(reread); }}
+      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}
       pendingNote={joined ? t("Added to your steer") : null}
       onSend={(text, _clear, _anyway, attached) => sendAs("send", text, attached)}
       attachMenu={setAttaching}

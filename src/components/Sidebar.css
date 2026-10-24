@@ -566,12 +566,13 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }
 
+/* one slow breath across the whole cycle: out for half, in for half. The old one held full, dropped
+   to half in a tenth of the cycle, held, and jumped back, which read as a light blinking on and off
+   (owner, ZAC-228) */
 @keyframes sidebar-breathe {
   0%,
-  40% { opacity: 1; }
-  50%,
-  90% { opacity: 0.5; }
   100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* background tasks still running, and a pane's plan: a number beside the state, quieter than it */

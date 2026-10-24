@@ -238,6 +238,8 @@ const patch = `(() => {
       if (path === "/api/host-chats/chat/checkpoint/redo") { const files = state.restored?.files ?? 0; state.restored = null; return json({ files }); }
       if (path === "/api/host-chats/chat/stop") { state.stopped += 1; state.busy = false; return json({ ok: true }); }
       if (path === "/api/host-chats/chat/pending/remove") { state.pending = state.pending.filter((each) => each.id !== body.id); return json({ ok: true }); }
+      // VS Code's Send Immediately: the message leaves the queue and the turn it starts is the chat's
+      if (path === "/api/host-chats/chat/pending/send_now") { state.pending = state.pending.filter((each) => each.id !== body.id); return json({ ok: true }); }
       // the row and tab menus' actions: the host has them, and says so on its next list
       const action = { "/api/host-chats/chat/rename": "rename", "/api/host-chats/chat/read": "read", "/api/host-chats/chat/archive": "archive", "/api/host-chats/chat/delete": "delete" }[path];
       if (action) {
@@ -1306,29 +1308,23 @@ try {
         const caretGap = await view.evaluate((root) => Math.round(root.querySelector(".composer-send-menu")!.getBoundingClientRect().left - root.querySelector(".composer-send")!.getBoundingClientRect().right));
         assert.ok(caretGap <= 2, `the send menu's caret sits against Send (${caretGap} px)`);
         await view.getByRole("button", { name: "Send message" }).click();
-        const steering = view.locator('.host-pending-group[data-kind="steering"]');
-        await steering.locator(".host-pending-divider", { hasText: "Steering" }).waitFor();
-        await steering.locator(".host-pending-row", { hasText: "FICTIONAL steer one" }).waitFor();
+        // VS Code's pending requests: greyed messages at the transcript's end, under their divider
+        const steering = view.locator('.pending-requests-group[data-kind="steering"]');
+        await steering.locator(".pending-requests-divider", { hasText: "Steering" }).waitFor();
+        await steering.locator(".pending-request", { hasText: "FICTIONAL steer one" }).waitFor();
+        assert.ok(await steering.evaluate((group) => !!group.closest('[role="log"]')), "in the transcript, not over the box");
+        const dim = Number(await steering.locator(".pending-request-bubble").first().evaluate((node) => getComputedStyle(node).opacity));
+        assert.ok(dim < 0.9, `muted until it is sent (${dim})`);
         assert.equal(await box.inputValue(), "", "a steer leaves the box");
         const steered = await posts("/api/machines/remote/host-chats/chat/send");
         assert.deepEqual(bare(steered.at(-1)), { session: SESSION, text: "FICTIONAL steer one", mode: "steer", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Send on a busy chat steers, with the pills' model and agent");
-        console.log("PASS a send while busy steers by default, and the Steering row shows");
+        console.log("PASS a send while busy steers by default, and shows greyed under Steering in the transcript");
         await box.fill("FICTIONAL steer two");
         await box.press("Enter");
         await view.locator(".host-pending-note", { hasText: "Added to your steer" }).waitFor();
-        assert.equal(await steering.locator(".host-pending-row").count(), 1, "one steering row");
-        assert.match(await steering.locator(".host-pending-text").textContent() ?? "", /FICTIONAL steer one\s+FICTIONAL steer two/, "holding both texts in order");
-        console.log("PASS a second steer says it was added to your steer, one row holding both");
-        // the row is one line; a tap shows the whole message, wrapped, and another folds it back
-        const steerText = steering.locator(".host-pending-text");
-        const lines = () => steerText.evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight || "20")));
-        assert.equal(await lines(), 1, "a waiting row is one line");
-        await steerText.click();
-        assert.equal(await steerText.getAttribute("aria-expanded"), "true", "a tap opens it");
-        assert.ok(await lines() >= 2, "open, it shows both steers, one per line");
-        await steerText.click();
-        assert.equal(await lines(), 1, "a second tap folds it back");
-        console.log("PASS a tap on a waiting row shows its whole message");
+        assert.equal(await steering.locator(".pending-request").count(), 1, "one steering message");
+        assert.match(await steering.locator(".pending-request-bubble").textContent() ?? "", /FICTIONAL steer one\s+FICTIONAL steer two/, "holding both texts in order");
+        console.log("PASS a second steer says it was added to your steer, one message holding both");
         await box.fill("FICTIONAL later");
         await view.locator(".composer-send-menu").click();
         // at 390 px the menu is the app's bottom sheet (RowMenu)
@@ -1339,19 +1335,29 @@ try {
         await fits("the open send menu");
         if (shots) await page.screenshot({ path: join(shots, "task-8-send-menu-390.png") });
         await menu.getByRole("button", { name: "Add to Queue" }).click();
-        const queuedRows = view.locator('.host-pending-group[data-kind="queued"]');
-        await queuedRows.locator(".host-pending-row", { hasText: "FICTIONAL later" }).waitFor();
-        await queuedRows.locator(".host-pending-divider", { hasText: "Queued" }).waitFor();
+        const queuedRows = view.locator('.pending-requests-group[data-kind="queued"]');
+        await queuedRows.locator(".pending-request", { hasText: "FICTIONAL later" }).waitFor();
+        await queuedRows.locator(".pending-requests-divider", { hasText: "Queued" }).waitFor();
         assert.equal((await modelPill.locator(".host-chat-pill-aside").textContent())?.trim(), "High", "the pills still show model-b · high after the send");
         assert.match(await view.locator(".host-chat-settings").getAttribute("aria-label") ?? "", /Report$/, "and Report");
         assert.deepEqual(bare((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)), { session: SESSION, text: "FICTIONAL later", mode: "queue", model: { id: "fictional/model-b", effort: "high" }, agent: REPORT }, "Add to Queue posts mode queue with the pills' model and agent");
         await menu.waitFor({ state: "detached" });
+        await queuedRows.locator(".pending-request").scrollIntoViewIfNeeded();
+        await fits("the waiting messages");
         if (shots) await page.screenshot({ path: join(shots, "task-8-pending-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" });
-        console.log("PASS Add to Queue adds a Queued row");
-        await queuedRows.getByRole("button", { name: "Remove from Queue" }).click();
+        console.log("PASS Add to Queue shows greyed under Queued");
+        // Edit takes it back into the box, off the queue
+        await queuedRows.getByRole("button", { name: /^Edit: FICTIONAL later/ }).click();
         await queuedRows.waitFor({ state: "detached" });
-        assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/pending/remove")).map((post) => post.body["session"]), [SESSION], "the row's remove posts once");
-        console.log("PASS a pending row's remove takes it off");
+        assert.equal(await box.inputValue(), "FICTIONAL later", "Edit puts the words back in the box");
+        assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/pending/remove")).map((post) => post.body["session"]), [SESSION], "Edit takes it off the queue once");
+        await box.fill("");
+        console.log("PASS Edit on a waiting message moves it back into the box");
+        // Send now: VS Code's Send Immediately, the turn stops and the message goes as the next one
+        await steering.getByRole("button", { name: /^Send now: FICTIONAL steer one/ }).click();
+        await steering.waitFor({ state: "detached" });
+        assert.deepEqual((await posts("/api/machines/remote/host-chats/chat/pending/send_now")).map((post) => post.body["session"]), [SESSION], "Send now posts once");
+        console.log("PASS Send now on a waiting message sends it at once");
 
         // 5a. background work while busy: VS Code's words, then the meter's breakdown
         await page.evaluate(() => {
@@ -1517,9 +1523,17 @@ try {
         await todoBar.waitFor();
         assert.equal((await todoBar.locator(".todo-bar-title").innerText()).trim(), "Todos 3/7", "done of all");
         assert.equal((await todoBar.locator(".todo-bar-current").innerText()).trim(), "FICTIONAL step 4", "the step in progress, before an earlier pending one");
-        assert.ok(await todoBar.evaluate((bar) => bar.compareDocumentPosition(document.querySelector(".session-pills")!) & Node.DOCUMENT_POSITION_FOLLOWING), "above the pills");
+        // part of the composer (owner, ZAC-228): a tab right before the box, its lower edge under it
+        const tucked = await todoBar.evaluate((bar) => {
+          const box = bar.nextElementSibling as HTMLElement | null;
+          if (!bar.parentElement?.classList.contains("composer") || !box?.classList.contains("composer-surface")) return "not in the composer, before the box";
+          const b = bar.getBoundingClientRect(), s = box.getBoundingClientRect();
+          return b.bottom > s.top && b.left > s.left && b.right < s.right ? "tucked" : `edges ${Math.round(b.left)}-${Math.round(b.right)}/${Math.round(b.bottom)} vs box ${Math.round(s.left)}-${Math.round(s.right)}/${Math.round(s.top)}`;
+        });
+        assert.equal(tucked, "tucked", "the todos are a tab under the box's top edge");
         const fill = await todoBar.locator(".todo-bar-fill").evaluate((node) => Math.round(node.getBoundingClientRect().width / node.parentElement!.getBoundingClientRect().width * 100));
-        assert.ok(Math.abs(fill - 43) <= 1, `the line is 3/7 along (${fill}%)`);
+        assert.ok(Math.abs(fill - 43) <= 3, `the meter is 3/7 along (${fill}%)`);
+        if (shots) await page.screenshot({ path: join(shots, "zac228-todos-folded-390.png") });
         await todoBar.locator(".todo-bar-head").click();
         await todoBar.locator(".todo-bar-row").nth(6).waitFor();
         assert.equal(await todoBar.locator(".todo-bar-row").count(), 7, "open, every todo");
@@ -1529,7 +1543,7 @@ try {
         await todoBar.locator(".todo-bar-head").click();
         await page.evaluate(() => { const host = window as unknown as { hostState: { todos: unknown }; rereadHost(): void }; host.hostState.todos = undefined; host.rereadHost(); });
         await todoBar.waitFor({ state: "detached" });
-        console.log("PASS the session's todo list sits above the pills: done of all, the step in progress, and the list on a tap");
+        console.log("PASS the session's todo list is a tab under the composer's edge: done of all, the step in progress, and the list on a tap");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
         const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;

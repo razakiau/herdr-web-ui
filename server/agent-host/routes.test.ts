@@ -1213,6 +1213,35 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
   });
 
+  it("pending/send_now: takes the message off, stops the turn and starts one with it; the rest stay queued", async () => {
+    const steer = { id: uuid(47), message: user("FICTIONAL steer now") };
+    const other = { id: uuid(48), message: user("FICTIONAL later") };
+    const r = await busy({ steeringMessage: steer, queuedMessages: [other] });
+    expect(await call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(47) })).toEqual({ status: 200, json: { ok: true } });
+    expect(only(r.fake, "chat/pendingMessageRemoved")).toMatchObject({ kind: "steering", id: uuid(47) });
+    expect(only(r.fake, "chat/turnCancelled")).toMatchObject({ turnId: "turn-live" });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === uuid(47));
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ turnId: uuid(47), message: { text: "FICTIONAL steer now" } });
+    expect(r.conn.chat(sessionUri(1))?.queuedMessages).toEqual([other] as unknown as NonNullable<ChatState["queuedMessages"]>);
+    const gone = await call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(49) });
+    expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
+  });
+
+  it("pending/send_now puts the message back, as it was, when the turn does not stop", async () => {
+    const queued = { id: uuid(50), message: user("FICTIONAL keep me") };
+    const r = await busy({ queuedMessages: [queued] });
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => { if (action.type !== "chat/turnCancelled") dispatch(channel, action); };
+    const pending = call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(50) });
+    await until("the removal", () => actions(r.fake, "chat/pendingMessageRemoved").length === 1);
+    r.clock.advance(STOP_AND_SEND_WAIT_MS);
+    const answer = await pending;
+    expect({ status: answer.status, code: answer.json.error.code }).toEqual({ status: 409, code: "turn_still_running" });
+    await until("put back", () => actions(r.fake, "chat/pendingMessageSet").length === 1);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "queued", id: uuid(50), message: { text: "FICTIONAL keep me" } });
+    expect(actions(r.fake, "chat/turnStarted").length).toBe(0);
+  });
+
   it("pending/remove takes off a steer the host lists only in its queue, as a steer", async () => {
     const r = await busy({ queuedMessages: [{ id: uuid(46), kind: "steering", message: user("FICTIONAL steer") }] });
     expect(await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(46) })).toEqual({ status: 200, json: { ok: true } });

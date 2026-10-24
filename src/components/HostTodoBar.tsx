@@ -14,8 +14,9 @@ export function currentTodo(todos: readonly HostTodo[]): HostTodo | null {
 }
 
 /**
- * VS Code's todo list above the input (chat.todoListWidget): closed, how many are done, the task
- * the agent is on and a progress line; open, every todo with its state. Gone when there is none,
+ * VS Code's todo list above the input (chat.todoListWidget), drawn as a tab tucked under the
+ * composer's top edge (the Composer's `tray`) so it reads as part of it: closed, how many are done,
+ * a short meter and the task the agent is on; open, every todo with its state. Gone when there is none,
  * and once all are done and the chat is idle.
  */
 export function HostTodoBar({ todos, busy, defaultOpen = false }: { todos: readonly HostTodo[] | undefined; busy: boolean; defaultOpen?: boolean }) {
@@ -31,12 +32,12 @@ export function HostTodoBar({ todos, busy, defaultOpen = false }: { todos: reado
     <button type="button" className="todo-bar-head" aria-expanded={open} onClick={() => setOpen(!open)}>
       <ListChecks className="todo-bar-icon" aria-hidden="true" />
       <span className="todo-bar-title">{t("Todos {done}/{total}", { done, total: todos.length })}</span>
+      <span className="todo-bar-track" role="progressbar" aria-valuemin={0} aria-valuemax={todos.length} aria-valuenow={done}>
+        <span className="todo-bar-fill" style={{ width: share }} />
+      </span>
       {current !== null && <span className="todo-bar-current">{current.title}</span>}
       <ChevronDown className="todo-bar-caret" aria-hidden="true" />
     </button>
-    <div className="todo-bar-track" role="progressbar" aria-valuemin={0} aria-valuemax={todos.length} aria-valuenow={done}>
-      <div className="todo-bar-fill" style={{ width: share }} />
-    </div>
     <AnimatedHeight open={open}>
       {open && <ol className="todo-bar-list">
         {todos.map((todo) => {
