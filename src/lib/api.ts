@@ -110,7 +110,10 @@ export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteSta
  */
 let prices: Promise<ModelPrices | null> | null = null;
 export function fetchModelPrices(): Promise<ModelPrices | null> {
-  prices ??= getJson<{ prices: ModelPrices | null }>("/api/usage/omniroute/pricing").then((answer) => answer.prices, () => { prices = null; return null; });
+  // a table is kept for the page; no table (no gateway yet, or the server's read failed) is asked again
+  prices ??= getJson<{ prices: ModelPrices | null }>("/api/usage/omniroute/pricing").then(
+    (answer) => { if (!answer.prices) prices = null; return answer.prices; },
+    () => { prices = null; return null; });
   return prices;
 }
 

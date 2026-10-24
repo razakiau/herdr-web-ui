@@ -944,8 +944,9 @@ const KIND_LABEL: Record<string, string> = {
 /**
  * VS Code's breakdown of the attribution's entries (contextAttributionToPromptTokenDetails): a
  * `system` entry is its own row unless it is a parent (its children are summed instead), every
- * other kind is summed into one row, and what no entry covers is "Messages". Each row is a whole
- * percent of the prompt, rows under 1% left out, as VS Code rounds them.
+ * other kind is summed into one row, and what no entry covers is "Messages". Each row is a percent
+ * of the prompt to one decimal, rows under 0.1% left out: whole percents (VS Code's rounding) could
+ * add to more than 100 and leave the popup no room for its "Other" row.
  */
 function attributedParts(attribution: Record<string, unknown>, total: number): NonNullable<HostContextUsage["parts"]> {
   const raw = Array.isArray(attribution["entries"]) ? attribution["entries"] : [];
@@ -958,7 +959,7 @@ function attributedParts(attribution: Record<string, unknown>, total: number): N
   });
   if (total <= 0 || entries.length === 0) return [];
   const parents = new Set(entries.flatMap((entry) => entry.parent ? [entry.parent] : []));
-  const share = (tokens: number): number => Math.round((tokens / total) * 100);
+  const share = (tokens: number): number => Math.round((tokens / total) * 1000) / 10;
   const rows: NonNullable<HostContextUsage["parts"]> = [];
   const kinds = new Map<string, number>();
   let accounted = 0;

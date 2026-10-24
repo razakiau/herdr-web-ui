@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from "bun:test";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry.ts";
-import { AttachmentTooLargeError, ApiError, changeTelemetry, fetchTelemetry, uploadPaneImage } from "./api.ts";
+import { AttachmentTooLargeError, ApiError, changeTelemetry, fetchModelPrices, fetchTelemetry, uploadPaneImage } from "./api.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "./settings.ts";
 
 const realFetch = globalThis.fetch;
@@ -84,4 +84,15 @@ it("treats a missing telemetry route as unavailable for reads and an API error f
   const error = await changeTelemetry({ enabled: true }).catch((failure: unknown) => failure);
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({ status: 404, code: "not_found" });
+});
+
+it("asks for OmniRoute's prices again after an answer with none, and keeps a table once it has one (ZAC-224)", async () => {
+  // no gateway yet, or the server's last read failed: {prices: null}, which a later open must ask again
+  const answers: unknown[] = [{ prices: null }, { prices: { cc: { "fictional-opus": { input: 4, output: 20 } } } }];
+  let asked = 0;
+  globalThis.fetch = (async () => { asked += 1; return Response.json(answers.shift() ?? { prices: null }); }) as unknown as typeof fetch;
+  expect(await fetchModelPrices()).toBeNull();
+  expect(await fetchModelPrices()).toEqual({ cc: { "fictional-opus": { input: 4, output: 20 } } });
+  expect(await fetchModelPrices()).toEqual({ cc: { "fictional-opus": { input: 4, output: 20 } } });
+  expect(asked).toBe(2);
 });

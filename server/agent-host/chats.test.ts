@@ -558,16 +558,21 @@ describe("what a host chat waits on, and its context", () => {
       { category: "system", label: "System prompt", share: 25 },
       { category: "system", label: "Tool Definitions", share: 35 },
       { category: "user", label: "Tool Results", share: 10 },
-      // 0.3%: under VS Code's whole-percent rounding, left out
-      { category: "user", label: "Messages", share: 30 },
+      { category: "user", label: "MCP Tools", share: 0.3 },
+      { category: "user", label: "Messages", share: 29.7 },
     ]);
+    // shares to one decimal, never whole percents: three thirds rounded up would add to more than the
+    // prompt and leave no room for the rest
+    const thirds = [1, 2, 3].map((n) => ({ kind: "system", id: `s${n}`, label: `FICTIONAL ${n}`, tokens: 33340 }));
+    const rounded = readFrom("s", "t", chat({ turns: [{ ...turn, usage: { ...turn.usage, _meta: { contextAttribution: { ...attribution, entries: thirds } } } }] }), ctx(undefined)).context!.parts!;
+    expect(rounded.map((part) => part.share)).toEqual([33.3, 33.3, 33.3]);
     // no model budget known: the host's own buffer is the reserved band
     expect(read.reservedTokens).toBe(20000);
     // with the model's answer budget, VS Code's band: the budget less what the turn wrote
     const metered = { ...turn, message: { ...turn.message, model: { id: "fictional-opus" } }, usage: { inputTokens: 90000, outputTokens: 4000, _meta: { contextAttribution: attribution } } };
     const budgets = { ...ctx(undefined), modelWindow: () => 528000, modelOutput: (id: string) => (id === "fictional-opus" ? 64000 : null) };
     const withBudget = readFrom("s", "t", chat({ turns: [metered] }), budgets).context!;
-    expect({ reserved: withBudget.reservedTokens, parts: withBudget.parts?.length }).toEqual({ reserved: 60000, parts: 4 });
+    expect({ reserved: withBudget.reservedTokens, parts: withBudget.parts?.length }).toEqual({ reserved: 60000, parts: 5 });
   });
 
   it("sums the tokens each loaded turn spent by model, and says when that is only part of the chat", () => {
