@@ -749,7 +749,7 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
  * icon when a call failed, and on its quiet right the edits' lines and how long it worked. The
  * pictures the tools returned and the calls VS Code never folds (MCP, mermaid) sit after it.
  */
-function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, stateKey = "work", offset = 0 }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; stateKey?: string; offset?: number }) {
+function VscodeWorkBlockView({ paneId, parts, live, waiting, defaultOpen, stateKey = "work", offset = 0 }: { paneId: string; parts: ConversationPart[]; live: boolean; waiting: boolean; defaultOpen: boolean; stateKey?: string; offset?: number }) {
   const t = useT();
   const [chosenOpen, setOpen] = useChatRowToggle(stateKey, null);
   const open = chosenOpen ?? defaultOpen;
@@ -772,7 +772,6 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
         <span className="work-block-title">{space < 0 || live ? heading : <>{heading.slice(0, space)}<span className="work-title-detail">{heading.slice(space)}</span></>}</span>
         <span className="work-block-meta">
           {(added > 0 || removed > 0) && <span className="work-block-lines"><span className="chat-diff-add">+{added}</span> <span className="chat-diff-del">−{removed}</span></span>}
-          {!live && duration !== null && <span className="work-block-time">{t("Worked for {duration}", { duration })}</span>}
         </span>
         <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
       </button>
@@ -795,7 +794,7 @@ function VscodeWorkBlockView({ paneId, parts, duration, live, waiting, defaultOp
  * sentence ("Ran 2 commands"). The last group carries the turn's state (Working…, Needs you), its
  * time and the open fold; the earlier ones are done and closed. Row memory keys stay per part.
  */
-function VscodeWork({ paneId, work, all, duration, live, waiting, defaultOpen, skills }: { paneId: string; work: ConversationPart[]; all: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; skills: SkillMatcher | null }) {
+function VscodeWork({ paneId, work, all, live, waiting, answered, skills }: { paneId: string; work: ConversationPart[]; all: ConversationPart[]; live: boolean; waiting: boolean; answered: boolean; skills: SkillMatcher | null }) {
   const segments = useMemo(() => {
     const out: ({ kind: "words"; text: string; at: number } | { kind: "own"; part: Extract<ConversationPart, { kind: "subagent" | "question" | "notice" }>; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
     work.forEach((part, at) => {
@@ -816,8 +815,16 @@ function VscodeWork({ paneId, work, all, duration, live, waiting, defaultOpen, s
         : segment.part.kind === "notice" ? <SystemNotice key={`notice:${all.indexOf(segment.part)}`} notice={segment.part} memoryKey={`notice:${all.indexOf(segment.part)}`} />
         : <QuestionSummary key={`question:${all.indexOf(segment.part)}`} part={segment.part} memoryKey={`question:${all.indexOf(segment.part)}`} attached={<AnswerImages paneId={paneId} part={segment.part} />} />
     : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
-      duration={index === lastGroup ? duration : null} live={live && index === lastGroup} waiting={waiting && index === lastGroup}
-      defaultOpen={index === lastGroup && defaultOpen} />)}</>;
+      live={live && index === lastGroup} waiting={waiting && index === lastGroup}
+      defaultOpen={groupStartsOpen(index === lastGroup, live, answered || segments.slice(index + 1).some((next) => next.kind === "words"))} />)}</>;
+}
+
+/**
+ * Whether a tool group starts open (ZAC-228, VS Code's): only the live turn's last group, and only
+ * until the agent writes after it. The reader's own open or close wins over this (`useChatRowToggle`).
+ */
+export function groupStartsOpen(last: boolean, live: boolean, textAfter: boolean): boolean {
+  return last && live && !textAfter;
 }
 
 /** Skill evidence stays visible even when the surrounding work block is folded. */
@@ -1160,6 +1167,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
   const answerAt = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
   const inWork = (part: ConversationPart): boolean => isSystemNotice(part) && (answerAt < 0 || turn.parts.indexOf(part) < answerAt);
   const vscodeWork = style === "vscode" ? turn.parts.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question" || inWork(part)) : work;
+  const worked = style === "vscode" && !live && vscodeWork.length > 0 ? formatWorkDuration(turn.ts, turn.end_ts ?? null) : null;
   const ownRows = style !== "vscode" ? turn.parts.flatMap((part, index) =>
     part.kind === "subagent" ? [<TurnSubagent key={`subagent:${index}`} part={part} live={live} />]
       : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} attached={<AnswerImages paneId={paneId} part={part} />} />]
@@ -1176,18 +1184,20 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {style === "vscode"
-      ? vscodeWork.length > 0 ? <VscodeWork paneId={paneId} work={vscodeWork} all={turn.parts} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} skills={skills} />
+      ? vscodeWork.length > 0 ? <VscodeWork paneId={paneId} work={vscodeWork} all={turn.parts} live={live} waiting={waiting} answered={answer.length > 0} skills={skills} />
         : live && answer.length === 0 && <PendingWorkHead title={waiting ? t("Needs you") : t("Working…")} />
       : (work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} pendingHead={answer.length === 0} />}
     {ownRows}
     {noticeRows(true)}
     {answer.map((part, index) => style === "vscode" ? <Markdown key={index} skills={skills} style="vscode">{part.text}</Markdown> : <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
     {noticeRows(false)}
-    {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
+    {(answerText.length > 0 || (worked !== null && vscodeWork.length > 0)) && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
-      <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
-      <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")} onResult={copied}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>
+      {answerText.length > 0 && <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>}
+      {answerText.length > 0 && <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")} onResult={copied}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>}
       {time}
+      {/* how long it worked, once for the turn (VS Code's groups carry none) */}
+      {worked !== null && <span className="chat-meta-duration">{t("Worked for {duration}", { duration: worked })}</span>}
     </div>}
     {copyError}
   </article>;

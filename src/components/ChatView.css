@@ -2218,3 +2218,6 @@ button.question-summary-answer { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .subagent-row.is-revealed { animation: none; outline: var(--hairline) solid var(--accent); }
 }
+
+/* how long a host turn worked, once in its footer (ZAC-228): VS Code's groups carry no time */
+.chat-meta-duration { font-variant-numeric: tabular-nums; }

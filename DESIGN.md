@@ -1411,6 +1411,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   narrowest phone the title wraps to a second line instead.
 - An OmO or omp `task` row opens to the tasks it starts (`.chat-task-calls`): each summary in
   `--text`, the agent as a hairline mono pill, the prompt in the bounded mono input box.
+- A host chat (`is-vscode`, ZAC-228) folds the way VS Code does: one group per run of tools
+  between the agent's words, and only the running turn's last group is open, until the agent
+  writes after it. A settled turn's groups are all folded, whatever text they hold, because the
+  words stand outside them. No group head carries a time: the turn's footer says once
+  "Worked for 7s" (`.chat-meta-duration`) after the copy buttons and the time of day.
 
 ### Plan (`.bg-tasks-plan`, `.bg-step`, `.plan-count`)
 - A pane's plan has no control of its own: it shares the composer's background-task chip

@@ -484,7 +484,9 @@ try {
         assert.equal(await agentTurn.locator(":scope > .work-words").innerText(), "FICTIONAL the edit is in; now the tests.", "the narration is outside every fold");
         const second = agentTurn.locator(".work-block.is-vscode").nth(1);
         assert.equal((await second.locator(".work-block-title").innerText()).trim(), "Ran 2 commands", "the second group has its own sentence");
-        assert.match(await second.locator(".work-block-time").innerText(), /^Worked for \d+m$/, "the last group says how long the turn worked, on its quiet right");
+        assert.equal(await second.locator(".work-block-time").count(), 0, "no group carries the time (ZAC-228)");
+        assert.match(await second.getAttribute("class") ?? "", /is-folded/, "a finished turn's last group is folded too (ZAC-228)");
+        assert.match(await agentTurn.locator(".chat-agent-meta .chat-meta-duration").innerText(), /^Worked for \d+m$/, "the turn's footer says once how long it worked (ZAC-228)");
         // a diagram in the answer: drawn by Pele in the app's colours, recoloured by a theme switch
         const diagram = agentTurn.locator(".markdown-mermaid svg.pele");
         await diagram.waitFor();

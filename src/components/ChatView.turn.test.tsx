@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { Turn } from "./ChatView.tsx";
+import { groupStartsOpen, Turn } from "./ChatView.tsx";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] } as ConversationTurn);
@@ -100,8 +100,11 @@ describe("a turn's style", () => {
     expect(html).toContain("work-title-detail");
     expect(html).toContain("+28");
     expect(html).toContain("−3");
-    expect(html).toContain("Worked for 7s");
     expect(html).not.toContain("1 edit · 2 file reads");
+    // the time is the answer's, once, in its footer: never on a group's head (ZAC-228)
+    expect(html).not.toContain("work-block-time");
+    expect(html.match(/Worked for 7s/g)?.length).toBe(1);
+    expect(html.indexOf("Worked for 7s")).toBeGreaterThan(html.indexOf("chat-agent-meta"));
   });
 
   it("vscode shows a tool's pictures under the block, outside the fold", () => {
@@ -165,12 +168,13 @@ describe("a Copilot pane's turn (no fixture for one: rendered here)", () => {
     { kind: "tool", name: "run_in_terminal", summary: "bun test", input: JSON.stringify({ command: "bun test" }), output: "" },
     { kind: "text", text: "FICTIONAL green" },
   ] } as ConversationTurn;
-  // live, the block is open and its rows are drawn
+  // live and with nothing written after it yet, the block is open and its rows are drawn
   const html = (style: "vscode" | "classic", live = false) => {
+    const shown = live ? { ...turn, parts: turn.parts.slice(0, 2) } : turn;
     const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
     Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
     try {
-      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "p-1", turn, live, waiting: false, showThinking: false, style }) }));
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "p-1", turn: shown, live, waiting: false, showThinking: false, style }) }));
     } finally {
       if (saved) Object.defineProperty(navigator, "languages", saved);
       else Reflect.deleteProperty(navigator, "languages");
@@ -222,7 +226,8 @@ describe("subagents and answered questions in a Copilot turn", () => {
     expect(html).toContain("subagent-row");
     expect(html).toContain("question-summary");
     // the block counts only its own call
-    expect(html.replace(/<[^>]+>/g, "")).toContain("Ran 1 commandWorked for 7s");
+    expect(html.replace(/<[^>]+>/g, "")).toContain("Ran 1 command");
+    expect(html.indexOf("Worked for 7s")).toBeGreaterThan(html.indexOf("chat-agent-meta"));
     expect(html).not.toContain("other step");
     const block = html.indexOf("work-block");
     expect(block).toBeLessThan(html.indexOf("subagent-row"));
@@ -308,8 +313,15 @@ describe("a Copilot turn's tools grouped between its words, as VS Code does", ()
     expect(first).toBeLessThan(words);
     expect(words).toBeLessThan(second);
     expect(html.slice(first, second)).not.toContain("Worked for");
-    expect(html.slice(second)).toContain("Worked for 7s");
     expect(html.indexOf("FICTIONAL all done")).toBeGreaterThan(second);
+    // a finished turn's groups are all folded (ZAC-228)
+    expect(html.match(/work-block is-vscode[^"]*is-folded/g)?.length).toBe(2);
+  });
+
+  it("vscode, live: only the last group is open, and it folds once words follow it", () => {
+    const open = (html: string) => html.match(/class="work-block is-vscode[^"]*"/g)!.map((cls) => !cls.includes("is-folded"));
+    expect(open(render(settled(parts.slice(0, 4)), "vscode", true))).toEqual([false, true]);
+    expect(open(render(settled(parts), "vscode", true))).toEqual([false, false]);
   });
 
   it("vscode, live: only the last group says Working…, the earlier one its sentence", () => {
@@ -326,3 +338,12 @@ describe("a Copilot turn's tools grouped between its words, as VS Code does", ()
   });
 });
 
+
+describe("groupStartsOpen", () => {
+  it("opens only the live turn's last group, while nothing is written after it", () => {
+    expect(groupStartsOpen(true, true, false)).toBe(true);
+    expect(groupStartsOpen(false, true, false)).toBe(false);
+    expect(groupStartsOpen(true, true, true)).toBe(false);
+    expect(groupStartsOpen(true, false, false)).toBe(false);
+  });
+});
