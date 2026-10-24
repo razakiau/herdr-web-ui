@@ -1360,6 +1360,14 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   a semibold `--text-strong` header over a `--border-strong` rule, `--border` hairlines between
   rows, cells top-aligned, 6em to 28em wide.
   Thinking renders as a folded block only when **Show thinking** is enabled.
+- The end of a host answer (ZAC-228), as VS Code ends one: under an answer that edited files, a
+  dim `.chat-turn-changes` line, `N files changed +a −r View`, whose View opens the session's
+  Changes sheet filtered to that turn's files; a `.chat-checkpoint-line` after it, `Restore to
+  before the next message`, when the next message holds a checkpoint. Restore and Fork live only
+  on messages, behind the message's ⋯ (`.chat-more-btn`, `More actions`: Copy, Restore to before
+  this message or Start Over on the first, Fork from here); the answer's ⋯ holds Copy as markdown
+  and Copy as plain text. The ⋯ is a `RowMenu`, a sheet on a phone. The classic style keeps its
+  inline buttons.
 - Auto-follow stops when the reader scrolls up; later output raises a **New messages** pill.
 - An empty chat is greeted from the composer (`.composer-greeting`, below), only where the agent's
   conversation was read and holds no turn. A chat still loading, one whose read failed, an agent

@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, GitFork, Layers, RotateCcw, Target, Wrench,
+  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Ellipsis, FileDiff, GitFork, Layers, RotateCcw, Target, Wrench,
   type LucideProps,
 } from "lucide-react";
 
@@ -24,6 +24,7 @@ import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
 import { mcpCall } from "../lib/mcpCall.ts";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
@@ -197,7 +198,8 @@ export interface ChatViewProps {
   /** the pane's own name, as App's header shows it: the log is named by it, never by the pane id */
   title?: string | null;
   /** a host chat's checkpoints (HostChatRead), the one restored, and what a tap on one does */
-  checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void; /** VS Code's Fork Conversation at a request (never the first) */ onFork?(turn: string): void } | null;
+  checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void; /** VS Code's Fork Conversation at a request (never the first) */ onFork?(turn: string): void;
+    /** an answer's "View" on its changes line: the chat's diff sheet cut to these paths (ZAC-228) */ onViewChanges?(paths: string[]): void } | null;
 }
 
 interface ChatState {
@@ -975,6 +977,41 @@ interface TurnProps {
   onCheckpoint?: (turn: string) => void;
   /** Fork Conversation was tapped on this request: a new chat with the turns before it */
   onFork?: (turn: string) => void;
+  /** an answer's own edits (its host turn's checkpoint, ZAC-228): the changes line under it */
+  changes?: HostCheckpoint["files"] | null;
+  /** View on the changes line: the chat's diff sheet, cut to these paths */
+  onViewChanges?: (paths: string[]) => void;
+  /** the next message's checkpoint turn, when this answer changed files: the checkpoint line under it */
+  checkpointAfter?: string | null;
+}
+
+/** What an answer changed, summed (ZAC-228). */
+export function changesLine(files: readonly { added: number; removed: number }[]): { files: number; added: number; removed: number } {
+  return { files: files.length, added: files.reduce((sum, file) => sum + file.added, 0), removed: files.reduce((sum, file) => sum + file.removed, 0) };
+}
+
+/** "📄 2 files changed +30 −3 · View": what this answer changed, its diffs a tap away (ZAC-228). */
+function TurnChanges({ files, onView }: { files: HostCheckpoint["files"]; onView: ((paths: string[]) => void) | undefined }) {
+  const t = useT();
+  const sum = changesLine(files);
+  return <div className="chat-turn-changes">
+    <FileDiff className="chat-turn-changes-icon" aria-hidden="true" />
+    <span>{t(sum.files === 1 ? "1 file changed" : "{n} files changed", { n: sum.files })}</span>
+    {sum.added > 0 && <span className="chat-diff-add">+{sum.added}</span>}
+    {sum.removed > 0 && <span className="chat-diff-del">−{sum.removed}</span>}
+    {onView && <button type="button" className="chat-turn-changes-view" onClick={() => onView(files.map((file) => file.path))}>{t("View")}<ChevronRight aria-hidden="true" /></button>}
+  </div>;
+}
+
+/** VS Code's ⋯ on a message or an answer: its actions in a menu (a sheet on a phone). */
+function TurnMenu({ title, items }: { title: string; items: RowMenuItem[] }) {
+  const t = useT();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  return <>
+    <button type="button" className="chat-meta-btn chat-more-btn" aria-label={t("More actions")} title={t("More actions")} aria-haspopup="menu" aria-expanded={anchor !== null}
+      onClick={(event) => setAnchor(anchor === null ? event.currentTarget : null)}><Ellipsis aria-hidden="true" /></button>
+    {anchor !== null && <RowMenu anchor={anchor} title={title} items={items} onClose={() => setAnchor(null)} />}
+  </>;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -1103,7 +1140,7 @@ function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey:
 // a turn that did not change keeps its object across polls: skip re-rendering it. A host chat's
 // row has paneId "": its pictures and outputs come through the chat's source, and UserImages shows
 // no `@image` mention without a pane, so such a row reads no file
-export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null, style = "classic", checkpoint = null, onCheckpoint, onFork }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null, style = "classic", checkpoint = null, onCheckpoint, onFork, changes = null, onViewChanges, checkpointAfter = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -1151,7 +1188,14 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
         {text.length > 0 && <UserMessage text={text} skills={userSkills} />}
-        <div className="chat-turn-meta">{time}
+        {style === "vscode" ? <div className="chat-turn-meta">{time}
+          {/* ZAC-228: VS Code keeps a request's restore and fork behind its ⋯; only a message has them */}
+          {(action || forkAt || text.length > 0) && <TurnMenu title={t("Message")} items={[
+            ...(text.length > 0 ? [{ id: "copy", label: t("Copy"), icon: Copy, run: () => { void copyText(text).then(copied); } }] : []),
+            ...(action ? [{ id: "restore", label: t(action.first ? "Start Over" : "Restore to before this message"), icon: RotateCcw, run: () => onCheckpoint!(action.turn!) }] : []),
+            ...(forkAt ? [{ id: "fork", label: t("Fork from here"), icon: GitFork, run: () => onFork!(forkAt) }] : []),
+          ]} />}</div>
+        : <div className="chat-turn-meta">{time}
           {/* VS Code's checkpoint toolbar on a request: Start Over on the first, Restore Checkpoint on the rest */}
           {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
             aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
@@ -1160,7 +1204,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
           {forkAt && <button type="button" className="chat-meta-btn chat-fork-btn" title={t("Fork Conversation")} aria-label={t("Fork Conversation")} onClick={() => onFork!(forkAt)}>
             <GitFork aria-hidden="true" />
           </button>}
-          {text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
+          {text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>}
       </div>
       {copyError}
       {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
@@ -1216,8 +1260,17 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       {time}
       {/* how long it worked, once for the turn (VS Code's groups carry none) */}
       {worked !== null && <span className="chat-meta-duration">{t("Worked for {duration}", { duration: worked })}</span>}
+      {style === "vscode" && answerText.length > 0 && <TurnMenu title={t("Answer")} items={[
+        { id: "md", label: t("Copy as markdown"), icon: Copy, run: () => { void copyText(answerText).then(copied); } },
+        { id: "txt", label: t("Copy as plain text"), icon: Copy, run: () => { void copyText(plainText(answerText)).then(copied); } },
+      ]} />}
     </div>}
     {copyError}
+    {style === "vscode" && !live && changes !== null && changes.length > 0 && <TurnChanges files={changes} onView={onViewChanges} />}
+    {style === "vscode" && !live && changes !== null && changes.length > 0 && checkpointAfter !== null && onCheckpoint &&
+      <button type="button" className="chat-checkpoint-line" onClick={() => onCheckpoint(checkpointAfter)} title={t("Restore to before the next message")}>
+        <span className="chat-checkpoint-line-word">{t("Checkpoint")}</span>
+      </button>}
   </article>;
 });
 
@@ -1922,6 +1975,19 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
   const forkAt = checkpoints?.onFork;
   const rowCheckpoints = useMemo(() => checkpointList === null ? null
     : checkpointRows(shownTurns, checkpointList, restoredTurn, olderCursor !== null && olderCursor !== undefined), [shownTurns, checkpointList, restoredTurn, olderCursor]);
+  // ZAC-228: an answer's own edits are its host turn's, which the user row before it holds; the
+  // checkpoint line under it restores to before the next user row
+  const viewChanges = checkpoints?.onViewChanges;
+  const answerEnds = useCallback((index: number): { changes?: HostCheckpoint["files"]; onViewChanges?: (paths: string[]) => void; checkpointAfter?: string } => {
+    if (rowCheckpoints === null || shownTurns[index]?.role !== "assistant") return {};
+    if (shownTurns[index + 1]?.role === "assistant") return {};
+    let user = index - 1;
+    while (user >= 0 && shownTurns[user]?.role !== "user") user -= 1;
+    const own = user >= 0 ? rowCheckpoints.get(user) : undefined;
+    if (own === undefined || own.faded || own.files.length === 0) return {};
+    const next = rowCheckpoints.get(index + 1);
+    return { changes: own.files, ...(viewChanges ? { onViewChanges: viewChanges } : {}), ...(next?.turn && !next.faded ? { checkpointAfter: next.turn } : {}) };
+  }, [rowCheckpoints, shownTurns, viewChanges]);
   const stickyRow = sticky === null ? undefined : timelineRows.find((row) => row.key === sticky);
   const stickyText = stickyRow === undefined ? "" : stickyRow.turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n").trim();
   // Back in a pane the reader left away from the end: the first answer read puts the turn they
@@ -2000,9 +2066,10 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t(hosted ? "This message can't be shown here." : "This message can't be shown here. The terminal has it.")}</p>}>
       <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} style={style}
-        checkpoint={rowCheckpoints?.get(index) ?? null} {...(pickCheckpoint ? { onCheckpoint: pickCheckpoint } : {})} {...(forkAt ? { onFork: forkAt } : {})} />
+        checkpoint={rowCheckpoints?.get(index) ?? null} {...(pickCheckpoint ? { onCheckpoint: pickCheckpoint } : {})} {...(forkAt ? { onFork: forkAt } : {})}
+        {...answerEnds(index)} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style, rowCheckpoints, pickCheckpoint, forkAt]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style, rowCheckpoints, pickCheckpoint, forkAt, answerEnds]);
   // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
   const shownTitle = title?.trim() ?? "";
   const logLabel = label ?? (shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation"));

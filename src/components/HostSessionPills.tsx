@@ -62,17 +62,25 @@ export interface HostSessionPillsProps {
   session?: string;
   /** changes when the changes may have: a turn ended, another began (the count is read again) */
   changesKey?: string;
+  /** an answer's "View" (ZAC-228): open the Changes sheet cut to these paths; `at` makes each tap a new request */
+  showChanges?: { paths: string[]; at: number } | null;
 }
 
 type Sheet = "changes" | "pullRequests" | "issues" | "artifacts" | "references" | "subagents" | "shells";
 
-export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId, session, changesKey }: HostSessionPillsProps) {
+export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onRevealSubagent, machineId, session, changesKey, showChanges = null }: HostSessionPillsProps) {
   const t = useT();
   const pills = useMemo(() => sessionPills(artifacts), [artifacts]);
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const states = useReferenceStates(machineId, [...pills.pullRequests, ...pills.issues, ...pills.sections.flatMap((section) => section.items)]);
   const changes = useHostChanges(machineId, session, changesKey);
-  const close = useCallback(() => setSheet(null), []);
+  const [only, setOnly] = useState<string[] | null>(null);
+  const close = useCallback(() => { setSheet(null); setOnly(null); }, []);
+  useEffect(() => {
+    if (showChanges === null) return;
+    setOnly(showChanges.paths);
+    setSheet("changes");
+  }, [showChanges]);
   const open = (artifact: HostArtifact): void => {
     if (artifact.type === "file" && artifact.uri) {
       const path = pathOfFileUri(artifact.uri);
@@ -92,7 +100,7 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onReveal
   if (shownChanges === null && pills.pullRequests.length + pills.issues.length + others.length + pills.references.length + work.length === 0) return null;
   const sheetPill = (kind: Sheet, icon: React.ReactNode, label: string, extra: { running?: boolean; aria?: string; title?: string; children?: React.ReactNode } = {}) =>
     <button key={kind} type="button" className={`session-pill${extra.running ? " is-running" : ""}`} aria-haspopup="dialog" aria-expanded={sheet === kind}
-      {...(extra.aria ? { "aria-label": extra.aria } : {})} title={extra.title ?? label} onClick={() => setSheet(kind)}>
+      {...(extra.aria ? { "aria-label": extra.aria } : {})} title={extra.title ?? label} onClick={() => { setOnly(null); setSheet(kind); }}>
       {icon}
       <span className="session-pill-label">{label}</span>
       {extra.children}
@@ -131,7 +139,7 @@ export function HostSessionPills({ artifacts, work, onOpenFile, onStop, onReveal
     {shells.length > 0 && sheetPill("shells", <SquareTerminal className="session-pill-icon" aria-hidden="true" />,
       t(shells.length === 1 ? "1 shell" : "{n} shells", { n: shells.length }), { running: true })}
     {sheet === "changes" && shownChanges !== null && machineId !== undefined && session !== undefined && <PillSheet title={shownChanges.label} onClose={close}>
-      <ChangesList changes={shownChanges} load={(id, signal) => fetchHostChangeDiff(machineId, session, id, signal)} onOpenFile={onOpenFile} />
+      <ChangesList changes={only === null ? shownChanges : onlyPaths(shownChanges, only)} load={(id, signal) => fetchHostChangeDiff(machineId, session, id, signal)} onOpenFile={onOpenFile} />
     </PillSheet>}
     {sheet === "pullRequests" && <PillSheet title={t("Pull requests")} onClose={close}><ArtifactList items={pills.pullRequests} states={states} onOpen={open} /></PillSheet>}
     {sheet === "issues" && <PillSheet title={t("Issues")} onClose={close}><ArtifactList items={pills.issues} states={states} onOpen={open} /></PillSheet>}
@@ -154,6 +162,13 @@ function Stat({ added, removed }: { added: number; removed: number }) {
     <span className="session-pill-added">+{added}</span>
     <span className="session-pill-removed">−{removed}</span>
   </span>;
+}
+
+/** The chat's changes cut to an answer's files (ZAC-228); the sums are the cut's own. */
+export function onlyPaths(changes: HostChanges, paths: readonly string[]): HostChanges {
+  const wanted = new Set(paths);
+  const files = changes.files.filter((file) => wanted.has(file.path));
+  return { ...changes, files, added: files.reduce((sum, file) => sum + file.added, 0), removed: files.reduce((sum, file) => sum + file.removed, 0) };
 }
 
 /** The changeset's files, VS Code's Changes list: each one's name, folder and lines; a tap opens its diff under it. */

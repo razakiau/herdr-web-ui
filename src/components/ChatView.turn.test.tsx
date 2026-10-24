@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { groupStartsOpen, Turn } from "./ChatView.tsx";
+import { changesLine, groupStartsOpen, Turn } from "./ChatView.tsx";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] } as ConversationTurn);
@@ -369,5 +369,54 @@ describe("groupStartsOpen", () => {
     expect(groupStartsOpen(false, true, false)).toBe(false);
     expect(groupStartsOpen(true, true, true)).toBe(false);
     expect(groupStartsOpen(true, false, false)).toBe(false);
+  });
+});
+
+describe("the end of a host answer (ZAC-228)", () => {
+  const agent = (parts: ConversationTurn["parts"]): ConversationTurn => ({ role: "assistant", ts: "2026-01-01T00:00:00.000Z", end_ts: "2026-01-01T00:00:07.000Z", parts });
+  const draw = (turn: ConversationTurn, extra: Record<string, unknown> = {}): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "", turn, live: false, waiting: false, showThinking: false, style: "vscode", ...extra }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const plain = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const answer = agent([{ kind: "text", text: "FICTIONAL done" }]);
+  const files = [{ path: "/r/src/a.ts", added: 28, removed: 3 }, { path: "/r/src/b.ts", added: 2, removed: 0 }, { path: "/r/logo.png", added: 0, removed: 0 }];
+
+  it("sums what the answer changed", () => {
+    expect(changesLine(files)).toEqual({ files: 3, added: 30, removed: 3 });
+  });
+
+  it("closes an answer that changed files with its count, its lines and View", () => {
+    const html = draw(answer, { changes: files, onViewChanges: () => undefined });
+    expect(plain(html)).toContain("3 files changed +30 −3 View");
+    expect(draw(answer, { changes: [files[2]!], onViewChanges: () => undefined })).not.toMatch(/\+0|−0/);
+    expect(draw(answer)).not.toContain("chat-turn-changes");
+    expect(draw(answer, { changes: [], onViewChanges: () => undefined })).not.toContain("chat-turn-changes");
+  });
+
+  it("draws a checkpoint line after an answer that changed files, when a message follows", () => {
+    expect(draw(answer, { changes: files, checkpointAfter: "t2", onCheckpoint: () => undefined })).toContain("chat-checkpoint-line");
+    expect(draw(answer, { changes: files, onCheckpoint: () => undefined })).not.toContain("chat-checkpoint-line");
+    expect(draw(answer, { checkpointAfter: "t2", onCheckpoint: () => undefined })).not.toContain("chat-checkpoint-line");
+  });
+
+  it("an answer's footer has one ⋯ and no restore or fork", () => {
+    const html = draw(answer, { changes: files, onCheckpoint: () => undefined, onFork: () => undefined });
+    expect(html.match(/aria-label="More actions"/g)?.length).toBe(1);
+    expect(html).not.toContain("Restore");
+    expect(html).not.toContain("Fork");
+  });
+
+  it("a host message keeps restore and fork behind its ⋯, not as buttons of their own", () => {
+    const html = draw(user("FICTIONAL go"), { checkpoint: { turn: "t1", first: false, files: [], faded: false }, onCheckpoint: () => undefined, onFork: () => undefined });
+    expect(html).toContain('aria-label="More actions"');
+    expect(html).not.toContain("chat-checkpoint-btn");
+    expect(html).not.toContain("chat-fork-btn");
   });
 });

@@ -138,10 +138,12 @@ const patch = `(() => {
         { id: "a-ref", type: "website", label: "FICTIONAL docs", isArtifact: false, link: "https://example.invalid/docs" },
       ],
       work: state.work ?? [],
+      // ZAC-228: the session's todo list (session.db todos), when a step turns it on
+      ...(state.todos ? { todos: state.todos } : {}),
       context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000, reservedTokens: 40000,
         parts: [{ category: "system", label: "System prompt", share: 11 }, { category: "system", label: "Tool Definitions", share: 18 }, { category: "user", label: "Tool Results", share: 30 }, { category: "user", label: "Messages", share: 40 }] },
       tokens: { totals: [{ model: "cc/fictional-opus", input: 1000000, cached: 900000, output: 10000 }, { model: "fictional/unpriced", input: 10, cached: 0, output: 10 }, { model: "opencode-go/fictional-v4.1-flash", input: 1000000, cached: 0, output: 0 }], partial: false },
-      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.work ?? null, state.resumed, state.restored ?? null]) };
+      signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.work ?? null, state.resumed, state.restored ?? null, state.todos ?? null]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
     ...(row.session in edits.titles ? { title: edits.titles[row.session] } : {}),
@@ -407,6 +409,14 @@ try {
         };
         const posts = async (path: string): Promise<Post[]> => (await page.evaluate(() => (window as unknown as { hostCalls: { posts: Post[] } }).hostCalls.posts)).filter((post) => post.path === path);
         const sheetItems = async () => (await page.locator(".row-sheet .row-sheet-item").allInnerTexts()).map((text) => text.trim());
+        // ZAC-228: a message's restore and fork live behind its ⋯ (a sheet at this width)
+        const messageMenu = async (ask: ReturnType<typeof page.locator>) => {
+          await ask.getByRole("button", { name: "More actions" }).click();
+          await page.locator(".row-sheet").waitFor();
+          return sheetItems();
+        };
+        const pickInSheet = async (label: string) => { await page.locator(".row-sheet .row-sheet-item", { hasText: label }).click(); await page.locator(".row-sheet").waitFor({ state: "detached" }); };
+        const closeSheet = async () => { await page.locator(".row-sheet .row-sheet-cancel").click(); await page.locator(".row-sheet").waitFor({ state: "detached" }); };
         const fits = async (what: string) => {
           const width = await page.evaluate(() => document.documentElement.scrollWidth);
           assert.ok(width <= 390, `${what}: no horizontal overflow at 390 px (scrollWidth ${width})`);
@@ -501,6 +511,22 @@ try {
         assert.equal(await second.locator(".work-block-time").count(), 0, "no group carries the time (ZAC-228)");
         assert.match(await second.getAttribute("class") ?? "", /is-folded/, "a finished turn's last group is folded too (ZAC-228)");
         assert.match(await agentTurn.locator(".chat-agent-meta .chat-meta-duration").innerText(), /^Worked for \d+m$/, "the turn's footer says once how long it worked (ZAC-228)");
+        // ZAC-228: the answer closes with what it changed, View opens the diff sheet cut to it, and a
+        // dashed checkpoint follows it; its footer's ⋯ copies and never restores
+        const changed = agentTurn.locator(".chat-turn-changes");
+        assert.equal((await changed.innerText()).replace(/\s+/g, " ").trim(), "1 file changed +28 −3 View", "the answer's own changes");
+        assert.equal(await agentTurn.locator(".chat-checkpoint-line").count(), 1, "a checkpoint line after a turn that changed files");
+        await agentTurn.locator(".chat-agent-meta").getByRole("button", { name: "More actions" }).click();
+        await page.locator(".row-sheet").waitFor();
+        assert.deepEqual(await sheetItems(), ["Copy as markdown", "Copy as plain text"], "an answer's ⋯ only copies");
+        await page.locator(".row-sheet .row-sheet-cancel").click();
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        await changed.getByRole("button", { name: "View" }).click();
+        const cut = page.getByRole("dialog").filter({ has: page.locator(".session-sheet-summary") });
+        await cut.waitFor();
+        assert.deepEqual(await cut.locator(".session-sheet-label").allInnerTexts(), ["build.ts"], "View shows that answer's files only");
+        await cut.getByRole("button", { name: "Close" }).click().catch(async () => { await page.keyboard.press("Escape"); });
+        await cut.waitFor({ state: "detached" });
         // a diagram in the answer: drawn by Pele in the app's colours, recoloured by a theme switch
         const diagram = agentTurn.locator(".markdown-mermaid svg.pele");
         await diagram.waitFor();
@@ -750,11 +776,14 @@ try {
         // sheet names the files and what goes; a restore fades the turns from there, puts the message
         // in the box and shows Redo; Redo puts it all back
         const firstAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL an earlier ask" });
-        assert.equal(await firstAsk.getByRole("button", { name: "Start Over" }).count(), 1, "the first message is Start Over");
+        await firstAsk.scrollIntoViewIfNeeded();
+        assert.deepEqual(await messageMenu(firstAsk), ["Copy", "Start Over"], "the first message's ⋯: Copy and Start Over, no fork");
+        await closeSheet();
         const buildAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" });
-        assert.equal(await buildAsk.getByRole("button", { name: "Start Over" }).count(), 0, "a later message is no Start Over");
         await buildAsk.scrollIntoViewIfNeeded();
-        await buildAsk.getByRole("button", { name: "Restore Checkpoint" }).click();
+        assert.equal(await buildAsk.locator(".chat-checkpoint-btn, .chat-fork-btn").count(), 0, "no restore or fork button beside a message (ZAC-228)");
+        assert.deepEqual(await messageMenu(buildAsk), ["Copy", "Restore to before this message", "Fork from here"], "a later message's ⋯ (ZAC-228)");
+        await pickInSheet("Restore to before this message");
         const ckSheet = page.getByRole("alertdialog", { name: "Restore checkpoint?" });
         await ckSheet.waitFor();
         // the chat still asks (busy): the host would restore nothing, so the sheet says Stop first
@@ -764,7 +793,8 @@ try {
         await ckSheet.waitFor({ state: "detached" });
         await page.evaluate(() => { const state = (window as unknown as { hostState: { answered: boolean } }).hostState; state.answered = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
         await view.locator(".host-chat-status-line", { hasText: "Waiting for your response" }).waitFor({ state: "detached" });
-        await buildAsk.getByRole("button", { name: "Restore Checkpoint" }).click();
+        await messageMenu(buildAsk);
+        await pickInSheet("Restore to before this message");
         await ckSheet.waitFor();
         await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".checkpoint-sheet-restore")?.disabled);
         assert.deepEqual(await ckSheet.locator(".checkpoint-file").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).innerText.replace(/\s+/g, " ").trim())),
@@ -1431,6 +1461,31 @@ try {
         if (shots) { await page.waitForTimeout(200); await page.screenshot({ path: join(shots, "zac207-reveal-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         await page.evaluate(() => { (window as unknown as { hostState: { work: unknown[] } }).hostState.work = []; });
         console.log("PASS the session's pills, one per kind as VS Code's: Changes with its lines and diffs, a merged PR in purple, the artifacts by kind, the reference inline, Stop on a shell, and a subagent taken to its row");
+
+        // 5a'. ZAC-228: the session's todo list above the pills, VS Code's todo widget
+        assert.equal(await view.locator(".todo-bar").count(), 0, "no todo bar without todos");
+        await page.evaluate(() => {
+          const host = window as unknown as { hostState: { todos: unknown }; rereadHost(): void };
+          host.hostState.todos = ["done", "done", "done", "pending", "in_progress", "blocked", "pending"].map((status, index) => ({ id: "t" + index, title: "FICTIONAL step " + index, status }));
+          host.rereadHost();
+        });
+        const todoBar = view.locator(".todo-bar");
+        await todoBar.waitFor();
+        assert.equal((await todoBar.locator(".todo-bar-title").innerText()).trim(), "Todos 3/7", "done of all");
+        assert.equal((await todoBar.locator(".todo-bar-current").innerText()).trim(), "FICTIONAL step 4", "the step in progress, before an earlier pending one");
+        assert.ok(await todoBar.evaluate((bar) => bar.compareDocumentPosition(document.querySelector(".session-pills")!) & Node.DOCUMENT_POSITION_FOLLOWING), "above the pills");
+        const fill = await todoBar.locator(".todo-bar-fill").evaluate((node) => Math.round(node.getBoundingClientRect().width / node.parentElement!.getBoundingClientRect().width * 100));
+        assert.ok(Math.abs(fill - 43) <= 1, `the line is 3/7 along (${fill}%)`);
+        await todoBar.locator(".todo-bar-head").click();
+        await todoBar.locator(".todo-bar-row").nth(6).waitFor();
+        assert.equal(await todoBar.locator(".todo-bar-row").count(), 7, "open, every todo");
+        assert.equal(await todoBar.locator('.todo-bar-row[data-status="done"] .todo-bar-row-title').first().evaluate((node) => getComputedStyle(node).textDecorationLine), "line-through", "done ones struck through");
+        await fits("the open todo list");
+        if (shots) await page.screenshot({ path: join(shots, "zac228-todos-390.png") });
+        await todoBar.locator(".todo-bar-head").click();
+        await page.evaluate(() => { const host = window as unknown as { hostState: { todos: unknown }; rereadHost(): void }; host.hostState.todos = undefined; host.rereadHost(); });
+        await todoBar.waitFor({ state: "detached" });
+        console.log("PASS the session's todo list sits above the pills: done of all, the step in progress, and the list on a tap");
 
         // 5b. a send whose answer is lost (502): it says to send again, and the retry goes under the same id
         const before = (await posts("/api/machines/remote/host-chats/chat/send")).length;
@@ -2166,15 +2221,13 @@ try {
           await page.waitForTimeout(100);
         }
         await firstForkAsk.waitFor();
-        assert.equal(await firstForkAsk.getByRole("button", { name: "Fork Conversation" }).count(), 0, "the first request has nothing before it to fork");
+        assert.ok(!(await messageMenu(firstForkAsk)).includes("Fork from here"), "the first request has nothing before it to fork");
+        await closeSheet();
         const forkAsk = view.locator(".chat-turn-user", { hasText: "FICTIONAL look at the build" });
         await forkAsk.scrollIntoViewIfNeeded();
-        const forkButton = forkAsk.getByRole("button", { name: "Fork Conversation" });
-        assert.equal(await forkButton.count(), 1, "a later request offers Fork Conversation");
-        const meta = await forkAsk.locator(".chat-turn-meta").evaluate((node) => [...node.querySelectorAll("button")].map((each) => each.getAttribute("aria-label")));
-        assert.deepEqual(meta, ["Restore Checkpoint", "Fork Conversation", "Copy message"], "Fork sits between Restore and Copy");
+        assert.deepEqual(await messageMenu(forkAsk), ["Copy", "Restore to before this message", "Fork from here"], "Fork sits after Restore in the ⋯");
         await page.evaluate(() => { (window as unknown as { hostState: { failFork: boolean } }).hostState.failFork = true; });
-        await forkButton.click();
+        await pickInSheet("Fork from here");
         const forkBar = view.locator(".fork-bar");
         await forkBar.locator(".checkpoint-bar-error", { hasText: "FICTIONAL nothing to fork" }).waitFor();
         assert.equal((await forkBar.locator(".checkpoint-bar-text").innerText()).trim(), "Couldn't fork the conversation");
@@ -2183,7 +2236,8 @@ try {
         await forkBar.getByRole("button", { name: "Dismiss" }).click();
         await forkBar.waitFor({ state: "detached" });
         await page.evaluate(() => { (window as unknown as { hostState: { failFork: boolean } }).hostState.failFork = false; });
-        await forkButton.click();
+        await messageMenu(forkAsk);
+        await pickInSheet("Fork from here");
         const forked = page.locator('.host-chat[data-host-session^="fictional-fork-"]');
         await forked.waitFor();
         const forkPosts = (await posts("/api/machines/remote/host-chats/chat/fork")).map((post) => post.body);
