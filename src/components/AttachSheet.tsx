@@ -105,7 +105,7 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
               <button type="button" className="attach-tile" onClick={() => device({ accept: "image/*", capture: true })}><Camera aria-hidden="true" />{t("Camera")}</button>
               <button type="button" className="attach-tile" onClick={() => device({ accept: "image/*" })}><Image aria-hidden="true" />{t("Photos")}</button>
             </div>
-            <div className="host-picker-group">
+            <div className="host-picker-group host-picker-rows">
               <button type="button" className="host-picker-option" onClick={() => setPage("folder")}>
                 <FolderOpen className="host-picker-option-icon" aria-hidden="true" />
                 <span className="host-picker-option-text"><span className="host-picker-option-name">{t("Files in this folder")}</span></span>
@@ -123,10 +123,10 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
             </div>
             {recent.length > 0 && <section className="host-picker-group" aria-label={t("Recent in this chat")}>
               <p className="host-picker-provider">{t("Recent in this chat")}</p>
-              {recent.map((path) => <button key={path} type="button" className="host-picker-option attach-recent" onClick={() => pick(path)}>
+              <div className="host-picker-rows">{recent.map((path) => <button key={path} type="button" className="host-picker-option attach-recent" onClick={() => pick(path)}>
                 <FileText className="host-picker-option-icon" aria-hidden="true" />
                 <span className="host-picker-option-text"><span className="host-picker-option-name attach-path">{path}</span></span>
-              </button>)}
+              </button>)}</div>
             </section>}
           </> : <>
             <div className="host-picker-head">
@@ -138,7 +138,7 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
             {files === null && <p className="host-picker-state" role="status">{t("Loading…")}</p>}
             {failed && <p className="host-picker-error" role="alert">{t("Couldn't list this folder's files")}</p>}
             {files !== null && !failed && files.length === 0 && <p className="host-picker-state">{t("No files match")}</p>}
-            {files !== null && files.length > 0 && <div className="host-picker-group">
+            {files !== null && files.length > 0 && <div className="host-picker-group host-picker-rows">
               {files.map((path) => <button key={path} type="button" className="host-picker-option" aria-label={path} onClick={() => pick(path)}>
                 <FileText className="host-picker-option-icon" aria-hidden="true" />
                 <span className="host-picker-option-text">

@@ -10,11 +10,11 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Hand, ListChecks, MessageSquare, Pin, Rocket, Scale, Search, ShieldCheck, Sparkles, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Boxes, Check, ChevronDown, Hand, ListChecks, MessageSquare, Pin, Rocket, Scale, Search, ShieldCheck, Sparkles, TriangleAlert, X, type LucideIcon } from "lucide-react";
 
 import type { HostAgent, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { filterModels, multiplierLabel, pickerSections, pinnedModels, providerMark, recentModels, rememberRecent, rowDetail, SECTION_TITLES, togglePinned, type ModelMark, type PickerSection } from "../lib/modelProvider.ts";
+import { filterModels, groupName, modelGroupOf, modelTabs, multiplierLabel, pickerSections, pinnedModels, providerMark, recentModels, rememberRecent, rowDetail, SECTION_TITLES, togglePinned, type ModelMark, type PickerSection } from "../lib/modelProvider.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -112,15 +112,19 @@ export function ModelPicker({ machineId, focus, models, agents, model, agent, co
 function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps, "machineId" | "models" | "model" | "onModel">) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const [source, setSource] = useState<string | null>(null);
   const [pinned, setPinned] = useState(() => pinnedModels(machineId));
   const [recent] = useState(() => recentModels(machineId));
   const [efforts, setEfforts] = useState<string | null>(null);
   const press = useRef<{ timer: ReturnType<typeof setTimeout>; fired: boolean } | null>(null);
   if (models === null) return <p className="host-picker-state" role="status">{t("Loading…")}</p>;
   if (models.length === 0) return <p className="host-picker-state">{t("Copilot on this PC offers no models")}</p>;
-  const shown = filterModels(models, query, null);
-  // a search keeps the groups but drops Pinned and Recent, which would only repeat its matches
-  const searching = query.trim() !== "";
+  // the owner's ask (ZAC-207): with many models, narrow to one source (Copilot, OmniRoute…), each
+  // chip carrying that source's mark; none when the PC offers one source only
+  const sources = modelTabs(models);
+  const shown = filterModels(models, query, source);
+  // a search or a source keeps the groups but drops Pinned and Recent, which would only repeat its matches
+  const searching = query.trim() !== "" || source !== null;
   const sections = pickerSections(shown, searching ? [] : pinned, searching ? [] : recent);
   // Pinned, Recent and the two groups the app names are words; a router's name is its id prefix
   const word = (key: string, title: string): string => (SECTION_TITLES as readonly string[]).includes(title) && ["pinned", "recent", "copilot", "other"].includes(key) ? t(title) : title;
@@ -133,10 +137,19 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
       <Search aria-hidden="true" />
       <input className="input" type="search" value={query} placeholder={t("Search models")} aria-label={t("Search models")} autoFocus onChange={(event) => setQuery(event.target.value)} />
     </label>
+    {sources.length > 0 && <div className="host-picker-sources" role="group" aria-label={t("Sources")}>
+      {[null, ...sources].map((each) => <button key={each ?? ""} type="button" className={`host-picker-chip host-picker-source${source === each ? " is-picked" : ""}`} aria-pressed={source === each} data-group={each ?? ""}
+        onClick={() => setSource(each)}>
+        {each !== null && (each === "other" ? <Boxes className="host-picker-source-icon" aria-hidden="true" /> : <span aria-hidden="true" className="host-picker-source-mark"><AgentMark agent={each} size={14} /></span>)}
+        {each === null ? t("All") : word(each, groupName(each))}
+        <span className="host-picker-source-count" aria-hidden="true">{each === null ? models.length : models.filter((model) => modelGroupOf(model) === each).length}</span>
+      </button>)}
+    </div>}
     </div>
     {shown.length === 0 && <p className="host-picker-state">{t("No models match")}</p>}
     {sections.map((section) => <section key={section.key} className="host-picker-group" aria-label={section.vendor ? `${heading(section)} · ${section.vendor}` : heading(section)}>
       <p className="host-picker-provider">{heading(section)}{section.vendor && <span className="host-picker-vendor"> · {section.vendor}</span>}</p>
+      <div className="host-picker-rows">
       {section.models.map((each) => {
         const picked = each.id === model?.id;
         const effort = picked ? model?.effort ?? null : null;
@@ -171,6 +184,7 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
           </div>}
         </div>;
       })}
+      </div>
     </section>)}
   </>;
 }
@@ -194,22 +208,24 @@ function SettingsList({ config, agents, agent, onConfig, onAgent }: Pick<ModelPi
     {config === null && <p className="host-picker-state" role="status">{t("Loading…")}</p>}
     {config !== null && config.approvalModes.length > 0 && <section className="host-picker-group" aria-label={t("Permissions")}>
       <p className="host-picker-provider">{t("Permissions")}</p>
-      {config.approvalModes.map((each) => option({ key: each, data: { "data-approvals": each }, picked: config.approvals === each, name: t(APPROVALS_LABEL[each] ?? each),
-        line: APPROVALS_HINT[each] ? t(APPROVALS_HINT[each]) : undefined, Icon: APPROVALS_ICON[each], tone: each === "autoApprove" ? "notice" : undefined, onPick: () => onConfig({ approvals: each }) }))}
+      <div className="host-picker-rows">{config.approvalModes.map((each) => option({ key: each, data: { "data-approvals": each }, picked: config.approvals === each, name: t(APPROVALS_LABEL[each] ?? each),
+        line: APPROVALS_HINT[each] ? t(APPROVALS_HINT[each]) : undefined, Icon: APPROVALS_ICON[each], tone: each === "autoApprove" ? "notice" : undefined, onPick: () => onConfig({ approvals: each }) }))}</div>
     </section>}
     {config !== null && config.modes.length > 0 && <section className="host-picker-group" aria-label={t("Mode")}>
       <p className="host-picker-provider">{t("Mode")}</p>
-      {config.modes.map((each) => option({ key: each, data: { "data-mode": each }, picked: config.mode === each, name: t(MODE_LABEL[each] ?? each),
-        line: MODE_HINT[each] ? t(MODE_HINT[each]) : undefined, Icon: MODE_ICON[each], onPick: () => onConfig({ mode: each }) }))}
+      <div className="host-picker-rows">{config.modes.map((each) => option({ key: each, data: { "data-mode": each }, picked: config.mode === each, name: t(MODE_LABEL[each] ?? each),
+        line: MODE_HINT[each] ? t(MODE_HINT[each]) : undefined, Icon: MODE_ICON[each], onPick: () => onConfig({ mode: each }) }))}</div>
     </section>}
     <section className="host-picker-group" aria-label={t("Agent")}>
       <p className="host-picker-provider">{t("Agent")}</p>
+      <div className="host-picker-rows">
       {all.length > AGENT_SEARCH_FROM && <label className="host-picker-search">
         <Search aria-hidden="true" />
         <input className="input" type="search" value={query} placeholder={t("Search agents")} aria-label={t("Search agents")} onChange={(event) => setQuery(event.target.value)} />
       </label>}
       {option({ key: "", data: { "data-agent": "" }, picked: agent === null, name: t("Agent"), onPick: () => onAgent(null) })}
       {shown.map((each) => option({ key: each.uri, data: { "data-agent": each.uri }, picked: each.uri === agent, name: each.name, line: each.description ?? undefined, onPick: () => onAgent(each.uri) }))}
+      </div>
     </section>
     <p className="host-picker-note">{t("This choice applies to messages sent from here; a message typed on the PC uses the agent picked there.")}</p>
   </>;

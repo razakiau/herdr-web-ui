@@ -1571,6 +1571,7 @@ export const KO: Record<string, string> = {
   "Couldn't list this folder's files": "이 폴더의 파일을 나열할 수 없습니다",
   "No picture on the clipboard": "클립보드에 사진이 없습니다",
   "The browser didn't allow reading the clipboard": "브라우저가 클립보드 읽기를 허용하지 않았습니다",
+  "Sources": "소스",
   "Chat settings": "채팅 설정",
   "Chat settings: {0}, {1}, {2}": "채팅 설정: {0}, {1}, {2}",
   "Mode": "모드",

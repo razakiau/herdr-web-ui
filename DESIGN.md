@@ -1515,7 +1515,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   status line does not repeat a running count the pills already show.
   A host chat's toolbar (ZAC-207 redesign, `docs/superpowers/specs/2026-10-24-composer-redesign-design.md`)
   is one quiet row on every width: attach `+`, the settings button (`.host-chat-settings`,
-  `SlidersHorizontal`, `--text-dim`; `--notice` while permissions are not Manual), the model chip
+  `SlidersHorizontal`, `--text-dim`; the theme's `--accent` while permissions are not Manual: a choice, not a warning, so never a fixed amber), the model chip
   (provider mark, name, dim effort; no border or caret, `--bg-hover` on hover; the name is the
   row's only words and ellipsizes last, after the effort word drops), on a mouse window a custom
   agent's name in `--text-dim`, then the context meter (ring; its percent from `600px`) and one
@@ -1524,11 +1524,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   chat with nothing typed (`roundButton`); with Send shown the mic sits quiet just before it. A
   pane chat keeps its mic after attach and the status pill.
   The settings and model sheets are grouped inset lists: a group is one `--bg-elevated`
-  `--radius-lg` block under an 11 px caps caption, rows at least 50 px with a hairline between
+  `--radius-lg` block (`.host-picker-rows`, round at all four corners) under an 11 px caps caption
+  that stands on the sheet above it, never inside the block, rows at least 50 px with a hairline between
   them inset past the icon, a 20 px `--text-dim` icon, the name in `--text-strong`, one
   `--text-dim` line, and an `--accent` check on the choice. No row is an outlined card. The
   settings sheet's order is Permissions, Mode, Agent (a section the host has no values for is
-  left out); the model sheet has no provider tab chips, its captions name the providers.
+  left out). The model sheet's captions name the providers; under its search a row of source chips
+  (All, then one per source: Copilot, OmniRoute, a custom endpoint…, each with its mark and count;
+  `.host-picker-sources`, scrolling sideways) narrows the list to one source, and none show when
+  the PC offers one source only.
   A host chat's `+` opens the attach sheet ("Add to chat", `AttachSheet.tsx`) in the same `.modal`
   shell: two `--bg-elevated` `--radius-lg` tiles (Camera, Photos: the device picker narrowed to
   pictures), then one grouped list: Files in this folder (a pushed page with a search over the
