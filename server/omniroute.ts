@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelPrice, ModelPrices, OmniRouteStatus, ProviderUsage, UsageWindow } from "../shared/protocol.ts";
 import { jsonResponse } from "./http.ts";
+import type { LiteLlmPrices } from "./litellmPrices.ts";
 import { FRESH_MS, MIN_REFRESH_MS, RETRY_MS } from "./usage.ts";
 
 type Json = Record<string, unknown>;
@@ -298,10 +299,14 @@ function normalizeUrl(value: string): string {
   return url.href.replace(/\/+$/, "");
 }
 
-/** GET /api/usage/omniroute/pricing: the gateway's prices for a chat's cost estimate, `null` when there are none. */
-export async function handleOmniRoutePricing(request: Request, link: OmniRouteLink): Promise<Response> {
+/**
+ * GET /api/usage/omniroute/pricing: the gateway's prices for a chat's cost estimate, and LiteLLM's
+ * maker prices by bare model name behind them (ZAC-224); each `null` when there are none.
+ */
+export async function handleOmniRoutePricing(request: Request, link: OmniRouteLink, litellm: Pick<LiteLlmPrices, "read">): Promise<Response> {
   if (request.method !== "GET") return jsonResponse({ error: { code: "method_not_allowed", message: "Use GET" } }, 405, { allow: "GET" });
-  return jsonResponse({ prices: await link.pricing() }, 200, { "cache-control": "no-store" });
+  const [prices, fallback] = await Promise.all([link.pricing(), litellm.read()]);
+  return jsonResponse({ prices, fallback }, 200, { "cache-control": "no-store" });
 }
 
 /** GET, PUT `{url, token?}` and DELETE on /api/usage/omniroute; only fixed words leave it. */

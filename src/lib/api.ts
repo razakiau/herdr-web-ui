@@ -52,6 +52,7 @@ import type {
   UsageReport,
   WorkspaceCreated,
   PluginActionRequest,
+  ModelPrice,
   ModelPrices,
   OmniRouteStatus,
   PluginActionResult,
@@ -104,16 +105,21 @@ export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteSta
 }
 
 /**
- * The OmniRoute gateway's prices, for a chat's cost estimate: this server's (the one the browser
- * talks to), whichever PC the chat is on; null with no gateway, or a server too old to have them.
- * Asked once a page: the server keeps the table for hours.
+ * List prices for a chat's cost estimate, from this server (the one the browser talks to) whichever
+ * PC the chat is on: OmniRoute's table, and LiteLLM's maker prices by bare name behind it (ZAC-224).
+ * Each null when missing (no gateway, a failed read, or a server too old to have it).
  */
-let prices: Promise<ModelPrices | null> | null = null;
-export function fetchModelPrices(): Promise<ModelPrices | null> {
-  // a table is kept for the page; no table (no gateway yet, or the server's read failed) is asked again
-  prices ??= getJson<{ prices: ModelPrices | null }>("/api/usage/omniroute/pricing").then(
-    (answer) => { if (!answer.prices) prices = null; return answer.prices; },
-    () => { prices = null; return null; });
+export interface ChatPrices { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null }
+let prices: Promise<ChatPrices> | null = null;
+export function fetchModelPrices(): Promise<ChatPrices> {
+  // kept for the page once both are in; a missing one is asked again on the next open
+  prices ??= getJson<{ prices?: ModelPrices | null; fallback?: Record<string, ModelPrice> | null }>("/api/usage/omniroute/pricing").then(
+    (answer) => {
+      const found = { prices: answer.prices ?? null, fallback: answer.fallback ?? null };
+      if (!found.prices || !found.fallback) prices = null;
+      return found;
+    },
+    () => { prices = null; return { prices: null, fallback: null }; });
   return prices;
 }
 

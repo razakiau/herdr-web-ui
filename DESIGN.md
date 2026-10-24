@@ -1544,8 +1544,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   The context meter opens "Context window", VS Code's popup in the same `.modal` shell and grouped
   lists (ZAC-224): first a Session group with the chat's cost at list price, the turns' tokens by
   model times OmniRoute's API prices (`/api/usage/omniroute/pricing`, subscriptions priced too),
-  `~` when every turn is counted, `≥` when older turns aren't loaded or a model has no price (the
-  note names it); then "{used} / {limit} tokens" with the percent, a bar whose `--accent` fill turns
+  then LiteLLM's maker price by bare name for a model OmniRoute lacks, then either one's price for
+  a `.x` point release's base model (v4.1 as v4, named in the note); `~` when every turn is
+  counted, `≥` when older turns aren't loaded or a model has no price (the note names it); then "{used} / {limit} tokens" with the percent, a bar whose `--accent` fill turns
   `--notice` past 75% and `--status-blocked` from 90%, followed by a striped band for the space
   kept for the answer (the model's output limit less this turn's output, "Reserved for response");
   then System, User Context and Uncategorized rows, each a share of the window to one decimal as

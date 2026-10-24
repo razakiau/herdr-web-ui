@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
+import { handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -262,5 +262,16 @@ describe("handleOmniRouteRequest", () => {
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ error: { code: "omniroute_env", message: "OmniRoute is set by the server" } });
     expect((await call(link, "POST", {})).status).toBe(405);
+  });
+
+  it("serves OmniRoute's prices with LiteLLM's maker prices behind them, either one alone when the other is missing (ZAC-224)", async () => {
+    const link = (prices: unknown) => ({ pricing: async () => prices }) as unknown as OmniRouteLink;
+    const litellm = (fallback: unknown) => ({ read: async () => fallback }) as never;
+    const ask = async (prices: unknown, fallback: unknown) => (await handleOmniRoutePricing(new Request("http://x/api/usage/omniroute/pricing"), link(prices), litellm(fallback))).json();
+    const table = { cc: { "claude-opus-5-5": { input: 4, output: 20 } } };
+    const map = { "deepseek-v4-flash": { input: 0.3, output: 1.2 } };
+    expect(await ask(table, map)).toEqual({ prices: table, fallback: map });
+    expect(await ask(null, map)).toEqual({ prices: null, fallback: map });
+    expect(await ask(table, null)).toEqual({ prices: table, fallback: null });
   });
 });

@@ -68,6 +68,7 @@ import { handlePortalRequest, PortalService } from "./portal.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
+import { LiteLlmPrices } from "./litellmPrices.ts";
 import { handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
@@ -294,6 +295,8 @@ export function createServer(
     usage?: UsageService;
     /** Tests supply a gateway link with its own state folder and environment. */
     omniRoute?: OmniRouteLink;
+    /** LiteLLM's price map behind OmniRoute's; tests pass a stand-in that reads nothing */
+    litellmPrices?: Pick<LiteLlmPrices, "read">;
     /** where a host chat's PR and issue pills read their state (server/references.ts); tests pass a stand-in */
     references?: ReferenceStateSource;
     /** Tests supply an isolated proxy service, never a user's configured instance. */
@@ -408,6 +411,7 @@ export function createServer(
   const cliProxyRoutes = new CLIProxyRoutes(cliProxy);
   const usageLogin = options.usageLogin ?? new UsageLoginService();
   const omniRoute = options.omniRoute ?? new OmniRouteLink(options.stateDir ?? defaultStateDir());
+  const litellmPrices = options.litellmPrices ?? new LiteLlmPrices();
   const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
     const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
@@ -1325,7 +1329,7 @@ export function createServer(
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       if (pathname === "/api/usage/omniroute") return handleOmniRouteRequest(request, omniRoute);
-      if (pathname === "/api/usage/omniroute/pricing") return handleOmniRoutePricing(request, omniRoute);
+      if (pathname === "/api/usage/omniroute/pricing") return handleOmniRoutePricing(request, omniRoute, litellmPrices);
       if (pathname === "/api/references/state") return handleReferenceStateRequest(request, references);
       if (pathname === "/api/usage/login") { bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }

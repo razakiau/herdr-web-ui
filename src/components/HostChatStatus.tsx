@@ -70,8 +70,8 @@ const CATEGORY_TITLE = { system: CONTEXT_PART.headingSystem, user: CONTEXT_PART.
 
 interface MeterProps {
   read: HostChatRead | null; open: boolean; onOpen(): void; onClose(): void;
-  /** the chat's cost at list price, from OmniRoute's prices; absent while unknown */
-  cost?: { usd: number; partial: boolean; missing: string[] } | null;
+  /** the chat's cost at list price (OmniRoute's, then LiteLLM's); absent while unknown */
+  cost?: { usd: number; partial: boolean; missing: string[]; estimated: string[] } | null;
   /** VS Code's Compact Conversation: sends /compact; absent while the chat works */
   onCompact?: () => void;
 }
@@ -145,9 +145,11 @@ function ContextSheet({ usage, cost, onClose, onCompact }: { usage: HostContextU
                 <strong className="host-context-cost">{cost.partial || cost.missing.length > 0 ? "≥ " : "~"}{formatUsd(cost.usd)}</strong>
               </div>
             </div>
-            <p className="host-context-note">{cost.missing.length > 0
-              ? t("OmniRoute has no price for {models}.", { models: cost.missing.join(", ") })
-              : cost.partial ? t("Older turns are not loaded, or reported no usage: at least this much.") : t("Tokens at OmniRoute's API prices, subscriptions included.")}</p>
+            <p className="host-context-note">{[
+              cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null,
+              cost.estimated.length > 0 ? t("{models} priced as its base model.", { models: cost.estimated.join(", ") }) : null,
+              cost.partial ? t("Older turns are not loaded, or reported no usage: at least this much.") : null,
+            ].filter(Boolean).join(" ") || t("Tokens at list prices (OmniRoute, then LiteLLM), subscriptions included.")}</p>
           </section>}
           <section className={`host-context-window${level}`} aria-label={t("Context window")}>
             <div className="host-context-head">

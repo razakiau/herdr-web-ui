@@ -126,7 +126,7 @@ const patch = `(() => {
       work: state.work ?? [],
       context: { currentTokens: 84000, tokenLimit: 200000, conversationTokens: 60000, systemTokens: 9000, toolDefinitionsTokens: 15000, reservedTokens: 40000,
         parts: [{ category: "system", label: "System prompt", share: 11 }, { category: "system", label: "Tool Definitions", share: 18 }, { category: "user", label: "Tool Results", share: 30 }, { category: "user", label: "Messages", share: 40 }] },
-      tokens: { totals: [{ model: "cc/fictional-opus", input: 1000000, cached: 900000, output: 10000 }, { model: "fictional/unpriced", input: 10, cached: 0, output: 10 }], partial: false },
+      tokens: { totals: [{ model: "cc/fictional-opus", input: 1000000, cached: 900000, output: 10000 }, { model: "fictional/unpriced", input: 10, cached: 0, output: 10 }, { model: "opencode-go/fictional-v4.1-flash", input: 1000000, cached: 0, output: 0 }], partial: false },
       signature: JSON.stringify([state.answered, state.busy, state.sent, state.model, state.agent, state.older, state.pushed, state.pending, state.background ?? null, state.work ?? null, state.resumed, state.restored ?? null]) };
   };
   const edited = (rows) => rows.filter((row) => !edits.deleted.includes(row.session)).map((row) => ({ ...row,
@@ -178,7 +178,7 @@ const patch = `(() => {
     if (SIX && machine === "pc-e" && path === "/api/host-chats/chats") return json({ chats: [{ session: "fictional-pc-e", title: "FICTIONAL waits on you", status: state.peAsks ? "asks" : "idle", modified_at: at(1), cwd: "/tmp/fictional-e", unread: false, archived: false }] });
     // ZAC-207: this server reads the PR pill's state (GitHub): the fixture's PR is merged
     // OmniRoute's prices, from this server (whichever PC the chat is on)
-    if (url.pathname === "/api/usage/omniroute/pricing") { calls.prices = (calls.prices ?? 0) + 1; return json({ prices: { cc: { "fictional-opus": { input: 4, output: 20, cached: 0.2 } } } }); }
+    if (url.pathname === "/api/usage/omniroute/pricing") { calls.prices = (calls.prices ?? 0) + 1; return json({ prices: { cc: { "fictional-opus": { input: 4, output: 20, cached: 0.2 } } }, fallback: { "fictional-v4-flash": { input: 0.5, output: 1 } } }); }
     if (path === "/api/references/state") return json({ states: Object.fromEntries(url.searchParams.getAll("url").map((each) => [each, { state: each.endsWith("/pull/12") ? "merged" : "unknown" }])) });
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
       const body = init?.body ? JSON.parse(init.body) : undefined;
@@ -1262,15 +1262,16 @@ try {
         // VS Code's popup (owner, ZAC-224): the session's cost, the window's bar with its reserved band,
         // then System, User Context and Uncategorized as shares of the window
         await contextSheet.locator(".host-context-cost").waitFor();
-        // 100,000 new in x $4 + 900,000 cached x $0.20 + 10,000 out x $20 per million = $0.78; the unpriced model makes it a floor
-        assert.equal((await contextSheet.locator(".host-context-cost").innerText()).trim(), "≥ $0.78", "the cost at OmniRoute's prices");
-        assert.match(await contextSheet.locator(".host-context-note").innerText(), /no price for fictional\/unpriced/, "a model it cannot price is named");
+        // OmniRoute's opus: 100,000 new in x $4 + 900,000 cached x $0.20 + 10,000 out x $20 per million = $0.78;
+        // v4.1 at LiteLLM's v4 price (its base model): 1,000,000 in x $0.50 = $0.50; the unpriced model makes it a floor
+        assert.equal((await contextSheet.locator(".host-context-cost").innerText()).trim(), "≥ $1.28", "the cost at OmniRoute's prices, then LiteLLM's for a point release");
+        assert.equal((await contextSheet.locator(".host-context-note").innerText()).trim(), "No price for fictional/unpriced. opencode-go/fictional-v4.1-flash priced as its base model.", "the unpriced and the estimated are named");
         assert.equal((await contextSheet.locator(".host-context-count").innerText()).trim(), "84.0K / 200.0K tokens", "VS Code's counts");
         const windowBar = await contextSheet.locator(".host-context-bar").evaluate((node) => { const width = node.getBoundingClientRect().width; const part = (selector: string) => Math.round((node.querySelector(selector)!.getBoundingClientRect().width / width) * 100); return { used: part(".host-context-used"), reserved: part(".host-context-reserved") }; });
         assert.deepEqual(windowBar, { used: 42, reserved: 20 }, "the bar: 42% used, the answer's 20% striped after it");
         const groups = await contextSheet.locator(".host-picker-group").evaluateAll((nodes) => nodes.map((node) => [node.querySelector("h3")?.textContent?.trim(), [...node.querySelectorAll(".host-context-row")].map((row) => row.textContent?.replace(/\s+/g, " ").trim())]));
         assert.deepEqual(groups, [
-          ["Session", ["Cost at list price≥ $0.78"]],
+          ["Session", ["Cost at list price≥ $1.28"]],
           ["System", ["System prompt4.6%", "Tool Definitions7.6%"]],
           ["User Context", ["Tool Results12.6%", "Messages16.8%"]],
           ["Uncategorized", ["Other0.4%"]],

@@ -11,9 +11,8 @@
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ModelPrices } from "../../shared/protocol.ts";
 import { chatCost } from "../lib/chatCost.ts";
-import { fetchModelPrices } from "../lib/api.ts";
+import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
 import { Eye, GitFork, SlidersHorizontal } from "lucide-react";
 
 import "./ChatView.css";
@@ -124,15 +123,16 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   // OmniRoute's prices, once the context sheet is first opened: the cost is only shown there
-  const [prices, setPrices] = useState<ModelPrices | null>(null);
+  // asked on every open until both tables are in (fetchModelPrices keeps them for the page then)
+  const [prices, setPrices] = useState<ChatPrices | null>(null);
   useEffect(() => {
-    if (!contextOpen || prices !== null) return;
-    void fetchModelPrices().then((value) => { if (mounted.current && value) setPrices(value); });
-  }, [contextOpen, prices]);
+    if (!contextOpen) return;
+    void fetchModelPrices().then((value) => { if (mounted.current && (value.prices || value.fallback)) setPrices(value); });
+  }, [contextOpen]);
   const cost = useMemo(() => {
     const tokens = chat?.tokens;
     if (!prices || !tokens || tokens.totals.length === 0) return null;
-    return { ...chatCost(tokens.totals, prices), partial: tokens.partial };
+    return { ...chatCost(tokens.totals, prices.prices ?? {}, prices.fallback), partial: tokens.partial };
   }, [chat?.tokens, prices]);
   // the checkpoint a tap asked to restore (its sheet is up), and the message a restore put back in the box
   const [restoring, setRestoring] = useState<string | null>(null);
