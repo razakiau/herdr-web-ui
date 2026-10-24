@@ -406,9 +406,19 @@ describe("the end of a host answer (ZAC-228)", () => {
     expect(draw(answer, { checkpointAfter: "t2", onCheckpoint: () => undefined })).not.toContain("chat-checkpoint-line");
   });
 
-  it("an answer's footer names its model", () => {
+  it("an answer's footer names its model, with its maker's mark when one is known", () => {
     expect(plain(draw({ ...answer, model: "FICTIONAL Model A" }))).toContain("FICTIONAL Model A");
+    expect(draw({ ...answer, model: "FICTIONAL Model A" })).not.toContain("agent-mark");
+    expect(draw({ ...answer, model: "Claude FICTIONAL 9" })).toMatch(/chat-meta-model"><span aria-hidden="true"><span class="agent-mark claude/);
     expect(draw(answer)).not.toContain("chat-meta-model");
+  });
+
+  it("names a gateway's MCP call by the tool it ran, though the read gives the full id as its name", () => {
+    const mcp = agent([{ kind: "tool", name: "lab-search-mcp_tool_call", tool_id: "lab-search-mcp_tool_call", summary: "mcp_tool_call", past: '"mcp_tool_call" failed',
+      input: JSON.stringify({ tool_name: "fictional-search", arguments: {} }), output: "", error: true }, { kind: "text", text: "FICTIONAL after" }]);
+    const html = plain(draw(mcp));
+    expect(html).toContain("Failed fictional-search lab-search");
+    expect(html).not.toContain("mcp_tool_call");
   });
 
   it("an answer's footer has one ⋯ and no restore or fork", () => {

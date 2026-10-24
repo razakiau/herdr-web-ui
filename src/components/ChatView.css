@@ -1811,9 +1811,12 @@
   text-decoration-color: var(--text-dim);
   text-underline-offset: 0.2em;
 }
-/* running, the wrench says it works: the classic pulsing dot is not drawn twice (a blocked turn keeps its red dot) */
+/* running, VS Code's turning ring says it works (owner, ZAC-228: the blue wrench read cheap); the
+   classic pulsing dot is not drawn twice (a blocked turn keeps its red dot) */
 .work-block.is-vscode.is-live:not(.is-waiting) .work-block-title::before { display: none; }
-.work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon { color: var(--status-working); }
+.work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon { color: var(--text-dim); animation: work-spin var(--dur-spin) var(--ease-spin) infinite; }
+@keyframes work-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .work-block.is-vscode.is-live .work-block-icon { animation: none; } }
 
 /* ---------- a subagent's row (vscode style only; SubagentRow.tsx) ---------- */
 /* the turn's column lays its rows out at their own width: these take the column's, so a long
@@ -2252,8 +2255,16 @@ button.question-summary-answer { cursor: pointer; }
 
 /* how long a host turn worked, once in its footer (ZAC-228): VS Code's groups carry no time */
 .chat-meta-duration { font-variant-numeric: tabular-nums; }
-/* the model that answered (ZAC-228): the footer's last word, cut short before it can wrap the line */
-.chat-meta-model { min-width: 0; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+/* the model that answered (ZAC-228), its maker's mark before it as on the composer's chip; cut
+   short before it can wrap the line */
+.chat-meta-model { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 18em; color: var(--text-dim); }
+.chat-meta-model .agent-mark { display: inline-flex; }
+.chat-meta-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* time · how long it worked · the model: VS Code's dots between the footer's facts (owner: they
+   ran together with the gap alone) */
+.chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-model) + :is(.chat-meta-duration, .chat-meta-model)::before {
+  content: "·"; margin-right: var(--space-2); color: var(--text-dim);
+}
 
 /* an MCP call's server beside its tool (ZAC-228), and the captions of its opened input and output */
 .work-row-server { color: var(--text-dim); font-size: var(--fs-xs); }

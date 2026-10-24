@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Ellipsis, FileDiff, GitFork, Layers, RotateCcw, Target, Wrench,
+  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Ellipsis, FileDiff, GitFork, Layers, LoaderCircle, RotateCcw, Target,
   type LucideProps,
 } from "lucide-react";
 
@@ -23,7 +23,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
-import { mcpCall } from "../lib/mcpCall.ts";
+import { mcpCall, mcpWordsSayMore } from "../lib/mcpCall.ts";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
@@ -92,6 +92,7 @@ import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
+import { providerMark } from "../lib/modelProvider.ts";
 import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
@@ -723,8 +724,7 @@ function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: strin
   // one, else what happened to the command; skipped keeps its word, as it never ran
   // an MCP call (ZAC-228): VS Code's "Ran `tool`" and its server, never the proxy's bare name
   const mcp = command === null ? mcpCall(part) : null;
-  const hostWords = (words: string | undefined) => words !== undefined && words.trim().length > 0 && words.trim() !== part.name;
-  const label = mcp !== null && !hostWords(part.past)
+  const label = mcp !== null && !mcpWordsSayMore(part.past, part)
     ? <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : part.error ? "Failed" : "Ran")} <code>{mcp.tool}</code>{mcp.server !== null && <> <span className="work-row-server">{mcp.server}</span></>}</>
     : command !== null
     ? part.intention !== undefined && part.state !== "skipped" ? <>{part.intention} <code>{command}</code></>
@@ -775,7 +775,7 @@ function VscodeWorkBlockView({ paneId, parts, live, waiting, defaultOpen, stateK
   const standalone = parts.filter((part): part is ToolPartType => part.kind === "tool" && apart(part));
   const { title, added, removed } = toolGroupSummary(folded, t);
   const failed = folded.some((part) => part.kind === "tool" && part.error === true);
-  const Icon = failed ? CircleX : live ? Wrench : Check;
+  const Icon = failed ? CircleX : live ? LoaderCircle : Check;
   const heading = waiting ? t("Needs you") : live ? t("Working…") : title;
   const space = heading.indexOf(" ");
   return <>
@@ -1002,6 +1002,15 @@ function TurnChanges({ files, onView }: { files: HostCheckpoint["files"]; onView
     {sum.removed > 0 && <span className="chat-diff-del">−{sum.removed}</span>}
     {onView && <button type="button" className="chat-turn-changes-view" onClick={() => onView(files.map((file) => file.path))}>{t("View")}<ChevronRight aria-hidden="true" /></button>}
   </div>;
+}
+
+/** The model that answered, with its maker's mark as the composer's chip wears it (owner, ZAC-228). */
+function AnswerModel({ name }: { name: string }) {
+  const mark = providerMark({ id: name, name, provider: "" });
+  return <span className="chat-meta-model">
+    {mark !== "sparkle" && <span aria-hidden="true"><AgentMark agent={mark} size={12} /></span>}
+    <span className="chat-meta-model-name">{name}</span>
+  </span>;
 }
 
 /** VS Code's ⋯ on a message or an answer: its actions in a menu (a sheet on a phone). */
@@ -1261,7 +1270,7 @@ export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinki
       {time}
       {/* how long it worked, once for the turn (VS Code's groups carry none) */}
       {worked !== null && <span className="chat-meta-duration">{t("Worked for {duration}", { duration: worked })}</span>}
-      {style === "vscode" && turn.model !== undefined && <span className="chat-meta-model">{turn.model}</span>}
+      {style === "vscode" && turn.model !== undefined && <AnswerModel name={turn.model} />}
       {style === "vscode" && answerText.length > 0 && <TurnMenu title={t("Answer")} items={[
         { id: "md", label: t("Copy as markdown"), icon: Copy, run: () => { void copyText(answerText).then(copied); } },
         { id: "txt", label: t("Copy as plain text"), icon: Copy, run: () => { void copyText(plainText(answerText)).then(copied); } },
@@ -2165,7 +2174,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, active =
     </div>}
     {/* VS Code's sticky request: the turn's own message, two lines, a tap takes the reader back to it */}
     {stickyText.length > 0 && <button type="button" className="chat-sticky-request" aria-label={t("Go to your message: {text}", { text: stickyText.slice(0, 120) })} onClick={toStickyRequest}>
-      <span className="chat-sticky-request-text">{stickyText}</span>
+      <span className="chat-sticky-request-text"><span className="chat-sticky-request-clamp">{stickyText}</span></span>
     </button>}
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} />}
     {jump}

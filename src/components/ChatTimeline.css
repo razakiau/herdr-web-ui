@@ -64,7 +64,7 @@
 }
 
 .chat-sticky-request-text {
-  display: -webkit-box;
+  display: block;
   max-width: 80%;
   padding: var(--space-2) var(--space-3);
   overflow: hidden;
@@ -77,6 +77,12 @@
   line-height: var(--lh-prose);
   overflow-wrap: anywhere;
   white-space: pre-line;
+}
+/* the clamp on an inner box: with the bubble's own padding under it, a clamped box shows a sliver
+   of its third line in the padding (live, 2026-10-24) */
+.chat-sticky-request-clamp {
+  display: -webkit-box;
+  overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;

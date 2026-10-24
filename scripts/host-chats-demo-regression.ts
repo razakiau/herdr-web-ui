@@ -514,6 +514,7 @@ try {
         assert.match(await second.getAttribute("class") ?? "", /is-folded/, "a finished turn's last group is folded too (ZAC-228)");
         assert.match(await agentTurn.locator(".chat-agent-meta .chat-meta-duration").innerText(), /^Worked for \d+m$/, "the turn's footer says once how long it worked (ZAC-228)");
         assert.equal((await agentTurn.locator(".chat-agent-meta .chat-meta-model").innerText()).trim(), "FICTIONAL Model A", "and the model that answered");
+        assert.equal(await agentTurn.locator(".chat-agent-meta .chat-meta-model").evaluate((node) => getComputedStyle(node, "::before").content), '"·"', "a dot between it and the time worked, never run together (owner)");
         // ZAC-228: the answer closes with what it changed, View opens the diff sheet cut to it, and a
         // dashed checkpoint follows it; its footer's ⋯ copies and never restores
         const changed = agentTurn.locator(".chat-turn-changes");
@@ -779,8 +780,10 @@ try {
         // the folded card leaves a taller transcript: its rows re-measure for a moment before the pin settles
         await page.waitForFunction(() => document.querySelector(".host-chat .chat-sticky-request")?.textContent?.trim() === "FICTIONAL find the config", undefined, { timeout: 3000 }).catch(() => undefined);
         assert.equal((await pinned.innerText()).trim(), "FICTIONAL find the config", "the sticky row is the turn's own message");
-        const clamp = await pinned.locator(".chat-sticky-request-text").evaluate((node) => getComputedStyle(node).webkitLineClamp);
+        const clamp = await pinned.locator(".chat-sticky-request-clamp").evaluate((node) => getComputedStyle(node).webkitLineClamp);
         assert.equal(clamp, "2", "cut to two lines");
+        // the cut lives inside the bubble's padding, so no sliver of a third line shows under it (live, ZAC-228)
+        assert.equal(await pinned.locator(".chat-sticky-request-text").evaluate((node) => getComputedStyle(node).webkitLineClamp), "none", "the padded bubble itself is not the clamped box");
         if (shots) await page.screenshot({ path: join(shots, "r5-sticky-390.png") });
         await pinned.click();
         await page.waitForFunction(() => {
@@ -1349,6 +1352,12 @@ try {
         await working.waitFor();
         const shimmer = await working.evaluate((node) => { const style = getComputedStyle(node); return { clip: style.backgroundClip || (style as unknown as Record<string, string>)["webkitBackgroundClip"], name: style.animationName, image: style.backgroundImage.startsWith("linear-gradient") }; });
         assert.deepEqual(shimmer, { clip: "text", name: "work-shimmer", image: true }, "the live title shimmers");
+        // its icon is VS Code's turning ring, not a wrench (owner, ZAC-228)
+        const liveIcon = view.locator(".work-block.is-vscode.is-live:not(.is-waiting) .work-block-icon").last();
+        if (await liveIcon.count() > 0) {
+          assert.match(await liveIcon.getAttribute("class") ?? "", /lucide-loader-circle/, "the live group turns a ring");
+          assert.equal(await liveIcon.evaluate((node) => getComputedStyle(node).animationName), "work-spin", "and it turns");
+        }
         if (shots) await page.screenshot({ path: join(shots, "r4-working-390.png") });
         assert.equal(await line.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the line is whole at 390 px");
         await view.locator('.composer-controls-right .host-chat-meter').click();
