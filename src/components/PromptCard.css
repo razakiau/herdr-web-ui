@@ -650,14 +650,16 @@
   padding: var(--space-2) 0 0;
 }
 
-/* Opened: the same card at full height in the app's sheet. The question scrolls on its own and
-   the options and the answer field stay at the bottom, over the keyboard (--app-height). */
+/* Opened: the same card in the app's sheet. The question scrolls on its own and the options and
+   the answer field stay at the bottom, over the keyboard (--app-height). On a wide window the sheet
+   is as tall as its content, up to the window: a fixed height left a short question over a dead
+   band (owner, ZAC-207, a desktop screenshot). A phone keeps the full-height sheet (below). */
 .prompt-card-sheet {
   display: flex;
   flex-direction: column;
   width: min(100%, 48rem);
-  height: min(calc(var(--app-height, 100dvh) - 2 * var(--space-4)), 60rem);
-  max-height: none;
+  height: auto;
+  max-height: min(calc(var(--app-height, 100dvh) - 2 * var(--space-4)), 60rem);
   padding: 0;
   overflow: hidden;
 }
