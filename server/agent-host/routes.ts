@@ -49,6 +49,7 @@ import {
   type StateAction,
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState, HostChanges, HostCommand } from "../../shared/host-chats.ts";
+import { readSessionTodos } from "./todos.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
@@ -461,6 +462,7 @@ function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): R
     chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelWindow: (id) => windows.get(id) ?? null, modelOutput: (id) => outputs.get(id) ?? null,
     ...(session ? { session: () => host.mirror().getSession(ownerOf(host, session)) } : {}),
     ...(skills ? { skills: () => skills } : {}),
+    ...(session ? { todos: () => readSessionTodos(session) } : {}),
   };
 }
 

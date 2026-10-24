@@ -117,6 +117,8 @@ export interface HostChatRead {
   checkpoints: HostCheckpoint[];
   /** a checkpoint restored and not yet sent past or redone: the next send truncates the chat to before it */
   restored: { turn: string; files: number } | null;
+  /** the session's todo list in its order (absent when it has none, and from a bridge before ZAC-228) */
+  todos?: HostTodo[];
   /** changes when anything shown changes */
   signature: string;
 }
@@ -163,6 +165,13 @@ export interface HostSessionConfig { mode: string | null; approvals: string | nu
 export interface HostCommand { name: string; description: string; kind: "skill" | "prompt" | "agent" }
 
 /** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */
+/** One row of a Copilot session's `todos` table. */
+export interface HostTodo {
+  id: string;
+  title: string;
+  status: "pending" | "in_progress" | "done" | "blocked";
+}
+
 export interface HostCheckpoint {
   turn: string;
   files: { path: string; added: number; removed: number }[];

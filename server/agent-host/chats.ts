@@ -47,7 +47,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTodo, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
 
@@ -238,6 +238,8 @@ export interface ReadContext {
   modelWindow?(id: string): number | null;
   /** the most a model writes in one answer as the host lists it (maxOutputTokens), null when it has none */
   modelOutput?(id: string): number | null;
+  /** the session's todo list, null when it has none */
+  todos?(): HostTodo[] | null;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -1097,12 +1099,14 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     checkpoints: checkpointsOf(chat),
     restored,
   };
+  const todos = context?.todos?.() ?? null;
+  if (todos !== null && todos.length > 0) read.todos = todos;
   const shape = [
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
     prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
-    read.background, read.work, read.artifacts, read.confirmations, read.context, read.tokens, read.restored,
+    read.background, read.work, read.artifacts, read.confirmations, read.context, read.tokens, read.restored, read.todos ?? null,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
   ];

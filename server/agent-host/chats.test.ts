@@ -486,6 +486,17 @@ describe("what a host chat waits on, and its context", () => {
     expect(readFrom("s", "t", chat({ backgroundWork: work })).signature).not.toBe(readFrom("s", "t", chat({})).signature);
   });
 
+  it("a read carries the session's todos when it has some, and they change its signature", () => {
+    const base = { chat: () => undefined, modelName: (id: string) => id };
+    const one = [{ id: "a", title: "FICTIONAL plan", status: "in_progress" as const }];
+    const done = [{ id: "a", title: "FICTIONAL plan", status: "done" as const }];
+    expect(readFrom("s", "t", chat({}), { ...base, todos: () => one }).todos).toEqual(one);
+    expect(readFrom("s", "t", chat({}), { ...base, todos: () => [] })).not.toHaveProperty("todos");
+    expect(readFrom("s", "t", chat({}), { ...base, todos: () => null })).not.toHaveProperty("todos");
+    expect(readFrom("s", "t", chat({}), { ...base, todos: () => one }).signature)
+      .not.toBe(readFrom("s", "t", chat({}), { ...base, todos: () => done }).signature);
+  });
+
   it("a read carries the session's artifacts and the chat's running work, and either changes its signature", () => {
     const work = [{ kind: "shell", id: "shell:1", label: "FICTIONAL dev server", startedAt: AT, command: "npm run dev", _meta: { "vscode.stopBackgroundWork": true } }];
     const artifacts = [{ id: "a1", type: "issue", label: "FICTIONAL ticket", link: "https://linear.invalid/FIC-1" }];
