@@ -479,6 +479,19 @@
   border-top: var(--hairline) solid var(--border);
 }
 
+/* in the header (a mouse window): no rule above it, the count between the arrows, tight to the title's end */
+.prompt-card-pager.is-header {
+  flex: none;
+  gap: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* a mouse window's foot holds only Submit, at the card's end */
+.prompt-card-pager:not(.is-header):not(:has(.icon-button)) {
+  justify-content: flex-end;
+}
+
 .prompt-card-pager-count {
   min-width: 4.5em;
   color: var(--text-dim);
@@ -653,6 +666,14 @@
 
 .prompt-card.is-expanded .prompt-card-body {
   max-height: none;
+}
+
+/* full screen on a wide window: the sheet's own margins, not the inline card's tight 12 px */
+@media (min-width: 641px) {
+  .prompt-card.is-expanded {
+    padding: var(--space-5) var(--space-6) var(--space-2);
+    gap: var(--space-3);
+  }
 }
 
 @media (max-width: 640px) {

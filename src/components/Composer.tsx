@@ -1514,7 +1514,8 @@ export function Composer({
         <div className="composer-controls composer-controls-right">
           {toolbarEnd}
           {round === "voice" && <MicButton dictation={dictation} round className="composer-voice-wrap" />}
-          {round === "send" && dictation.shown && pills !== undefined && <MicButton dictation={dictation} />}
+          {/* the quiet mic before Send, and before Stop on a busy chat: steering by voice must not wait on a typed character (owner, ZAC-207) */}
+          {round !== null && round !== "voice" && dictation.shown && <MicButton dictation={dictation} />}
           {round === "voice" ? null : !sendShown ? (
             <button
               type="button"

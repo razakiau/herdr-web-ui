@@ -816,6 +816,7 @@ try {
         assert.ok(sized.fieldBottom <= sized.viewport, `the answer field is on screen without scrolling (bottom ${sized.fieldBottom} of ${sized.viewport})`);
         await fits("the expanded card");
         if (shots) await page.screenshot({ path: join(shots, "task-10-card-expanded-390.png") });
+        if (shots) { await page.setViewportSize({ width: 1440, height: 900 }); await settled(page); await page.screenshot({ path: join(shots, "card-expanded-1440.png") }); await page.setViewportSize({ width: 390, height: 844 }); await settled(page); }
         await opened.getByRole("button", { name: "Exit full screen" }).click();
         await expanded.waitFor({ state: "detached" });
         assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL kept", "collapsing returns the card inline with its text");
@@ -894,6 +895,21 @@ try {
         await page.evaluate(() => { const host = (window as unknown as { hostState: { answered: boolean; form: boolean } }).hostState; host.answered = false; host.form = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
         const formCard = page.locator(".prompt-dock .prompt-card");
         await formCard.locator(".prompt-card-pager-count", { hasText: "1 of 2" }).waitFor();
+        // a wide window: the pager stands in the card's header beside the title, not in a footer row of its
+        // own under a wide card (owner, ZAC-207); a phone keeps it at the foot, in the thumb's reach
+        assert.equal(await formCard.locator(".prompt-card-header .prompt-card-pager-count").count(), 0, "a phone keeps the pager at the foot");
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await formCard.locator(".prompt-card-header .prompt-card-pager-count").waitFor({ timeout: 5_000 }).catch(() => assert.fail("the pager is in the header on a wide window"));
+        await formCard.getByRole("button", { name: "Open full screen" }).click();
+        const formSheet = page.getByRole("dialog", { name: "Agent is asking" });
+        await formSheet.waitFor();
+        const pad = await formSheet.locator(".prompt-card").evaluate((n) => parseFloat(getComputedStyle(n).paddingLeft));
+        assert.ok(pad >= 20, `full screen on a wide window has the sheet's margins (${pad} px)`);
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "ask-form-expanded-1440.png") }); }
+        await formSheet.getByRole("button", { name: "Exit full screen" }).click();
+        await formSheet.waitFor({ state: "detached" });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await formCard.locator(".prompt-card-pager:not(.is-header) .prompt-card-pager-count").waitFor();
         const answeredBefore = (await posts("/api/machines/remote/host-chats/chat/answer")).length;
         assert.equal(await formCard.getByRole("button", { name: "Next question" }).isDisabled(), true, "a required page waits for its answer");
         await formCard.getByRole("button", { name: /FICTIONAL south/ }).click();
@@ -1129,8 +1145,14 @@ try {
         // Add to Queue waits for the turn, and Stop and Send ends the turn and sends
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
         assert.equal(await view.locator(".composer-send-menu").count(), 0, "no send menu while the box is empty");
+        // steering by voice: a busy chat's empty box offers the mic beside Stop, no typed character first (owner, ZAC-207)
+        await view.locator(".composer-stop").waitFor();
+        assert.equal(await view.locator(".composer-controls .voice-mic:not(.composer-voice)").count(), 1, "the mic is there while the chat works");
         await box.fill("FICTIONAL steer one");
         await view.locator(".composer-send-menu").waitFor();
+        // the caret is Send's own split half, not a separate button a gap away
+        const caretGap = await view.evaluate((root) => Math.round(root.querySelector(".composer-send-menu")!.getBoundingClientRect().left - root.querySelector(".composer-send")!.getBoundingClientRect().right));
+        assert.ok(caretGap <= 2, `the send menu's caret sits against Send (${caretGap} px)`);
         await view.getByRole("button", { name: "Send message" }).click();
         const steering = view.locator('.host-pending-group[data-kind="steering"]');
         await steering.locator(".host-pending-divider", { hasText: "Steering" }).waitFor();
