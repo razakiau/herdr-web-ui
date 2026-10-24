@@ -521,6 +521,14 @@ try {
         assert.match(await agentTurn.locator(".chat-agent-meta .chat-meta-duration").innerText(), /^Worked for \d+m$/, "the turn's footer says once how long it worked (ZAC-228)");
         assert.equal((await agentTurn.locator(".chat-agent-meta .chat-meta-model").innerText()).trim(), "FICTIONAL Model A", "and the model that answered");
         assert.equal(await agentTurn.locator(".chat-agent-meta .chat-meta-model").evaluate((node) => getComputedStyle(node, "::before").content), '"·"', "a dot between it and the time worked, never run together (owner)");
+        // each fact on one line: at 390 px the time and the duration broke in two (live crawl, ZAC-228)
+        for (const fact of [".chat-agent-meta time", ".chat-agent-meta .chat-meta-duration"]) {
+          const lines = await agentTurn.locator(fact).first().evaluate((node) => Math.round(node.getBoundingClientRect().height / parseFloat(getComputedStyle(node).lineHeight || "16")));
+          assert.equal(lines, 1, `${fact} stays on one line`);
+        }
+        // the row keeps to the turn's width, so the ⋯ stays on screen and the model's name gives way
+        const metaOver = await agentTurn.locator(".chat-agent-meta").evaluate((meta) => Math.round(meta.querySelector(".chat-more-btn")!.getBoundingClientRect().right - meta.closest(".chat-turn-agent")!.getBoundingClientRect().right));
+        assert.ok(metaOver <= 0, `the footer's ⋯ is inside the turn (${metaOver} px over)`);
         // ZAC-228: the answer closes with what it changed, View opens the diff sheet cut to it, and a
         // dashed checkpoint follows it; its footer's ⋯ copies and never restores
         const changed = agentTurn.locator(".chat-turn-changes");
@@ -670,6 +678,16 @@ try {
         const mcpRun = view.locator(".work-standalone .mcp-run");
         assert.equal((await mcpRun.locator(":scope > .work-row-line .work-row-text").innerText()).replace(/\s+/g, " ").trim(), "Ran 3 MCP tools lab-search 1 failed", "a run of MCP calls folds to one line");
         assert.equal(await mcpRun.locator(".mcp-run-rows").count(), 0, "folded");
+        // its caret on the far edge, as a work group's (it hung right after the words)
+        // measured on a short title: the fixture's long one fills the row and would hide a caret that hugs its words
+        const runCaretGap = await mcpRun.evaluate((run) => {
+          const text = run.querySelector(":scope > .work-row-line .work-row-text") as HTMLElement, was = text.innerHTML;
+          text.textContent = "Ran 3 MCP tools";
+          const gap = Math.round(run.closest(".chat-turn")!.getBoundingClientRect().right - run.querySelector(":scope > .work-row-line .work-row-caret")!.getBoundingClientRect().right);
+          text.innerHTML = was;
+          return gap;
+        });
+        assert.ok(runCaretGap <= 8, `the run's caret sits at the turn's edge (${runCaretGap} px short)`);
         await mcpRun.locator(":scope > .work-row-line .work-row-head").click();
         assert.deepEqual((await mcpRun.locator(".mcp-run-rows .work-row-text").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()),
           ["Ran FICTIONAL-get_issue lab-search", "Failed FICTIONAL-save_issue lab-search", "Ran FICTIONAL-save_comment lab-search"], "opened: each call by the tool it ran");

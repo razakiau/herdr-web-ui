@@ -1804,10 +1804,15 @@
 .work-images { margin-top: var(--space-1); }
 /* a call VS Code never folds: its own row after the block */
 .work-standalone { display: flex; flex-direction: column; }
+/* a run spans the turn's column (the turn aligns its children to the start, so it took its words' width) */
+.work-standalone:has(> .mcp-run) { align-self: stretch; }
 /* a run of MCP calls folded to one line (ZAC-228): its calls open under it, indented to its words */
 .mcp-run-rows { display: flex; flex-direction: column; padding-inline-start: calc(var(--fs-md) + var(--space-2)); }
 .mcp-run.is-error .mcp-run-failed { color: var(--status-blocked); }
 .mcp-run .work-row-head .work-row-caret { margin-inline-start: auto; }
+/* the run's head spans the row so its caret sits on the far edge, as a work group's does (it took
+   the text's width, and the caret hung right after the words) */
+.work-row.is-vscode.mcp-run > .work-row-line > .work-row-head { flex: 1 1 auto; width: calc(100% + var(--space-1)); }
 
 .markdown-host-link {
   color: var(--accent);
@@ -2283,8 +2288,14 @@ button.question-summary-answer { cursor: pointer; }
 /* time · how long it worked · the model: VS Code's dots between the footer's facts (owner: they
    ran together with the gap alone) */
 .chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-model) + :is(.chat-meta-duration, .chat-meta-model)::before {
-  content: "·"; margin-right: var(--space-2); color: var(--text-dim);
+  content: "·"; margin-inline: var(--space-1) var(--space-2); color: var(--text-dim);
 }
+/* each fact stays on one line: on a phone "09:05 AM" and "Worked for 1h 13m" broke in two and
+   stacked beside each other (live crawl at 390 px, ZAC-228); the model's name is what gives way */
+.chat-agent-meta { align-self: stretch; min-width: 0; }
+.chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-btn) { flex: none; white-space: nowrap; }
+.chat-agent-meta .chat-meta-model { flex: 0 1 auto; overflow: hidden; }
+.chat-agent-meta .chat-meta-model .agent-mark { flex: none; }
 
 /* an MCP call's server beside its tool (ZAC-228), and the captions of its opened input and output */
 .work-row-server { color: var(--text-dim); font-size: var(--fs-xs); }
