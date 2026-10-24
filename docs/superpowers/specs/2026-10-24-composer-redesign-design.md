@@ -69,8 +69,9 @@ inset lists:
 
 - Search field first (focused on desktop, not on phone, so the keyboard doesn't cover the list).
 - Effort is a segmented control (only the levels the selected model offers) under the search.
-- **Recent**: the last 3 models used on this PC (localStorage, per machine), then one group per
-  provider under a caption. The group chips go away.
+- **Pinned** and **Recent** as today (`modelProvider.ts` already stores both per machine; the
+  long-press pin stays), then one group per provider under a caption. The provider tab chips go
+  away: the captions and search do their job.
 - Each row: provider mark, name, and the context size on the line below when the host gives it.
 
 ### Attach sheet (new)
@@ -97,8 +98,8 @@ Desktop: + opens the same content as a popover; drag-and-drop and paste stay as 
 
 ## Testing
 
-- Unit: the recent-models store (cap 3, per machine, de-duplicated) and the voice/send state
-  (empty, text, attachment only, dictation unavailable, busy).
+- Unit: the voice/send state (empty, text, attachment only, dictation unavailable, busy) and
+  the settings icon's tone.
 - host-chats demo (390 and 1440): the row order, the model mark present in the chip, the
   settings icon in `--notice` when Allow all is on, voice turning into send on the first
   character, each sheet's checkmark on the current value, the attach sheet's folder search
