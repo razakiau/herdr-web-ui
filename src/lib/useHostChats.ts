@@ -13,7 +13,7 @@ import type { PaneView } from "./actions.ts";
 import { errorText, hostChatRoster, openHostChatClosed, readsOnView, useHostChatPcs, type HostPc } from "./hostChats.ts";
 import { hostChatDroplets, showDroplet } from "./droplet.ts";
 import { hostChatHome, pcPlacement, samePath } from "./hostPlacement.ts";
-import { closeTab, closeWorkspace, currentHostWorkspaces, firstHostTab, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./hostWorkspaces.ts";
+import { closeTab, closeWorkspace, moveTab, currentHostWorkspaces, firstHostTab, isTabOpen, openTab, setHostWorkspaces, subscribeHostWorkspaces, tabAfterClose, upkeepPc } from "./hostWorkspaces.ts";
 import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleSidebarPin } from "./sidebarPins.ts";
 import { lastViewedPane } from "./lastViewedPane.ts";
 import { hostChatFromSearch } from "./notificationTarget.ts";
@@ -188,6 +188,12 @@ export function useHostChats({ t, settings, machines, machinesRef, alertsRef, al
       askDelete: (target) => setHostDelete(target),
       isTab: (machineId, session) => isTabOpen(hostWorkspaces[machineId], session),
       closeTab: (machineId, session) => closeHostTabRef.current(machineId, session),
+      moveTab: (machineId, shown, session, boundary) => {
+        const state = currentHostWorkspaces();
+        const pc = state[machineId];
+        const next = pc ? moveTab(pc, shown, session, boundary) : pc;
+        if (pc && next !== pc) setHostWorkspaces({ ...state, [machineId]: next! });
+      },
       asking: hostRename !== null || hostDelete !== null,
     };
   }, [hostTracker, hostPins, t, hostRename, hostDelete, hostWorkspaces]);

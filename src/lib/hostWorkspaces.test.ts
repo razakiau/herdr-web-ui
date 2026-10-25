@@ -284,3 +284,16 @@ describe("agent host worktree folders (herdr's tree)", () => {
     expect(moveBlock(keys, ["f:/r", "f:/r.wt/a"], "f:/r", "after")).toBe(keys);
   });
 });
+
+describe("moving a host chat tab", () => {
+  it("a tab dragged to another place in its strip keeps that place", async () => {
+    const { moveTab } = await import("./hostWorkspaces.ts");
+    const pc: PcHostWorkspaces = { open: [{ cwd: "/a", tabs: ["x", "y", "z"] }] };
+    expect(moveTab(pc, ["x", "y", "z"], "z", 0).open[0]!.tabs).toEqual(["z", "x", "y"]);
+    expect(moveTab(pc, ["x", "y", "z"], "x", 3).open[0]!.tabs).toEqual(["y", "z", "x"]);
+    expect(moveTab(pc, ["x", "y", "z"], "y", 1)).toBe(pc);
+    // a strip drawing two folders' tabs: each folder takes the new order of its own
+    const two: PcHostWorkspaces = { open: [{ cwd: "/a", tabs: ["x", "y"] }, { cwd: "/b", tabs: ["p", "q"] }] };
+    expect(moveTab(two, ["x", "y", "p", "q"], "y", 0).open).toEqual([{ cwd: "/a", tabs: ["y", "x"] }, { cwd: "/b", tabs: ["p", "q"] }]);
+  });
+});

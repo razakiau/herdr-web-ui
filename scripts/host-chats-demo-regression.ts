@@ -1920,6 +1920,26 @@ try {
         await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"] [role="tab"]`).click();
         await page.locator(`.host-chat[data-host-session="${SESSION}"]`).waitFor();
         assert.equal(await oldTab.count(), 1, "a kept tab stays after leaving it");
+        // its tabs move as a pane's do: Move tab left from its menu, and a mouse drag back to the end
+        const hostOrder = async (): Promise<string[]> => page.locator(".tab-strip .host-chat-tab").evaluateAll((tabs) => tabs.map((tab) => (tab as HTMLElement).dataset["hostSession"]!));
+        await oldTab.locator('[role="tab"]').click();
+        await page.locator('.host-chat[data-host-session="fictional-session-old"]').waitFor();
+        await oldTab.getByRole("button", { name: /^Actions for / }).click();
+        await page.locator(".row-sheet").getByRole("button", { name: "Move tab left", exact: true }).click();
+        await page.waitForFunction((want) => [...document.querySelectorAll<HTMLElement>(".tab-strip .host-chat-tab")].map((tab) => tab.dataset["hostSession"]).join() === want, `fictional-session-old,${SESSION}`, { timeout: 3000 })
+          .catch(async () => assert.fail(`Move tab left moves a host chat tab: ${(await hostOrder()).join()}`));
+        assert.deepEqual((await savedTabs()).remote!.open.find((each) => each.cwd === "/tmp/fictional-repo")!.tabs, ["fictional-session-old", SESSION], "the moved order is saved");
+        const from = (await oldTab.locator('[role="tab"]').boundingBox())!;
+        const to = (await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"]`).boundingBox())!;
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(from.x + from.width / 2 + 10, from.y + from.height / 2, { steps: 3 });
+        await page.mouse.move(to.x + to.width - 4, to.y + to.height / 2, { steps: 6 });
+        assert.equal(await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"].is-drop-after`).count(), 1, "the drag shows where the tab lands");
+        await page.mouse.up();
+        assert.deepEqual(await hostOrder(), [SESSION, "fictional-session-old"], "a host chat tab dragged to the end lands there");
+        assert.equal(await page.locator(`.host-chat[data-host-session="fictional-session-old"]`).count(), 1, "the drop opens nothing else");
+        console.log("PASS a host chat tab moves left from its menu and back by a drag, and its order is saved");
         // Close tab: the tab goes, the chat is kept (not archived), and the strip moves on to a neighbour
         await oldTab.locator('[role="tab"]').click();
         await page.locator('.host-chat[data-host-session="fictional-session-old"]').waitFor();
@@ -2250,7 +2270,7 @@ try {
         // the open chat's tab: ⋯ opens the chat's menu
         await keptTab.getByRole("button", { name: "Actions for FICTIONAL new chat" }).click();
         await page.locator(".row-sheet").waitFor();
-        assert.deepEqual(await sheetItems(), ["Pin agent", "Rename…", "Mark as unread", "Close tab", "Mark as done", "Delete…"], "the chat's menu: pin, rename, unread, close tab, done, delete");
+        assert.deepEqual(await sheetItems(), ["Move tab left", "Pin agent", "Rename…", "Mark as unread", "Close tab", "Mark as done", "Delete…"], "the chat's menu: move left (it is the strip's last host tab), pin, rename, unread, close tab, done, delete");
         await page.waitForFunction(() => document.querySelector(".row-sheet")?.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running") ?? false);
         await fits("the chat tab's menu");
         await noVsCode("the chat tab's menu");

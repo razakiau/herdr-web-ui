@@ -8,6 +8,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import { fitHostWorkspaces, sanitizeHostWorkspaces, type HostWorkspace, type HostWorkspaceState, type PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 import { hostChatLive, type HostPc } from "./hostChats.ts";
 import { isLive, samePath } from "./hostPlacement.ts";
+import { movedTabOrder } from "./tabOrder.ts";
 import type { HostAutoOpen } from "./settings.ts";
 
 export { fitHostWorkspaces, HOST_WORKSPACES_BUDGET, sanitizeHostWorkspaces } from "../../shared/host-workspaces.ts";
@@ -92,6 +93,27 @@ export function openTab(pc: PcHostWorkspaces, chat: Pick<HostChatRow, "session" 
   if (!open) return withOpen(pc, [...pc.open, { cwd: folder, tabs: [chat.session] }]);
   if (open.tabs.includes(chat.session)) return pc;
   return withOpen(pc, pc.open.map((each) => each === open ? { ...each, tabs: [...each.tabs, chat.session] } : each));
+}
+
+/**
+ * `session`'s tab moved to `boundary` (0..count, before the move) among `shown`, the tabs as one
+ * strip draws them. A strip can draw the tabs of more than one folder (a herdr workspace whose panes
+ * work in several): each folder keeps the order the move gives its own tabs.
+ */
+export function moveTab(pc: PcHostWorkspaces, shown: readonly string[], session: string, boundary: number): PcHostWorkspaces {
+  const order = movedTabOrder(shown, session, boundary);
+  if (!order) return pc;
+  const rank = new Map(order.map((each, at) => [each, at] as const));
+  let changed = false;
+  const open = pc.open.map((each) => {
+    const moving = each.tabs.filter((tab) => rank.has(tab)).sort((a, b) => rank.get(a)! - rank.get(b)!);
+    let next = 0;
+    const tabs = each.tabs.map((tab) => rank.has(tab) ? moving[next++]! : tab);
+    if (tabs.every((tab, at) => tab === each.tabs[at])) return each;
+    changed = true;
+    return { ...each, tabs };
+  });
+  return changed ? withOpen(pc, open) : pc;
 }
 
 /** The chat's tab closed; a workspace left with none closes, as herdr's does with its last tab. */

@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
-import type { HerdrTab, TabMoved } from "../../shared/protocol.ts";
 import { adjacentTabBoundary, movedTabOrder, tabDropBoundary } from "./tabOrder.ts";
 
 type Drag = { tabId: string; boundary: number | null };
@@ -15,14 +14,17 @@ export interface TabDragOut {
 }
 
 /** A drag previews only an insertion line. Herdr's next snapshot owns the actual order. */
-export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale, outside }: {
+export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale, outside, items = ".tab-strip-item" }: {
   owner: string;
-  tabs: HerdrTab[];
+  tabs: readonly { tab_id: string }[];
   strip: RefObject<HTMLDivElement | null>;
-  moveTab: (tabId: string, boundary: number) => Promise<TabMoved>;
+  /** herdr answers with the order it will publish; a move kept in this browser (host chat tabs) answers nothing */
+  moveTab: (tabId: string, boundary: number) => Promise<{ tabs: readonly { tab_id: string }[] } | void>;
   failed: (error: unknown) => void;
   stale: () => void;
   outside?: TabDragOut;
+  /** the strip's items this drag moves among: a workspace's strip draws its host chats' tabs after its own */
+  items?: string;
 }) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [moving, setMoving] = useState(false);
@@ -80,6 +82,7 @@ export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale, outs
     setMoving(true);
     void saved.moveTab(tabId, boundary).then((result) => {
       if (operation.current !== op || current.current.owner !== saved.owner) return;
+      if (!result) { finishOperation(op); return; }
       op.expected = JSON.stringify(result.tabs.map((tab) => tab.tab_id));
       op.settled = true;
       if (current.current.key === op.expected) finishOperation(op);
@@ -107,7 +110,7 @@ export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale, outs
   const boundaryAt = (held: Press): number | null => {
     const row = strip.current;
     if (!row || !overStrip(held) || current.current.ids.length < 2) return null;
-    const rects = [...row.querySelectorAll<HTMLElement>(".tab-strip-item")].map((item) => item.getBoundingClientRect());
+    const rects = [...row.querySelectorAll<HTMLElement>(items)].map((item) => item.getBoundingClientRect());
     return tabDropBoundary(rects, held.x);
   };
   const paintDrag = (held: Press): void => {

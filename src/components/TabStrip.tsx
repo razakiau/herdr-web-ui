@@ -9,7 +9,7 @@
  * That menu also carries the open pane's actions, so a lone pane shows no ellipsis of its own.
  * A host chat's tab has the chat's own menu instead (HostChatTab).
  */
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type DOMAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Bot, Ellipsis, Pencil, Plus, Server, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
@@ -76,7 +76,7 @@ export interface TabStripProps {
  * On a phone Rename… opens the sidebar's sheet instead: a field in a 390 px strip is a sliver, and
  * an Android keyboard's Enter (keyCode 229) never reaches a bare field's key handler.
  */
-function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void }) {
+function HostChatTab({ chat, selected, hosted, onSelect, move }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void; move?: HostTabMove }) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -102,7 +102,11 @@ function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; 
   };
   const openMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus: HTMLElement | null = anchor): void =>
     setMenu(menu ? null : { anchor, point, previousFocus });
-  return <div className={`tab-strip-item host-chat-tab${selected ? " is-active" : ""}${editing !== null ? " is-editing" : ""}`} data-host-session={chat.session}>
+  const moveItems: RowMenuItem[] = [
+    ...(move?.left ? [{ id: "move-left", label: t("Move tab left"), icon: ArrowLeft, run: move.left }] : []),
+    ...(move?.right ? [{ id: "move-right", label: t("Move tab right"), icon: ArrowRight, run: move.right }] : []),
+  ];
+  return <div className={`tab-strip-item host-chat-tab${selected ? " is-active" : ""}${editing !== null ? " is-editing" : ""}${move?.dragging ? " is-dragging" : ""}${move?.dropBefore ? " is-drop-before" : ""}${move?.dropAfter ? " is-drop-after" : ""}`} data-host-session={chat.session}>
     {editing !== null ? <>
       <input className="input tab-strip-rename" aria-label={t("Chat name")} autoFocus size={Math.max(8, editing.length + 1)} maxLength={MAX_LABEL_CHARS}
         placeholder={title} value={editing} aria-invalid={error !== null || undefined}
@@ -118,7 +122,9 @@ function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; 
       {error && <span className="tab-strip-error" role="alert">{error}</span>}
     </> : <button ref={tabButton} type="button" role="tab" className="tab-strip-tab" aria-selected={selected} tabIndex={selected ? 0 : -1} title={[title, chat.cwd].filter(Boolean).join("\n")}
       aria-haspopup={actions ? "menu" : undefined} aria-keyshortcuts={actions ? "Shift+F10 F2 Delete" : undefined}
-      onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); if (!selected) onSelect(); }}
+      {...move?.pointer}
+      onDragStart={(event) => event.preventDefault()}
+      onClick={(event) => { if (move?.consumeClick(event.detail)) return; event.currentTarget.focus({ preventScroll: true }); if (!selected) onSelect(); }}
       onDoubleClick={actions ? beginRename : undefined}
       onMouseDown={(event) => { if (actions && (event.button === 2 || (event.button === 0 && event.ctrlKey))) event.preventDefault(); }}
       onContextMenu={actions ? (event) => {
@@ -127,6 +133,12 @@ function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; 
           document.activeElement instanceof HTMLElement ? document.activeElement : null);
       } : undefined}
       onKeyDown={actions ? (event) => {
+        // Alt+Shift+arrows move it, as a pane tab's do
+        if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          event.preventDefault(); event.stopPropagation();
+          if (!event.repeat) (event.key === "ArrowLeft" ? move?.left : move?.right)?.();
+          return;
+        }
         // the strip's own keys are a pane tab's: these three are the chat's
         const key = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey) ? "menu" : event.key === "F2" ? "rename" : event.key === "Delete" ? "delete" : null;
         if (key === null) return;
@@ -149,8 +161,46 @@ function HostChatTab({ chat, selected, hosted, onSelect }: { chat: HostChatRow; 
       <Ellipsis aria-hidden="true" />
     </button>}
     {menu && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={title} subtitle={chat.cwd ?? undefined}
-      items={hostChatItems(actions, target, t, touchMenu ? undefined : beginRename)} align="start" onClose={() => setMenu(null)} />}
+      items={[...moveItems, ...hostChatItems(actions, target, t, touchMenu ? undefined : beginRename).map((item, at) => at === 0 && moveItems.length > 0 ? { ...item, divider: true } : item)]} align="start" onClose={() => setMenu(null)} />}
   </div>;
+}
+
+/** What a host chat tab needs to move in its strip: the drag's handlers and marks, and one step left or right. */
+interface HostTabMove {
+  dragging: boolean;
+  dropBefore: boolean;
+  dropAfter: boolean;
+  pointer: Pick<DOMAttributes<HTMLButtonElement>, "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture">;
+  consumeClick(detail: number): boolean;
+  left?: () => void;
+  right?: () => void;
+}
+
+/**
+ * A strip's host chat tabs dragged left or right, as its pane tabs are (lib/useTabReorder.ts). The
+ * order is this browser's (lib/hostWorkspaces.ts moveTab), so the move answers at once.
+ */
+function useHostTabMoves(strip: { current: HTMLDivElement | null }, chats: readonly HostChatRow[]): (session: string) => HostTabMove | undefined {
+  const machineId = useMachineId();
+  const actions = useHostChatActions();
+  const ids = chats.map((chat) => chat.session);
+  const reorder = useTabReorder({ owner: `${machineId}:host`, tabs: ids.map((tab_id) => ({ tab_id })), strip, items: ".host-chat-tab",
+    moveTab: async (session, boundary) => { actions?.moveTab(machineId, ids, session, boundary); },
+    failed: () => {}, stale: () => {} });
+  if (!actions || ids.length < 2) return () => undefined;
+  return (session) => {
+    const at = ids.indexOf(session);
+    return {
+      dragging: reorder.drag?.tabId === session,
+      dropBefore: reorder.drag?.boundary === at,
+      dropAfter: reorder.drag?.boundary === ids.length && at === ids.length - 1,
+      pointer: { onPointerDown: (event) => reorder.onPointerDown(event, session), onPointerMove: reorder.onPointerMove, onPointerUp: reorder.onPointerUp,
+        onPointerCancel: reorder.cancelDrag, onLostPointerCapture: reorder.cancelDrag },
+      consumeClick: reorder.consumeClick,
+      left: at > 0 ? () => reorder.moveAdjacent(session, -1) : undefined,
+      right: at < ids.length - 1 ? () => reorder.moveAdjacent(session, 1) : undefined,
+    };
+  };
 }
 
 /** The arrows between a strip's tabs, Home and End: the same for a folder's strip as a workspace's. */
@@ -199,8 +249,9 @@ export function HostChatTabStrip({ folder, chats, selectedSession, onSelect }: {
   const t = useT();
   const strip = useRef<HTMLDivElement | null>(null);
   useStripOverflow(strip, chats.length);
+  const move = useHostTabMoves(strip, chats);
   return <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: folder })} onKeyDown={moveTabFocus}>
-    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} />)}
+    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} move={move(chat.session)} />)}
   </div>;
 }
 
@@ -248,7 +299,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   const panes = rosterPanes(snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id), selectedPane.pane_id);
   // The snapshot order is authoritative; number identifies a tab and does not change on a move.
   const tabs = snapshot.tabs.filter((tab) => tab.workspace_id === workspace.workspace_id);
-  const reorder = useTabReorder({ owner: `${machineId}:${workspace.workspace_id}`, tabs, strip, moveTab,
+  const reorder = useTabReorder({ owner: `${machineId}:${workspace.workspace_id}`, tabs, strip, moveTab, items: ".tab-strip-item:not(.host-chat-tab)",
     failed: (reason) => setError(t("Move failed: {reason}", { reason: said(reason) })),
     stale: () => setError(t("Tab order did not refresh. Try again.")),
     // dragged down out of the strip, a tab opens its pane in half of the pane area (lib/split.ts)
@@ -354,6 +405,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
     if (!scroll.current.moved) bringOpenTab();
   }, [faces]);
   useStripOverflow(strip, tabs.length + hostTabs.length + (shown ? 1 : 0));
+  const hostMove = useHostTabMoves(strip, hostTabs);
   const onScroll = (): void => {
     const row = strip.current;
     if (row) scroll.current = stripScrolled(scroll.current, row.scrollLeft, row.scrollWidth - row.clientWidth);
@@ -590,7 +642,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
             </div>
           );
         })}
-        {hostTabs.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedHostSession} hosted={hosted} onSelect={() => onSelectHostChat?.(chat.session)} />)}
+        {hostTabs.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedHostSession} hosted={hosted} onSelect={() => onSelectHostChat?.(chat.session)} move={hostMove(chat.session)} />)}
         <button type="button" className="tab-strip-add" aria-label={t("New terminal")} title={t("New terminal")}
           onClick={() => { setError(null); void onNewTerminal().catch((reason: unknown) => setError(t("New terminal failed: {reason}", { reason: said(reason) }))); }}>
           <Plus aria-hidden="true" />

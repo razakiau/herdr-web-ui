@@ -39,6 +39,8 @@ export interface HostChatActions {
   isTab(machineId: string, session: string): boolean;
   /** its tab closed: hidden, never archived; the workspace closes with its last tab */
   closeTab(machineId: string, session: string): void;
+  /** its tab moved to `boundary` among `shown`, the host tabs as its strip draws them (lib/hostWorkspaces.ts moveTab) */
+  moveTab(machineId: string, shown: readonly string[], session: string, boundary: number): void;
   /** the confirm, naming the chat; Delete there deletes it */
   askDelete(target: HostChatRef): void;
   /** the rename sheet or the delete confirm is up: a sheet under it leaves Back to it (lib/sheetHistory.ts) */
