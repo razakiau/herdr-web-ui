@@ -2,7 +2,7 @@
    transcript (PaneTerminal places it; the column and the space under it are Composer.css's).
    Its height is budgeted, and a phone's keyboard counts (--app-height): the larger of 60% of the
    app and six touch rows, so a three-option approval is never cut. Only the reference text gives
-   way (.prompt-card-body); when that is not enough the card scrolls as a whole. The composer's
+   way (.prompt-card-body); when that is not enough the middle scrolls (.prompt-card-scroll). The composer's
    folder strip under the input card comes out of that 60% (--prompt-card-strip), so the transcript
    keeps what it had without one. */
 .prompt-card {
@@ -25,8 +25,46 @@
 
 /* what the user answers with never shrinks: header, steps, question, hint, options, the
    custom row, the confirm row */
-.prompt-card > * {
+.prompt-card > *,
+.prompt-card-scroll > *,
+.prompt-card-foot > * {
   flex: none;
+}
+
+/* The card in three: the header and the foot (the answer field, Submit, the pager, Confirm) stay
+   in place, and only the middle (steps, question, reference text, options) scrolls (owner, ZAC-233:
+   the whole card scrolled, its title and its field with it). The middle keeps two touch rows when
+   the foot is tall; the card's own scroll is left only as the last resort of a card too short for both */
+.prompt-card-scroll {
+  flex: 1 1 auto;
+  min-height: min(calc(var(--touch-target) * 2), 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* whatever is cut at the middle's end fades out into the foot */
+.prompt-card-scroll::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  flex: none;
+  height: var(--space-2);
+  margin-top: calc(-1 * var(--space-2));
+  background: linear-gradient(transparent, var(--bg-elevated));
+  pointer-events: none;
+}
+
+/* the foot keeps its height and the middle gives way, down to its two rows; past that (a 24 px
+   font on a 500 px phone with a Confirm row) the card itself scrolls, and Confirm stays pinned at
+   its fold as before */
+.prompt-card-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 /* the card's bottom padding, as a strip that stays on the fold: whatever is cut under it fades

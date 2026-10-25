@@ -352,6 +352,8 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
     <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
   </>;
+  const footPager = form !== null && (pagerAtFoot || lastPage);
+  const hasFoot = (q.multi_select && form === null) || q.custom_option_index !== null || (prompt.optional && !prompt.multi_select) || typedAnswer?.option_index !== undefined || footPager;
   const card = (
     <section className={`prompt-card${folded && !expanded ? " is-folded" : ""}${expanded ? " is-expanded" : ""}`} ref={cardRef} role="region" aria-label={t("Agent is asking")}
       onKeyDown={(event) => { down.current = null; keyed.current = event.key === "Enter" || event.key === " " ? event.target : null; }}
@@ -395,6 +397,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
           {folded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
         </button>}
       </header>
+      {/* only the middle scrolls: the header and the foot (the answer field, Submit, the pager) stay
+          in place on a long card (owner, ZAC-233) */}
+      <div className="prompt-card-scroll">
       {/* a form of several questions (omo): each one, answered or not, and the one asked now */}
       {prompt.steps && (
         <ol className="prompt-card-steps" aria-label={t("Questions")}>
@@ -506,6 +511,8 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
           })}
         </div>
       )}
+      </div>
+      {hasFoot && <div className="prompt-card-foot">
       {q.multi_select && form === null && (
         <button type="button" className={`btn${selected.size > 0 ? " btn-primary" : ""} prompt-card-submit`} disabled={pending || (selected.size === 0 && !("optional" in q && q.optional) && !(prompt.agent === "opencode" && custom.trim()))} onClick={(event) => void answer({ option_indices: [...selected].sort((a, b) => a - b) }, event)}>
           {selected.size > 0 ? t("Submit ({n})", { n: selected.size }) : t("Submit")}
@@ -585,12 +592,13 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       {/* on a mouse window the pager sits in the header beside the title, as VS Code's carousel does: a
           footer row of its own held three small controls under a wide card (owner, ZAC-207). A phone
           keeps it at the foot, in the thumb's reach; Submit stays at the foot on both */}
-      {form !== null && (pagerAtFoot ? pager : lastPage) && (
+      {footPager && (
         <nav className="prompt-card-pager" aria-label={pagerAtFoot ? t("Questions") : undefined}>
           {pagerAtFoot && pager}
           {lastPage && <button type="button" className="btn btn-primary prompt-card-pager-submit" disabled={pending} onClick={(event) => void submitForm(event)}>{t("Submit")}</button>}
         </nav>
       )}
+      </div>}
       <p className={pending || stale ? "prompt-card-status" : "visually-hidden"} role="status">{pending ? t("Sending your answer…") : stale ? t("Not updated: the question on screen may have changed.") : null}</p>
       {error !== null && <p className="prompt-card-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}
     </section>

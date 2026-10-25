@@ -102,7 +102,7 @@ const layoutOf = (page: Page): Promise<Layout> => page.evaluate(() => {
     cardTop: (() => { const rect = card.getBoundingClientRect(); return document.elementFromPoint(rect.left + rect.width / 2, rect.top + 4)?.closest(".prompt-card") === card; })(),
     queue: queue === null ? null : box(queue),
     cap: Math.max(app * 0.6, 240),
-    scrolls: card.scrollHeight > card.clientHeight + 1,
+    scrolls: (() => { const middle = card.querySelector<HTMLElement>(".prompt-card-scroll")!; return middle.scrollHeight > middle.clientHeight + 1 || card.scrollHeight > card.clientHeight + 1; })(),
     pageScrolls: document.documentElement.scrollHeight > window.innerHeight || document.documentElement.scrollWidth > window.innerWidth,
     placeholder: document.querySelector<HTMLTextAreaElement>(".composer-text")!.placeholder,
     badge: badge === null ? null : { text: badge.textContent ?? "", width: badge.getBoundingClientRect().width },
@@ -128,13 +128,17 @@ const reach = async (page: Page, selector: string): Promise<{ hit: string | null
   await page.evaluate((target) => {
     const card = document.querySelector<HTMLElement>(".prompt-card")!;
     const node = [...document.querySelectorAll<HTMLElement>(target)].at(-1)!;
-    const sticky = card.querySelector<HTMLElement>(".prompt-card-confirm");
-    // clear of what stays pinned on the card's fold: the confirm row and the fade under it
-    const pinned = (sticky === null || sticky === node ? 0 : sticky.offsetHeight + 12) + 12;
-    const over = node.getBoundingClientRect().bottom - (card.getBoundingClientRect().bottom - pinned);
-    if (over > 0) card.scrollTop += over;
-    const under = card.getBoundingClientRect().top - node.getBoundingClientRect().top;
-    if (under > 0) card.scrollTop -= under;
+    // the middle scrolls; the header and the foot (the field, Confirm) stand still around it, and
+    // the card scrolls only when it is too short for both
+    const middle = card.querySelector<HTMLElement>(".prompt-card-scroll")!;
+    const scroller = middle.contains(node) ? middle : card;
+    const sticky = scroller === middle ? null : card.querySelector<HTMLElement>(".prompt-card-confirm");
+    // clear of the fade at the middle's end, and of the Confirm row pinned on the card's fold
+    const pinned = (sticky === null || sticky.contains(node) ? 0 : sticky.offsetHeight + 12) + 12;
+    const over = node.getBoundingClientRect().bottom - (scroller.getBoundingClientRect().bottom - pinned);
+    if (over > 0) scroller.scrollTop += over;
+    const under = scroller.getBoundingClientRect().top - node.getBoundingClientRect().top;
+    if (under > 0) scroller.scrollTop -= under;
   }, selector);
   return hitOf(page, selector);
 };
@@ -543,10 +547,10 @@ try {
           assert.equal(await typing(), false, "a drag down the card at its top puts the keyboard away");
           // a scrolled card: the drag down is the way back to its top, and the keyboard stays
           await raise();
-          assert.ok(await page.locator(".prompt-card").evaluate((node) => { node.scrollTop = 40; return node.scrollTop; }) > 0);
+          assert.ok(await page.locator(".prompt-card-scroll").evaluate((node) => { node.scrollTop = 40; return node.scrollTop; }) > 0);
           await drag(".prompt-card-options");
           assert.equal(await typing(), true, "a drag down a scrolled card keeps the keyboard");
-          await page.locator(".prompt-card").evaluate((node) => { node.scrollTop = 0; });
+          await page.locator(".prompt-card-scroll").evaluate((node) => { node.scrollTop = 0; });
           // the card's own field keeps its keyboard, and a press on a row is not a request to read
           await drag(".prompt-card-custom .input");
           assert.equal(await typing(), true, "a drag on the card's field keeps the keyboard");
@@ -607,7 +611,7 @@ try {
             await page.evaluate(() => document.querySelector("[data-reach]")!.removeAttribute("data-reach"));
           }
           assert.equal(await page.evaluate(() => {
-            const card = document.querySelector<HTMLElement>(".prompt-card")!;
+            const card = document.querySelector<HTMLElement>(".prompt-card-scroll")!;
             const long = document.querySelectorAll<HTMLElement>(".prompt-card-option")[1]!;
             card.scrollTop += long.getBoundingClientRect().top - card.getBoundingClientRect().top;
             const rect = long.getBoundingClientRect();
@@ -629,7 +633,7 @@ try {
         try {
           await page.locator(".prompt-card-custom .input").fill("sqlite");
           const before = await page.evaluate(() => {
-            const card = document.querySelector<HTMLElement>(".prompt-card")!;
+            const card = document.querySelector<HTMLElement>(".prompt-card-scroll")!;
             const body = card.querySelector<HTMLElement>(".prompt-card-body")!;
             card.scrollTop = card.scrollHeight;
             body.scrollTop = body.scrollHeight;
@@ -640,12 +644,43 @@ try {
           await page.locator(".prompt-card").getByText(PLAN.title).waitFor();
           const after = await page.evaluate(() => {
             const card = document.querySelector<HTMLElement>(".prompt-card")!;
-            return { card: card.scrollTop, body: card.querySelector<HTMLElement>(".prompt-card-body")!.scrollTop, custom: card.querySelector<HTMLInputElement>(".prompt-card-custom .input")!.value, cards: document.querySelectorAll(".prompt-card").length, inRegion: card.parentElement!.getAttribute("aria-live") };
+            return { card: card.querySelector<HTMLElement>(".prompt-card-scroll")!.scrollTop, body: card.querySelector<HTMLElement>(".prompt-card-body")!.scrollTop, custom: card.querySelector<HTMLInputElement>(".prompt-card-custom .input")!.value, cards: document.querySelectorAll(".prompt-card").length, inRegion: card.parentElement!.getAttribute("aria-live") };
           });
           assert.deepEqual(after, { card: 0, body: 0, custom: "", cards: 1, inRegion: "polite" }, "the next prompt opens at its top, empty, as an addition to the live region");
           assert.deepEqual(errors, []);
         } catch (error) { await preserveFailure(page, error); } finally { await close(); }
         console.log("PASS a prompt that replaces a scrolled one opens at its top");
+      }
+
+      {
+        // The header (title, fold) and the foot (the answer field) stay put on a short phone; only
+        // what lies between them scrolls (owner, ZAC-233: the whole card scrolled, title and field with it)
+        const { page, errors, close } = await open({ width: 390, height: 500, touch: true, prompt: FORM });
+        try {
+          const at = (end: boolean) => page.evaluate((toEnd) => {
+            const card = document.querySelector<HTMLElement>(".prompt-card")!;
+            const scroller = card.querySelector<HTMLElement>(".prompt-card-scroll");
+            const target = scroller ?? card;
+            target.scrollTop = toEnd ? target.scrollHeight : 0;
+            const box = card.getBoundingClientRect();
+            const inView = (selector: string): boolean => {
+              const node = card.querySelector(selector)!;
+              const rect = node.getBoundingClientRect();
+              const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+              return rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1 && hit !== null && node.contains(hit);
+            };
+            return {
+              middleScrolls: scroller !== null && scroller.scrollHeight > scroller.clientHeight + 1,
+              cardScrolls: card.scrollHeight > card.clientHeight + 1,
+              title: inView(".prompt-card-header h2"), fold: inView(".prompt-card-fold"), field: inView(".prompt-card-custom .input"),
+            };
+          }, end);
+          const fixed = { middleScrolls: true, cardScrolls: false, title: true, fold: true, field: true };
+          assert.deepEqual(await at(false), fixed, "at the top: the title, the fold and the answer field are in sight, and only the middle scrolls");
+          assert.deepEqual(await at(true), fixed, "scrolled to the end: the title and the fold are still at the top, the field at the foot");
+          assert.deepEqual(errors, []);
+        } catch (error) { await preserveFailure(page, error); } finally { await close(); }
+        console.log("PASS a long card keeps its header and its answer field in place; only its middle scrolls");
       }
 
       {
