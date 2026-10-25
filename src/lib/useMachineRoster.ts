@@ -210,7 +210,7 @@ export function useRosterEvents({ locked, receivePreferencesRef, snapshotRequest
           let changed = false;
           const next = list.map((m) => {
             if (m.id !== machine.id || !m.snapshot) return m;
-            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status, message.background_tasks, message.background_wait === true, message.plan, message.finish_id, message.finish_epoch);
+            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status, message.background_tasks, message.background_wait === true, message.plan, message.finish_id, message.finish_epoch, message.status_since);
             if (snapshot === m.snapshot) return m;
             changed = true;
             return { ...m, snapshot };

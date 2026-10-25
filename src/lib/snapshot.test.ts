@@ -69,6 +69,17 @@ describe("applyPaneStatus", () => {
     expect("plan" in none.panes.find((pane) => pane.pane_id === "w1:p1")!).toBe(false);
   });
 
+  it("carries status_since, and drops a stale one when an unstamped frame changes the status", () => {
+    const current = snapshotFixture();
+    const stamped = applyPaneStatus(current, "w1:p1", "working", undefined, false, undefined, undefined, undefined, 1000);
+    expect(stamped.panes[0]?.status_since).toBe(1000);
+    expect(applyPaneStatus(stamped, "w1:p1", "working")).toBe(stamped);
+    const blocked = applyPaneStatus(stamped, "w1:p1", "blocked", undefined, false, undefined, undefined, undefined, 5000);
+    expect(blocked.panes[0]?.status_since).toBe(5000);
+    const unstamped = applyPaneStatus(blocked, "w1:p1", "done");
+    expect(unstamped.panes[0]?.status_since).toBeUndefined();
+  });
+
   it("returns the same snapshot object when the status already matches", () => {
     const current = snapshotFixture();
     expect(applyPaneStatus(current, "w1:p1", "working")).toBe(current);

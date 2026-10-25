@@ -30,6 +30,7 @@ import type { PreferenceStore } from "../preferences.ts";
 import { promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
 import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
+import { StatusSince } from "../status-since.ts";
 import type { Telemetry } from "../telemetry.ts";
 import type { UsageLoginService } from "../usage-login.ts";
 import type { UsageService } from "../usage.ts";
@@ -95,6 +96,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   /** `done` for agents herdr loses track of (server/completion.ts), kept across restarts */
   const completions = new CompletionTracker(join(options.stateDir ?? defaultStateDir(), "completions.json"));
   const finishes = new Finishes();
+  const statusSince = new StatusSince();
   /** OmO panes get their status from OmO's session files: herdr reports none for them (server/omo-status.ts) */
   const omo = new OmoStatus({
     discover: (panes) => omoPanes(panes),
@@ -168,7 +170,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
         return background > 0 || waiting || plan !== null ? { ...pane, ...(background > 0 ? { background_tasks: background } : {}), ...(waiting ? { background_wait: true as const } : {}), ...(plan !== null ? { plan } : {}) } : pane;
       }),
     }, completions);
-    return order ? { ...settled, ...order } : settled;
+    // since when each pane shows its status, for the Agents list's "how long"
+    const stamped = { ...settled, panes: settled.panes.map((pane) => ({ ...pane, status_since: statusSince.note(pane.pane_id, pane.agent_status) })) };
+    return order ? { ...stamped, ...order } : stamped;
   };
   /**
    * A browser visit for the daily active message: the call is made now so the visit's day is the
@@ -190,7 +194,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   }
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
-    ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
+    ({ type: "pane-status", pane_id: paneId, agent_status: status, status_since: statusSince.note(paneId, status), ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch, agentHost: agentHostEnabled });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
 
@@ -362,6 +366,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       pending.forget(paneId);
       waits.forget(paneId);
       completions.forget(paneId);
+      statusSince.forget(paneId);
       // the terminal is gone, so is whatever its chat parsed (server/conversation.ts)
       forgetPaneTranscriptState(paneId);
       bridgeAgents?.ended(paneId);
