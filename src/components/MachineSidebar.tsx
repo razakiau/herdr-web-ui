@@ -171,18 +171,22 @@ export function MachineSidebar(props: Props) {
       <datalist id={suggestionsId}>{suggestions.map((label) => <option key={label} value={label} />)}</datalist>
       {query !== "" && <button type="button" className="sidebar-filter-clear" aria-label={t("Clear filter")} title={t("Clear filter")} onClick={clearFilter}><X aria-hidden="true" /></button>}
     </div>
-    <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-      {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
-        // the PC in use stays open while it is; any other can be folded, even one that asks (Other PCs then says so)
-        onPutBack={foldable && machine.id !== props.selectedMachineId ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
-      {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveLists(openPc(lists, id))} />}
-      <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
+    {/* one scroll: what the agents do first, then the places (owner, 2026-10-25) */}
+    <div className="sidebar-scroll">
+      <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
+        hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
+        // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
+        allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />
+      <div className="machine-list" aria-label={t("PCs and workspaces")}>
+        <h2 className="sidebar-section-label sidebar-pcs-head">{t("PCs")}</h2>
+        <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
+        {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
+          // the PC in use stays open while it is; any other can be folded, even one that asks (Other PCs then says so)
+          onPutBack={foldable && machine.id !== props.selectedMachineId ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
+        {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveLists(openPc(lists, id))} />}
+        <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
+      </div>
     </div>
-    <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
-      hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
-      // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
-      allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />
     <footer className="sidebar-footer">
       {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
       {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />{t("Install app")}</button>}

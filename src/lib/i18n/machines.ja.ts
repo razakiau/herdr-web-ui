@@ -94,4 +94,5 @@ export const MACHINES_JA: Record<string, string> = {
   "All agents on {pc}…": "{pc} のすべてのエージェント…",
   "Move {name} to Other PCs": "{name} をその他の PC に移動",
   "Move to Other PCs": "その他の PC に移動",
+  "PCs": "PC",
 };

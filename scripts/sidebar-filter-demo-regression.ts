@@ -474,7 +474,8 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
     assert.ok(laptop.workspaces.every((row) => row.draggable !== "true" && row.shortcuts === null), `${name}: no row can be moved while the filter is on`);
     // the rows kept are drawn, not only kept: a phone's folded Agents list opens for the filter's time
     assert.ok(during.agentsExpanded && during.agents.every((row) => row.visible), `${name}: every kept agent row is visible: ${JSON.stringify(during.agents)}`);
-    if (scene.phone) assert.equal(before.agentsExpanded, false, `${name}: a phone's Agents list starts folded`);
+    // the Agents list leads every screen, a phone's drawer too (2026-10-25)
+    assert.equal(before.agentsExpanded, true, `${name}: the Agents list starts open`);
     assert.equal(await pickerArrowDrawn(page), false, `${name}: the browser's suggestions arrow is not drawn beside the clear`);
     await capture(page, scene, "typing");
     const measured = await measure(page);

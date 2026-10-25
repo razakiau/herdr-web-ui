@@ -94,4 +94,5 @@ export const MACHINES_ZH: Record<string, string> = {
   "All agents on {pc}…": "{pc} 上的所有代理…",
   "Move {name} to Other PCs": "将 {name} 移到其他 PC",
   "Move to Other PCs": "移到其他 PC",
+  "PCs": "电脑",
 };

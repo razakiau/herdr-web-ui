@@ -3,27 +3,17 @@
    The fold and the + close the header at its right. */
 .machine-list {
   position: relative;
-  /* as tall as its groups, shrinking to scroll when they are taller than the room: a list that
-     took every spare pixel put a gap above Agents that changed with how many PCs were open
-     (desktop audit, 2026-10-23). The spare height goes above the footer (Sidebar.css) */
-  flex: 0 1 auto;
-  min-height: 0;
+  /* under Agents in the sidebar's one scroll (.sidebar-scroll, Sidebar.css) */
+  flex: 0 0 auto;
   padding-top: var(--space-2);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scroll-padding-bottom: var(--space-4);
 }
 
-
-/* a list that is cut fades out at its lower edge */
-.machine-list::after {
-  content: "";
-  position: sticky;
-  bottom: 0;
-  display: block;
-  height: var(--space-4);
-  background: linear-gradient(transparent, var(--bg-panel));
-  pointer-events: none;
+/* "PCs": the section's dim head, the leading cell empty as the Agents head's caret is at rest */
+.sidebar-pcs-head {
+  padding-left: calc(var(--side-gutter) + var(--side-box));
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
 }
 
 .machine-list > .tree-state { padding-left: calc(var(--side-gutter) + var(--side-box)); }
@@ -174,7 +164,10 @@
 
 /* "Other PCs (n)": the PCs not in use, folded as the Agents list folds (AgentSidebar.css) */
 .other-pcs { padding: var(--space-2) var(--side-gutter) 0; }
-.other-pcs-toggle { gap: 0; }
+.other-pcs-toggle { gap: 0; width: 100%; }
+.other-pcs-label { flex: none; color: var(--text); }
+/* while folded, who is in it, dim after the label */
+.other-pcs-names { min-width: 0; margin-left: var(--space-2); overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .other-pcs-list { margin: 0; padding: 0; list-style: none; }
 .other-pcs-row {
   display: flex;

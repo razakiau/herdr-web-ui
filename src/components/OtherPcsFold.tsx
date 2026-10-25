@@ -29,6 +29,11 @@ function Dots({ activity }: { activity: PcActivity }) {
   </span>;
 }
 
+/** "services, node2 +6": the first two names of a fold, the rest counted. */
+export function foldedNames(names: readonly string[]): string {
+  return names.length <= 2 ? names.join(", ") : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+}
+
 export function OtherPcsFold({ machines, activity, stateWord, onPick }: { machines: Machine[]; activity(machine: Machine): PcActivity; stateWord(machine: Machine): string; onPick(machineId: string): void }) {
   const t = useT();
   const listId = useId();
@@ -41,7 +46,9 @@ export function OtherPcsFold({ machines, activity, stateWord, onPick }: { machin
   return <section className={`other-pcs${open ? "" : " is-collapsed"}`} aria-label={t("Other PCs")}>
     <button type="button" className="agent-section-toggle sidebar-section-label other-pcs-toggle" aria-expanded={open} aria-controls={listId} onClick={toggle}>
       {open ? <ChevronDown className="agent-section-caret" aria-hidden="true" /> : <ChevronRight className="agent-section-caret" aria-hidden="true" />}
-      <span>{t("Other PCs ({n})", { n: machines.length })}</span>
+      <span className="other-pcs-label">{t("Other PCs ({n})", { n: machines.length })}</span>
+      {/* who is in it, while folded: the first names, the rest counted */}
+      {!open && <span className="other-pcs-names">{foldedNames(machines.map((machine) => machine.name))}</span>}
       <Dots activity={total} />
     </button>
     <ul className="other-pcs-list" id={listId} hidden={!open}>

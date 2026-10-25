@@ -20,6 +20,30 @@
   padding: 0 var(--side-gutter);
 }
 
+/* Agents, then the PCs, in one scroll above the fixed footer; a cut list fades at its lower edge */
+.sidebar-scroll {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: var(--space-4);
+}
+
+.sidebar-scroll::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  display: block;
+  flex: 0 0 auto;
+  height: var(--space-4);
+  margin-top: auto;
+  background: linear-gradient(transparent, var(--bg-panel));
+  pointer-events: none;
+}
+
 /* a section head (Agents): quiet words, never a rule */
 .sidebar-section-label {
   display: flex;

@@ -94,4 +94,5 @@ export const MACHINES_KO: Record<string, string> = {
   "All agents on {pc}…": "{pc}의 모든 에이전트…",
   "Move {name} to Other PCs": "{name}을(를) 다른 PC로 이동",
   "Move to Other PCs": "다른 PC로 이동",
+  "PCs": "PC",
 };

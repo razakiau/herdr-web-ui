@@ -49,4 +49,6 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Expand": "펼치기",
   "Shell": "셸",
   "VS Code gave these chats no folder": "VS Code가 이 채팅에 폴더를 주지 않았습니다",
+  "{n} needs you": "{n}개 답변 대기",
+  "For {time}": "{time} 경과",
 };

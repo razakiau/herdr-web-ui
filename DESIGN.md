@@ -1012,13 +1012,23 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Hover is `color-mix(in srgb, var(--bg-hover) 50%, var(--bg-panel))`, only where a pointer hovers;
   selection is `--bg-hover`; keyboard focus draws the ring inside the row and no fill. No rule
   separates sections: `--space-4` and a dim `--fs-sm` head do.
-- The PC/workspace list and the lower Agents list scroll independently above the fixed footer.
-  Agents takes the height of its rows, at most half the sidebar, docked above the footer; the
-  workspace list has the rest. The Agents heading stays outside its scroll area and shows its
-  count only while folded. A list that is cut fades out at its lower edge. An empty or folded
-  Agents list gives its space back; PC and workspace folds do not hide agent rows. In the drawer
-  (`max-width: 768px`) the list starts folded. Until the PCs are in and every connected PC's
-  panes have come, an empty list says **Loading agents…**, never "No agents running".
+- **Agents first** (2026-10-25): the Agents list leads, the PCs follow under a dim **PCs** head
+  (`.sidebar-pcs-head`), and both scroll as one (`.sidebar-scroll`) above the fixed footer; what the
+  agents do is what is looked for first, the places are where it happens. The Agents head shows its
+  count only while folded and, on the right, what needs you and what works (`.agent-section-summary`:
+  `1 needs you  2 working`, a dot in `--status-blocked` / `--status-working` beside the words, a zero
+  left out, nothing when both are). The list starts open on every screen, a phone's drawer too. A
+  list that is cut fades out at its lower edge. PC and workspace folds do not hide agent rows. Until
+  the PCs are in and every connected PC's panes have come, an empty list says **Loading agents…**,
+  never "No agents running".
+- **PC folds** (lib/hostPlacement.ts `foldPcs`): with three PCs or more, the current PC is open while
+  it is the current one (a chat opened on a folded PC shows it, and it folds back when the selection
+  leaves); a PC with an agent working or asking is open; a PC the user kept open (picked from
+  **Other PCs**, `ovis:pcs-kept-open`) is open; a PC he folded from its header (`ovis:pcs-kept-folded`)
+  stays folded even while its agents work or ask, his choice beating the default, and **Other PCs**
+  then carries its asking dot. Keeping a PC open takes it off the folded list and folding it takes
+  it off the kept one. Everything else folds. Folded, **Other PCs** names its first two PCs dim after
+  its label (`services, node2 +6`).
 - A PC's header is the head of its workspaces, and the caret beside its `+` is the one fold over
   them. The roster has no label or fold of its own.
 - A repository's parent row keeps `workspace.label`; its opened linked
@@ -1056,13 +1066,21 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - **Agents** is an independent pane list: agents from each PC's `snapshot.agents`
   join the matching pane in `snapshot.panes`; pane agent metadata supplies entries missing
   from that list, including a recognized OmO pane. Each row opens that agent's pane: the agent's
-  bare brand mark, the pane's title, and one dim line naming the agent, then the PC (only when two
-  or more are registered), the workspace and the tab (only when the workspace has two or more tabs
-  or the tab was renamed, and never when it repeats the workspace). An agent with a live name
-  leads that line with it in `--font-mono` and `--text` (`.agent-name`); the kind takes the label's
-  place beside it, and the tooltip keeps the name. Its background-task count and
-  compact status sit at the right. A pane that waits for an answer is not listed apart or moved
-  up: its state shows on its workspace row and its agent row, and the alerts say the rest. Pane state is
+  bare brand mark, the pane's title, and one dim line led by the PC (`.agent-pc`, in `--text` and
+  medium weight, only when two or more are registered), then the agent's kind, the workspace and the
+  tab (only when the workspace has two or more tabs or the tab was renamed, and never when it repeats
+  the workspace), then what it does now (`.agent-now`, lib/agentNow.ts): **Waiting for you** in
+  `--status-blocked` when it asks, else its plan's current step and `done/total`, which then takes
+  the plan badge's place. An agent with a live name follows the PC with it in `--font-mono` and
+  `--text` (`.agent-name`); the kind takes the label's place beside it, and the tooltip keeps the
+  name. A row that works or asks draws its title in `--text-strong` medium; one at rest stays plain.
+  Its background-task count and compact status sit at the right; under the status, how long the
+  pane has been in it (`.agent-since`: `now`, `4m`, `2h`, `3d`, tabular `--fs-2xs` dim, in
+  `--status-blocked` while it asks) from the bridge's `status_since` (server/status-since.ts:
+  stamped when the status really changes, absent from an older bridge, which then shows no time).
+  On One line the time is in the row's tooltip only. The list's order outside the pinned card is by
+  attention (lib/agentRoster.ts `byAttention`): what needs you, then what works, then an unread
+  finish, then the rest, each group in the chosen Agents order. Pane state is
   authoritative when the agent roster and pane status differ. The workspace and agent lists
   share the existing combined machine roster and its SSE updates; neither adds a status subscription.
   A disconnected PC's saved workspace and agent rows are dimmed, inert and draw no state until that PC reconnects.
