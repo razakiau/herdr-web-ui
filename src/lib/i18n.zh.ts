@@ -1272,7 +1272,6 @@ export const ZH: Record<string, string> = {
   "View": "查看",
   "Context window": "上下文窗口",
   "Context window: {usage}": "上下文窗口：{usage}",
-  "Waiting for your response": "正在等待你的回复",
   "{0} and {1} running": "{0}和{1}正在运行",
   "{0} background commands running": "{0} 个后台命令正在运行",
   "{0} background commands": "{0} 个后台命令",

@@ -1270,7 +1270,6 @@ export const JA: Record<string, string> = {
   "View": "表示",
   "Context window": "コンテキスト ウィンドウ",
   "Context window: {usage}": "コンテキスト ウィンドウ: {usage}",
-  "Waiting for your response": "応答を待っています",
   "{0} and {1} running": "{0}と{1}を実行中",
   "{0} background commands running": "{0} 個のバックグラウンド コマンドを実行中",
   "{0} background commands": "{0} 個のバックグラウンド コマンド",

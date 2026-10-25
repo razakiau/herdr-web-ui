@@ -692,8 +692,10 @@ describe("what a host chat waits on (VS Code's persistent progress)", () => {
     background: { subagents: 0, commands: 0 }, confirmations: 0, context: null, message_ids: [], checkpoints: [], restored: null, signature: "x", ...extra,
   });
   const question = { kind: "question" } as unknown as HostChatRead["prompt"];
-  it("an open question comes first", () => {
-    expect(hostStatusLine(read({ prompt: question, confirmations: 2, background: { subagents: 1, commands: 1 } }), words)).toBe("Waiting for your response");
+  // the question card over the composer already says the chat waits on you: the line between it and
+  // the todo tab said it twice (owner, ZAC-228)
+  it("an open question silences the line: its card says it", () => {
+    expect(hostStatusLine(read({ prompt: question, confirmations: 2, background: { subagents: 1, commands: 1 } }), words)).toBeNull();
   });
   it("then pending confirmations, one or more", () => {
     expect(hostStatusLine(read({ confirmations: 1, background: { subagents: 1, commands: 0 } }), words)).toBe("1 confirmation pending");
@@ -709,7 +711,7 @@ describe("what a host chat waits on (VS Code's persistent progress)", () => {
   it("background work the session pills already count is not said again", () => {
     expect(hostStatusLine(read({ background: { subagents: 1, commands: 0 } }), words, { workShown: true })).toBeNull();
     expect(hostStatusLine(read({ confirmations: 1, background: { subagents: 1, commands: 0 } }), words, { workShown: true })).toBe("1 confirmation pending");
-    expect(hostStatusLine(read({ prompt: question, background: { subagents: 1, commands: 0 } }), words, { workShown: true })).toBe("Waiting for your response");
+    expect(hostStatusLine(read({ prompt: question, background: { subagents: 1, commands: 0 } }), words, { workShown: true })).toBeNull();
   });
   it("else nothing: the app's working word stands", () => {
     expect(hostStatusLine(read({}), words)).toBeNull();

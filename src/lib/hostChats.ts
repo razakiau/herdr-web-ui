@@ -571,7 +571,9 @@ export function readsOnView(was: HostChatRow | undefined, now: HostChatRow | und
  * fields sends none of them: nothing to say.
  */
 export function hostStatusLine(read: HostChatRead, t: Translate, { workShown = false }: { workShown?: boolean } = {}): string | null {
-  if (read.prompt?.kind === "question") return t("Waiting for your response");
+  // an open question's card over the composer says it already: a line between it and the todo tab
+  // said it twice (owner, ZAC-228)
+  if (read.prompt?.kind === "question") return null;
   const confirmations = read.confirmations ?? 0;
   if (confirmations > 0) return confirmations === 1 ? t("1 confirmation pending") : t("{0} confirmations pending", { 0: confirmations });
   // the session pills name the running work ("1 subagent", "2 shells"): the same count twice is noise

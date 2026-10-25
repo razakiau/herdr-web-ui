@@ -878,7 +878,7 @@ try {
         await ckSheet.getByRole("button", { name: "Cancel" }).click();
         await ckSheet.waitFor({ state: "detached" });
         await page.evaluate(() => { const state = (window as unknown as { hostState: { answered: boolean } }).hostState; state.answered = true; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
-        await view.locator(".host-chat-status-line", { hasText: "Waiting for your response" }).waitFor({ state: "detached" });
+        await view.locator(".prompt-dock .prompt-card").waitFor({ state: "detached" });
         await messageMenu(buildAsk);
         await pickInSheet("Restore to before this message");
         await ckSheet.waitFor();
@@ -913,7 +913,7 @@ try {
         await view.locator(".composer-text").fill("");
         // the rest of the demo starts from the question still open
         await page.evaluate(() => { const state = (window as unknown as { hostState: { answered: boolean } }).hostState; state.answered = false; (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(false); });
-        await view.locator(".host-chat-status-line", { hasText: "Waiting for your response" }).waitFor();
+        await view.locator(".prompt-dock .prompt-card").waitFor();
         console.log("PASS a checkpoint restores through its sheet, fades the turns after it, puts its message back, and Redo undoes it");
         await summary.scrollIntoViewIfNeeded();
         await fits("the answered question");
@@ -937,9 +937,9 @@ try {
         assert.ok(rows.below && rows.weight >= 600, `title bold over its description: ${JSON.stringify(rows)}`);
         if (shots) { await card.scrollIntoViewIfNeeded(); await card.screenshot({ path: join(shots, "r4-askcard-390.png") }); }
         assert.equal(await card.getByRole("textbox").getAttribute("placeholder"), "Other…", "the typed-answer field is the Other… slot");
-        // the status line says what the chat waits on, VS Code's words; on a phone it ends with the
-        // context meter (a wide window has it by Send: the wide pass below)
-        assert.equal((await view.locator(".host-chat-status-line").textContent())?.trim(), "Waiting for your response", "an open question: Waiting for your response");
+        // an open question: no status line, the card says the chat waits on you (owner, ZAC-228: the
+        // line sat between the card and the todo tab)
+        assert.equal(await view.locator(".host-chat-status-line").count(), 0, "an open question has no status line");
         // the meter sits in the composer's row on a phone too (ZAC-207 redesign): the row has room now
         const meter = view.locator('.composer-controls-right .host-chat-meter');
         assert.equal(await meter.isVisible(), true, "a phone shows the meter by the round button");

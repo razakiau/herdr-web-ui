@@ -1268,7 +1268,6 @@ export const KO: Record<string, string> = {
   "View": "보기",
   "Context window": "컨텍스트 창",
   "Context window: {usage}": "컨텍스트 창: {usage}",
-  "Waiting for your response": "응답을 기다리는 중",
   "{0} and {1} running": "{0}, {1} 실행 중",
   "{0} background commands running": "백그라운드 명령 {0}개 실행 중",
   "{0} background commands": "백그라운드 명령 {0}개",
