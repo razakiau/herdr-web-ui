@@ -102,12 +102,12 @@ export function sinceText(since: Since | null, t: Translate): string | null {
   return since.unit === "m" ? t("{n}m", { n: since.n }) : since.unit === "h" ? t("{n}h", { n: since.n }) : t("{n}d", { n: since.n });
 }
 
-export function agentsSummary(statuses: readonly (AgentStatus | undefined)[], t: Translate): { status: "blocked" | "working"; text: string }[] {
+export function agentsSummary(statuses: readonly (AgentStatus | undefined)[], t: Translate): { status: "blocked" | "working"; text: string; count: number }[] {
   const asking = statuses.filter((status) => status === "blocked").length;
   const working = statuses.filter((status) => status === "working").length;
   return [
-    ...(asking > 0 ? [{ status: "blocked" as const, text: t("{n} waiting on you", { n: asking }) }] : []),
-    ...(working > 0 ? [{ status: "working" as const, text: t("{n} working", { n: working }) }] : []),
+    ...(asking > 0 ? [{ status: "blocked" as const, text: t("{n} waiting on you", { n: asking }), count: asking }] : []),
+    ...(working > 0 ? [{ status: "working" as const, text: t("{n} working", { n: working }), count: working }] : []),
   ];
 }
 
@@ -363,7 +363,11 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
         {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
       </button>
       {summary.length > 0 && <span className="agent-section-summary">
-        {summary.map((part) => <span key={part.status} className="agent-summary-part" data-status={part.status}>{part.text}</span>)}
+        {summary.map((part) => <span key={part.status} className="agent-summary-part" data-status={part.status} title={part.text}>
+          <span className="agent-summary-long">{part.text}</span>
+          {/* a narrow head keeps the dot and the number; the words stay for a screen reader */}
+          <span className="agent-summary-short" aria-hidden="true">{part.count}</span>
+        </span>)}
       </span>}
       {headAction}
       {allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}

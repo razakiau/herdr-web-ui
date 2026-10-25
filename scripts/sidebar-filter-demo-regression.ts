@@ -853,6 +853,27 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
       results["hitInOtherPcs"] = tags;
     } finally { await context.close(); }
   }
+  if (!scene.phone) {
+    // a narrow sidebar (the owner's at ~260px drew "3 waiting on you" over "Agents"): the head's parts never overlap
+    for (const width of [240, 320]) {
+      const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}`, { "ovis:sidebar-width": String(width) });
+      try {
+        const boxes = await page.evaluate(() => {
+          const box = (selector: string) => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, width: r.width } : null; };
+          const parts = [...document.querySelectorAll(".agent-summary-part")].map((el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, text: (el as HTMLElement).innerText.trim() }; });
+          return { label: box(".agent-section-toggle span"), summary: box(".agent-section-summary"), parts, search: box(".sidebar-search-toggle") };
+        });
+        assert.ok(boxes.label && boxes.parts.length > 0, `${name} ${width}px: the head has its label and counts: ${JSON.stringify(boxes)}`);
+        for (const part of boxes.parts) {
+          assert.ok(part.left >= boxes.label!.right, `${name} ${width}px: "${part.text}" starts after "Agents": ${JSON.stringify(boxes)}`);
+          assert.ok(!boxes.search || part.right <= boxes.search.left + 0.5, `${name} ${width}px: "${part.text}" ends before the magnifier: ${JSON.stringify(boxes)}`);
+        }
+        results[`narrowHead${width}`] = boxes;
+        await capture(page, scene, `head-${width}`);
+        assert.deepEqual(errors, [], `${name}: no uncaught browser errors`);
+      } finally { await context.close(); }
+    }
+  }
   report(`fold-transitions-${scene.phone ? 390 : 1440}-${scene.theme}`, { scene, ...results, storageUnchanged: true });
   console.log(`PASS ${name}: a branch match comes back after a no-match query; parent matches and the selection open folds; carets under the filter fold what is drawn and never the saved fold`);
 }

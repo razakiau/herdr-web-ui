@@ -35,8 +35,8 @@ describe("AgentRowBody", () => {
 
 describe("agentsSummary", () => {
   it("counts what needs you and what works, leaving out zeros", () => {
-    expect(agentsSummary(["blocked", "working", "working", "idle"], t)).toEqual([{ status: "blocked", text: "1 waiting on you" }, { status: "working", text: "2 working" }]);
-    expect(agentsSummary(["working"], t)).toEqual([{ status: "working", text: "1 working" }]);
+    expect(agentsSummary(["blocked", "working", "working", "idle"], t)).toEqual([{ status: "blocked", text: "1 waiting on you", count: 1 }, { status: "working", text: "2 working", count: 2 }]);
+    expect(agentsSummary(["working"], t)).toEqual([{ status: "working", text: "1 working", count: 1 }]);
     expect(agentsSummary(["idle", undefined], t)).toEqual([]);
   });
 });
