@@ -83,7 +83,6 @@ export const MACHINES_JA: Record<string, string> = {
   "Filter workspaces and agents": "ワークスペースとエージェントを絞り込む",
   "Filter": "絞り込み",
   "Workspaces and agents": "ワークスペースとエージェント",
-  "Clear filter": "絞り込みを消去",
   "No workspaces or agents match": "一致するワークスペースやエージェントはありません",
   "No workspaces or agents match on the PCs that answered": "応答した PC には一致するワークスペースやエージェントはありません",
   "Try other words, or clear the filter.": "別の言葉で探すか、絞り込みを消去してください。",
@@ -95,4 +94,6 @@ export const MACHINES_JA: Record<string, string> = {
   "Move {name} to Other PCs": "{name} をその他の PC に移動",
   "Move to Other PCs": "その他の PC に移動",
   "PCs": "PC",
+  "Search workspaces and agents": "ワークスペースとエージェントを検索",
+  "Clear filter": "絞り込みを消去",
 };

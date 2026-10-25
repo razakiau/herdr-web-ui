@@ -542,3 +542,13 @@
 
 .machine-action.is-setup { border-color: var(--border); }
 .machine-action.is-setup .machine-action-text strong { color: var(--text); }
+
+/* "In Other PCs" while searching: dim like "Host"; the name keeps its room and the tag gives way first */
+.machine-title:has(.machine-search-place) .machine-name { flex: none; max-width: 60%; }
+.machine-kind.machine-search-place {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

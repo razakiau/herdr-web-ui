@@ -129,6 +129,13 @@ const WEB = panes.web;
 const workspaceRows = (page: Page): Locator => page.locator(".machine-list .workspace-group");
 const agentRows = (page: Page): Locator => page.locator(".agents-sidebar .agent-item");
 const filterInput = (page: Page): Locator => page.locator(".sidebar-filter-input");
+const searchToggle = (page: Page): Locator => page.locator(".sidebar-search-toggle");
+/** The magnifier opens the field (2026-10-25: no standing filter row); a no-op while it is open. */
+async function openSearch(page: Page): Promise<Locator> {
+  if (await filterInput(page).count() === 0) await searchToggle(page).click();
+  await filterInput(page).waitFor();
+  return filterInput(page);
+}
 const clearButton = (page: Page): Locator => page.locator(".sidebar-filter-clear");
 
 /** Every row the lists draw, in document order: the roster as the user sees it, to compare before, during and after a filter. */
@@ -277,6 +284,7 @@ async function capture(page: Page, scene: Scene, state: string): Promise<void> {
  * Colours go through a canvas so any CSS colour form resolves to sRGB; a translucent layer is blended over the next.
  */
 async function measure(page: Page): Promise<Record<string, unknown>> {
+  await openSearch(page);
   return await page.evaluate(() => {
     const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
     const rgba = (color: string): [number, number, number, number] => {
@@ -447,14 +455,15 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
     assert.ok(before.agents.some((row) => row.machine === "build" && row.pane === panes.omp && row.pinned), `${name}: the build PC's omp agent is pinned`);
     assert.equal(before.selectedPane, WEB, `${name}: the web pane is selected`);
     await capture(page, scene, "rest");
+    assert.equal(await filterInput(page).count(), 0, `${name}: at rest there is no field, only the magnifier`);
     report(`measurements-rest-${scene.phone ? 390 : 1440}-${scene.theme}`, await measure(page));
     if (!scene.phone) {
       await workspaceRows(page).first().hover();
       await capture(page, scene, "hover-row");
     }
-    const input = filterInput(page);
+    const input = await openSearch(page);
     assert.equal(await input.inputValue(), "", `${name}: the filter starts empty`);
-    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("sidebar-filter-input") ?? false), false, `${name}: opening the list does not focus the filter`);
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("sidebar-filter-input") ?? false), true, `${name}: the magnifier puts the caret in the field`);
     await input.click();
     await capture(page, scene, "focus-visible");
     await input.pressSequentially("flky");
@@ -500,13 +509,12 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
     await waitWorkspaceIds(page, `ids.length === ${before.groups.reduce((sum, group) => sum + group.workspaces.length, 0)}`);
     assert.equal(await input.inputValue(), "", `${name}: Escape clears the field`);
     assert.deepEqual(await rosterView(page), { ...before, activeIsFilter: true }, `${name}: Escape brings the roster back too`);
-    if (scene.phone) {
-      // the field's Escape clears it in place; only the empty field's Escape is the drawer's
-      assert.equal(await page.locator(".sidebar.is-open").count(), 1, `${name}: Escape in a field with words leaves the drawer open`);
-      await page.keyboard.press("Escape");
-      await page.locator(".sidebar.is-open").waitFor({ state: "detached" });
-      await openDrawer(page, scene.language);
-    }
+    // the field's Escape clears it in place; the empty field's Escape closes the search, and a phone's drawer stays
+    if (scene.phone) assert.equal(await page.locator(".sidebar.is-open").count(), 1, `${name}: Escape in a field with words leaves the drawer open`);
+    await page.keyboard.press("Escape");
+    await filterInput(page).waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("sidebar-search-toggle")), true, `${name}: closing the search hands the focus to the magnifier`);
+    if (scene.phone) assert.equal(await page.locator(".sidebar.is-open").count(), 1, `${name}: closing the search leaves the drawer open`);
     const storageAfter = await storageView(page);
     assert.deepEqual(storageAfter, storageBefore, `${name}: a filter writes nothing to storage`);
     const transport = await transportText(page);
@@ -532,7 +540,7 @@ async function selectedNonMatch(browser: Browser, scene: Scene): Promise<void> {
     const head = before.groups[0]!.workspaces.find((row) => row.id === "w1C")!;
     assert.ok(head.folded, `${name}: the checkout-api group starts folded`);
     assert.deepEqual(before.groups[0]!.workspaces.filter((row) => row.nested && (row.id === "w1D" || row.id === "w1H")).map((row) => row.id), ["w1D"], `${name}: only the selected worktree shows under the fold`);
-    const input = filterInput(page);
+    const input = await openSearch(page);
     await input.click();
     await input.pressSequentially("zzqx");
     await page.locator(".sidebar-filter-empty").waitFor();
@@ -561,11 +569,12 @@ async function selectedNonMatch(browser: Browser, scene: Scene): Promise<void> {
     if (scene.phone) {
       await closeDrawer(page, scene.language);
       await openDrawer(page, scene.language);
-      assert.equal(await input.inputValue(), "", `${name}: closing the drawer clears the filter`);
+      assert.equal(await filterInput(page).count(), 0, `${name}: closing the drawer closes the search and forgets its words`);
       await waitWorkspaceIds(page, `ids.length === ${before.groups.reduce((sum, group) => sum + group.workspaces.length, 0)}`);
       assert.deepEqual(await rosterView(page), before, `${name}: the roster is back after the drawer closed`);
-      await input.click();
-      await input.pressSequentially("zzqx");
+      const again = await openSearch(page);
+      await again.click();
+      await again.pressSequentially("zzqx");
       await page.locator(".sidebar-filter-empty").waitFor();
     }
     const transport = await transportText(page);
@@ -577,7 +586,7 @@ async function selectedNonMatch(browser: Browser, scene: Scene): Promise<void> {
     if (scene.phone) await openDrawer(page, scene.language);
     await agentRows(page).first().waitFor({ state: "attached" });
     await page.waitForFunction(() => document.querySelectorAll(".machine-list .machine-group").length >= 2);
-    assert.equal(await filterInput(page).inputValue(), "", `${name}: a reload starts with an empty filter`);
+    assert.equal(await filterInput(page).count(), 0, `${name}: a reload starts with the search closed`);
     assert.equal(await page.locator(".sidebar-filter-empty").count(), 0, `${name}: nothing says no match after a reload`);
     assert.deepEqual(await rosterView(page), before, `${name}: the roster is back after a reload`);
     assert.deepEqual(errors, [], `${name}: no uncaught browser errors`);
@@ -594,7 +603,7 @@ async function openWorktreeUnderFilter(browser: Browser, scene: Scene): Promise<
   const foldKey = `ovis:worktree-group-collapsed:local:${repoKey}`;
   const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}`, { [foldKey]: "1" });
   try {
-    const input = filterInput(page);
+    const input = await openSearch(page);
     await input.click();
     await input.pressSequentially("checkout-api");
     await page.waitForFunction(() => document.querySelector('.workspace-group[data-workspace="w1C"]') !== null);
@@ -615,7 +624,7 @@ async function openWorktreeUnderFilter(browser: Browser, scene: Scene): Promise<
     await dialog.waitFor({ state: "detached" });
     assert.equal((await storageView(page)).local[foldKey], "1", `${name}: opening a checkout under the filter writes no fold`);
     if (scene.phone && await page.locator(".sidebar.is-open").count() === 0) await openDrawer(page);
-    if (await input.inputValue() !== "") await clearButton(page).click();
+    if (await filterInput(page).count() > 0 && await input.inputValue() !== "") await clearButton(page).click();
     await waitRoster(page, "the group folded again as saved", (view) => view.groups[0]!.workspaces.find((row) => row.id === "w1C")?.folded === true);
     assert.equal((await storageView(page)).local[foldKey], "1", `${name}: cleared, the saved fold is still there`);
     assert.deepEqual(errors, [], `${name}: no uncaught browser errors`);
@@ -639,7 +648,7 @@ async function liveOfflineRoster(browser: Browser, scene: Scene): Promise<void> 
     await capture(page, scene, "error-pc");
     report(`measurements-error-pc-${scene.phone ? 390 : 1440}-${scene.theme}`, await measure(page));
     await page.evaluate(() => { const list = document.querySelector<HTMLElement>(".machine-list"); if (list) list.scrollTop = 0; });
-    const input = filterInput(page);
+    const input = await openSearch(page);
     await input.click();
     // "tols" reaches the two tool repositories alone (the letters in order): their worktrees and agents come as descendants
     await input.pressSequentially("tols");
@@ -742,7 +751,7 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
   {
     const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}`);
     try {
-      const input = filterInput(page);
+      const input = await openSearch(page);
       // the build PC's roster reads its branches; a branch-only query finds the row on both PCs
       await page.waitForFunction(() => document.querySelectorAll('.machine-list .machine-group .workspace-group[data-branch="docs/changelog"]').length >= 2);
       await input.fill("docs/changelog");
@@ -787,7 +796,7 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
       assert.equal(foldsBefore["ovis:pc-collapsed:local"], "1", `${name}: the laptop's fold is saved`);
       const rest = await rosterView(page);
       assert.ok(rest.groups[0]!.folded && rest.groups[0]!.workspaces.length === 0, `${name}: the laptop starts folded`);
-      const input = filterInput(page);
+      const input = await openSearch(page);
       await input.fill("zzqx");
       const selection = await waitRoster(page, "the selected context under the folded laptop", (view) => view.empty !== null && (groupRows(view, "Laptop") ?? []).join(",") === "w1C,w1D");
       assert.equal(selection.groups[0]!.folded, false, `${name}: a folded PC opens for the selection it holds`);
@@ -817,7 +826,7 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
     try {
       const rest = await rosterView(page);
       assert.ok(rest.groups[1]!.folded && rest.groups[1]!.workspaces.length === 0, `${name}: the build PC starts folded`);
-      await filterInput(page).fill("docs/changelog");
+      await (await openSearch(page)).fill("docs/changelog");
       const found = await waitRoster(page, "docs/changelog on the folded build PC", (view) => (groupRows(view, "Build PC") ?? []).includes("w1L"));
       assert.equal(found.groups[1]!.folded, false, `${name}: a branch match opens a PC folded since the page loaded`);
       await clearButton(page).click();
@@ -827,6 +836,23 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
       assert.deepEqual(errors, [], `${name}: no uncaught browser errors`);
     } finally { await context.close(); }
   }
+  {
+    // the build PC put away under Other PCs (four PCs, so the fold is on): a hit there opens it and says where it lives
+    const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}&loading=1&error=1`, { "ovis:pcs-kept-open": JSON.stringify(["local", "loading"]), "ovis:pcs-kept-folded": JSON.stringify(["build"]) });
+    try {
+      assert.equal(await page.locator(".machine-search-place").count(), 0, `${name}: no place tag without a search`);
+      await (await openSearch(page)).fill("docs/changelog");
+      await waitRoster(page, "docs/changelog under Other PCs", (view) => (groupRows(view, "Build PC") ?? []).includes("w1L"));
+      const tags = await page.locator(".machine-group").evaluateAll((groups) => groups.map((group) => [group.querySelector(".machine-name")?.textContent, group.querySelector(".machine-search-place")?.textContent ?? null]));
+      // Build PC is put away and Rack PC (not kept, not working) folds by itself; the kept PCs say nothing
+      assert.deepEqual(tags, [["Laptop", null], ["Build PC", "In Other PCs"], ["Old PC", null], ["Rack PC", "In Other PCs"]], `${name}: each folded PC's header says it lives in Other PCs`);
+      await capture(page, scene, "hit-in-other-pcs");
+      await clearButton(page).click();
+      assert.equal(await page.locator(".machine-search-place").count(), 0, `${name}: the tag leaves with the words`);
+      assert.deepEqual(errors, [], `${name}: no uncaught browser errors`);
+      results["hitInOtherPcs"] = tags;
+    } finally { await context.close(); }
+  }
   report(`fold-transitions-${scene.phone ? 390 : 1440}-${scene.theme}`, { scene, ...results, storageUnchanged: true });
   console.log(`PASS ${name}: a branch match comes back after a no-match query; parent matches and the selection open folds; carets under the filter fold what is drawn and never the saved fold`);
 }
@@ -834,7 +860,7 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
 async function observeOnly(browser: Browser, scene: Scene): Promise<void> {
   const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}&watch=1`);
   try {
-    const input = filterInput(page);
+    const input = await openSearch(page);
     await input.click();
     await input.pressSequentially("flaky");
     await waitWorkspaceIds(page, 'ids.join(",") === "w1C,w1D,w1H,w1C,w1H"');
@@ -847,7 +873,7 @@ async function observeOnly(browser: Browser, scene: Scene): Promise<void> {
 async function composition(browser: Browser, scene: Scene): Promise<void> {
   const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}`);
   try {
-    const input = filterInput(page);
+    const input = await openSearch(page);
     await input.click();
     const session = await context.newCDPSession(page);
     try {
@@ -869,9 +895,9 @@ async function koreanShots(browser: Browser): Promise<void> {
     try {
       await capture(page, current, "rest");
       report(`measurements-rest-390-${theme}-ko`, await measure(page));
-      const input = filterInput(page);
+      const input = await openSearch(page);
       assert.equal(await input.getAttribute("placeholder"), "워크스페이스와 에이전트", "the field says what it filters in Korean");
-      assert.equal(await page.locator(".sidebar-filter-label").textContent(), "필터", "the field's label is in Korean");
+      assert.equal(await page.locator(".sidebar-filter-label").textContent(), "필터", "the field's label is in Korean (for a screen reader, beside its magnifier)");
       await input.click();
       await input.pressSequentially("flag");
       await waitWorkspaceIds(page, 'ids.includes("w1K") && ids.length < 11');
@@ -888,7 +914,7 @@ async function koreanShots(browser: Browser): Promise<void> {
       // the no-match line that names the PCs that answered, in Korean
       const pending = await newPage(browser, current, `pane=${encodeURIComponent(WEB)}&loading=1&error=1`);
       try {
-        await filterInput(pending.page).click();
+        await (await openSearch(pending.page)).click();
         await filterInput(pending.page).pressSequentially("zzqx");
         await pending.page.locator(".sidebar-filter-empty").waitFor();
         assert.equal((await rosterView(pending.page)).empty, "응답한 PC에는 일치하는 워크스페이스나 에이전트가\u00a0없습니다\n다른 단어로 찾거나 필터를 지우세요.", "the answered-PCs line in Korean");

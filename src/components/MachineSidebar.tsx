@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, FoldVertical, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, FoldVertical, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -12,7 +12,7 @@ import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
 import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
 import { basename, type HostPc } from "../lib/hostChats.ts";
 import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
-import { foldPc, foldPcs, keptPcs, openPc, pcPlacement, samePath, type PcLists } from "../lib/hostPlacement.ts";
+import { foldPc, foldPcs, keptPcs, openPc, pcPlacement, samePath, searchPlace, type PcLists } from "../lib/hostPlacement.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
 import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
@@ -105,6 +105,8 @@ export function MachineSidebar(props: Props) {
   // the filter's query lives here and nowhere else: not in storage, not in the address, not past this
   // mount (lib/sidebarFilter.ts). The branch each roster row says comes up from the rosters, which read it.
   const [query, setQuery] = useState("");
+  // the field shows only once the magnifier opens it (owner, 2026-10-25): no standing filter row
+  const [searching, setSearching] = useState(false);
   const filterId = useId();
   const suggestionsId = useId();
   const filterInput = useRef<HTMLInputElement>(null);
@@ -121,16 +123,24 @@ export function MachineSidebar(props: Props) {
   const filterView = useMemo(() => ({ filter, reportBranches }), [filter, reportBranches]);
   // the field offers the labels the rows show, as the browser's own suggestions: nothing typed is kept
   const suggestions = useMemo(() => filterSuggestions(props.machines, branchLabels), [props.machines, branchLabels]);
-  const clearFilter = () => { setQuery(""); filterInput.current?.focus(); };
-  // Escape in the field clears it; an empty field's Escape is left to the page (a phone's drawer closes on it)
+  const searchToggle = useRef<HTMLButtonElement>(null);
+  const openSearch = () => setSearching(true);
+  // the cross clears the words and keeps the field; on an empty field it closes the search, the focus back on the magnifier
+  // the magnifier is only drawn while the search is closed, so its focus waits for the commit that draws it again
+  const refocusToggle = useRef(false);
+  const closeSearch = () => { setQuery(""); setSearching(false); refocusToggle.current = true; };
+  useEffect(() => { if (!searching && refocusToggle.current) { refocusToggle.current = false; searchToggle.current?.focus(); } }, [searching]);
+  const clearOrClose = () => { if (query === "") closeSearch(); else { setQuery(""); filterInput.current?.focus(); } };
+  useEffect(() => { if (searching) filterInput.current?.focus(); }, [searching]);
+  // Escape in the field clears its words; in an empty field it closes the search, and the drawer stays
   const onFilterKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Escape" || query === "" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key !== "Escape" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     event.preventDefault();
     event.stopPropagation();
-    setQuery("");
+    if (query !== "") setQuery(""); else closeSearch();
   };
   const drawerOpen = props.drawerOpen === true;
-  useEffect(() => { if (!drawerOpen) setQuery(""); }, [drawerOpen]);
+  useEffect(() => { if (!drawerOpen) { setQuery(""); setSearching(false); } }, [drawerOpen]);
   // the roster's wait is a live region that is in the list from its first render, clipped while empty (never
   // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
   const loadingWords = useAnnouncedText(props.machines.length === 0 ? t("Loading PCs…") : null);
@@ -156,8 +166,10 @@ export function MachineSidebar(props: Props) {
   const active = (id: string): boolean => { const each = pcActivity(pcOf(id), hostChats.get(id), activity); return each.working + each.asking > 0; };
   const roster = props.machines.map((machine) => machine.id);
   const prefs = { active, keptOpen: keptPcs(lists.keptOpen, roster), keptFolded: keptPcs(lists.keptFolded, roster) };
-  // under the filter every PC is a group of its own, so a match on a folded one is seen
-  const { open: openPcs, folded } = filter.active ? { open: props.machines, folded: [] } : foldPcs(props.machines, props.selectedMachineId, prefs);
+  const fold = foldPcs(props.machines, props.selectedMachineId, prefs);
+  // under the search every PC is a group of its own, a folded one saying where it otherwise lives
+  const { open: openPcs, folded } = filter.active ? { open: props.machines, folded: [] } : fold;
+  const foldedIds = new Set(fold.folded.map((machine) => machine.id));
   // foldPcs folds nothing with one or two PCs: there is nowhere to put one back to
   const foldable = props.machines.length > 2;
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
@@ -165,15 +177,15 @@ export function MachineSidebar(props: Props) {
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs. The
   // filter above the lists is a row of the same grid, one field and its clear, never taller than a row.
   return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div className="sidebar-shell">
-    <div className="sidebar-filter" role="search" aria-label={t("Filter workspaces and agents")}>
-      <label className="sidebar-filter-label" htmlFor={filterId}>{t("Filter")}</label>
+    {searching && <div className="sidebar-filter" role="search" aria-label={t("Filter workspaces and agents")}>
+      <label className="sidebar-filter-label" htmlFor={filterId}><Search aria-hidden="true" /><span className="visually-hidden">{t("Filter")}</span></label>
       <input ref={filterInput} id={filterId} className="input sidebar-filter-input" type="search" value={query} aria-label={t("Filter workspaces and agents")} placeholder={t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
       <datalist id={suggestionsId}>{suggestions.map((label) => <option key={label} value={label} />)}</datalist>
-      {query !== "" && <button type="button" className="sidebar-filter-clear" aria-label={t("Clear filter")} title={t("Clear filter")} onClick={clearFilter}><X aria-hidden="true" /></button>}
-    </div>
+      <button type="button" className="sidebar-filter-clear" aria-label={query === "" ? t("Close search") : t("Clear filter")} title={query === "" ? t("Close search") : t("Clear filter")} onClick={clearOrClose}><X aria-hidden="true" /></button>
+    </div>}
     {/* one scroll: what the agents do first, then the places (owner, 2026-10-25) */}
     <div className="sidebar-scroll">
-      <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
+      <AgentSidebar headAction={searching ? null : <button ref={searchToggle} type="button" className="sidebar-row-action sidebar-search-toggle" aria-label={t("Search workspaces and agents")} title={t("Search workspaces and agents")} onClick={openSearch}><Search aria-hidden="true" /></button>} machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
         hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
         // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
         allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />
@@ -181,8 +193,9 @@ export function MachineSidebar(props: Props) {
         <h2 className="sidebar-section-label sidebar-pcs-head">{t("PCs")}</h2>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
         {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
+          searchNote={filter.active ? searchPlace(foldedIds.has(machine.id), t) : null}
           // the PC in use stays open while it is; any other can be folded, even one that asks (Other PCs then says so)
-          onPutBack={foldable && machine.id !== props.selectedMachineId ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
+          onPutBack={foldable && machine.id !== props.selectedMachineId && !foldedIds.has(machine.id) ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
         {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveLists(openPc(lists, id))} />}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
       </div>
@@ -218,7 +231,7 @@ function storedLists(): PcLists {
 }
 
 /** `onPutBack`: folds the PC into "Other PCs" again; absent where it would stay open anyway */
-function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutBack, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void; onPutBack?: (() => void) | undefined }) {
+function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutBack, searchNote = null, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void; onPutBack?: (() => void) | undefined; searchNote?: string | null }) {
   const t = useT();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
@@ -296,6 +309,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutB
         <span className="machine-name">{machine.name}</span>
         {/* the computer this app's server runs on; on a phone "this PC" read as the phone */}
         {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
+        {searchNote && <span className="machine-kind machine-search-place" title={searchNote}>{searchNote}</span>}
         <span className={`machine-dot is-${machine.action_required === "setup" ? "setup" : machine.state}`} title={machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state])} aria-hidden="true" />
       </div>
       {machine.kind === "ssh" && <button className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}

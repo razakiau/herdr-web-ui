@@ -972,17 +972,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   apps keep it; the roster has only the label filter below, which the maintainer approved in #1043
   and which differs from the palette-only design on purpose: it narrows the lists in place, by the
   words the rows show, and holds no state.
-- **Filter workspaces and agents** (`.sidebar-filter`, MachineSidebar.tsx) is its word, **Filter**
-  (`.sidebar-filter-label`, in `--text-dim` at the size of the field's text, in view whatever is typed), then one
+- **Search workspaces and agents** is a magnifier (`.sidebar-search-toggle`, a `.sidebar-row-action`) at the
+  right of the Agents head; there is no standing filter row (ZAC-233, 2026-10-25: the roster first).
+  Pressing it draws the field (`.sidebar-filter`, MachineSidebar.tsx) and puts the caret in it: the
+  magnifier as its label (`.sidebar-filter-label`, the word **Filter** visually hidden), then one
   `.input` the height of a row (`--side-row`, so a finger's `--touch-target` on a phone) in the rows'
   gutter above the lists, its placeholder naming the scope (**Workspaces and agents**) and its
   suggestions the names the rows show (a `<datalist>`, rebuilt from the roster, nothing typed kept),
-  with its clear (`.sidebar-filter-clear`, the same square, inside the field's trailing
-  cell) only while there is text; the browser's own search cancel glyph is off, so there is one. The
-  query lives in the component's state alone: never in storage, the address, a request or a frame,
-  and it is empty again after a reload, an unmount, a clear, Escape in the field, or the phone's
-  drawer closing. Escape in a field with words clears them and leaves the drawer open; the empty
-  field's Escape is the drawer's. Nothing focuses the field by itself, and nothing typed elsewhere reaches it, so a
+  with its cross (`.sidebar-filter-clear`, the same square, inside the field's trailing cell) always
+  there: **Clear filter** while there is text, **Close search** on an empty field. The browser's own
+  search cancel glyph is off, so there is one. The query lives in the component's state alone: never
+  in storage, the address, a request or a frame, and it is empty again after a reload, an unmount, a
+  clear, Escape in the field, or the phone's drawer closing (which closes the search too). Escape in
+  a field with words clears them; Escape (or the cross) on the empty field closes the search and
+  hands the focus back to the magnifier, and a phone's drawer stays open (the drawer's own Escape
+  passes over the field, lib/useSidebarLayout.ts). Only the magnifier focuses the field, and nothing
+  typed elsewhere reaches it, so a
   terminal keeps every keystroke. The matcher is the command palette's fuzzy one
   (`matchesQuery`, lib/paletteSearch.ts), its membership alone, never its rank: rows keep herdr's
   order, their PC, their group, their card and their pins (lib/sidebarFilter.ts). It reads only what
@@ -991,6 +996,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   transcript, an environment, a token value or an id. A match keeps its worktrees and its agent
   rows; a match keeps its repository head and its PC; a PC without one is hidden, its roster still
   mounted (a folded PC's too, hidden, while the filter lasts), so the branches it reads stay findable;
+  a PC that lives under **Other PCs** comes out of the fold with its hits, its header tagged **In
+  Other PCs** (`.machine-search-place`, dim like **Host**, giving way before the name, lib/hostPlacement.ts `searchPlace`) so the user knows where
+  to find it once the words are gone;
   a PC whose roster has not come (connecting, unreachable) stays as context with its state words. The
   selected pane's agent row, its workspace, that one's head and its PC stay whatever the query,
   drawn as context (`.is-filter-context`: the words in `--text-dim`) and never counted; the selected

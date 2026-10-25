@@ -83,7 +83,6 @@ export const MACHINES_KO: Record<string, string> = {
   "Filter workspaces and agents": "워크스페이스와 에이전트 필터",
   "Filter": "필터",
   "Workspaces and agents": "워크스페이스와 에이전트",
-  "Clear filter": "필터 지우기",
   "No workspaces or agents match": "일치하는 워크스페이스나 에이전트가 없습니다",
   "No workspaces or agents match on the PCs that answered": "응답한 PC에는 일치하는 워크스페이스나 에이전트가 없습니다",
   "Try other words, or clear the filter.": "다른 단어로 찾거나 필터를 지우세요.",
@@ -95,4 +94,6 @@ export const MACHINES_KO: Record<string, string> = {
   "Move {name} to Other PCs": "{name}을(를) 다른 PC로 이동",
   "Move to Other PCs": "다른 PC로 이동",
   "PCs": "PC",
+  "Search workspaces and agents": "워크스페이스와 에이전트 검색",
+  "Clear filter": "필터 지우기",
 };

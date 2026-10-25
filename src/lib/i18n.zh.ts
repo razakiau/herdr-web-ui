@@ -431,6 +431,7 @@ const BASE: Record<string, string> = {
   "Work": "工作",
   "{n} asking": "{n} 个等待回答",
   "Waiting for you": "等待你的回复",
+  "In Other PCs": "在其他电脑中",
   "{n} working": "{n} 个正在工作",
   "Other PCs": "其他 PC",
   "Other PCs ({n})": "其他 PC ({n})",

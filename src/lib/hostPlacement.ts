@@ -9,6 +9,7 @@
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 import type { Machine } from "../../shared/machines.ts";
+import type { Translate } from "./i18n.ts";
 
 export interface HostPlacement {
   /** by workspace_id: its host chats in strip order, drawn after its panes' tabs */
@@ -141,4 +142,12 @@ export function hostChatHome(placement: HostPlacement, session: string): { works
   for (const [workspace, rows] of placement.tabs) if (rows.some((row) => row.session === session)) return { workspace };
   const folder = placement.folders.find((group) => group.chats.some((row) => row.session === session));
   return folder ? { folder: folder.cwd } : null;
+}
+
+/**
+ * What a PC's header says while the search shows it: a PC that is folded when nothing is searched
+ * comes up in place with its hits, and says where it otherwise lives.
+ */
+export function searchPlace(folded: boolean, t: Translate): string | null {
+  return folded ? t("In Other PCs") : null;
 }

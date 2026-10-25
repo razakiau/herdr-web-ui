@@ -161,3 +161,12 @@ describe("the chat open now", () => {
     expect(hostChatHome(pcPlacement(snapshot, rows, { open: [] }, "far"), "far")).toEqual({ folder: "/w/z" });
   });
 });
+
+describe("searchPlace", () => {
+  const t = (key: string, vars?: Record<string, string | number>): string => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? ""));
+  it("names the fold a hit comes from, and nothing for an open PC", async () => {
+    const { searchPlace } = await import("./hostPlacement.ts");
+    expect(searchPlace(true, t)).toBe("In Other PCs");
+    expect(searchPlace(false, t)).toBeNull();
+  });
+});

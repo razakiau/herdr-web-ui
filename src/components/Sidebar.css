@@ -114,9 +114,22 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   padding: var(--space-2) var(--side-gutter) 0;
 }
 
+/* the magnifier that opens it, at the Agents head's trailing edge; the head's own icon cell */
+.sidebar-search-toggle { margin-left: auto; }
+.agent-section-summary + .sidebar-search-toggle { margin-left: 0; }
+
+/* the field's label is its magnifier, in the leading cell */
+.sidebar-filter-label svg {
+  display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-inline: calc((var(--side-box) - var(--icon-size)) / 2);
+}
+
 /* the field's label stays in view whatever is typed: the section head's words (Agents) */
 .sidebar-filter-label {
   flex: none;
+  margin-right: calc(var(--space-2) * -1);
   color: var(--text-dim);
   font-size: var(--fs-input);
   line-height: var(--lh-tight);

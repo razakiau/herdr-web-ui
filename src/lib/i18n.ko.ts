@@ -427,6 +427,7 @@ const BASE: Record<string, string> = {
   "Work": "작업",
   "{n} asking": "{n}개 응답 대기",
   "Waiting for you": "답변 대기 중",
+  "In Other PCs": "다른 PC에 있음",
   "{n} working": "{n}개 작업 중",
   "Other PCs": "다른 PC",
   "Other PCs ({n})": "다른 PC ({n})",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Pin, PinOff, Terminal } from "lucide-react";
 
 import type { Machine } from "../../shared/machines.ts";
@@ -122,6 +122,8 @@ export interface AgentSidebarProps {
   onSelectHostChat?(target: HostChatTarget): void;
   /** "All agents on <PC>…", one per PC with host chats: the section head's ⋯ */
   allAgents?: RowMenuItem[];
+  /** the head's trailing control: the sidebar's search (MachineSidebar.tsx) */
+  headAction?: ReactNode;
 }
 
 /**
@@ -142,7 +144,7 @@ const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machin
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it, and mutes or unmutes its alerts for every browser and device.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect, hostChats, selectedHostChat = null, onSelectHostChat, allAgents = [] }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect, hostChats, selectedHostChat = null, onSelectHostChat, allAgents = [], headAction = null }: AgentSidebarProps) {
   const [allMenu, setAllMenu] = useState<HTMLElement | null>(null);
   const t = useT();
   const listId = useId();
@@ -355,6 +357,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       {summary.length > 0 && <span className="agent-section-summary">
         {summary.map((part) => <span key={part.status} className="agent-summary-part" data-status={part.status}>{part.text}</span>)}
       </span>}
+      {headAction}
       {allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
     </div>
     {allMenu && <RowMenu anchor={allMenu} title={t("Agents")} items={allAgents} onClose={() => setAllMenu(null)} />}
