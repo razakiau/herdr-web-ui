@@ -39,8 +39,9 @@ const patch = `(() => {
     machine.state = "connected";
     // the Build PC's first workspace works in the build chat's folder: that chat is one of its tabs
     if (id === "remote") { const pane = machine.snapshot.panes.find((item) => item.workspace_id === machine.snapshot.workspaces[0].workspace_id); pane.cwd = "/tmp/fictional-repo/"; pane.foreground_cwd = "/tmp/fictional-repo/"; }
-    // the six-PC fixture: no pane asks anywhere, so only a host chat's question keeps a folded PC open
-    if (SIX) for (const pane of machine.snapshot.panes) if (pane.agent_status === "blocked") pane.agent_status = "idle";
+    // the six-PC fixture: no pane asks anywhere, so only a host chat's question keeps a folded PC open;
+    // the other PCs' panes rest too, since a PC with a working agent stays open (lib/hostPlacement.ts foldPcs, ZAC-233)
+    if (SIX) for (const pane of machine.snapshot.panes) if (pane.agent_status === "blocked" || (id !== "local" && pane.agent_status === "working")) pane.agent_status = "idle";
     // the no-pane fixture: every shell workspace on the Build PC closed, only agent host folders left
     if (NO_PANES && id === "remote") { machine.snapshot.panes = []; machine.snapshot.workspaces = []; machine.snapshot.focused_pane_id = null; }
     return machine;
@@ -449,7 +450,9 @@ try {
         await noVsCode("the sidebar");
         // the build chat asks: the Agents list shows it, with Copilot's mark
         const agentsRow = page.locator(`.agents-sidebar .host-chat-item[data-machine="remote"][data-host-session="${SESSION}"]`);
-        await page.locator(".agents-sidebar .agent-section-toggle").click();
+        // the Agents list starts open on every screen (ZAC-233); a fold left from a run before opens it
+        const agentsToggle = page.locator(".agents-sidebar .agent-section-toggle");
+        if (await agentsToggle.getAttribute("aria-expanded") === "false") await agentsToggle.click();
         await agentsRow.waitFor();
         assert.equal(await agentsRow.locator('svg[aria-label="copilot"]').count(), 1, "an Agents row wears Copilot's mark");
         assert.equal(await page.locator('.agents-sidebar [data-host-session="fictional-session-0"]').count(), 0, "an idle, read chat is not in the Agents list");
@@ -993,6 +996,21 @@ try {
         await fits("the expanded card");
         if (shots) await page.screenshot({ path: join(shots, "task-10-card-expanded-390.png") });
         if (shots) { await page.setViewportSize({ width: 1440, height: 900 }); await settled(page); await page.screenshot({ path: join(shots, "card-expanded-1440.png") }); await page.setViewportSize({ width: 390, height: 844 }); await settled(page); }
+        {
+          // a photo picked through the + sheet of the full-screen card lands on the card: the attach sheet
+          // closing used to step history back onto the card's sheet, which collapsed it while the phone's
+          // picker was open, and the picked file went to a detached input (owner's phone, ZAC-233)
+          await opened.locator(".prompt-card-attach").click();
+          const attachSheet = page.locator(".attach-sheet[role=dialog]");
+          await attachSheet.waitFor();
+          const [chooser] = await Promise.all([page.waitForEvent("filechooser"), attachSheet.locator(".attach-tile", { hasText: "Photos" }).click()]);
+          await page.waitForTimeout(400); // the user is in the picker; the attach sheet's history step lands
+          assert.equal(await chooser.element().evaluate((node) => node.isConnected), true, "the picker's input is still on the page");
+          assert.equal(await expanded.count(), 1, "the full-screen card stays open under the picker");
+          await chooser.setFiles({ name: "fictional-first.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") });
+          await opened.locator(".prompt-card-files .composer-attachment").first().waitFor({ timeout: 5000 });
+          await opened.locator(".prompt-card-files .composer-attachment button").first().click();
+        }
         await opened.getByRole("button", { name: "Exit full screen" }).click();
         await expanded.waitFor({ state: "detached" });
         assert.equal(await card.getByRole("textbox").inputValue(), "FICTIONAL kept", "collapsing returns the card inline with its text");

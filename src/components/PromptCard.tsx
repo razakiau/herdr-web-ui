@@ -610,7 +610,10 @@ let answerFileSequence = 0;
 function PromptCardSheet({ label, onClose, children }: { label: string; onClose(): void; children: ReactNode }) {
   const surface = useFocusTrap<HTMLDivElement>(true);
   useSheetSwipe(surface, onClose);
-  usePhoneSheetBack(() => { onClose(); });
+  // stays up under a sheet opened from it (the + sheet): that sheet's close steps history back, which
+  // must not collapse the card while the phone's picker is open, or the picked file lands on a
+  // detached input and is lost (owner's phone, ZAC-233)
+  usePhoneSheetBack(() => { onClose(); }, true, true);
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "Escape" || nativeModalOver(surface.current)) return;

@@ -179,7 +179,9 @@ try {
         await page.locator(".conn-live").waitFor();
         if (width === 390) {
           await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-          await page.locator(".agents-sidebar .agent-section-toggle").click();
+          // the Agents list starts open on a phone too (ZAC-233); a fold left from a run before opens it
+          const toggle = page.locator(".agents-sidebar .agent-section-toggle");
+          if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
         }
         const row = page.locator(`.agents-sidebar .agent-item[data-pane="${paneId}"]`);
         const badge = row.getByTestId("plan-progress");
