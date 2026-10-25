@@ -876,3 +876,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 .plan-count.is-done svg {
   color: var(--status-done);
 }
+
+/* what a host folder's chats do now (Sidebar.tsx nowLine), after its branch or place: the ask in its colour */
+.workspace-now.is-ask { color: var(--status-blocked); }

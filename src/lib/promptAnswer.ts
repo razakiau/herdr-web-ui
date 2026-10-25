@@ -23,6 +23,20 @@ function bareLabel(label: string): string {
   return label.replace(/\s*\((?:[a-z]|esc|recommended)\)$/i, "").trim().toLowerCase();
 }
 
+/**
+ * The agent's own pick written into an option's label: Claude's menu suffix "Redis (Recommended)", or a
+ * model's "Recommended: …" / "(recommended) …" prefix or "… — recommended" tail (an ask_user choice
+ * carries no flag). The card draws a tag instead; a label that only starts with the word keeps it.
+ */
+export function recommendedLabel(label: string): { text: string; recommended: boolean } {
+  const patterns = [/^\s*\(recommended\)\s*(.+)$/i, /^\s*recommended\s*[:\-–—]\s*(.+)$/i, /^(.+?)\s*\(recommended\)\s*$/i, /^(.+?)\s+[-–—]\s*recommended\s*$/i];
+  for (const pattern of patterns) {
+    const text = label.match(pattern)?.[1]?.trim();
+    if (text) return { text, recommended: true };
+  }
+  return { text: label, recommended: false };
+}
+
 /** null: the prompt only takes its options, and the text names none of them. */
 export function answerFromText(prompt: InteractivePrompt, text: string): TypedAnswer | null {
   const value = text.trim();

@@ -18,7 +18,7 @@ import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { folderName, shortPathTitle, stripPaneChrome, taskRowLines } from "../lib/paneName.ts";
 import { ApiError } from "../lib/api.ts";
-import { useT } from "../lib/i18n.ts";
+import { useT, type Translate } from "../lib/i18n.ts";
 import { userErrorMessage } from "../lib/userError.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -35,6 +35,7 @@ import { worktreeLabel } from "../lib/worktreeName.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
 import { hostChatStatus, samePath, type HostPlacement } from "../lib/hostPlacement.ts";
+import { hostChatNow, type AgentNow } from "../lib/agentNow.ts";
 import { currentHostWorkspaces, folderFace, folderKey, folderTree, mergedKeys, mergedOrder, moveBlock, moveInMerged, setHostWorkspaces, subscribeHostWorkspaces, withOrder, workspaceKey, type TreeRow } from "../lib/hostWorkspaces.ts";
 import { basename } from "../lib/hostChats.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
@@ -204,6 +205,17 @@ export interface HostChatRows {
  * Spaces follow herdr's workspace roster. A workspace opens its current pane; tabs and split
  * panes are navigated through the tab strip, while Agents is an independent API-backed list.
  */
+/** What a row's host chats do now, as the Agents list's rows say it (lib/agentNow.ts): one that asks first, else the open or newest one's activity. */
+function hostChatsNow(chats: readonly HostChatRow[], lead: HostChatRow | undefined, t: Translate): AgentNow | null {
+  const chat = chats.find((candidate) => candidate.status === "asks") ?? [...(lead ? [lead] : []), ...chats].find((candidate) => candidate.activity);
+  return chat ? hostChatNow(chat, t) : null;
+}
+
+/** A row's second line with what its chats do now after its branch or place. */
+function NowLine({ before, now }: { before: string | null; now: AgentNow | null }) {
+  return <span className="workspace-place">{before}{before && now ? " · " : null}{now && <span className={`workspace-now${now.tone === "ask" ? " is-ask" : ""}`}>{now.text}</span>}</span>;
+}
+
 export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = false, hostChats }: SidebarProps) {
   const t = useT();
   const { settings } = useSettings();
@@ -752,6 +764,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     const pane = currentPane(workspace, panes);
     // a workspace's host chats are its tabs too: the one open selects its row, and they count in its state
     const hostTabs = hostChats?.placement.tabs.get(workspace.workspace_id) ?? [];
+    // a workspace's host chat tabs say what they do now on its second line, as a folder's row does
+    const hostNow = online ? hostChatsNow(hostTabs, hostTabs.find((chat) => chat.session === hostChats?.selected), t) : null;
     const selected = panes.some((candidate) => candidate.pane_id === selectedPaneId) || hostTabs.some((chat) => chat.session === hostChats?.selected);
     const repoKey = workspace.worktree?.repo_key;
     const linked = workspace.worktree?.is_linked_worktree === true;
@@ -854,14 +868,15 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
               {foldedCount > 0 && <span className="workspace-fold-count" aria-hidden="true">+{foldedCount}</span>}
               {filterNote}
             </span>
-            {lines.place && <span className="workspace-place">{lines.place}</span>}
-          </span> : branchLine ? <span className="workspace-copy is-branch-line">
+            {(lines.place || hostNow) && <NowLine before={lines.place || null} now={hostNow} />}
+          </span> : branchLine || hostNow ? <span className="workspace-copy is-branch-line">
             <span className="workspace-line">
               <span className="workspace-name">{rowTitle}</span>
+              {!branchLine && secondaryBranch && <span className="worktree-workspace-label">{secondaryBranch}</span>}
               {foldedCount > 0 && <span className="workspace-fold-count" aria-hidden="true">+{foldedCount}</span>}
               {filterNote}
             </span>
-            <span className="workspace-place workspace-branch">{branchLine}</span>
+            {hostNow ? <NowLine before={branchLine} now={hostNow} /> : <span className="workspace-place workspace-branch">{branchLine}</span>}
           </span> : <span className="workspace-copy">
             <span className="workspace-name">{rowTitle}</span>
             {secondaryBranch && <span className="worktree-workspace-label">{secondaryBranch}</span>}
@@ -985,6 +1000,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     // the row opens the chat open there, else its newest
     const lead = open ?? chats[0]!;
     const lines = twoLine ? { title: lead.title.trim() || t("Copilot chat"), place: name } : null;
+    const now = online ? hostChatsNow(chats, lead, t) : null;
+    const nowLine = (before: string | null) => <NowLine before={before} now={now} />;
     const menuOpen = folderMenu?.cwd === cwd;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setFolderMenu(menuOpen ? null : { anchor, point, previousFocus, cwd, title: name, noFolder });
     const face = <span className="host-folder-face"><WorkspaceFavicon root={cwd} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true">{worktrees.length > 0 && !folded ? <FolderOpen /> : <Folder />}</span>} /></span>;
@@ -1012,10 +1029,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
           <span className="sidebar-mark" aria-hidden="true"><AgentMark agent="copilot" size={18} /></span>
           {lines ? <span className="workspace-copy is-two-line">
             <span className="workspace-line"><span className="workspace-name">{lines.title}</span></span>
-            <span className="workspace-place">{lines.place}</span>
-          </span> : branchLine ? <span className="workspace-copy is-branch-line">
-            <span className="workspace-line"><span className="workspace-name">{name}</span>{folded && <span className="workspace-fold-count" aria-hidden="true">+{worktrees.length}</span>}</span>
-            <span className="workspace-place workspace-branch">{branchLine}</span>
+            {nowLine(lines.place)}
+          </span> : branchLine || now ? <span className="workspace-copy is-branch-line">
+            <span className="workspace-line"><span className="workspace-name">{name}</span>{branchBeside && <span className="worktree-workspace-label">{branchBeside}</span>}{folded && <span className="workspace-fold-count" aria-hidden="true">+{worktrees.length}</span>}</span>
+            {now ? nowLine(branchLine) : <span className="workspace-place workspace-branch">{branchLine}</span>}
           </span> : <span className="workspace-copy"><span className="workspace-line"><span className="workspace-name">{name}</span>{branchBeside && <span className="worktree-workspace-label">{branchBeside}</span>}{folded && <span className="workspace-fold-count" aria-hidden="true">+{worktrees.length}</span>}</span></span>}
           <span className="sidebar-pane-meta">
             <span className="visually-hidden">Copilot</span>

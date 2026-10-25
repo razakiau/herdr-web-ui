@@ -7,7 +7,7 @@ import "./PromptCard.css";
 import { ApiError, assertAttachable } from "../lib/api.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
-import { customAnswerWithFiles, focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { customAnswerWithFiles, focusFollowsAnswer, pressOrigin, recommendedLabel, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -338,11 +338,8 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     await answer({ form: entries }, press);
   };
   const customLabelId = useId();
-  // Claude renders the menu's own pick as "Redis (Recommended)": a tag reads better than the suffix
-  const labelOf = (label: string): { text: string; recommended: boolean } => {
-    const text = label.replace(/\s*\(recommended\)$/i, "");
-    return { text, recommended: text !== label };
-  };
+  // the agent's pick in the label ("Redis (Recommended)", "Recommended: …"): a tag reads better (lib/promptAnswer.ts)
+  const labelOf = recommendedLabel;
   const hasChoices = q.options.some((_, index) => index !== q.custom_option_index);
   const openFile = useContext(OpenFileContext);
   const planFile = prompt.plan_file;

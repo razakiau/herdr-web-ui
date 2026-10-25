@@ -1380,6 +1380,8 @@ try {
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
         // its row says what it does, in the host's words (SessionSummary.activity), as VS Code's Sessions list
         await page.locator(`.host-chat-item[data-host-session="${SESSION}"] .agent-now`, { hasText: "FICTIONAL running the tests" }).waitFor({ state: "attached" });
+        // and its row in the workspaces tree says it too (the owner's phone shows that tree)
+        await page.locator(".workspace-header .workspace-now", { hasText: "FICTIONAL running the tests" }).first().waitFor({ state: "attached", timeout: 5000 });
         assert.equal(await view.locator(".composer-send-menu").count(), 0, "no send menu while the box is empty");
         // steering by voice: a busy chat's empty box offers the mic beside Stop, no typed character first (owner, ZAC-207)
         await view.locator(".composer-stop").waitFor();

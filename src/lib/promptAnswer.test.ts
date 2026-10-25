@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { InteractivePrompt } from "../../shared/protocol.ts";
 import { ApiError } from "./api.ts";
-import { answerFromText, answerHint, answerRefusal, customAnswerWithFiles, focusFollowsAnswer, needsConfirmation, pressOrigin, type PressOrigin } from "./promptAnswer.ts";
+import { answerFromText, answerHint, recommendedLabel, answerRefusal, customAnswerWithFiles, focusFollowsAnswer, needsConfirmation, pressOrigin, type PressOrigin } from "./promptAnswer.ts";
 
 const prompt = (options: string[], custom: number | null, multi = false): InteractivePrompt => ({
   id: "p", agent: "claude", kind: "question", title: "Question", question: "?", body: null,
@@ -173,5 +173,18 @@ describe("customAnswerWithFiles", () => {
     const refused = await customAnswerWithFiles("FICTIONAL", [file("a.png")],
       async () => { throw new ApiError("/api/machines/remote/host-chats/chat/upload", 413, "FICTIONAL too big", "image_too_large"); }, async () => {});
     expect(refused).toEqual({ ok: false, error: "FICTIONAL too big" });
+  });
+});
+
+describe("recommendedLabel", () => {
+  it("reads the agent's pick written into the label, as a suffix or a prefix, and leaves other labels whole", () => {
+    expect(recommendedLabel("Redis (Recommended)")).toEqual({ text: "Redis", recommended: true });
+    expect(recommendedLabel("Recommended: the learner's home on a phone (progress)")).toEqual({ text: "the learner's home on a phone (progress)", recommended: true });
+    expect(recommendedLabel("Recommended - fold them")).toEqual({ text: "fold them", recommended: true });
+    expect(recommendedLabel("(recommended) Redis")).toEqual({ text: "Redis", recommended: true });
+    expect(recommendedLabel("Redis — recommended")).toEqual({ text: "Redis", recommended: true });
+    expect(recommendedLabel("Recommended settings for the build")).toEqual({ text: "Recommended settings for the build", recommended: false });
+    expect(recommendedLabel("Recommended")).toEqual({ text: "Recommended", recommended: false });
+    expect(recommendedLabel("Postgres")).toEqual({ text: "Postgres", recommended: false });
   });
 });
