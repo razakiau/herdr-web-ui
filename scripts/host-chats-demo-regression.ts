@@ -594,6 +594,14 @@ try {
         assert.ok(footRow.bottomAir >= 20, `and clear of the phone's navigation bar (${footRow.bottomAir} px from the screen's foot)`);
         if (!footRow.overflows) assert.ok(Math.abs(footRow.centre) <= 2, `centred under the box (${footRow.centre} px off)`);
         if (shots) await page.screenshot({ path: join(shots, "ask-pills-390.png") });
+        // the card stands clear of what comes under it (the todo tab, else the box): with no status
+        // line between them, three bordered surfaces touched (owner's phone screenshot, ZAC-228)
+        const cardAir = await view.evaluate((root) => {
+          const card = root.querySelector(".prompt-dock .prompt-card")!.getBoundingClientRect();
+          const next = root.querySelector(".composer .todo-bar, .composer .composer-surface")!.getBoundingClientRect();
+          return Math.round(next.top - card.bottom);
+        });
+        assert.ok(cardAir >= 12, `the question card has air before the composer (${cardAir} px)`);
         // card and pills leave the transcript a thin strip at 390 px: the card is folded, as a reader would, while the transcript is read
         await view.locator(".prompt-card-fold").click();
         await view.locator(".prompt-card.is-folded").waitFor();
