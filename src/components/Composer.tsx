@@ -128,6 +128,8 @@ export interface ComposerProps {
   pendingNote?: string | null;
   /** a strip tucked under the box's top edge, part of the composer (a host chat's todos) */
   tray?: ReactNode;
+  /** a row under the box, on its column (a host chat's session pills) */
+  foot?: ReactNode;
   /** where the box's draft is kept, in place of the pane's (a host chat has no pane) */
   draftKey?: string;
   /** the words dictation listens for beside the agent's name (a host chat's agents) */
@@ -302,6 +304,7 @@ export function Composer({
   sendMenu,
   pendingNote = null,
   tray,
+  foot,
   draftKey: hostDraftKey,
   keywords,
   hostMenus,
@@ -1571,6 +1574,7 @@ export function Composer({
       </div>
       {/* the strip tucked under the card (t3code's composer context strip): the pane's working folder and its
           branch, each drawn only when the caller passes it. It only names them; nothing in it is pressed */}
+      {foot}
       {strip !== null && (
         <div className="composer-strip">
           {strip.folder !== null && <span className="composer-strip-item composer-strip-folder" title={strip.path ?? undefined}>

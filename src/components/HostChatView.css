@@ -687,21 +687,30 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
   margin-inline: var(--host-chat-gutter);
 }
 
-/* the session's pills above the composer (VS Code's agent-host input pills): PRs and issues in
-   their state's colour, the artifacts sheet, the work still running. One line; a phone scrolls it. */
+/* the session's pills under the composer's box (Composer `foot`; VS Code's agent-host input pills):
+   PRs and issues in their state's colour, the artifacts sheet, the work still running. Above the
+   box they sandwiched the todo tab (owner, ZAC-228): under it, the todos sit over the box and what
+   the session made under it. One line on the box's column, centred under it; a phone scrolls it,
+   from its start. Air above it so the row does not read as the box's foot (ZAC-207). */
 .session-pills {
   display: flex;
   gap: var(--space-1);
+  width: min(100%, var(--chat-w));
   min-width: 0;
-  /* air under the pills before the composer's card: at --space-1 they read as stuck to its border
-     (owner, ZAC-207); the first still starts on the card's edge (the desktop audit's column) */
-  padding: 0 var(--host-chat-gutter, var(--space-4)) var(--space-2);
+  margin: var(--space-2) auto 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
+/* auto margins centre a row that fits and leave one that scrolls starting at its first pill */
+.session-pills > :first-child { margin-inline-start: auto; }
+.session-pills > :last-child { margin-inline-end: auto; }
 .session-pills::-webkit-scrollbar { display: none; }
-/* a question card stands over the pills: air between them, so the row does not read as the card's foot */
-.prompt-dock:not(:empty) ~ .session-pills { padding-top: var(--space-2); }
+/* a phone: the row is the last thing on the screen, over the system's navigation bar (Android's
+   back / home / recents, iOS's home indicator), whose gesture zone takes the screen's last ~16 px.
+   The composer's bottom space lifts it clear (owner, ZAC-228) */
+@media (pointer: coarse) {
+  .host-chat .composer { padding-bottom: max(var(--space-5), env(safe-area-inset-bottom, 0px)); }
+}
 .session-pill {
   display: inline-flex; flex: none; align-items: center; gap: var(--space-1);
   min-height: 1.75rem; padding: 0 var(--space-2);

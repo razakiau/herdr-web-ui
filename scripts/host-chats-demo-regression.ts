@@ -576,13 +576,23 @@ try {
         await thumb.waitFor();
         assert.equal(await thumb.count(), 1, "the picture a tool returned shows under the folded block");
         assert.match(await thumb.getAttribute("src") ?? "", /host-chats\/image\?.*ref=c-shot%3A0/, "its URL is the host source's");
-        // a question is up: the session's pills (its PR, issue, artifacts) stay under the card, clear of it
+        // a question is up: the session's pills (its PR, issue, artifacts) stay, under the composer
         const askPills = view.locator(".session-pills");
         await askPills.locator(".session-pill").first().waitFor();
         assert.ok((await askPills.locator(".session-pill").allInnerTexts()).some((text) => text.includes("artifacts")), "the artifacts pill stands while the question card does");
-        const cardBox = await view.locator(".prompt-dock").boundingBox();
-        const pillsBox = await askPills.locator(".session-pill").first().boundingBox();
-        assert.ok(cardBox !== null && pillsBox !== null && pillsBox.y >= cardBox.y + cardBox.height + 6, `the pills sit below the card, with air between (${JSON.stringify({ cardBox, pillsBox })})`);
+        // the pills sit under the composer's box (owner, ZAC-228: above it they sandwiched the todo
+        // tab), centred on it, and lifted clear of a phone's navigation bar: the last 16 px of the
+        // screen is the bar's gesture zone
+        const footRow = await view.evaluate((root) => {
+          const box = root.querySelector(".composer-surface")!.getBoundingClientRect();
+          const row = root.querySelector(".session-pills")!;
+          const pills = [...row.querySelectorAll(".session-pill")].map((pill) => pill.getBoundingClientRect());
+          const left = Math.min(...pills.map((pill) => pill.left)); const right = Math.max(...pills.map((pill) => pill.right));
+          return { below: Math.round(pills[0]!.top - box.bottom), bottomAir: Math.round(window.innerHeight - Math.max(...pills.map((pill) => pill.bottom))), centre: Math.round((left + right) / 2 - (box.left + box.right) / 2), overflows: row.scrollWidth > row.clientWidth + 1 };
+        });
+        assert.ok(footRow.below >= 4, `the pills are under the composer's box (${footRow.below} px below it)`);
+        assert.ok(footRow.bottomAir >= 20, `and clear of the phone's navigation bar (${footRow.bottomAir} px from the screen's foot)`);
+        if (!footRow.overflows) assert.ok(Math.abs(footRow.centre) <= 2, `centred under the box (${footRow.centre} px off)`);
         if (shots) await page.screenshot({ path: join(shots, "ask-pills-390.png") });
         // card and pills leave the transcript a thin strip at 390 px: the card is folded, as a reader would, while the transcript is read
         await view.locator(".prompt-card-fold").click();
@@ -1462,16 +1472,9 @@ try {
         const sessionPillRow = view.locator(".session-pills");
         await sessionPillRow.waitFor();
         await sessionPillRow.locator(".session-pill-stat").waitFor();
-        // the pills' air before the next thing under them (the status line, else the composer): at 4 px
-        // they read as stuck to it (owner, ZAC-207)
-        const pillAir = await view.evaluate((root) => {
-          const row = root.querySelector(".session-pills")!;
-          const pill = row.querySelector(".session-pill")!.getBoundingClientRect();
-          let next = row.nextElementSibling;
-          while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling;
-          return Math.round(next!.getBoundingClientRect().top - pill.bottom);
-        });
-        assert.ok(pillAir >= 8, `the pills stand clear of what follows them (${pillAir} px)`);
+        // the pills' air under the box they sit beneath: at 4 px they read as stuck to it (owner, ZAC-207)
+        const pillAir = await view.evaluate((root) => Math.round(root.querySelector(".session-pill")!.getBoundingClientRect().top - root.querySelector(".composer-surface")!.getBoundingClientRect().bottom));
+        assert.ok(pillAir >= 6, `the pills stand clear of the box above them (${pillAir} px)`);
         assert.deepEqual((await sessionPillRow.locator(".session-pill").allInnerTexts()).map((text) => text.trim().replace(/\s+/g, " ")), ["2 files +30 −3", "#12", "3 artifacts", "FICTIONAL docs"], "changes, the PR, the artifacts, the reference");
         const prIcon = sessionPillRow.locator(".session-pill").nth(1).locator("svg");
         await page.waitForFunction(() => document.querySelectorAll(".session-pill")[1]?.querySelector("svg")?.getAttribute("data-tone") === "purple");
@@ -2574,11 +2577,15 @@ try {
           const left = (selector: string) => { const box = node.querySelector(selector)?.getBoundingClientRect(); return box ? Math.round(box.left) : null; };
           const toolbar = node.querySelector<HTMLElement>('.composer-controls-right .host-chat-meter');
           const status = node.querySelector<HTMLElement>('.host-chat-status .host-chat-meter');
-          return { composer: left(".composer-surface"), pill: left(".session-pill"),
+          const surface = node.querySelector(".composer-surface")!.getBoundingClientRect();
+          const pills = [...node.querySelectorAll(".session-pill")].map((pill) => pill.getBoundingClientRect());
+          const centre = Math.round((Math.min(...pills.map((p) => p.left)) + Math.max(...pills.map((p) => p.right))) / 2 - (surface.left + surface.right) / 2);
+          return { composer: left(".composer-surface"), centre,
             meter: toolbar !== null && toolbar.offsetParent !== null && toolbar.parentElement?.lastElementChild?.matches(".composer-action, .voice-mic-wrap") === true && (status === null || status.offsetParent === null) };
         });
         assert.notEqual(edges.composer, null);
-        assert.equal(edges.pill, edges.composer, `the first pill starts where the composer does (${JSON.stringify(edges)})`);
+        // under the box, centred on it (owner, ZAC-228: left-aligned on a wide window it read off-centre)
+        assert.ok(Math.abs(edges.centre) <= 2, `the pills are centred under the composer (${JSON.stringify(edges)})`);
         assert.equal(edges.meter, true, "the context meter is in the composer's toolbar");
         assert.match((await chat.locator(".composer-controls-right .host-chat-meter").innerText()).trim(), /\d+%/, "a wide row says the meter's percent");
         // a mouse window names a picked custom agent beside the model, as VS Code's toolbar does

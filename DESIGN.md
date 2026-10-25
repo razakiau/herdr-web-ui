@@ -1549,12 +1549,16 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Chat mode is ONE surface: the stack, the transcript and the composer region all sit on `--bg`,
   and the composer column equals the transcript column (`--chat-w`, same `--space-4` gutter,
   `--space-3` at `480px` and below). In a host chat every row between the two stands on that
-  column too (`--host-chat-gutter`): the session pills, the status line and the bars (not open in
+  column too (`--host-chat-gutter`): the status line and the bars (not open in
   its workspace, forking, restored), and so do the sticky request and, just left of it, the turn
   rail. The rail names a turn beside its tick on hover or focus (`.chat-minimap-preview`). The
   status line does not repeat a running count the pills already show.
-  Above the pills, a host chat's todo list (`.todo-bar`, ZAC-228; VS Code's todo widget) is one
-  `--bg-panel` card on that column: closed, `ListChecks`, "Todos 3/7" in `--text-strong`, the task
+  The session pills (`.session-pills`) sit under the box (Composer `foot`, ZAC-228): what the session
+  made under it, its todos over it. One line, centred under the box (a row too long for it scrolls
+  from its first pill). On touch the composer's bottom space is at least `--space-5`, so the row
+  clears a phone's navigation bar.
+  Over the box, a host chat's todo list (`.todo-bar`, ZAC-228; VS Code's todo widget) is a tab tucked
+  under its top edge: closed, `ListChecks`, "Todos 3/7" in `--text-strong`, the task
   in progress (else the next pending) in `--text-dim` ellipsized, a caret, and a 3 px `--accent`
   progress line under it; open, one row per todo (done dim and struck through, in progress
   `--status-working`, blocked `--notice`). It is gone with no todos, and once all are done in an

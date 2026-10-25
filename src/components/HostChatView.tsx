@@ -360,17 +360,18 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       await redoHostCheckpoint(machineId, session);
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
-    {/* the pills stay while a question or approval is up: what the session made is often what the question is about */}
-    <HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
-      onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
-      onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
+    {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
+        todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}
+      foot={<HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
+      onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
+      onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />}
       pendingNote={joined ? t("Added to your steer") : null}
       onSend={(text, _clear, _anyway, attached) => sendAs("send", text, attached)}
       attachMenu={setAttaching}
