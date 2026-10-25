@@ -1227,6 +1227,17 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "pending_gone" });
   });
 
+  it("pending/send_now starts the turn with a steer this bridge sent itself, not only one the host held already", async () => {
+    // the phone's own path: the steer goes out through chat/send first, so this process remembers
+    // its id as sent; Send now must still start the turn with it rather than read it as a repeat
+    const r = await busy();
+    expect(await call(r, "/api/host-chats/chat/send", { session: sessionUri(1), id: uuid(51), text: "FICTIONAL steer of mine", mode: "steer" })).toEqual({ status: 200, json: { queued: true } });
+    await until("held as the steer", () => r.conn.chat(sessionUri(1))?.steeringMessage?.id === uuid(51));
+    expect(await call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(51) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === uuid(51));
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ turnId: uuid(51), message: { text: "FICTIONAL steer of mine" } });
+  });
+
   it("pending/send_now puts the message back, as it was, when the turn does not stop", async () => {
     const queued = { id: uuid(50), message: user("FICTIONAL keep me") };
     const r = await busy({ queuedMessages: [queued] });

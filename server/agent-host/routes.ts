@@ -154,6 +154,7 @@ const SENT_MAX = 500;
 class Sent {
   private readonly answered = new Map<string, { session: string }>();
   get(id: string): { session: string } | undefined { return this.answered.get(id); }
+  forget(id: string): void { this.answered.delete(id); }
   has(session: string): boolean { for (const each of this.answered.values()) if (each.session === session) return true; return false; }
   add(id: string, session: string): void {
     this.answered.set(id, { session });
@@ -1054,6 +1055,10 @@ async function sendPendingNow(call: Call): Promise<Response> {
     call.host.dispatch(channel, { type: ActionType.ChatPendingMessageSet, kind: held.kind, id, message: held.message } as StateAction);
     return conflictResponse("turn_still_running", "the turn did not stop in time: the message waits as it was");
   }
+  // a steer or queued message the phone sent through this bridge is remembered as sent under the
+  // same id, and send() takes a remembered id for a repeat: without this Send now stopped the turn
+  // and sent nothing
+  sentOf(call.host).forget(id);
   send(call.host, session, channel, now, held.message, id);
   return jsonResponse({ ok: true });
 }
