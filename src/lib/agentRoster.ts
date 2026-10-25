@@ -40,3 +40,29 @@ export function byAttention<T>(rows: readonly T[], status: (row: T) => AgentStat
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((each) => each.row);
 }
+
+/** How many rows that need you or work the list shows before "Show all" (the owner's pick, 2026-10-25). */
+export const ACTIVE_CAP = 8;
+
+/**
+ * The Agents list with many agents (the owner, 2026-10-25): what needs you, works or finished unread stays;
+ * idle, read and away rows fold into "N resting"; past ACTIVE_CAP of the asking and working ones the rest
+ * wait behind "Show all" (`hidden` counts them). Rows come in byAttention order, so asks are the last cut.
+ * The selected row is always shown, where it stands.
+ */
+export function restingSplit<T>(rows: readonly T[], status: (row: T) => AgentStatus | undefined, selected: (row: T) => boolean, all: boolean): { shown: T[]; resting: T[]; hidden: number } {
+  const shown: T[] = [];
+  const resting: T[] = [];
+  let active = 0;
+  let hidden = 0;
+  for (const row of rows) {
+    const rank = attentionRank(status(row));
+    if (rank <= 1) {
+      active += 1;
+      if (all || active <= ACTIVE_CAP || selected(row)) shown.push(row);
+      else hidden += 1;
+    } else if (rank === 2 || selected(row)) shown.push(row);
+    else resting.push(row);
+  }
+  return { shown, resting, hidden };
+}

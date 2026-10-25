@@ -336,3 +336,28 @@
   .agent-row:enabled:active { opacity: 1; }
   .agent-item:has(> .agent-row:enabled:active) { background: var(--side-hover); }
 }
+
+/* "Show all (n more)" and "N resting" (lib/agentRoster.ts restingSplit): quiet rows under the list, dim
+   words as the section heads', the caret in the rows' mark column */
+.agent-more {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--side-row);
+  margin: 0;
+  padding: 0 var(--side-gutter);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-more svg { flex: none; width: 14px; height: 14px; }
+.agent-more:focus-visible { outline-offset: calc(var(--ring-offset) * -1); }
+@media (hover: hover) {
+  .agent-more:hover { color: var(--text); }
+}

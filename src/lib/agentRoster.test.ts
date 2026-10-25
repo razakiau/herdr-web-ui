@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { Machine, MachineState } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import fixture from "../../site/demo/fixtures/machines.json";
-import { agentRoster, byAttention } from "./agentRoster.ts";
+import { agentRoster, byAttention, restingSplit } from "./agentRoster.ts";
 import { sidebarPinKey } from "./sidebarPins.ts";
 
 const template = fixture.machines[0]!.snapshot as SessionSnapshot;
@@ -40,5 +40,36 @@ describe("agent roster", () => {
     const machines = [machine("local", "connected", [["a", "blocked"], ["b", "idle"]])];
     const split = agentRoster(machines, { byActivity: false, seqs: () => new Map(), pinned: [sidebarPinKey("local", "b")] });
     expect(split.pinned.map(({ entry }) => entry.pane.pane_id)).toEqual(["b"]);
+  });
+});
+
+describe("restingSplit (the owner, 2026-10-25: many agents)", () => {
+  type Row = { id: string; status: AgentStatus | undefined };
+  const row = (id: string, status: AgentStatus | undefined): Row => ({ id, status });
+  const ids = (rows: readonly Row[]) => rows.map((each) => each.id);
+  const split = (rows: Row[], selected: string | null = null, all = false) => restingSplit(rows, (each) => each.status, (each) => each.id === selected, all);
+
+  it("keeps what needs you, works or finished unread, and folds the rest into resting", () => {
+    const result = split([row("ask", "blocked"), row("run", "working"), row("fin", "done"), row("idle", "idle"), row("away", undefined)]);
+    expect(ids(result.shown)).toEqual(["ask", "run", "fin"]);
+    expect(ids(result.resting)).toEqual(["idle", "away"]);
+    expect(result.hidden).toBe(0);
+  });
+
+  it("shows 8 of the ones that need you or work, and counts the rest for Show all; asks come first so they are never cut", () => {
+    const busy = [row("a1", "blocked"), ...Array.from({ length: 10 }, (_, n) => row(`w${n}`, "working")), row("fin", "done")];
+    const result = split(busy);
+    expect(ids(result.shown)).toEqual(["a1", "w0", "w1", "w2", "w3", "w4", "w5", "w6", "fin"]);
+    expect(result.hidden).toBe(3);
+    expect(ids(split(busy, null, true).shown)).toHaveLength(12);
+  });
+
+  it("the selected row is always shown, even when resting or past the cap", () => {
+    const busy = Array.from({ length: 10 }, (_, n) => row(`w${n}`, "working"));
+    expect(ids(split(busy, "w9").shown)).toContain("w9");
+    expect(split(busy, "w9").hidden).toBe(1);
+    const quiet = split([row("run", "working"), row("idle", "idle")], "idle");
+    expect(ids(quiet.shown)).toEqual(["run", "idle"]);
+    expect(quiet.resting).toEqual([]);
   });
 });

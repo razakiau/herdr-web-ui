@@ -1099,7 +1099,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   herdr (a finish already seen) shows no time, since the time would be of a state not drawn.
   On One line the time is in the row's tooltip only. The list's order outside the pinned card is by
   attention (lib/agentRoster.ts `byAttention`): what needs you, then what works, then an unread
-  finish, then the rest, each group in the chosen Agents order. Pane state is
+  finish, then the rest, each group in the chosen Agents order. The rest (idle, read, away) fold
+  into a dim **N resting** row under the list, its open state this device's (`ovis:agents-resting-open`);
+  past 8 that ask or work, the others wait behind **Show all (n more)**, for the page's time. The
+  selected row always shows where it stands, and a search shows every row it keeps (lib/agentRoster.ts
+  `restingSplit`; the owner, 2026-10-25, with many agents). Pane state is
   authoritative when the agent roster and pane status differ. The workspace and agent lists
   share the existing combined machine roster and its SSE updates; neither adds a status subscription.
   A disconnected PC's saved workspace and agent rows are dimmed, inert and draw no state until that PC reconnects.

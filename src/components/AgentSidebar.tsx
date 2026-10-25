@@ -10,7 +10,7 @@ import { useT, type Translate } from "../lib/i18n.ts";
 import { agentNow, hostChatNow, type AgentNow } from "../lib/agentNow.ts";
 import { sinceOf, type Since } from "../lib/since.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { agentRoster, byAttention, type AgentRow } from "../lib/agentRoster.ts";
+import { agentRoster, byAttention, restingSplit, type AgentRow } from "../lib/agentRoster.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { folderName } from "../lib/paneName.ts";
 import { matchesQuery } from "../lib/paletteSearch.ts";
@@ -142,6 +142,8 @@ interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: nu
 /** a host chat in the Agents list: a Copilot agent while it works, asks, is unread or pinned */
 interface ChatRow { machine: Machine; chat: HostChatRow; entry?: undefined }
 type ListRow = (AgentRow & { chat?: undefined }) | ChatRow;
+/** this device's choice to show the resting rows (AgentSidebar restingSplit) */
+const RESTING_KEY = "ovis:agents-resting-open";
 const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machine.id, row.chat.session) : sidebarPinKey(row.machine.id, row.entry.pane.pane_id);
 
 /**
@@ -203,6 +205,21 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     return { pinned: roster.pinned.filter(kept), rest: roster.rest.filter(kept) };
   }, [roster, filter, selectedHostChat]);
   const rows = useMemo(() => [...split.pinned, ...split.rest], [split]);
+  // many agents (the owner, 2026-10-25): idle and read rows fold into "N resting", and past 8 asking or working
+  // ones the rest wait behind "Show all" (lib/agentRoster.ts restingSplit); a search shows every row it keeps
+  const [showAll, setShowAll] = useState(false);
+  const [restingOpen, setRestingOpen] = useState(() => { try { return localStorage.getItem(RESTING_KEY) === "1"; } catch { return false; } });
+  const setResting = (open: boolean): void => {
+    setRestingOpen(open);
+    try { localStorage.setItem(RESTING_KEY, open ? "1" : "0"); } catch { /* storage denied: for the page */ }
+  };
+  const restingId = useId();
+  const fold = useMemo(() => filter.active
+    ? { shown: split.rest, resting: [] as ListRow[], hidden: 0 }
+    : restingSplit(split.rest, shown, (row) => row.chat
+      ? selectedHostChat?.machineId === row.machine.id && selectedHostChat.session === row.chat.session
+      : row.machine.id === selectedMachineId && row.entry.pane.pane_id === selectedPaneId, showAll),
+  [split, filter.active, showAll, selectedHostChat, selectedMachineId, selectedPaneId, activity]);
   // a folded list (a phone's starts so) opens while the filter keeps rows in it, so a match or the selection is
   // seen, not only kept; its caret then folds and opens it for the filter's time, the list's own fold untouched
   const [filterFold, setFilterFold] = useState<boolean | null>(null);
@@ -380,7 +397,14 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
           <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(listItem)}</ul>
         </>}
-        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(listItem)}</ul>}
+        {fold.shown.length > 0 && <ul className="agent-list">{fold.shown.map(listItem)}</ul>}
+        {fold.hidden > 0 && <button type="button" className="agent-more" onClick={() => setShowAll(true)}>{t("Show all ({n} more)", { n: fold.hidden })}</button>}
+        {fold.resting.length > 0 && <>
+          <button type="button" className="agent-more agent-resting-toggle" aria-expanded={restingOpen} aria-controls={restingId} onClick={() => setResting(!restingOpen)}>
+            {restingOpen ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}{t("{n} resting", { n: fold.resting.length })}
+          </button>
+          <ul className="agent-list agent-list-resting" id={restingId} hidden={!restingOpen}>{restingOpen && fold.resting.map(listItem)}</ul>
+        </>}
       </>}
     </div>
     {menu && menuShown && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menuShown.title} subtitle={menuShown.subtitle} detail={menuShown.tokens.join(" · ") || undefined} onClose={closeMenu} items={menu.host && hostActions

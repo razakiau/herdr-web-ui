@@ -235,6 +235,8 @@ async function newPage(browser: Browser, scene: Scene, search: string, stored: R
     localStorage.setItem("ovis:settings", JSON.stringify(settings));
     // every demo PC kept open, so none folds under the fork's "Other PCs" row (MachineSidebar foldPcs)
     localStorage.setItem("ovis:pcs-kept-open", JSON.stringify(["local", "build", "loading", "error"]));
+    // every agent row in the list, the resting ones too (AgentSidebar restingSplit): this test reads their order
+    localStorage.setItem("ovis:agents-resting-open", "1");
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
   }, { settings: { language: scene.language, theme: scene.theme, defaultView: "chat" }, stored });
   const page = await context.newPage();

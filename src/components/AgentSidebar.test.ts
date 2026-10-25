@@ -10,7 +10,8 @@ import { AgentSidebar } from "./AgentSidebar.tsx";
 
 const pane = (pane_id: string, extra: Partial<HerdrPane> = {}): HerdrPane => ({
   pane_id, workspace_id: "w1", tab_id: "w1:t1", terminal_id: `term-${pane_id}`, focused: false, revision: 1,
-  agent: "claude", agent_status: "idle", ...extra,
+  // working: an idle row folds under "N resting" (restingSplit), and these tests read the rows themselves
+  agent: "claude", agent_status: "working", ...extra,
 });
 const agentOf = (row: HerdrPane): AgentInfo => ({
   pane_id: row.pane_id, workspace_id: row.workspace_id, tab_id: row.tab_id, terminal_id: row.terminal_id, focused: false, revision: 1,
