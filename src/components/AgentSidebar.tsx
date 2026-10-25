@@ -8,7 +8,7 @@ import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { agentRoster, type AgentRow } from "../lib/agentRoster.ts";
+import { agentRoster, byAttention, type AgentRow } from "../lib/agentRoster.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { folderName } from "../lib/paneName.ts";
 import { matchesQuery } from "../lib/paletteSearch.ts";
@@ -145,14 +145,19 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const chats = hostChats?.get(machine.id)?.chats ?? [];
     return agentsListHostChats(chats, (session) => pinned.includes(hostChatPinKey(machine.id, session))).map((chat): ChatRow => ({ machine, chat }));
   }), [machines, hostChats, pinned]);
+  // what needs you first, then what works, then an unread finish, then the rest (lib/agentRoster.ts byAttention);
+  // a host chat's "asks" needs you, and an unread one reads as a finish
+  const shown = (row: ListRow): AgentStatus | undefined => row.chat
+    ? row.chat.status === "asks" ? "blocked" : row.chat.status === "working" ? "working" : row.chat.unread ? "done" : "idle"
+    : row.machine.state === "connected" ? activity.status(row.machine.id, row.entry.pane) : undefined;
   const roster = useMemo((): { pinned: ListRow[]; rest: ListRow[] } => {
-    if (chatRows.length === 0) return herdrRoster;
+    if (chatRows.length === 0) return { pinned: herdrRoster.pinned, rest: byAttention<ListRow>(herdrRoster.rest, shown) };
     // the pinned rows of both kinds stand first, in the order they were pinned
     const chats = splitPinnedRows(chatRows, pinned, rowPinKey);
     const order = new Map(pinned.map((key, index) => [key, index]));
     const pinnedRows: ListRow[] = [...herdrRoster.pinned, ...chats.pinned].sort((a, b) => (order.get(rowPinKey(a)) ?? 0) - (order.get(rowPinKey(b)) ?? 0));
-    return { pinned: pinnedRows, rest: [...herdrRoster.rest, ...chats.rest] };
-  }, [herdrRoster, chatRows, pinned]);
+    return { pinned: pinnedRows, rest: byAttention<ListRow>([...herdrRoster.rest, ...chats.rest], shown) };
+  }, [herdrRoster, chatRows, pinned, activity]);
   const allRows = useMemo(() => [...roster.pinned, ...roster.rest], [roster]);
   // the sidebar's filter (lib/sidebarFilter.ts) keeps the matched rows and the selected one, in the same
   // order and cards; the pins and their pruning go on reading every row

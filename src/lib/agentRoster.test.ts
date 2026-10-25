@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { Machine, MachineState } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import fixture from "../../site/demo/fixtures/machines.json";
-import { agentRoster } from "./agentRoster.ts";
+import { agentRoster, byAttention } from "./agentRoster.ts";
 import { sidebarPinKey } from "./sidebarPins.ts";
 
 const template = fixture.machines[0]!.snapshot as SessionSnapshot;
@@ -28,5 +28,17 @@ describe("agent roster", () => {
     expect(split.pinned.map(key)).toEqual(["remote/d", "local/c"]);
     // blocked first, then the latest change, within each PC; the PCs keep their order
     expect(split.rest.map(key)).toEqual(["local/b", "local/a", "remote/e"]);
+  });
+
+  it("needs you, then working, then unread, then the rest, keeping the order inside a group", () => {
+    const rows = ["idle1", "work1", "done1", "block1", "work2", "idle2"].map((id) => ({ id, status: id.replace(/\d$/, "").replace("block", "blocked").replace("work", "working") }));
+    const sorted = byAttention(rows, (row) => row.status === "idle" ? "idle" : row.status);
+    expect(sorted.map((row) => row.id)).toEqual(["block1", "work1", "work2", "done1", "idle1", "idle2"]);
+  });
+
+  it("pinned rows stay in the card whatever their status", () => {
+    const machines = [machine("local", "connected", [["a", "blocked"], ["b", "idle"]])];
+    const split = agentRoster(machines, { byActivity: false, seqs: () => new Map(), pinned: [sidebarPinKey("local", "b")] });
+    expect(split.pinned.map(({ entry }) => entry.pane.pane_id)).toEqual(["b"]);
   });
 });

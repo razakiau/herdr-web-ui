@@ -428,6 +428,7 @@ const BASE: Record<string, string> = {
   "Asked": "依頼",
   "Work": "作業",
   "{n} asking": "{n} 件が回答待ち",
+  "Waiting for you": "あなたの返答待ち",
   "{n} working": "{n} 件が作業中",
   "Other PCs": "その他の PC",
   "Other PCs ({n})": "その他の PC ({n})",
