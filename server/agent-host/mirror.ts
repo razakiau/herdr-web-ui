@@ -67,7 +67,20 @@ export class AgentHostMirror extends AhpStateMirror {
     const session = this.ownSessions.get(channel);
     if (session) { this.ownSessions.set(channel, sessionReducer(session, action as SessionAction, quiet)); return; }
     const chat = this.ownChats.get(channel);
-    if (chat) { this.ownChats.set(channel, chatReducer(chat, action as ChatAction, quiet)); return; }
+    if (chat) { this.ownChats.set(channel, droppedSteer(chatReducer(chat, action as ChatAction, quiet), action as ChatAction)); return; }
     super.apply(envelope);
   }
+}
+
+/**
+ * VS Code's host lists its steer in `queuedMessages` too (kind "steering") and drops that entry on a
+ * steering pendingMessageRemoved; the package's reducer clears only `steeringMessage`, so a removed
+ * steer stayed in this mirror's queue and every read showed it again (owner's X did nothing, ZAC-233).
+ */
+export function droppedSteer(chat: ChatState, action: ChatAction): ChatState {
+  if (action.type !== "chat/pendingMessageRemoved" || action.kind !== "steering") return chat;
+  const queue = (chat.queuedMessages ?? []) as readonly { id: string; kind?: string }[];
+  const kept = queue.filter((each) => !(each.id === action.id && each.kind === "steering"));
+  if (kept.length === queue.length) return chat;
+  return { ...chat, queuedMessages: kept as ChatState["queuedMessages"] };
 }

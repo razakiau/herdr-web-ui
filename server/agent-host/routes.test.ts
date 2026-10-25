@@ -12,7 +12,7 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { LEASE_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, type LeaseClock, type AgentHost } from "./routes.ts";
+import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, type LeaseClock, type AgentHost } from "./routes.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -1200,6 +1200,18 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect(actions(r.fake, "chat/turnResume").length).toBe(1);
   });
 
+  it("pending/remove drops a steer VS Code holds in both steeringMessage and its queue (the subscribe snapshot's shape)", async () => {
+    // VS Code's host lists its steer in queuedMessages too (kind "steering"); the package's reducer
+    // cleared only steeringMessage, so the bridge kept reading the removed steer back (owner, ZAC-233)
+    const steer = { id: uuid(52), message: user("FICTIONAL steer to drop") };
+    const r = await busy({ steeringMessage: steer, queuedMessages: [{ ...steer, kind: "steering" }] });
+    const read = () => call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`);
+    expect((await read()).json.pending).toEqual([{ id: uuid(52), kind: "steering", text: "FICTIONAL steer to drop" }]);
+    expect(await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(52) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the removal echoed", () => r.conn.chat(sessionUri(1))?.steeringMessage === undefined);
+    expect((await read()).json.pending).toEqual([]);
+  });
+
   it("pending/remove takes a steering or queued message off by its id, and refuses one the chat does not hold", async () => {
     const r = await busy({ steeringMessage: { id: uuid(43), message: user("FICTIONAL steer") }, queuedMessages: [{ id: uuid(44), message: user("FICTIONAL queued") }] });
     expect(await call(r, "/api/host-chats/chat/pending/remove", { session: sessionUri(1), id: uuid(44) })).toEqual({ status: 200, json: { ok: true } });
@@ -1236,6 +1248,36 @@ describe("host chat send modes: steer, queue, stop and send", () => {
     expect(await call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(51) })).toEqual({ status: 200, json: { ok: true } });
     await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === uuid(51));
     expect(only(r.fake, "chat/turnStarted")).toMatchObject({ turnId: uuid(51), message: { text: "FICTIONAL steer of mine" } });
+  });
+
+  it("pending/send_now starts the message again when the cancelled turn's late idle ends the new turn empty", async () => {
+    // VS Code's Copilot host stops the cancelled turn's SDK run in the background; its idle can land
+    // after the new turn started and complete it with no reply, which is then dropped (owner, ZAC-233:
+    // "it shows sent, the agent works, then the chat just stops")
+    const r = await busy();
+    expect(await call(r, "/api/host-chats/chat/send", { session: sessionUri(1), id: uuid(52), text: "FICTIONAL steer, stolen", mode: "steer" })).toEqual({ status: 200, json: { queued: true } });
+    await until("held as the steer", () => r.conn.chat(sessionUri(1))?.steeringMessage?.id === uuid(52));
+    expect(await call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(52) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === uuid(52));
+    r.fake.push(chatUri(1), { type: "chat/turnComplete", turnId: uuid(52), duration: 0 } as StateAction);
+    await until("started again", () => actions(r.fake, "chat/turnStarted").length === 2);
+    const [first, again] = actions(r.fake, "chat/turnStarted").map((entry) => entry.action as { turnId: string; message: { text: string } });
+    expect(first).toMatchObject({ turnId: uuid(52), message: { text: "FICTIONAL steer, stolen" } });
+    expect(again!.message.text).toBe("FICTIONAL steer, stolen");
+    expect(again!.turnId).not.toBe(uuid(52));
+    await until("the restarted turn runs", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === again!.turnId);
+  });
+
+  it("pending/send_now leaves a turn that answered alone, and restarts at most once", async () => {
+    const r = await busy({ steeringMessage: { id: uuid(53), message: user("FICTIONAL answered") } });
+    expect(await call(r, "/api/host-chats/chat/pending/send_now", { session: sessionUri(1), id: uuid(53) })).toEqual({ status: 200, json: { ok: true } });
+    await until("the new turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.id === uuid(53));
+    r.fake.push(chatUri(1), { type: "chat/responsePart", turnId: uuid(53), part: { kind: "markdown", id: "p1", content: "FICTIONAL reply" } } as unknown as StateAction);
+    r.fake.push(chatUri(1), { type: "chat/turnComplete", turnId: uuid(53), duration: 0 } as StateAction);
+    await until("the turn ended", () => r.conn.chat(sessionUri(1))?.activeTurn === undefined);
+    await Bun.sleep(100);
+    expect(actions(r.fake, "chat/turnStarted")).toHaveLength(1);
+    r.clock.advance(REPLACEMENT_WATCH_MS);
   });
 
   it("pending/send_now puts the message back, as it was, when the turn does not stop", async () => {

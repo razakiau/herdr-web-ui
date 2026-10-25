@@ -90,6 +90,13 @@ export const LEASE_MS = 90_000;
 const OLDER_TURNS_WAIT_MS = 5_000;
 /** How long Stop and Send waits for the cancelled turn to end before it gives up and sends nothing. */
 export const STOP_AND_SEND_WAIT_MS = 10_000;
+/**
+ * How long a turn started right after a cancel is watched for being ended by the cancelled turn's
+ * late SDK idle (VS Code's Copilot host completes "the running replacement turn" when the abort's
+ * idle lands after the new send; live 2026-10-24: idle 0.4-0.9 s after the send, the reply then
+ * dropped as "delta with no active turn"). One that ends empty inside it is started again, once.
+ */
+export const REPLACEMENT_WATCH_MS = 8_000;
 const PREFIX = "/api/host-chats/";
 
 const realClock: LeaseClock = {
@@ -860,7 +867,40 @@ async function sendMessage(call: Call): Promise<Response> {
   await ended(call, session);
   const now = call.host.chat(session);
   if (!now || now.activeTurn !== undefined) return conflictResponse("turn_still_running", "the turn did not stop in time: nothing was sent");
-  return jsonResponse(send(call.host, session, channel, now, message, id));
+  const sent = send(call.host, session, channel, now, message, id);
+  void restartIfStolen(call, session, channel, message, id);
+  return jsonResponse(sent);
+}
+
+/**
+ * After a cancel the host's SDK abort settles in the background, and its idle can land on the turn
+ * started next and complete it before any reply (REPLACEMENT_WATCH_MS). The turn under `id` that ends
+ * with no response within the window is started again once, under a fresh id, with the same message:
+ * what the owner did by hand. A turn that replies, is still running at the deadline, or was cut by a
+ * later send is left alone.
+ */
+async function restartIfStolen(call: Call, session: string, channel: string, message: Message, id: string): Promise<void> {
+  let late = false;
+  const timer = call.clock.setTimeout(() => { late = true; }, REPLACEMENT_WATCH_MS);
+  try {
+    while (!late) {
+      const chat = call.host.chat(session);
+      if (!chat) return;
+      if (chat.activeTurn?.id === id) {
+        if (chat.activeTurn.responseParts.length > 0) return;
+      } else {
+        const done = chat.turns.find((turn) => turn.id === id);
+        // ended empty, and nothing else has started since: the late idle took it
+        if (done && done.responseParts.length === 0 && chat.activeTurn === undefined) {
+          const again = randomUUID();
+          sentOf(call.host).add(again, session);
+          call.host.dispatch(channel, { type: ActionType.ChatTurnStarted, turnId: again, startedAt: new Date().toISOString(), message } as StateAction);
+        }
+        if (done || chat.activeTurn !== undefined) return;
+      }
+      await Bun.sleep(10); // fixed wait: one poll step
+    }
+  } finally { call.clock.clearTimeout(timer); }
 }
 
 /** Polls the mirror until the session's turn has ended, or STOP_AND_SEND_WAIT_MS on the call's clock. */
@@ -1060,6 +1100,7 @@ async function sendPendingNow(call: Call): Promise<Response> {
   // and sent nothing
   sentOf(call.host).forget(id);
   send(call.host, session, channel, now, held.message, id);
+  void restartIfStolen(call, session, channel, held.message, id);
   return jsonResponse({ ok: true });
 }
 
