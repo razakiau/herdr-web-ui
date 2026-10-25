@@ -18,7 +18,7 @@
 - localStorage keys: `ovis:pcs-kept-open` (exists), `ovis:pcs-kept-folded` (new). Search query is never stored.
 - Any `server/` or `shared/` change bumps `REMOTE_BUNDLE_VERSION` in `shared/machines.ts` by 1 (1058 → 1059), once, in the task that changes them.
 - DESIGN.md is updated in the same commit as the behaviour it describes.
-- Usage footer: gear left, `UsageMeters` chips right-aligned; the chips and popover are otherwise unchanged.
+- Usage footer: gear left, `UsageMeters` chips right-aligned with `+N` last at the right edge (owner, 2026-10-25); the chips and popover are otherwise unchanged.
 
 ## Review Focus
 

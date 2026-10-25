@@ -54,7 +54,7 @@ filter field takes a full row at the top all the time.
    rule of today's filter stays (state never stored, nothing typed reaches it, terminal keeps keys).
 6. **Footer unchanged in substance.** The real multi-provider usage strip stays, with the gear on
    the left and the chips right-aligned for symmetry with the top row (owner, 2026-10-25): one chip
-   per account (provider mark, mono percent, 2 px bar, red from 80% used), `+N`, and the popover
+   per account (provider mark, mono percent, 2 px bar, red from 80% used), then `+N` last, at the right edge, and the popover
    with every limit per account. The mockup's two plain bars were wrong; nothing of the usage
    detail is lost.
 
