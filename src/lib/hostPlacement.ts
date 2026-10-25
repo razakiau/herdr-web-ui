@@ -71,17 +71,17 @@ export function agentsListHostChats(rows: HostChatRow[], pinned: (s: string) => 
 }
 
 /**
- * The PCs kept open on this device (MachineSidebar.tsx): each one picked from "Other PCs", worked on
- * or that asked, until it is put back from its header. One slot for "the last one picked" folded a
- * PC back as soon as another was picked or worked on, and it had to be found in the fold again
- * (the owner, 2026-10-23).
+ * The PCs the user placed by hand on this device (MachineSidebar.tsx): kept open from Other PCs, or
+ * folded from a PC's header. One PC is in one list at most; the latest choice wins.
  */
-export function keepPc(kept: readonly string[], id: string): string[] {
-  return kept.includes(id) ? [...kept] : [...kept, id];
+export interface PcLists { keptOpen: string[]; keptFolded: string[] }
+
+export function openPc(lists: PcLists, id: string): PcLists {
+  return { keptOpen: lists.keptOpen.includes(id) ? [...lists.keptOpen] : [...lists.keptOpen, id], keptFolded: lists.keptFolded.filter((each) => each !== id) };
 }
 
-export function unkeepPc(kept: readonly string[], id: string): string[] {
-  return kept.filter((each) => each !== id);
+export function foldPc(lists: PcLists, id: string): PcLists {
+  return { keptOpen: lists.keptOpen.filter((each) => each !== id), keptFolded: lists.keptFolded.includes(id) ? [...lists.keptFolded] : [...lists.keptFolded, id] };
 }
 
 /** The kept ids that are still PCs of the roster: a removed PC does not linger in storage */
@@ -89,16 +89,26 @@ export function keptPcs(kept: readonly string[], roster: readonly string[]): str
   return kept.filter((id) => roster.includes(id));
 }
 
+/** What decides a PC's fold besides being the current one: `active` is an agent working or asking. */
+export interface FoldPrefs { active(id: string): boolean; keptOpen: readonly string[]; keptFolded: readonly string[] }
+
 /**
- * The PCs drawn as full groups and the ones under "Other PCs": with one or two PCs none fold;
- * otherwise the current PC (else the first) and every PC kept open or that needs you, in roster order.
+ * The PCs drawn as full groups and the ones under "Other PCs" (owner, 2026-10-25): with one or two
+ * PCs none fold. Otherwise the current PC (else the first) is always open, for as long as it is the
+ * current one; a PC the user folded stays folded even while its agents work or ask (his choice beats
+ * the default, Other PCs then shows the asking); a PC he kept open, or with an agent working or
+ * asking, is open; the rest fold. Both lists keep roster order.
  */
-export function foldPcs(machines: Machine[], current: string | null, needsYou: (id: string) => boolean): { open: Machine[]; folded: Machine[] } {
+export function foldPcs(machines: Machine[], current: string | null, prefs: FoldPrefs): { open: Machine[]; folded: Machine[] } {
   if (machines.length <= 2) return { open: machines, folded: [] };
   const here = machines.some((machine) => machine.id === current) ? current : machines[0]?.id ?? null;
   const open: Machine[] = [];
   const folded: Machine[] = [];
-  for (const machine of machines) (machine.id === here || needsYou(machine.id) ? open : folded).push(machine);
+  for (const machine of machines) {
+    const id = machine.id;
+    const shown = id === here || (!prefs.keptFolded.includes(id) && (prefs.keptOpen.includes(id) || prefs.active(id)));
+    (shown ? open : folded).push(machine);
+  }
   return { open, folded };
 }
 

@@ -12,7 +12,7 @@ import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
 import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
 import { basename, type HostPc } from "../lib/hostChats.ts";
 import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
-import { foldPcs, keepPc, keptPcs, pcPlacement, samePath, unkeepPc } from "../lib/hostPlacement.ts";
+import { foldPc, foldPcs, keptPcs, openPc, pcPlacement, samePath, type PcLists } from "../lib/hostPlacement.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
 import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
@@ -142,30 +142,24 @@ export function MachineSidebar(props: Props) {
   const [ownAllOn, setOwnAllOn] = useState<AllAgentsOn | null>(null);
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
-  // the PCs kept open on this device (lib/hostPlacement.ts keepPc): picked from "Other PCs", worked
-  // on or that asked, each stays a full group until it is put back from its header
-  const [kept, setKept] = useState<string[]>(storedKept);
-  const saveKept = (next: string[]): void => {
-    setKept(next);
-    try { localStorage.setItem(KEPT_KEY, JSON.stringify(next)); } catch { /* storage denied: they last for the page */ }
+  // the PCs placed by hand on this device (lib/hostPlacement.ts foldPcs): kept open from "Other PCs",
+  // or folded from a PC's header; the current PC and the active ones are open without being kept
+  const [lists, setLists] = useState<PcLists>(storedLists);
+  const saveLists = (next: PcLists): void => {
+    setLists(next);
+    try {
+      localStorage.setItem(KEPT_KEY, JSON.stringify(next.keptOpen));
+      localStorage.setItem(FOLDED_KEY, JSON.stringify(next.keptFolded));
+    } catch { /* storage denied: they last for the page */ }
   };
-  const asking = (id: string): boolean => pcActivity(props.machines.find((machine) => machine.id === id)!, hostChats.get(id), activity).asking > 0;
-  const askingIds = props.machines.filter((machine) => asking(machine.id)).map((machine) => machine.id).join(" ");
-  // the PC in use and one that asked join the kept ones, so answering or moving on folds neither
-  useEffect(() => {
-    let next = kept;
-    if (props.selectedMachineId !== null && props.machines.some((machine) => machine.id === props.selectedMachineId)) next = keepPc(next, props.selectedMachineId);
-    for (const id of askingIds ? askingIds.split(" ") : []) next = keepPc(next, id);
-    if (next.length !== kept.length) saveKept(next);
-  }, [props.selectedMachineId, askingIds, props.machines.length]);
-  const keptHere = keptPcs(kept, props.machines.map((machine) => machine.id));
-  // with three PCs or more, the others fold (foldPcs): the current PC, the kept ones and every PC
-  // with a question or an approval waiting stay open
+  const pcOf = (id: string): Machine => props.machines.find((machine) => machine.id === id)!;
+  const active = (id: string): boolean => { const each = pcActivity(pcOf(id), hostChats.get(id), activity); return each.working + each.asking > 0; };
+  const roster = props.machines.map((machine) => machine.id);
+  const prefs = { active, keptOpen: keptPcs(lists.keptOpen, roster), keptFolded: keptPcs(lists.keptFolded, roster) };
   // under the filter every PC is a group of its own, so a match on a folded one is seen
-  const { open: openPcs, folded } = filter.active ? { open: props.machines, folded: [] } : foldPcs(props.machines, props.selectedMachineId, (id) => keptHere.includes(id) || asking(id));
+  const { open: openPcs, folded } = filter.active ? { open: props.machines, folded: [] } : foldPcs(props.machines, props.selectedMachineId, prefs);
   // foldPcs folds nothing with one or two PCs: there is nowhere to put one back to
   const foldable = props.machines.length > 2;
-  const putBack = (id: string): void => saveKept(unkeepPc(kept, id));
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
   const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs. The
@@ -180,9 +174,9 @@ export function MachineSidebar(props: Props) {
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
       <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
       {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
-        // the PC in use, and one that asks, have nothing to put back: they stay open whatever is kept
-        onPutBack={foldable && machine.id !== props.selectedMachineId && !asking(machine.id) ? () => putBack(machine.id) : undefined} />)}
-      {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveKept(keepPc(kept, id))} />}
+        // the PC in use stays open while it is; any other can be folded, even one that asks (Other PCs then says so)
+        onPutBack={foldable && machine.id !== props.selectedMachineId ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
+      {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveLists(openPc(lists, id))} />}
       <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
@@ -206,12 +200,17 @@ export function MachineSidebar(props: Props) {
 }
 
 const KEPT_KEY = "ovis:pcs-kept-open";
+const FOLDED_KEY = "ovis:pcs-kept-folded";
 
-function storedKept(): string[] {
+function storedIds(key: string): string[] {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(KEPT_KEY) ?? "[]");
+    const value: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
     return Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
   } catch { return []; }
+}
+
+function storedLists(): PcLists {
+  return { keptOpen: storedIds(KEPT_KEY), keptFolded: storedIds(FOLDED_KEY) };
 }
 
 /** `onPutBack`: folds the PC into "Other PCs" again; absent where it would stay open anyway */

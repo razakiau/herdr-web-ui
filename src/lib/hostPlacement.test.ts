@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { Machine } from "../../shared/machines.ts";
-import { agentsListHostChats, foldPcs, keepPc, keptPcs, placeHostChats, unkeepPc } from "./hostPlacement.ts";
+import { agentsListHostChats, foldPc, foldPcs, keptPcs, openPc, placeHostChats, type FoldPrefs } from "./hostPlacement.ts";
 import type { PcHostWorkspaces } from "../../shared/host-workspaces.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -9,7 +9,6 @@ const DAY = 24 * 60 * 60 * 1000;
 const chat = (session: string, cwd: string | null, ageMs: number, extra: Partial<HostChatRow> = {}): HostChatRow => ({
   session, title: `FICTIONAL ${session}`, status: "idle", modified_at: new Date(NOW - ageMs).toISOString(), cwd, unread: false, archived: false, ...extra,
 });
-const none = (): boolean => false;
 
 describe("placeHostChats", () => {
   const openAt = (...folders: [string, string[]][]): PcHostWorkspaces => ({ open: folders.map(([cwd, tabs]) => ({ cwd, tabs })) });
@@ -98,38 +97,57 @@ describe("agentsListHostChats", () => {
 
 describe("foldPcs", () => {
   const pc = (id: string): Machine => ({ id, name: `FICTIONAL ${id}` }) as Machine;
-  it("fold_pcs", () => {
+  const five = ["a", "b", "c", "d", "e"].map(pc);
+  const ids = (list: Machine[]): string[] => list.map((machine) => machine.id);
+  const prefs = (over: Partial<FoldPrefs> = {}): FoldPrefs => ({ active: () => false, keptOpen: [], keptFolded: [], ...over });
+
+  it("two PCs never fold", () => {
     const two = [pc("a"), pc("b")];
-    expect(foldPcs(two, "b", none)).toEqual({ open: two, folded: [] });
-    const six = ["a", "b", "c", "d", "e", "f"].map(pc);
-    const ids = (list: Machine[]): string[] => list.map((machine) => machine.id);
-    expect(ids(foldPcs(six, "c", none).open)).toEqual(["c"]);
-    expect(ids(foldPcs(six, "c", none).folded)).toEqual(["a", "b", "d", "e", "f"]);
-    // one that needs you stays open, in its place in the roster
-    const needs = foldPcs(six, "c", (id) => id === "e");
-    expect(ids(needs.open)).toEqual(["c", "e"]);
-    expect(ids(needs.folded)).toEqual(["a", "b", "d", "f"]);
+    expect(foldPcs(two, "b", prefs({ keptFolded: ["a"] }))).toEqual({ open: two, folded: [] });
   });
 
-  it("kept PCs stay open alongside the current one, in roster order", () => {
-    const six = ["a", "b", "c", "d", "e", "f"].map(pc);
-    const kept = new Set(["e", "b"]);
-    const fold = foldPcs(six, "d", (id) => kept.has(id));
-    expect(fold.open.map((machine) => machine.id)).toEqual(["b", "d", "e"]);
+  it("current, active and kept-open are open, the rest folded, in roster order", () => {
+    const fold = foldPcs(five, "a", prefs({ active: (id) => id === "c", keptOpen: ["e"] }));
+    expect(ids(fold.open)).toEqual(["a", "c", "e"]);
+    expect(ids(fold.folded)).toEqual(["b", "d"]);
   });
 
-  it("keepPc adds once, unkeepPc removes, and a missing PC is dropped", () => {
-    expect(keepPc([], "a")).toEqual(["a"]);
-    expect(keepPc(["a"], "a")).toEqual(["a"]);
-    expect(keepPc(["a"], "b")).toEqual(["a", "b"]);
-    expect(unkeepPc(["a", "b"], "a")).toEqual(["b"]);
-    expect(keptPcs(["a", "gone", "b"], ["a", "b", "c"])).toEqual(["a", "b"]);
+  it("kept folded beats active", () => {
+    const fold = foldPcs(five, "a", prefs({ active: (id) => id === "c", keptFolded: ["c"] }));
+    expect(ids(fold.open)).toEqual(["a"]);
+    expect(ids(fold.folded)).toEqual(["b", "c", "d", "e"]);
+  });
+
+  it("current PC stays open even if kept folded", () => {
+    expect(ids(foldPcs(five, "b", prefs({ keptFolded: ["b"] })).open)).toEqual(["b"]);
+  });
+
+  it("current is temporary: it folds back once the selection leaves", () => {
+    expect(ids(foldPcs(five, "b", prefs()).open)).toEqual(["b"]);
+    expect(ids(foldPcs(five, "a", prefs()).folded)).toContain("b");
+  });
+
+  it("stale ids are ignored", () => {
+    const fold = foldPcs(five, "a", prefs({ keptOpen: ["gone"], keptFolded: ["gone"] }));
+    expect(ids(fold.open)).toEqual(["a"]);
+    expect(ids(fold.folded)).toEqual(["b", "c", "d", "e"]);
   });
 
   it("with no current PC the first one is open", () => {
-    const six = ["a", "b", "c", "d", "e", "f"].map(pc);
-    expect(foldPcs(six, null, none).open.map((machine) => machine.id)).toEqual(["a"]);
-    expect(foldPcs(six, "gone", none).open.map((machine) => machine.id)).toEqual(["a"]);
+    expect(ids(foldPcs(five, null, prefs()).open)).toEqual(["a"]);
+    expect(ids(foldPcs(five, "gone", prefs()).open)).toEqual(["a"]);
+  });
+
+  it("foldPc and openPc move a PC between the lists, once", () => {
+    const lists = { keptOpen: ["a", "b"], keptFolded: ["c"] };
+    expect(foldPc(lists, "a")).toEqual({ keptOpen: ["b"], keptFolded: ["c", "a"] });
+    expect(foldPc(foldPc(lists, "a"), "a")).toEqual({ keptOpen: ["b"], keptFolded: ["c", "a"] });
+    expect(openPc(lists, "c")).toEqual({ keptOpen: ["a", "b", "c"], keptFolded: [] });
+    expect(openPc(openPc(lists, "c"), "c")).toEqual({ keptOpen: ["a", "b", "c"], keptFolded: [] });
+  });
+
+  it("keptPcs drops a missing PC", () => {
+    expect(keptPcs(["a", "gone", "b"], ["a", "b", "c"])).toEqual(["a", "b"]);
   });
 });
 
