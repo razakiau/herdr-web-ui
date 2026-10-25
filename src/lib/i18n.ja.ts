@@ -1535,6 +1535,7 @@ export const JA: Record<string, string> = {
   "Working for {duration}": "{duration} 作業中",
   "Subagent: {name}": "サブエージェント: {name}",
   "Couldn't load the subagent's chat.": "サブエージェントのチャットを読み込めませんでした。",
+  "Show full brief": "依頼の全文を表示",
   "Subagent chat is not available yet.": "サブエージェントのチャットはまだ利用できません。",
   "Question:": "質問:",
   "Answered:": "回答:",

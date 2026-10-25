@@ -587,6 +587,10 @@ try {
         // card and pills leave the transcript a thin strip at 390 px: the card is folded, as a reader would, while the transcript is read
         await view.locator(".prompt-card-fold").click();
         await view.locator(".prompt-card.is-folded").waitFor();
+        // folded, the card is one quiet row as short as the todo tab, not a tall box (owner, ZAC-228);
+        // its buttons keep their touch targets, reaching past the row
+        const foldedHeight = await view.locator(".prompt-card.is-folded").evaluate((node) => Math.round(node.getBoundingClientRect().height));
+        assert.ok(foldedHeight <= 40, `a folded question is one short row (${foldedHeight} px)`);
         // the card (its answer field on a line of its own) and the jump button stand over the
         // transcript's foot: the head is brought to the top, clear of them
         await head.evaluate((node) => node.scrollIntoView({ block: "center" }));
@@ -933,7 +937,7 @@ try {
         assert.equal((await meter.locator(".host-chat-meter-label").textContent())?.trim(), "42%", "the meter shows the percent of copilot.usageInfo");
         assert.equal(await meter.getAttribute("title"), "Context window: 42% · 84K / 200K", "the counts are in its title");
         await fits("the card");
-        // the card opens to a full-height sheet: the question scrolls, the answer field stays in view,
+        // the card opens to a sheet as tall as it needs: the question scrolls, the answer field stays in view,
         // and collapsing keeps the typed text
         // the header's two controls sit together at its end, and the title is plain text, not the alarm red
         const cardHead = await card.locator(".prompt-card-header").evaluate((node) => {
@@ -959,9 +963,13 @@ try {
         const sized = await expanded.evaluate((node) => {
           const field = node.querySelector(".prompt-card-custom .input")!.getBoundingClientRect();
           const body = node.querySelector(".prompt-card-body")!;
-          return { height: node.getBoundingClientRect().height, viewport: window.innerHeight, fieldBottom: field.bottom, bodyScrolls: body.scrollHeight > body.clientHeight + 1 };
+          const next = body.nextElementSibling!.getBoundingClientRect();
+          return { height: node.getBoundingClientRect().height, viewport: window.innerHeight, fieldBottom: field.bottom, bodyScrolls: body.scrollHeight > body.clientHeight + 1, gap: Math.round(next.top - body.getBoundingClientRect().bottom) };
         });
-        assert.ok(sized.height > sized.viewport * 0.85, `the sheet fills the screen (${sized.height} of ${sized.viewport})`);
+        // the sheet is as tall as what it holds: a full-height sheet left a screen of empty space
+        // between the message and the answers (owner's phone screenshot, ZAC-228)
+        assert.ok(sized.gap <= 16, `no empty space between the message and the answers (${sized.gap} px)`);
+        assert.ok(sized.height <= sized.viewport, `the sheet fits the screen (${sized.height} of ${sized.viewport})`);
         assert.ok(sized.bodyScrolls, "the long message scrolls on its own inside the sheet");
         assert.ok(sized.fieldBottom <= sized.viewport, `the answer field is on screen without scrolling (bottom ${sized.fieldBottom} of ${sized.viewport})`);
         await fits("the expanded card");
@@ -1089,14 +1097,18 @@ try {
         await formCard.getByRole("button", { name: /FICTIONAL east/ }).click();
         await formCard.locator(".prompt-card-pager-count", { hasText: "2 of 2" }).waitFor();
         if (shots) await formCard.screenshot({ path: join(shots, "r4-form-390.png") });
-        // full screen on a phone with a short message: the field and the pager sit at the sheet's foot,
-        // not mid-sheet over an empty band (owner, ZAC-207, a phone screenshot)
+        // full screen on a phone with a short message: the sheet rises only as far as it needs, the
+        // field and the pager at its foot (owner, ZAC-207 and ZAC-228, phone screenshots)
         await formCard.getByRole("button", { name: "Open full screen" }).click();
         await formSheet.waitFor();
         await formSheet.evaluate((node) => Promise.all(node.getAnimations({ subtree: true }).map((animation) => animation.finished)));
         const footGap = await formSheet.evaluate((sheet) => Math.round(sheet.getBoundingClientRect().bottom - sheet.querySelector(".prompt-card-pager")!.getBoundingClientRect().bottom));
         if (shots) await page.screenshot({ path: join(shots, "ask-form-expanded-short-390.png") });
         assert.ok(footGap <= 40, `no empty band under the pager in full screen (${footGap} px)`);
+        // ...and no empty band above them either: the sheet is as tall as what it holds, not the
+        // screen's height with the answers pushed to its foot (owner's phone screenshot, ZAC-228)
+        const midGap = await formSheet.evaluate((sheet) => { const body = sheet.querySelector(".prompt-card-body")!; return Math.round(body.nextElementSibling!.getBoundingClientRect().top - body.getBoundingClientRect().bottom); });
+        assert.ok(midGap <= 24, `no empty band between a short message and its answers on a phone (${midGap} px)`);
         const bodyHeight = await formSheet.locator(".prompt-card-body").evaluate((node) => Math.round(node.getBoundingClientRect().height));
         assert.ok(bodyHeight <= 100, `a short message keeps its own height, not a tall empty box (${bodyHeight} px)`);
         await formSheet.getByRole("button", { name: "Exit full screen" }).click();

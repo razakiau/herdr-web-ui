@@ -120,6 +120,16 @@
   display: none;
 }
 
+/* ...and as short as the todo tab under it (owner, ZAC-228: a folded question was a tall box): a
+   2rem row, its buttons' touch targets reaching past it rather than heightening it */
+.prompt-card.is-folded {
+  padding-block: 0;
+  gap: 0;
+}
+.prompt-card.is-folded::after { display: none; }
+.prompt-card.is-folded .prompt-card-header { min-height: 2rem; }
+.prompt-card.is-folded :is(.prompt-card-expand, .prompt-card-fold) { margin-block: calc((2rem - var(--touch-target)) / 2); }
+
 /* a form of several questions: a chip per question, answered ones checked, the one asked now in
    the accent; the chips name the questions, so the card's title only says where this one stands */
 .prompt-card-steps {
@@ -671,15 +681,11 @@
   border-radius: inherit;
 }
 
-/* the message keeps its own height (a long one scrolls) and the answers sit at the sheet's foot, in
-   the thumb's reach: a short message left the space under the pager empty, and growing the message
-   instead drew a tall empty box (owner, ZAC-207, a phone screenshot) */
+/* the message keeps its own height (a long one scrolls inside the sheet's cap); a short one leaves
+   no empty band: the sheet is as tall as what it holds, the answers right under the message and
+   the sheet's foot in the thumb's reach (owner, ZAC-207 and ZAC-228, phone screenshots) */
 .prompt-card.is-expanded .prompt-card-body {
   max-height: none;
-}
-
-.prompt-card.is-expanded .prompt-card-body + * {
-  margin-top: auto;
 }
 
 /* full screen on a wide window: the sheet's own margins, not the inline card's tight 12 px */
@@ -693,6 +699,6 @@
 @media (max-width: 640px) {
   .prompt-card-sheet {
     width: 100%;
-    height: calc(var(--app-height, 100dvh) - var(--space-6));
+    max-height: calc(var(--app-height, 100dvh) - var(--space-6));
   }
 }

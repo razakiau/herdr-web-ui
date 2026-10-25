@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ConversationPart, ConversationTurn } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { formatElapsedTime, SubagentRow, subagentSections } from "./SubagentRow.tsx";
+import { formatElapsedTime, SubagentAsked, SubagentRow, subagentSections } from "./SubagentRow.tsx";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
 
 type Subagent = Extract<ConversationPart, { kind: "subagent" }>;
@@ -49,6 +49,26 @@ describe("SubagentRow", () => {
     expect(running).toContain('class="work-block-dot subagent-row-dot"');
     expect(running).not.toContain("lucide-loader-circle");
     expect(running).not.toContain("lucide-messages-square");
+  });
+
+  it("a running subagent's step reads as text, its code as code, never raw backticks (owner, ZAC-228)", () => {
+    const row = render(createElement(SubagentRow, { part: part({ status: "running", ended: null, activity: "Ran `cat > /tmp/fictional.mjs`" }), live: true, now: Date.parse(AT) }));
+    expect(row).toContain("<code>cat &gt; /tmp/fictional.mjs</code>");
+    expect(text(row)).not.toContain("`");
+  });
+
+  it("a long brief folds to a few lines with Show full brief; a short one stands whole (owner, ZAC-228)", () => {
+    const long = Array.from({ length: 9 }, (_, index) => `FICTIONAL brief line ${index + 1}`).join("\n\n");
+    const folded = render(createElement(SubagentAsked, { id: "c3", text: long }));
+    expect(folded).toContain("subagent-asked is-capped");
+    expect(folded).toContain('aria-expanded="false"');
+    expect(text(folded)).toContain("Show full brief");
+    const opened = render(withToggles({ "subagent-asked:c3": true }, createElement(SubagentAsked, { id: "c3", text: long })));
+    expect(opened).not.toContain("is-capped");
+    expect(text(opened)).toContain("Show less");
+    const short = render(createElement(SubagentAsked, { id: "c3", text: "FICTIONAL find the config" }));
+    expect(short).not.toContain("is-capped");
+    expect(short).not.toContain("subagent-asked-fold");
   });
 
   it("a background subagent breathes and counts on after its turn has ended (ZAC-207)", () => {

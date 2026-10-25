@@ -1537,6 +1537,7 @@ export const ZH: Record<string, string> = {
   "Working for {duration}": "已工作 {duration}",
   "Subagent: {name}": "子代理：{name}",
   "Couldn't load the subagent's chat.": "无法加载子代理的聊天。",
+  "Show full brief": "显示完整任务",
   "Subagent chat is not available yet.": "子代理聊天尚不可用。",
   "Question:": "问题：",
   "Answered:": "已回答：",

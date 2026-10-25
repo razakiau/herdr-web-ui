@@ -1533,6 +1533,7 @@ export const KO: Record<string, string> = {
   "Working for {duration}": "{duration} 작업 중",
   "Subagent: {name}": "하위 에이전트: {name}",
   "Couldn't load the subagent's chat.": "하위 에이전트의 채팅을 불러오지 못했습니다.",
+  "Show full brief": "요청 전체 보기",
   "Subagent chat is not available yet.": "하위 에이전트 채팅을 아직 사용할 수 없습니다.",
   "Question:": "질문:",
   "Answered:": "답변:",

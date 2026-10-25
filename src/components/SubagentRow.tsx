@@ -14,6 +14,7 @@ import { useChatRowToggle } from "../lib/chatRowState.tsx";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { splitTurn } from "../lib/workBlocks.ts";
 import { Markdown } from "./Markdown.tsx";
+import { RowText } from "./RowText.tsx";
 
 export type SubagentPart = Extract<ConversationPart, { kind: "subagent" }>;
 
@@ -86,6 +87,26 @@ export function subagentSections(turns: ConversationTurn[]): { asked: string | n
   return { asked, work: [...rest.slice(0, -1), ...(trimmed.parts.length > 0 ? [trimmed] : [])], answer };
 }
 
+/** A brief longer than this many lines (or characters, a paste with few breaks) folds to four lines. */
+const ASKED_FOLD_LINES = 6;
+const ASKED_FOLD_CHARS = 480;
+
+/**
+ * What a subagent was asked. A long brief (a worktree, a context section, a report spec) took a
+ * phone's whole screen before its work (owner, ZAC-228): past a few lines it folds to four, the
+ * last fading, with "Show full brief"; the reader's choice is kept with the row.
+ */
+export function SubagentAsked({ id, text }: { id: string; text: string }) {
+  const t = useT();
+  const long = text.length > ASKED_FOLD_CHARS || text.split("\n").filter((line) => line.trim().length > 0).length > ASKED_FOLD_LINES;
+  const [chosen, setOpen] = useChatRowToggle(`subagent-asked:${id}`, false);
+  const open = chosen === true;
+  return <>
+    <div className={`subagent-asked${long && !open ? " is-capped" : ""}`}><Markdown style="vscode">{text}</Markdown></div>
+    {long && <button type="button" className="subagent-asked-fold" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? t("Show less") : t("Show full brief")}</button>}
+  </>;
+}
+
 export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }: SubagentRowProps) {
   const t = useT();
   // a background subagent runs on after its turn: its own chat is what says it runs
@@ -137,7 +158,7 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
     {canOpen
       ? <button type="button" className="subagent-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>{head}</button>
       : <div className="subagent-row-head">{head}</div>}
-    {running && part.activity !== undefined && <p className="subagent-row-activity">{part.activity}</p>}
+    {running && part.activity !== undefined && <p className="subagent-row-activity"><RowText text={part.activity} /></p>}
     {open && canOpen && <div className="subagent-row-body">
       {/* the row's head cuts its words to one line: opened, they stand whole, the agent's own blurb under them */}
       {(part.about !== undefined || part.model !== null) && <div className="subagent-row-about">
@@ -150,7 +171,7 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
             : <>
               {(sections.asked ?? part.description).length > 0 && <div className="subagent-section">
                 <h4 className="subagent-caption">{t("Asked")}</h4>
-                <div className="subagent-asked"><Markdown style="vscode">{sections.asked ?? part.description}</Markdown></div>
+                <SubagentAsked id={part.id} text={sections.asked ?? part.description} />
               </div>}
               {sections.work.length > 0 && <div className="subagent-section">
                 <h4 className="subagent-caption">{t("Work")}</h4>

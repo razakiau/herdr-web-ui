@@ -48,7 +48,7 @@ import { teammateMessageParts, type TeammateMessage } from "../lib/teammateMessa
 import { usePageVisible } from "../lib/visibility.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
-import { fileLineTarget, OpenFileContext } from "../lib/filePaths.ts";
+import { OpenFileContext } from "../lib/filePaths.ts";
 import { parseInline, type InlineNode } from "../lib/markdown.ts";
 import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
@@ -72,6 +72,7 @@ import { hostSource, paneSource, type ChatSource } from "../lib/chatSource.ts";
 import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
 import { toolIcon } from "../lib/toolIcons.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
+import { RowText } from "./RowText.tsx";
 import { isSubagentTarget, RevealedSubagentContext, SubagentRow, type SubagentTarget } from "./SubagentRow.tsx";
 import { QuestionSummary } from "./QuestionSummary.tsx";
 
@@ -654,26 +655,6 @@ function EditChip({ edit, stateKey }: { edit: ToolEdit; stateKey: string }) {
     </button>
     {open && <EditDiffBody edit={edit} />}
   </div>;
-}
-
-/** A row's text from the host (`Ran \`ls\``): its code spans as code, a file it links as its name. */
-function RowText({ text }: { text: string }) {
-  return <>{parseInline(text, false).map((node, index) => <RowNode key={index} node={node} />)}</>;
-}
-
-function RowNode({ node }: { node: InlineNode }): ReactNode {
-  switch (node.type) {
-    case "text": return node.value;
-    case "code": return <code>{node.value}</code>;
-    case "math": return node.value;
-    case "image": return node.alt;
-    case "file": return node.children.length > 0 ? <RowText text={inlineText(node.children)} /> : baseName(fileLineTarget(node.path).path);
-    default: return <>{node.children.map((child, index) => <RowNode key={index} node={child} />)}</>;
-  }
-}
-
-function inlineText(nodes: InlineNode[]): string {
-  return nodes.map((node) => node.type === "text" || node.type === "code" || node.type === "math" ? node.value : node.type === "image" ? node.alt : inlineText(node.children)).join("");
 }
 
 /** The command a terminal call ran: the host's, else its input's. */

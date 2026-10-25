@@ -1939,6 +1939,27 @@ button.subagent-row-head:focus-visible { outline: 2px solid var(--accent); outli
 }
 .subagent-asked, .subagent-answer { min-width: 0; }
 .subagent-asked { color: var(--text-dim); }
+/* a long brief folds to four lines, the last fading into the card (SubagentAsked) */
+.subagent-asked.is-capped {
+  max-height: calc(4 * var(--chat-fs-body) * var(--lh-prose));
+  overflow: hidden;
+  mask-image: linear-gradient(currentColor calc(100% - var(--chat-fs-body) * var(--lh-prose)), transparent);
+}
+.subagent-asked-fold {
+  align-self: flex-start;
+  min-height: var(--chip-h);
+  margin-left: calc(-1 * var(--space-1));
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.subagent-asked-fold:hover { background: var(--bg-hover); color: var(--text-strong); }
+@media (pointer: coarse) { .subagent-asked-fold { min-height: var(--touch-target); } }
 /* a subagent's subagent: a card inside the card, on the page's own ground */
 .subagent-card .subagent-card { background: var(--bg); }
 .subagent-row-turn { min-width: 0; max-width: 100%; }
