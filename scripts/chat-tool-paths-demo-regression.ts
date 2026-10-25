@@ -231,6 +231,10 @@ createRoot(document.getElementById("root")).render(<SettingsProvider><Fixture />
     plugins: [{ name: "tool-paths-bare", setup(builder) {
       builder.onResolve({ filter: /^tool-paths-bare\.tsx$/ }, () => ({ path: "tool-paths-bare.tsx", namespace: "tool-paths-bare" }));
       builder.onLoad({ filter: /.*/, namespace: "tool-paths-bare" }, () => ({ contents: entry, loader: "tsx", resolveDir: repo }));
+      // Vite's asset-URL imports (the Material file icons, src/lib/fileIconUrls.generated.ts): Bun has no
+      // such suffix, and the bare chat needs only a URL string, not the icon
+      builder.onResolve({ filter: /\?url(&no-inline)?$/ }, (args) => ({ path: args.path, namespace: "asset-url" }));
+      builder.onLoad({ filter: /.*/, namespace: "asset-url" }, (args) => ({ contents: `export default ${JSON.stringify(`/assets/${args.path.split("/").pop()!.replace(/\?.*$/, "")}`)};`, loader: "js" }));
     } }],
   });
   assert.ok(build.success, String(build.logs));

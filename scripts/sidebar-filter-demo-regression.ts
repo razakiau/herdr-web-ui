@@ -226,6 +226,8 @@ async function newPage(browser: Browser, scene: Scene, search: string, stored: R
     : { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, locale: "en-US", colorScheme: scene.theme });
   await context.addInitScript(({ settings, stored }) => {
     localStorage.setItem("ovis:settings", JSON.stringify(settings));
+    // every demo PC kept open, so none folds under the fork's "Other PCs" row (MachineSidebar foldPcs)
+    localStorage.setItem("ovis:pcs-kept-open", JSON.stringify(["local", "build", "loading", "error"]));
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
   }, { settings: { language: scene.language, theme: scene.theme, defaultView: "chat" }, stored });
   const page = await context.newPage();

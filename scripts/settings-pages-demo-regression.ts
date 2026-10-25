@@ -406,6 +406,12 @@ try {
                 // the launch modes for new Claude Code and Codex agents lead the page
                 { label: "Claude Code", description: label("Permission mode"), command: null, copy: null },
                 { label: "Codex", description: label("Sandbox and approvals"), command: null, copy: null },
+                // the fork's VS Code agent host chats come next (SettingsDialog AgentHostGroup)
+                { label: label("Show agent host chats"), description: "", command: null, copy: label("Show agent host chats") },
+                { label: label("Folders that open by themselves"), description: label("The first time a PC is seen. A chat you open always opens its folder."), command: null, copy: null },
+                { label: label("Show archived chats"), description: label("In All agents and Chats in a folder, folded at the end."), command: null, copy: label("Show archived chats") },
+                { label: label("New chat model"), description: label("This PC's agent host lists no models: its own default is used."), command: null, copy: null },
+                { label: label("New chat permissions"), description: "", command: null, copy: null },
                 { label: "pi", description: missing + install("pi"), command: install("pi"), copy: copyLabel("pi") },
                 { label: "claude", description: label("Installed"), command: null, copy: null },
                 { label: "codex", description: label("Installed, but older than this herdr: run this to update it") + install("codex"), command: install("codex"), copy: copyLabel("codex") },
@@ -415,7 +421,7 @@ try {
                 { label: "cursor", description: missing + install("cursor"), command: install("cursor"), copy: copyLabel("cursor") },
                 { label: "antigravity-cli", description: missing + install("antigravity-cli"), command: install("antigravity-cli"), copy: copyLabel("antigravity-cli") },
               ], "every fixture integration, with its state and install command");
-              assert.deepEqual(await body.locator("h3").allTextContents(), [label("New agents"), label("Not found on this PC")]);
+              assert.deepEqual(await body.locator("h3").allTextContents(), [label("New agents"), label("Agent host"), label("Not found on this PC")]);
               const copy = body.getByRole("button", { name: copyLabel("codex"), exact: true });
               await copy.tap();
               await body.getByRole("button", { name: copyLabel("codex"), exact: true }).filter({ hasText: label("Copied") }).waitFor();

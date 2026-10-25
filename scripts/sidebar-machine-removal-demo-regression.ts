@@ -214,6 +214,8 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
   try {
     await context.addInitScript((theme) => {
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme, density: "comfortable", defaultView: "chat" }));
+      // the fixture PCs kept open, so none folds under the fork's "Other PCs" row (MachineSidebar foldPcs)
+      localStorage.setItem("ovis:pcs-kept-open", JSON.stringify(["sidebar-fixture", "sidebar-managed-fixture", "local"]));
       localStorage.setItem("ovis:sidebar-width", "520");
     }, scenario.theme);
     const page = await context.newPage();
