@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { InteractivePrompt } from "../shared/protocol.ts";
 import { answerKeys, handlePromptRequest, parseInteractivePrompt } from "./prompt.ts";
+import { registry } from "./dialogs/registry.ts";
 
 // Copilot CLI 1.0.88's ask_user form, read off a live herdr pane (fictional question, loopback model)
 const screen = (name: string): string => readFileSync(new URL(`./fixtures/copilot/ask-${name}-1.0.88.txt`, import.meta.url), "utf8");
@@ -119,6 +120,16 @@ describe("Copilot's ask_user form", () => {
     // a field that does not say optional keeps one way: typing
     const free = parseInteractivePrompt("copilot", screen("free"))!;
     expect(free.options.map((option) => option.label)).toEqual(["Type your answer"]);
+  });
+
+  it("is read by the copilot-question and copilot-input readers, one card each", () => {
+    const question = registry.readerFor("copilot-question")!;
+    const input = registry.readerFor("copilot-input")!;
+    const ctx = { agent: "copilot", omoAsk: null, omoTrusted: false, omoOpen: [], sent: null, working: false };
+    expect(question.parse(screen("choice"), ctx)?.responder).toBe("copilot-question");
+    expect(input.parse(screen("choice"), ctx)).toBeNull();
+    expect(input.parse(screen("free"), ctx)?.responder).toBe("copilot-input");
+    expect(question.parse(screen("free"), ctx)).toBeNull();
   });
 
   it("reads no card off a screen that does not hang together", () => {

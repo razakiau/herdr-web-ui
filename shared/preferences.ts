@@ -6,10 +6,13 @@
  * server keeps only the names below and the shape. A browser sends only the settings it changed,
  * which the server lays over what it holds, so a setting nobody changed stays each device's own.
  */
+import { sanitizeHostWorkspaces, type HostWorkspaceState } from "./host-workspaces.ts";
 export const SHARED_SETTING_KEYS = [
   "theme", "palette", "darkTheme", "lightTheme", "language", "sidebarRows", "agentOrder", "agentMarks", "autoSendQueued",
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
-  "usageGlance", "usageOrder", "usageHidden", "claudeLaunchMode", "codexLaunchMode",
+  "usageGlance", "usageOrder", "usageHidden", "usageShown", "usageKnown", "usageSort", "claudeLaunchMode", "codexLaunchMode",
+  "usageGroup", "hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "smoothMotion",
+  "voiceInput", "voiceLanguage", "voicePolishChat", "voicePolishTerminal",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];
 
@@ -18,7 +21,7 @@ export interface SharedPreferences {
   revision: number;
   /** only the settings some browser has shared: one nobody changed is absent, and stays each device's own */
   settings: Partial<Record<SharedSettingKey, unknown>>;
-  /** sidebar pin keys (`machine:pane` for an agent, `machine:workspace:id` for a workspace), in their order; absent until a browser first shares its pins */
+  /** sidebar pin keys (`machine:pane` for an agent, `machine:workspace:id` for a workspace, `machine:host:session` for a host chat, `machine:vscode:session` before), in their order; absent until a browser first shares its pins */
   pins?: string[];
   /**
    * the panes whose alerts are off on every channel (push, in-app, chime, tab notification) in
@@ -27,6 +30,8 @@ export interface SharedPreferences {
    * it comes from an older server, and a browser then offers no mute.
    */
   muted_panes?: string[];
+  /** the agent host workspaces open per PC (shared/host-workspaces.ts); absent until a browser first shares them */
+  hostWorkspaces?: HostWorkspaceState;
 }
 
 export const MAX_PINS = 500;
@@ -38,8 +43,8 @@ export const MAX_PREFERENCES_BYTES = 64 * 1024;
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** What a browser sends: the settings it changed, and the pins and the muted panes when they changed (absent: unchanged; an empty list: none left) */
-export interface PreferencesChange { settings: SharedPreferences["settings"]; pins?: string[]; muted_panes?: string[] }
+/** What a browser sends: the settings it changed, and the pins, the muted panes and the open host workspaces when they changed (absent: unchanged; an empty list: none left) */
+export interface PreferencesChange { settings: SharedPreferences["settings"]; pins?: string[]; muted_panes?: string[]; hostWorkspaces?: HostWorkspaceState }
 
 /** A list of keys as a body or a stored file may carry it: at most `limit` nonempty strings of at most `length` characters; null when it is anything else. */
 function keyList(value: unknown, limit: number, length: number): string[] | null | undefined {
@@ -82,8 +87,19 @@ export function sharedPreferencesBody(raw: unknown): PreferencesChange | null {
   const pins = keyList(raw["pins"], MAX_PINS, MAX_PIN_LENGTH);
   const muted = keyList(raw["muted_panes"], MAX_MUTED_PANES, MAX_MUTED_PANE_LENGTH);
   if (pins === null || muted === null) return null;
+  let hostWorkspaces: HostWorkspaceState | undefined;
+  if (raw["hostWorkspaces"] !== undefined) {
+    const checked = sanitizeHostWorkspaces(raw["hostWorkspaces"]);
+    if (checked === null) return null;
+    hostWorkspaces = checked;
+  }
   const given = raw["settings"];
   const settings: SharedPreferences["settings"] = {};
   for (const key of SHARED_SETTING_KEYS) if (key in given) settings[key] = given[key];
-  return { settings, ...(pins === undefined ? {} : { pins }), ...(muted === undefined ? {} : { muted_panes: muted }) };
+  return {
+    settings,
+    ...(pins === undefined ? {} : { pins }),
+    ...(muted === undefined ? {} : { muted_panes: muted }),
+    ...(hostWorkspaces === undefined ? {} : { hostWorkspaces }),
+  };
 }

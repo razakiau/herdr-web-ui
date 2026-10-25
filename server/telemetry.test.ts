@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SUPPORTED_AGENT_KINDS } from "../shared/supported-agents.ts";
+import { HOST_AGENT_KIND, SUPPORTED_AGENT_KINDS } from "../shared/supported-agents.ts";
 import { ACTIVE_LATE_DAYS, harnessOf, NOTICE_VERSION, TELEMETRY_HARNESSES, type TelemetryActive, type TelemetryChange, type TelemetryEvent, type TelemetrySettings } from "../shared/telemetry.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot, type Settings } from "../src/lib/settings.ts";
 import { handleTelemetryRequest, installMethod, Telemetry, telemetryBlocked } from "./telemetry.ts";
@@ -411,7 +411,8 @@ describe("daily active message", () => {
     // the deployed Worker refuses a harness it does not list, so these count as other until a deploy adds them
     const undeployed = new Set(["letta"]);
     for (const kind of undeployed) expect(harnessOf(kind)).toBe("other");
-    const missing = [...SUPPORTED_AGENT_KINDS].filter((kind) => !undeployed.has(kind) && !(TELEMETRY_HARNESSES as readonly string[]).includes(kind));
+    // a host chat is no pane, so the active message never names it
+    const missing = [...SUPPORTED_AGENT_KINDS].filter((kind) => kind !== HOST_AGENT_KIND && !undeployed.has(kind) && !(TELEMETRY_HARNESSES as readonly string[]).includes(kind));
     if (missing.length > 0) throw new Error(`${missing.join(", ")}: add it to TELEMETRY_HARNESSES and deploy the Worker`);
     expect(missing).toEqual([]);
   });

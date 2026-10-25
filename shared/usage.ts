@@ -1,5 +1,7 @@
 /** The subscriptions whose plan limits GET /api/usage can read from a CLI's own sign-in. */
 export type UsageProviderId = "claude" | "codex" | "cursor" | "copilot" | "grok" | "antigravity" | "opencode";
+/** A provider herdr reads itself, or another an OmniRoute gateway reports ("glm", "kimi-coding"): lowercase, digits and dashes. */
+export type UsageProviderName = UsageProviderId | (string & {});
 
 /** One limit of a plan: how much of it is used and when it starts over. */
 export interface UsageWindow {
@@ -23,7 +25,7 @@ export interface UsageWindow {
 export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked";
 
 export interface ProviderUsage {
-  readonly id: UsageProviderId;
+  readonly id: UsageProviderName;
   /**
    * One account of one provider, stable across reads: the provider and its account id, or, for a
    * sign-in that does not say whose it is, the provider and where it was found. A PC signed in to
@@ -45,3 +47,25 @@ export interface ProviderUsage {
 export interface UsageReport {
   readonly providers: readonly ProviderUsage[];
 }
+
+/**
+ * An OmniRoute gateway this server reads plan limits from (HERDR_WEB_OMNIROUTE_URL and _TOKEN in
+ * its environment, else saved from Settings): its accounts are in /api/usage, keyed
+ * `<provider>:omniroute:<connection>`.
+ */
+export interface OmniRouteStatus {
+  readonly configured: boolean;
+  /** env: the server's environment, which Settings cannot change; saved: from Settings; null when not configured */
+  readonly source: "env" | "saved" | null;
+  /** null when not configured */
+  readonly url: string | null;
+  readonly ok: boolean;
+  readonly problem: string | null;
+  /** ISO 8601 time the gateway last answered */
+  readonly checked_at: string | null;
+}
+
+/** A model's list price, USD per million tokens, as OmniRoute prices it; `cached` when cache reads cost less. */
+export interface ModelPrice { input: number; output: number; cached?: number }
+/** By provider (OmniRoute's ids: cc, gh, anthropic, openai…), then model. */
+export type ModelPrices = Record<string, Record<string, ModelPrice>>;

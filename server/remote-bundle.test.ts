@@ -70,6 +70,14 @@ describe("remote bundle sources", () => {
     }
   });
 
+  it("the zhomelab fork never falls back to upstream's published bundles", async () => {
+    // our own range, from 1001, bumped by one per change: never a number upstream publishes
+    expect(REMOTE_BUNDLE_VERSION).toMatch(/^[0-9]+$/);
+    expect(Number(REMOTE_BUNDLE_VERSION)).toBeGreaterThanOrEqual(1001);
+    const source = await bundleManifestSource("linux-x64", { directory: "/nonexistent", manifest: "" });
+    expect(source).toBe(`https://github.com/devswha/ovis/releases/download/remote-v${REMOTE_BUNDLE_VERSION}/manifest.json`);
+  });
+
   it("keeps explicit manifest configuration ahead of automatic discovery", async () => {
     const local = fixture("darwin-arm64");
     const override = fixture("darwin-arm64");

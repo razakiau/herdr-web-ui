@@ -6,6 +6,7 @@ import { OMO_FOOTER_LINES, OMO_HINT_LINES, OMO_NOT_FOOTER_RE, OMO_OPTIONS_HINT_R
 import { CLAUDE_ASK_HINT_RE, CLAUDE_CONFIRM_HINT_RE, CLAUDE_EFFORT_HINT_RE, claudeModelListWaits, withoutClaudeTasks } from "./claude.ts";
 import { OMP_CLIPPED_SINGLE_HINT_RE, OMP_MULTI_CLIPPED_HINT_RE, OMP_MULTI_HINT_RE, OMP_REVIEW_HINT_RE, OMP_SINGLE_CLIPPED_HINT_RE, OMP_SINGLE_HINT_RE } from "./omp.ts";
 import { HERMES_HINT_RE } from "./hermes.ts";
+import { COPILOT_ASK_HINT_RE } from "./copilot.ts";
 import { PI_INPUT_HINT_RE, PI_MENU_HINT_RE } from "./pi.ts";
 import { openCodeV1QuestionActive } from "./opencode.ts";
 
@@ -99,6 +100,15 @@ export function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolea
   // Hermes keeps its status line (and maybe the hint's wrapped tail) under the hint; an answered
   // question leaves the screen, so a hint among the last few lines is the live one
   if (prompt.responder === "hermes-question" || prompt.responder === "hermes-input") return shown.slice(-4).some((line) => HERMES_HINT_RE.test(line));
+  // Copilot closes the form's frame with one rule under its hint; an answered form leaves the screen.
+  // The open Other line's input box can follow it (one more line, rules dropped), and a phone-width
+  // pane wraps the hint over up to three lines: a hint that ends among the last two lines is live
+  if (prompt.responder === "copilot-question" || prompt.responder === "copilot-input") {
+    return [1, 2].some((tail) => [1, 2, 3].some((span) => {
+      const end = shown.length - tail + 1;
+      return end - span >= 0 && COPILOT_ASK_HINT_RE.test(shown.slice(end - span, end).join(" "));
+    }));
+  }
   if (prompt.responder === "codex-menu") return ends(CODEX_CONTINUE_HINT_RE);
   if (prompt.responder === "codex-question") return ends(CODEX_ASK_HINT_RE);
   if (prompt.responder === "codex-async-question") return cleanLines.slice(-4).some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line)) || ends(CODEX_ASYNC_ASK_HINT_RE);

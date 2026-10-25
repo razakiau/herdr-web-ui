@@ -149,6 +149,20 @@ export async function savePaneImage(options: {
   /** the file's own name: any type is accepted, and one that is not a pasted image keeps it */
   name?: string;
 }): Promise<string> {
+  return saveAttachment({ ...options, cwd: async () => (await paneGet(options.paneId)).cwd });
+}
+
+/**
+ * Writes an attachment under `preparePasteDirectory(cwd)` and returns its path: a pane's (savePaneImage)
+ * and a host chat's (server/agent-host/routes.ts chat/upload). `cwd` is read only once the body has
+ * passed its checks, so a refused file costs no lookup.
+ */
+export async function saveAttachment(options: {
+  cwd: () => Promise<string | null | undefined>;
+  contentType: string;
+  dataBase64: string;
+  name?: string;
+}): Promise<string> {
   const rasterClaim = EXTENSIONS[options.contentType] !== undefined;
   const named = rasterClaim ? null : storedName(options.name);
   // cheap pre-check: reject the ENCODED length before allocating the decode buffer,
@@ -165,9 +179,7 @@ export async function savePaneImage(options: {
     throw new PasteImageError("invalid_image", "file does not contain a supported raster image", 400);
   }
 
-  const pane = await paneGet(options.paneId);
-
-  const directory = preparePasteDirectory(pane.cwd);
+  const directory = preparePasteDirectory(await options.cwd());
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const unique = `${stamp}-${crypto.randomUUID().slice(0, 8)}`;
   const name = named === null ? `paste-${unique}.${imageExtension}` : `${named.base}-${unique}.${named.extension}`;

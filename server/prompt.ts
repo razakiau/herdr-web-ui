@@ -731,7 +731,7 @@ async function readKnownPrompt(
     return { prompt: publicPrompt(parsed) };
   }
 
-  if (!["claude", "omp", "codex", "omo", "pi", "gjc", "hermes", "cmd", "opencode", ""].includes(agent)) return { prompt: null };
+  if (!["claude", "omp", "codex", "omo", "pi", "gjc", "hermes", "copilot", "cmd", "opencode", ""].includes(agent)) return { prompt: null };
   const screen = await liveScreen(paneId);
   // omo's form reads its text from the session's call, the screen showing where the form stands
   const omoAsks = ["omo", "pi", "claude", ""].includes(agent) && pane.cwd && OMO_FORM_RE.test(screen)

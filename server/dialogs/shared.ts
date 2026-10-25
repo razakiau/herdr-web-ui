@@ -96,6 +96,8 @@ type Responder =
   | "omp-model"
   | "hermes-question"
   | "hermes-input"
+  | "copilot-question"
+  | "copilot-input"
   | "hermes-help"
   | "hermes-status"
   | "hermes-version"

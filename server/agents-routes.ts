@@ -3,6 +3,8 @@
  * Oh My Pi and Claude Code always, and the shell-started agents this server finds (shell-agent.ts).
  * The dispatcher in index.ts runs the access gate first.
  */
+import { withHostAgent } from "./agent-host/agents.ts";
+import type { AgentHostState } from "../shared/host-chats.ts";
 import type { AgentKind } from "../shared/agents.ts";
 import { agentManifests } from "./herdr/client.ts";
 import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
@@ -30,7 +32,7 @@ const AGENT_LABELS: Record<string, string> = {
 };
 
 /** The answer for the agent catalog route, or null when the path is not it. `shellAgents`: the server's own locator, which starts them too. */
-export async function handleAgentsRequest(request: Request, pathname: string, shellAgents: Pick<ShellAgentLocator, "executable">): Promise<Response | null> {
+export async function handleAgentsRequest(request: Request, pathname: string, shellAgents: Pick<ShellAgentLocator, "executable">, hostState: () => AgentHostState | null = () => null): Promise<Response | null> {
   if (pathname === "/api/agents") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
@@ -47,7 +49,7 @@ export async function handleAgentsRequest(request: Request, pathname: string, sh
         // an agent's command is its kind; herdr starts the others in its own environment, so only this server's PATH speaks for them
         .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: shellStarted.has(kind) || Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
         .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
-      return jsonResponse({ agents });
+      return jsonResponse({ agents: withHostAgent(agents, hostState()) });
     } catch (error) {
       return errorResponse(error);
     }

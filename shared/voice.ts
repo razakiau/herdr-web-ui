@@ -63,9 +63,17 @@ export const VOICE_FORM = {
   language: "language",
 } as const;
 
-export const VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
-/** the recorder stops itself here; the server does not trust it and checks bytes only */
-export const VOICE_MAX_SECONDS = 120;
+/** 16 MiB, the voice server's own upload cap (zhomelab roles/voice, ZAC-221): 600 s of Chrome's
+ * WebM/Opus is 2.5 MB at 32 kbit/s and 10.5 MB at 128 kbit/s (measured on the services VM) */
+export const VOICE_MAX_AUDIO_BYTES = 16 * 1024 * 1024;
+/** the recorder stops itself here; the server does not trust it and checks bytes only. 600 s
+ * (ZAC-221): the voice server cuts a clip past 30 s at pauses, so its memory no longer grows with
+ * the clip (a 600 s clip peaked at 2.7 of 4 GiB; build 7 was OOM-killed 10 s in), and it accepts
+ * up to 900 s */
+export const VOICE_MAX_SECONDS = 600;
+/** how long one /api/voice request may run: a 600 s clip transcribes in ~60 s on the services VM
+ * (485 s took 40.9 s live, 2026-10-24), plus the optional polish; 180 leaves room for both */
+export const VOICE_REQUEST_TIMEOUT_SECONDS = 180;
 export const VOICE_KEYWORDS_MAX = 50;
 export const VOICE_KEYWORD_MAX_CHARS = 80;
 

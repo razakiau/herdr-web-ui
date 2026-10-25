@@ -412,4 +412,16 @@ describe("a damaged preferences file", () => {
     expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
     expect(new PreferenceStore(dir).get()).toEqual({ revision: 4, settings: { theme: "light" }, muted_panes: [] });
   });
+
+  it("absent_field_leaves_it", async () => {
+    const dir = root();
+    const store = new PreferenceStore(dir);
+    const open = { m: { open: [{ cwd: "/a", tabs: ["x"] }], order: ["f:/a"] } };
+    expect((await put(store, JSON.stringify({ settings: {}, hostWorkspaces: open }))).status).toBe(200);
+    expect((await put(store, JSON.stringify({ settings: { theme: "light" } }))).status).toBe(200);
+    expect(store.get().hostWorkspaces).toEqual(open);
+    expect(new PreferenceStore(dir).get().hostWorkspaces).toEqual(open);
+    expect((await put(store, JSON.stringify({ settings: {}, hostWorkspaces: { m: { open: [{ cwd: 1 }] } } }))).status).toBe(400);
+  });
 });
+

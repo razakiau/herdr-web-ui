@@ -100,6 +100,9 @@ describe("a paired watch device", () => {
     // nor make a folder there
     expect((await asWatcher("/api/workspace/directories", "POST")).status).toBe(403);
     expect((await asWatcher("/api/machines/local/workspace/directories", "POST")).status).toBe(403);
+    // a host chat edit's two sides are file contents too
+    expect((await asWatcher("/api/host-chats/edit-diff?session=copilotcli%3A%2Fx&ref=c1%3A0")).status).toBe(403);
+    expect((await asWatcher("/api/machines/local/host-chats/edit-diff?session=copilotcli%3A%2Fx&ref=c1%3A0")).status).toBe(403);
     // sending an alert is not a preference: it makes the server POST somewhere
     expect((await asWatcher("/api/push/test", "POST")).status).toBe(403);
     // watching is the role's whole point

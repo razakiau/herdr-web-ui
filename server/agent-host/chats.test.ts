@@ -104,7 +104,8 @@ describe("host chat mappers", () => {
       id: "turn-1", startedAt: AT, state: "complete", usage: undefined, message: user("FICTIONAL go"),
       responseParts: [
         ask("a1", "User responded:\nnotes: @/tmp/fictional/.herdr-web-ui/paste-1.jpg @/tmp/fictional/.herdr-web-ui/shot-2.PNG FICTIONAL see these"),
-        ask("a2", "User responded:\nnotes: @/tmp/fictional/.herdr-web-ui/paste-3.webp"),
+        // the folder is .ovis since the rename; an answer from before it still names .herdr-web-ui
+        ask("a2", "User responded:\nnotes: @/tmp/fictional/.ovis/paste-3.webp"),
         ask("a3", "User responded:\nnotes: @/tmp/fictional/src/logo.png and @/tmp/fictional/.herdr-web-ui/notes.txt"),
       ],
     }] });

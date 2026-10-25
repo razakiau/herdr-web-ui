@@ -9,6 +9,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { OrderSequence } from "./order-sequence.ts";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { accessSync, constants, readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { HealthAuth, PendingMessage } from "../shared/protocol.ts";
@@ -45,18 +46,26 @@ import { handlePortalRequest, PortalService } from "./portal.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
+import { LiteLlmPrices } from "./litellmPrices.ts";
+import { handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
+import { VOICE_REQUEST_TIMEOUT_SECONDS } from "../shared/voice.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { handleMachineRequest, nonCanonicalPath, slowMachinePath } from "./machine-api.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
+import { AgentHostConnection } from "./agent-host/connection.ts";
+import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
+import { hostChatsRoute } from "./agent-host/routes.ts";
+import { rowsFrom } from "./agent-host/chats.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
+import { handlePresenceRequest, PagePresence } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
 
@@ -148,6 +157,12 @@ export function createServer(
     telemetry?: Telemetry;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
     usage?: UsageService;
+    /** Tests supply a gateway link with its own state folder and environment. */
+    omniRoute?: OmniRouteLink;
+    /** LiteLLM's price map behind OmniRoute's; tests pass a stand-in that reads nothing */
+    litellmPrices?: Pick<LiteLlmPrices, "read">;
+    /** where a host chat's PR and issue pills read their state (server/references.ts); tests pass a stand-in */
+    references?: ReferenceStateSource;
     /** Tests supply an isolated proxy service, never a user's configured instance. */
     cliProxy?: CLIProxyService;
     /** Tests use a disposable credential home and stand-in CLI binaries. */
@@ -192,6 +207,12 @@ export function createServer(
     sidecar?: boolean | (() => boolean);
     /** where omo and gjc are found for the offer and the start (server/shell-agent.ts); unset, this server's PATH alone. The real entrypoints (this file's and remote-entry.ts) add their user's login shell; tests pass a fixture one. */
     shellAgents?: ShellAgentLocator;
+    /**
+     * This PC's host chats (server/agent-host/): `enabled` defaults to HERDR_WEB_AGENT_HOST=on, `startHost`
+     * to HERDR_WEB_AGENT_HOST_START not `off`. The bridges this server starts get the same switch.
+     * `home` and `env` say where VS Code's agent-host registry is; tests point them at a temp dir.
+     */
+    agentHost?: { enabled: boolean; startHost: boolean; home?: string; env?: Record<string, string | undefined> };
   } = {},
 ): ServerInstance {
   /**
@@ -220,7 +241,13 @@ export function createServer(
   const cliProxy = options.cliProxy ?? new CLIProxyService(stateDir);
   const cliProxyRoutes = new CLIProxyRoutes(cliProxy);
   const usageLogin = options.usageLogin ?? new UsageLoginService();
-  const usage = options.usage ?? new UsageService(undefined, undefined, (refresh) => cliProxy.report(refresh));
+  const omniRoute = options.omniRoute ?? new OmniRouteLink(stateDir);
+  const litellmPrices = options.litellmPrices ?? new LiteLlmPrices();
+  const references = options.references ?? new GitHubReferenceState();
+  const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
+    const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
+    return [...hub, ...gateway];
+  });
   const voice = options.voice ?? new VoiceService({ stateDir, env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (OVIS_TAILSCALE_OWNER) */
   const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["OVIS_TAILSCALE_OWNER"]?.trim() || undefined;
@@ -237,12 +264,30 @@ export function createServer(
   const openCodeState = new OpenCodePromptState();
   const draftTimer = setInterval(() => openCodeState.prune(), 60_000);
   draftTimer.unref();
-  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
+  /** pages in use that say so over HTTP (server/page-presence.ts): a page reading host chats has no WebSocket */
+  const pages = new PagePresence();
+  const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
+  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
   const { sidecar, serialize, push, logPushError, omo, claudeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
   // started after createCore's Node probe (server/pty/sidecar.ts), which can hold the thread up to 3 s: that wait
   // would count against the read's own 2.5 s limit, and a read cut short leaves the owner unknown for 5 minutes
   identityOf(false, null);
   const bridgeToken = randomBytes(32).toString("hex");
+
+  // one connection to this PC's agent host, only with the switch on; its changes go to
+  // every client, and through machines.localMessage to a connection server's phone
+  const agentHostConnection = agentHost.enabled ? new AgentHostConnection({
+    home: agentHost.home ?? homedir(),
+    platform: process.platform,
+    env: agentHost.env ?? process.env,
+    startHost: agentHost.startHost,
+    onChange: (event) => {
+      broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null });
+      // the list's statuses are what the alerts watch (server/push.ts onHostChats)
+      if (event.kind === "chats") push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
+    },
+  }) : null;
+  agentHostConnection?.start();
 
   type PortalStartup = { ok: true } | { ok: false; error: unknown };
   let settlePortalStartup!: (result: PortalStartup) => void;
@@ -274,7 +319,7 @@ export function createServer(
       const url = new URL(request.url);
       let { pathname } = url;
       const bridgeAuthorized = isAuthenticated(request, bridgeToken);
-      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws";
+      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname.startsWith("/api/host-chats/") || pathname === "/ws";
       const ip = bunServer.requestIP(request);
       const loopback = ip !== null && isLoopbackAddress(ip.address);
       const forwarded = cameThroughProxy(request.headers);
@@ -339,9 +384,12 @@ export function createServer(
       // protection: a watch device's subscription is delivered every status change anyway.
       // /api/push/test stays with a session that can drive only because it is a mutation.
       // A watch device may report its own connection metadata, never terminal input or file data.
-      const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe" || pathname === "/api/connection-diagnostics";
+      // A page saying it is on screen (/api/presence) only holds alerts back, so `watch` keeps it too.
+      const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe" || pathname === "/api/connection-diagnostics" || pathname === "/api/presence";
       // a repository's changes are file contents too: the patch of a credential file is that file
-      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname);
+      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname)
+        // and a host chat edit's two sides: what the file held before and after the call
+        || /^\/api\/(?:machines\/[^/]+\/)?host-chats\/edit-diff$/.test(pathname);
       // earlier sessions carry their first prompts
       const sessionHistory = /^\/api\/(?:machines\/[^/]+\/)?sessions\/history$/.test(pathname);
       // an agent's commands in a folder are read from that folder's command files, as a directory listing and a file read are
@@ -444,10 +492,15 @@ export function createServer(
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
 
       if (pathname === "/api/usage") { setRequestRoute(pathname); return handleUsageRequest(request, url, usage); }
+      if (pathname === "/api/usage/omniroute") { setRequestRoute(pathname); return handleOmniRouteRequest(request, omniRoute); }
+      if (pathname === "/api/usage/omniroute/pricing") { setRequestRoute(pathname); return handleOmniRoutePricing(request, omniRoute, litellmPrices); }
+      if (pathname === "/api/references/state") { setRequestRoute(pathname); return handleReferenceStateRequest(request, references); }
       if (pathname === "/api/usage/login") { setRequestRoute(pathname); bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
       if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
-      if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
+      if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, VOICE_REQUEST_TIMEOUT_SECONDS); return handleVoiceRequest(request, pathname, voice); }
+
+      if (pathname === "/api/presence") { setRequestRoute(pathname); return handlePresenceRequest(request, pages); }
 
       if (pathname === "/api/push" || pathname.startsWith("/api/push/")) {
         try {
@@ -504,7 +557,7 @@ export function createServer(
         }
       }
 
-      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents);
+      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents, () => agentHostConnection?.state() ?? null);
       if (agentsResponse) return agentsResponse;
 
       const integrationsResponse = await handleIntegrationsRequest(request, pathname);
@@ -559,6 +612,9 @@ export function createServer(
         }
       }
 
+      const hostChatsResponse = hostChatsRoute(request, pathname, agentHostConnection);
+      if (hostChatsResponse) return hostChatsResponse;
+
       if (pathname.startsWith("/api/")) {
         return jsonResponse({ error: { code: "not_found", message: `unknown endpoint ${pathname}` } }, 404);
       }
@@ -612,6 +668,8 @@ export function createServer(
         void options.portal?.shutdown();
         registration?.close();
         closeCodexDaemonSources();
+        // a failed stop must not become an unhandled rejection at shutdown; its name only (never its message)
+        agentHostConnection?.stop().catch((error: unknown) => console.warn(`agent-host: stop failed (${error instanceof Error ? error.name : typeof error})`));
       });
       void shellAgents.stop();
       server.stop(true);

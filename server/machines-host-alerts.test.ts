@@ -28,7 +28,7 @@ async function fixture(agentHost: boolean) {
   const root = mkdtempSync(join(tmpdir(), "herdr-host-alerts-"));
   const seen: { rows: HostChatRow[]; machine: string | undefined; name: string | undefined }[] = [];
   const push = { seed() {}, async onStatus() {}, async onEnded() {}, onHostChats(rows: HostChatRow[], machine?: string, name?: string) { seen.push({ rows, machine, name }); } } as unknown as PushService;
-  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => { throw new Error("local offline"); }, agentHost);
+  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => { throw new Error("local offline"); }, { agentHost });
   let chats: HostChatRow[] = [row("working")];
   let reads = 0;
   let observer: { send(data: string): unknown } | undefined;

@@ -27,6 +27,8 @@ export const SKILL_SYNTAX: Readonly<Record<string, SkillSyntax>> = {
   // its menu opens only on a leading `/`, and lists skills as bare `/<skill-id>` rows
   // (letta-code 0.34.23, src/cli/components/SlashCommandAutocomplete.tsx)
   letta: { skillTriggers: ["/"], inline: [], namespaced: false, chipForms: [] },
+  // the host chat's skills come from the bridge, not a menu typed in a pane
+  "copilot-host": { skillTriggers: ["/"], inline: [], namespaced: false, chipForms: [] },
 };
 
 export function skillSyntax(agent: string | null | undefined): SkillSyntax {

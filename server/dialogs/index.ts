@@ -5,6 +5,7 @@ import { readers as omp } from "./omp.ts";
 import { readers as omo } from "./omo.ts";
 import { readers as pi } from "./pi.ts";
 import { readers as hermes } from "./hermes.ts";
+import { readers as copilot } from "./copilot.ts";
 import { readers as gjc } from "./gjc.ts";
 import { readers as opencode } from "./opencode.ts";
 import { readers as grok } from "./grok.ts";
@@ -14,4 +15,4 @@ import { readers as cmd } from "./cmd.ts";
 import { readers as fallback } from "./fallback.ts";
 
 // Stable ties preserve each parser's candidate order; fallback always comes last.
-export const readers: readonly DialogReader[] = [...claude, ...codex, ...omp, ...omo, ...pi, ...hermes, ...gjc, ...opencode, ...grok, ...agy, ...devin, ...cmd, ...fallback];
+export const readers: readonly DialogReader[] = [...claude, ...codex, ...omp, ...omo, ...pi, ...hermes, ...copilot, ...gjc, ...opencode, ...grok, ...agy, ...devin, ...cmd, ...fallback];

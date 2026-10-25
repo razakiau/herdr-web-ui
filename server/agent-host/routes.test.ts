@@ -1375,11 +1375,11 @@ describe("host chat attachments", () => {
     return { folder, r: await rig({ sessions: [where(1), noFolder] }) };
   };
 
-  it("upload_writes_into_chat_folder: under <cwd>/.herdr-web-ui/, and the answer gives its path", async () => {
+  it("upload_writes_into_chat_folder: under <cwd>/.ovis/, and the answer gives its path", async () => {
     const { folder, r } = await inFolder();
     const up = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "shot.png", media_type: "image/png", data: PNG });
     expect(up.status).toBe(200);
-    expect(up.json.path.startsWith(join(folder, ".herdr-web-ui") + "/")).toBe(true);
+    expect(up.json.path.startsWith(join(folder, ".ovis") + "/")).toBe(true);
     expect(readFileSync(up.json.path).toString("base64")).toBe(PNG);
     const text = await call(r, "/api/host-chats/chat/upload", { session: sessionUri(1), name: "notes.txt", media_type: "text/plain", data: Buffer.from("FICTIONAL").toString("base64") });
     expect(text.json.path).toMatch(/\/notes-[^/]+\.txt$/);
@@ -1502,13 +1502,13 @@ describe("host chat image and tool-output routes", () => {
     expect(served.bytes.equals(PNG_BYTES)).toBe(true);
   });
 
-  it("an answer's uploaded picture is served from the chat's .herdr-web-ui, and nothing else is", async () => {
+  it("an answer's uploaded picture is served from the chat's .ovis, and nothing else is", async () => {
     const folder = realpathSync(temp());
-    mkdirSync(join(folder, ".herdr-web-ui"));
-    writeFileSync(join(folder, ".herdr-web-ui", "paste-1.png"), PNG_BYTES);
-    writeFileSync(join(folder, ".herdr-web-ui", "paste-2.png"), PNG_BYTES);
+    mkdirSync(join(folder, ".ovis"));
+    writeFileSync(join(folder, ".ovis", "paste-1.png"), PNG_BYTES);
+    writeFileSync(join(folder, ".ovis", "paste-2.png"), PNG_BYTES);
     writeFileSync(join(folder, "secret.png"), PNG_BYTES);
-    symlinkSync(join(folder, "secret.png"), join(folder, ".herdr-web-ui", "link.png"));
+    symlinkSync(join(folder, "secret.png"), join(folder, ".ovis", "link.png"));
     const answered = (out: string): ChatState => reducedChat([
       { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: user("FICTIONAL ask") } as StateAction,
       ...toolCallActions("turn-1", { toolCallId: "a1", toolName: "ask_user", displayName: "ask_user", invocationMessage: "ask_user", toolInput: JSON.stringify({ message: "FICTIONAL look?" }) },
@@ -1517,7 +1517,7 @@ describe("host chat image and tool-output routes", () => {
     ], chatState(1));
     const r = await rig({
       sessions: [{ ...summary(1), workingDirectories: [`file://${folder}`] }, summary(2)],
-      chats: { [chatUri(1)]: answered(`User responded:\nnotes: @${folder}/.herdr-web-ui/paste-1.png @${folder}/.herdr-web-ui/link.png`), [chatUri(2)]: chatState(2) },
+      chats: { [chatUri(1)]: answered(`User responded:\nnotes: @${folder}/.ovis/paste-1.png @${folder}/.ovis/link.png`), [chatUri(2)]: chatState(2) },
     });
     const read = (await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead;
     expect(read.turns[1]!.parts[0]).toMatchObject({ kind: "question", custom: null, images: [{ ref: "answer:paste-1.png" }, { ref: "answer:link.png" }] });

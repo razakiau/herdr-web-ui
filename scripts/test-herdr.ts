@@ -20,6 +20,12 @@ import { testShellEnv } from "./test-shell.ts";
 // resolved, so a fixture made under the unresolved path never matches the pane it is for
 process.env["TMPDIR"] = realpathSync(tmpdir());
 
+// host chats are off in every test server: a createServer without its own `agentHost` reads
+// these, and a developer's shell may set them on the very PC whose real VS Code agent host the
+// feature talks to (and would start). A test that needs the feature passes `agentHost` itself.
+delete process.env["HERDR_WEB_AGENT_HOST"];
+delete process.env["HERDR_WEB_AGENT_HOST_START"];
+
 export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "ovis-test";
 
 /**

@@ -586,7 +586,7 @@ async function readImage(call: Call): Promise<Response> {
 }
 
 /**
- * A picture an answer carried, by `answer:<file name>`: read from the chat's `.herdr-web-ui/`, the
+ * A picture an answer carried, by `answer:<file name>`: read from the chat's `.ovis/`, the
  * folder chat/upload writes, and only when one of the chat's answers names that file. Any other
  * name, a path, or a file a link points out of the folder with, is not found.
  */
@@ -738,7 +738,7 @@ const IMAGE_BY_EXTENSION: Record<string, string> = { ".png": "image/png", ".jpg"
 /**
  * The message's attachments, as VS Code sends them: an image embedded (base64, read back from the
  * file), any other file a resource the host reads by its file:// URI. Only files inside the chat's
- * own folder are taken: one chat/upload wrote (under `.herdr-web-ui/`), or one picked with "@"
+ * own folder are taken: one chat/upload wrote (under `.ovis/`), or one picked with "@"
  * (a path relative to the folder, as the file source gives it). Symlinks are followed before the
  * check, so a link inside cannot hand out a file outside.
  */
@@ -770,7 +770,7 @@ function attachmentsOf(value: unknown, host: AgentHost, session: string): Messag
   });
 }
 
-/** Writes an attached file into the chat's folder (`<cwd>/.herdr-web-ui/`, as a pane's): its path. */
+/** Writes an attached file into the chat's folder (`<cwd>/.ovis/`, as a pane's): its path. */
 async function uploadFile(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const { name, media_type: mediaType, data } = call.body;

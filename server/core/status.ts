@@ -6,6 +6,8 @@ import { join } from "node:path";
 import type { AgentStatus, HerdrPane, PlanSummary, ServerMessage, SessionSnapshot } from "../../shared/protocol.ts";
 import { alertStatus, paneAlertsMuted, paneTitle } from "../../shared/notify-policy.ts";
 import { BackgroundWait } from "../background-wait.ts";
+import { ntfyFromEnv, type NtfyConfig } from "../ntfy.ts";
+import type { PagePresence } from "../page-presence.ts";
 import { ClaudeSubagentStatus } from "../claude-subagents.ts";
 import { codexOpenRollout, paneCodexHome } from "../codex.ts";
 import { startStatusCollector } from "../collector.ts";
@@ -36,7 +38,7 @@ import { type Client, send } from "./connections.ts";
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin }: {
+export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -44,6 +46,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     machines?: boolean;
     herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
     alertTiming?: Partial<AlertTiming>;
+    /** null: no ntfy even if the environment names one (tests); absent: HERDR_WEB_NTFY_* */
+    ntfy?: NtfyConfig | null;
     pushLoopbackHttp?: boolean;
     backgroundWait?: { grace: number; limit: number };
     statusNow?: () => number;
@@ -56,12 +60,18 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   preferences: PreferenceStore;
   clients: Set<Client>;
   present: Set<Client>;
+  /** pages in use that said so over HTTP (server/page-presence.ts) */
+  pages?: PagePresence;
   /** the pending messages' status and lifetime calls, whoever owns them (a connection, or the bridge for a first message) */
   pending: PendingInputs<Owner, Lease>;
   drainPending: (paneId: string) => void;
   holdPendingPane: (paneId: string, fault: { code: string; message: string }) => void;
   usage: UsageService;
   usageLogin: UsageLoginService;
+  /** HERDR_WEB_AGENT_HOST: the bridges this server starts on other PCs get the same switch */
+  agentHostEnabled?: boolean;
+  /** Settings' shared "Show agent host chats" (server/preferences.ts): off, their alerts stay quiet */
+  hostChatsShown?: () => boolean;
 }) {
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
@@ -69,9 +79,12 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     now: options.statusNow,
     loopbackHttp: options.pushLoopbackHttp === true,
     canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)),
-    inUse: () => present.size > 0,
+    inUse: () => present.size > 0 || pages?.inUse() === true,
     // the persisted list, read as each alert is scheduled and again as it goes out
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),
+    hostChatsShown,
+    // the deployment's ntfy topic, if any (server/ntfy.ts); a test server passes its own or none
+    ntfy: (options.ntfy === undefined ? ntfyFromEnv(process.env) : options.ntfy) ?? undefined,
     lookupTitle: async (paneId) => {
       return paneTitle(await paneGet(paneId));
     },
@@ -178,7 +191,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
-  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch });
+  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch, agentHost: agentHostEnabled });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
 
   function broadcastAll(message: ServerMessage): void {

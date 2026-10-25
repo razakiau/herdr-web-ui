@@ -61,9 +61,11 @@ import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, p
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { answerVersion, ConversationNotStarted, ConversationUnavailable, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
+import { COPILOT_IMAGE_REF, copilotImage, copilotSessionId, copilotToolOutput, copilotTranscript, defaultCopilotHome, parseCopilotEvents } from "./copilot.ts";
 
 import { createOmpTranscriptParser, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, type TranscriptParser } from "./transcript-records.ts";
 import { claudeResultText, createClaudeTranscriptParser, IMAGE_TYPES, parseClaudeTranscript, type TranscriptEntry } from "./claude-transcript.ts";
+export { IMAGE_TYPES };
 import { forgetSubagents, lineNotifications, subagentDetails, type SubagentDetail } from "./claude-subagents.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { readsStartScreen, startScreenMetadata } from "./start-screen.ts";
@@ -438,6 +440,7 @@ function parseTurns(source: RecognizedConversation["source"], path: string, text
     }
   }
   if (source === "agy-transcript") return parseAgyTranscript(text, path);
+  if (source === "copilot-transcript") return parseCopilotEvents(text);
   return source === "codex-transcript" ? parseCodexTranscript(text, Infinity)
     // only pi keeps a tool's images in the entry as base64; omp, omo and gjc are read the same
     // way but would carry image refs nothing can answer, so the option stays with pi alone
@@ -1029,6 +1032,16 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       const resolved = await hermesTranscriptForPane(pane, cwd, hermesHome);
       return { source: "hermes-transcript", path: resolved.dbPath, sessionId: resolved.sessionId };
     }
+    if (agent === "copilot") {
+      // herdr's Copilot integration reports the session id at session start; the store is
+      // this user's own, where the CLI and VS Code's Copilot harness both write it
+      const session = copilotSessionId(pane);
+      if (session === null) throw new ConversationUnavailable("no_session_id");
+      const found = copilotTranscript(session, defaultCopilotHome());
+      if (found === null) throw new ConversationUnavailable("no_session_path");
+      if ("unwritten" in found) throw new ConversationNotStarted(found.unwritten, "copilot-transcript", found.unwritten);
+      return { source: "copilot-transcript", path: found.path };
+    }
     throw new ConversationUnavailable("no_recognized_transcript");
   } catch (error) {
     if (error instanceof AgyUnavailable) throw new ConversationUnavailable("transcript_missing");
@@ -1173,7 +1186,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   }
   const identity = resolved.source === "agy-transcript" ? resolved.path
     : resolved.source === "claude-transcript" ? nodePath.basename(resolved.path, ".jsonl")
-    : resolved.source === "pi-transcript" || resolved.source === "cmd-transcript" || resolved.source === "omp-transcript" ? realpathSync(resolved.path) : null;
+    : resolved.source === "pi-transcript" || resolved.source === "cmd-transcript" || resolved.source === "omp-transcript" || resolved.source === "copilot-transcript" ? realpathSync(resolved.path) : null;
   rememberPaneRead(paneId, resolved.path);
   const answer = transcriptPage(resolved.source, resolved.path, page, resolved.codexHome ?? codexHome, resolved.piAgentDir);
   const status = snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
@@ -1388,7 +1401,7 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
  * image. Codex uses a hash of the native attachment and searches only the bound history.
  */
 export async function conversationImage(paneId: string, ref: string, codexHome?: string, opencodeDb?: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
-  if (!IMAGE_REF.test(ref) && !CODEX_IMAGE_REF.test(ref) && !PI_IMAGE_REF.test(ref) && !OPENCODE_IMAGE_REF.test(ref)) return null;
+  if (!IMAGE_REF.test(ref) && !CODEX_IMAGE_REF.test(ref) && !PI_IMAGE_REF.test(ref) && !OPENCODE_IMAGE_REF.test(ref) && !COPILOT_IMAGE_REF.test(ref)) return null;
   const snapshot = await sessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined || typeof pane.cwd !== "string" || pane.cwd.length === 0) return null;
@@ -1400,6 +1413,11 @@ export async function conversationImage(paneId: string, ref: string, codexHome?:
   rememberPaneRead(paneId, resolved.path);
   if (resolved.source === "codex-transcript") return codexTranscriptImage(codexHistorySegments(resolved.path, resolved.codexHome ?? codexHome), ref, pane.cwd);
   if (resolved.source === "pi-transcript" || resolved.source === "cmd-transcript") return piTranscriptImage(resolved.path, ref);
+  if (resolved.source === "copilot-transcript") {
+    let text: string;
+    try { text = readFileSync(resolved.path, "utf8"); } catch { return null; }
+    return copilotImage(text, ref);
+  }
   return resolved.source === "claude-transcript" ? transcriptImage(resolved.path, ref) : null;
 }
 
@@ -1470,6 +1488,12 @@ export function transcriptToolOutput(source: StreamSource, path: string, ref: st
   if (source === "grok-transcript") return grokToolOutput(path, ref);
   if (source === "agy-transcript") return agyToolOutput(path, ref);
   if (source === "pi-transcript" || source === "cmd-transcript") return piToolOutput(path, ref);
+  if (source === "copilot-transcript") {
+    let whole: string;
+    try { whole = readFileSync(path, "utf8"); } catch { return null; }
+    const output = copilotToolOutput(whole, ref);
+    return output === null ? null : output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
+  }
   let text: string;
   try { text = readFileSync(path, "utf8"); } catch { return null; }
   return outputInText(source, text, ref);

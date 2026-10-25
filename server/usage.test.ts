@@ -247,6 +247,10 @@ describe("providers", () => {
     } });
     const [usage] = (await new UsageService(context(), only("copilot")).report()).providers;
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("token gho_x");
+    // GitHub answers this endpoint for an editor's Copilot: the request names itself as one, exactly
+    expect(requests[0]!.init.headers).toMatchObject({
+      "editor-version": "vscode/1.96.2", "editor-plugin-version": "copilot-chat/0.26.7", "user-agent": "GitHubCopilotChat/0.26.7",
+    });
     expect(usage).toMatchObject({
       plan: "free",
       windows: [

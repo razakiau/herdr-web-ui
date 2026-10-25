@@ -381,8 +381,11 @@ function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<Con
   return answer === null ? { ...base, custom: null, skipped: true } : withUploads({ ...base, custom: answer, skipped: false });
 }
 
-/** A picture this app uploaded for an answer: `@<folder>/.herdr-web-ui/<name>` (lib/promptAnswer.ts). */
-const ANSWER_UPLOAD = /(?:^|\s)@(\S*\/\.herdr-web-ui\/([^\s/]+\.(png|jpe?g|gif|webp)))(?=\s|,|$)/gi;
+/**
+ * A picture this app uploaded for an answer: `@<folder>/.ovis/<name>` (lib/promptAnswer.ts), or
+ * `.herdr-web-ui/` in a chat answered before the rename.
+ */
+const ANSWER_UPLOAD = /(?:^|\s)@(\S*\/\.(?:ovis|herdr-web-ui)\/([^\s/]+\.(png|jpe?g|gif|webp)))(?=\s|,|$)/gi;
 const UPLOAD_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 /** The ref an answer's uploaded picture is read by: `answer:<its file name>` (routes.ts readImage). */
 export const ANSWER_REF = "answer:";

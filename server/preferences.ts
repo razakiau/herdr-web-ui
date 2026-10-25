@@ -73,7 +73,7 @@ export class PreferenceStore {
     }
     const revision = isJsonObject(parsed) && Number.isSafeInteger(parsed["revision"]) ? parsed["revision"] as number : 0;
     // the mutes are muted-panes.json's (readMutes): what this document holds of them is left out
-    return { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }), muted_panes: this.current.muted_panes };
+    return { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }), ...(body.hostWorkspaces === undefined ? {} : { hostWorkspaces: body.hostWorkspaces }), muted_panes: this.current.muted_panes };
   }
 
   get(): SharedPreferences { return this.current; }
@@ -89,9 +89,13 @@ export class PreferenceStore {
     }
     change = normalizeThemeChange(base.settings, change);
     const pins = change.pins ?? base.pins;
+    const hostWorkspaces = change.hostWorkspaces ?? base.hostWorkspaces;
     // a change that names no list leaves the mutes; an empty list is the last one unmuted
     const muted = change.muted_panes ?? base.muted_panes ?? [];
-    const next: SharedPreferences = { revision: base.revision + 1, settings: { ...base.settings, ...change.settings }, ...(pins === undefined ? {} : { pins }), muted_panes: muted };
+    const next: SharedPreferences = {
+      revision: base.revision + 1, settings: { ...base.settings, ...change.settings },
+      ...(pins === undefined ? {} : { pins }), ...(hostWorkspaces === undefined ? {} : { hostWorkspaces }), muted_panes: muted,
+    };
     if (byteLength(JSON.stringify(next)) > MAX_PREFERENCES_BYTES) throw new PreferencesTooLarge();
     // the revision first: a save that fails there leaves the mutes as they were. One that fails at the
     // list puts the previous preferences.json back, so a refused save leaves nothing on disk that no
@@ -140,7 +144,7 @@ export async function handlePreferencesRequest(request: Request, store: Preferen
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { return badRequest("invalid_json", "The body is not JSON"); }
   const body = sharedPreferencesBody(raw);
-  if (body === null) return badRequest("invalid_body", "Send { settings: object, pins?: string[], muted_panes?: string[] }");
+  if (body === null) return badRequest("invalid_body", "Send { settings: object, pins?: string[], muted_panes?: string[], hostWorkspaces?: object }");
   try { return reply(store.set(body)); }
   catch (error) {
     if (error instanceof PreferencesTooLarge) return tooLarge();

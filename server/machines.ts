@@ -19,6 +19,7 @@ import { validateTarget } from "./machine-security.ts";
 import { detectHost, HERDR_INSTALL_CMD } from "./remote-host.ts";
 import { discard, readCappedJson, REMOTE_LIMITS } from "./remote-json.ts";
 import { SshConnection } from "./ssh.ts";
+import type { HostChatRow } from "../shared/host-chats.ts";
 
 interface StoredMachine { id: string; name: string; target: SshTarget; enabled: boolean; snapshot?: SessionSnapshot | null }
 interface Runtime {
@@ -43,6 +44,8 @@ interface Runtime {
   verification?: SourceCheck;
   /** the user cancelled this PC's bridge update: it is not started again on its own until the PC connects */
   updateCancelled?: boolean;
+  /** its host chats' list is being read for the alerts; `again`: it changed meanwhile, read once more */
+  hostChatsRead?: { again: boolean };
 }
 interface JobState {
   update: boolean;
@@ -192,14 +195,17 @@ export class MachineManager {
   private bootId?: string;
   /** a monotonic clock for the health calls' start interval; tests pass their own */
   private now: () => number;
+  /** the bridges this manager starts show their PC's host chats (HERDR_WEB_AGENT_HOST=on) */
+  private readonly agentHost: boolean;
   private sourceToken = 0;
   /** each PC's last health-call start, kept across reconnects for as long as this manager lives */
   private sourceStarts = new Map<string, number>();
 
   constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes),
-    options: { bootId?: string; now?: () => number } = {}) {
+    options: { bootId?: string; now?: () => number; agentHost?: boolean } = {}) {
     this.bootId = options.bootId;
     this.now = options.now ?? (() => performance.now());
+    this.agentHost = options.agentHost ?? false;
     if (this.bootId) this.local.source_boot_id = this.bootId;
     this.profileState = new HerdrProfileState(stateDir);
     this.statePath = join(stateDir, "machines.json");
@@ -704,7 +710,7 @@ export class MachineManager {
     if (!descriptor) {
       if (job?.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
       if (job) this.stage(job, "starting", "Starting the remote bridge…");
-      await host.start(ssh, { session, herdrPath, inspection });
+      await host.start(ssh, { session, herdrPath, inspection, agentHost: this.agentHost });
       for (let i = 0; i < 40; i++) {
         if (job?.abort.signal.aborted || this.stopped) throw new Error("Setup cancelled");
         descriptor = (await host.descriptors(ssh)).find((d) => d.socket_path === expectedSocket && d.pid !== stalePid);
@@ -799,6 +805,8 @@ export class MachineManager {
       this.remoteDiagnostics.recovered(runtime.machine.id, { operation: "bridge", machine_id: runtime.machine.id });
       ws.send(JSON.stringify({ type: "role", mode: "observe" }));
     };
+    // the chats as they are now are the alerts' baseline: a change before this read is no news
+    this.readHostChats(runtime, generation);
     ws.onmessage = (event) => {
       if (generation !== runtime.generation || this.stopped) return;
       let message: ServerMessage;
@@ -813,6 +821,7 @@ export class MachineManager {
         void this.push.onStatus(message.pane_id, alertStatus(message.agent_status, message.background_wait), runtime.machine.id).catch(() => {});
       }
       if (message.type === "pane-exited") void this.push.onEnded(message.pane_id, runtime.machine.id).catch(() => {});
+      if (message.type === "host-chat-changed" && message.session === null) this.readHostChats(runtime, generation);
       this.emit({ type: "machine-message", machine_id: runtime.machine.id, message });
       if (["pane-status", "pane-exited", "session-changed"].includes(message.type)) void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e));
     };
@@ -821,6 +830,34 @@ export class MachineManager {
     runtime.ssh!.onExit = () => this.lost(runtime, generation, new Error("SSH connection ended"));
     runtime.poll = setInterval(() => void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e)), 5000);
     runtime.poll.unref();
+  }
+  /**
+   * The PC's host chats as its bridge lists them, handed to the alerts (server/push.ts
+   * onHostChats). One read at a time: a burst of list changes (a turn streaming) costs one more.
+   */
+  private readHostChats(runtime: Runtime, generation: number): void {
+    if (!this.agentHost) return;
+    if (runtime.hostChatsRead) { runtime.hostChatsRead.again = true; return; }
+    const read = runtime.hostChatsRead = { again: false };
+    void (async () => {
+      try {
+        do {
+          read.again = false;
+          const endpoint = runtime.endpoint;
+          if (!endpoint || generation !== runtime.generation || this.stopped) return;
+          const response = await fetch(`${endpoint.url}/api/host-chats/chats`, { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(15_000) });
+          // no agent host there (503), or an older bridge: no chats to alert about
+          if (!response.ok) return;
+          const { chats } = await response.json() as { chats: HostChatRow[] };
+          if (generation !== runtime.generation || this.stopped || !Array.isArray(chats)) return;
+          this.push.onHostChats(chats, runtime.machine.id, runtime.machine.name);
+        } while (read.again);
+      } catch {
+        /* the bridge went away: its reconnect reads the list again */
+      } finally {
+        if (runtime.hostChatsRead === read) runtime.hostChatsRead = undefined;
+      }
+    })();
   }
   private lost(runtime: Runtime, generation: number, error: unknown): void {
     if (generation !== runtime.generation || !runtime.machine.enabled || this.stopped) return;

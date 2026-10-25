@@ -2,6 +2,7 @@ import type { StreamSource } from "./conversation-shared.ts";
 import { claudePeerNotice, piMessage } from "./transcript-records.ts";
 import type { TranscriptEntry } from "./claude-transcript.ts";
 import { isCommandEntry } from "./claude-transcript.ts";
+import { COPILOT_TURN_MARK, copilotOpensTurn } from "./copilot.ts";
 
 /**
  * A Claude session's branch, followed as the file is scanned. Claude Code links each record to the
@@ -94,6 +95,7 @@ const TURN_MARK: Record<StreamSource, Buffer> = {
   "gjc-transcript": Buffer.from('"user"'),
   "pi-transcript": Buffer.from('"user"'),
   "cmd-transcript": Buffer.from('"user"'),
+  "copilot-transcript": COPILOT_TURN_MARK,
 };
 
 /**
@@ -107,6 +109,7 @@ function opensTurn(source: StreamSource, line: string): boolean {
   try { entry = JSON.parse(line); } catch { return false; }
   if (entry === null || typeof entry !== "object") return false;
   if (source === "codex-transcript") return entry.type === "event_msg" && entry.payload?.type === "task_started";
+  if (source === "copilot-transcript") return copilotOpensTurn(line);
   if (source !== "claude-transcript") {
     const message = piMessage(entry);
     return message?.role === "user" && (message.content as Record<string, unknown>[]).some((part) => part.type === "text" && typeof part.text === "string" && part.text.length > 0);

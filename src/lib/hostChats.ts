@@ -108,7 +108,7 @@ export async function fetchHostFiles(machineId: string, session: string, query: 
 }
 
 /**
- * Stores an attached file in the chat's folder on its PC (`.herdr-web-ui/`, where a pane's go): its
+ * Stores an attached file in the chat's folder on its PC (`.ovis/`, where a pane's go): its
  * path, which the message then carries as an attachment. Refused before reading for a file over
  * the limit (AttachmentTooLargeError), as a pane's upload is.
  */

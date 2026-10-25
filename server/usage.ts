@@ -962,7 +962,7 @@ export class UsageService {
       if (!held || (held.problem !== null && usage.problem === null)) byKey.set(usage.key, usage);
     }
     // two sign-ins of one provider that name no account are told apart by a number, in key order
-    const unnamed = new Map<UsageProviderId, ProviderUsage[]>();
+    const unnamed = new Map<string, ProviderUsage[]>();
     for (const usage of byKey.values()) if (usage.account === null) unnamed.set(usage.id, [...unnamed.get(usage.id) ?? [], usage]);
     for (const group of unnamed.values()) {
       if (group.length < 2) continue;
