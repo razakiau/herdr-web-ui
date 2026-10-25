@@ -253,15 +253,20 @@ interface TurnRead { times: TurnTimes; running: boolean; model: string | null; c
 const AUTO_MODEL = "auto";
 
 /**
- * Whether a subagent's model is worth saying: VS Code's shouldShowSubagentModel by id. Not when it
- * is the chat's own or Auto; always under an Auto chat (the concrete one is news).
+ * Whether a subagent's model is worth saying: any concrete one, the chat's own too, unlike VS
+ * Code's shouldShowSubagentModel (owner, ZAC-233: which model and effort a worker runs on was the
+ * question; the same name as the chat's answers it). Auto names nothing.
  */
-function shownModel(subagent: string | undefined, parent: string | null): boolean {
+function shownModel(subagent: string | undefined): boolean {
   const own = subagent?.trim().toLowerCase();
-  if (!own || own === AUTO_MODEL) return false;
-  const parentId = parent?.trim().toLowerCase() ?? null;
-  if (parentId !== null && (parentId === AUTO_MODEL || parentId.slice(parentId.lastIndexOf(":") + 1) === AUTO_MODEL)) return true;
-  return own !== parentId;
+  return !!own && own !== AUTO_MODEL;
+}
+
+/** A model selection's effort: thinkingLevel, else its config's one string value (as modelOf reads it). */
+function effortOfSelection(selection: { config?: Record<string, unknown> } | undefined): string | null {
+  const config = selection?.config ?? {};
+  const effort = config["thinkingLevel"] ?? Object.values(config).find((value) => typeof value === "string");
+  return typeof effort === "string" && effort.trim() !== "" ? effort : null;
 }
 
 /**
@@ -311,7 +316,13 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
   // a background task's call settles as soon as it is launched: its own chat still running says it runs on
   const status = !settled(tool) || (!failed && own?.activeTurn !== undefined) ? "running" : failed || tool.status === ToolCallStatus.Cancelled ? "failed" : "done";
   const timing = own ? chatTiming(own) : null;
-  const ownModel = own ? (own.activeTurn ?? own.turns.at(-1))?.message.model?.id : undefined;
+  const ownSelection = own ? (own.activeTurn ?? own.turns.at(-1))?.message.model : undefined;
+  const ownModel = ownSelection?.id;
+  // the host files a subagent's effort on its turn's usage (subagent.configured), else it is in the model's config
+  const ownTurn = own ? own.activeTurn ?? own.turns.at(-1) : undefined;
+  const configured = (ownTurn?.usage as { _meta?: Record<string, unknown> } | undefined)?._meta?.["vscode.modelConfiguration"];
+  const metaEffort = isRecord(configured) && typeof configured["reasoningEffort"] === "string" && configured["reasoningEffort"].trim() !== "" ? configured["reasoningEffort"] : null;
+  const ownEffort = metaEffort ?? effortOfSelection(ownSelection as { config?: Record<string, unknown> } | undefined);
   const activity = own && status === "running" ? activityOf(own) : undefined;
   const started = timing?.started ?? turn.times.started;
   return {
@@ -322,7 +333,7 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
     description: intent ?? subagent.description ?? "",
     ...(intent !== null && subagent.description && subagent.description.trim() !== intent ? { about: subagent.description } : {}),
     ...(background || (status === "running" && settled(tool)) ? { background: true as const } : {}),
-    model: ownModel !== undefined && shownModel(ownModel, turn.model) ? turn.context!.modelName(ownModel) : null,
+    model: ownModel !== undefined && shownModel(ownModel) ? `${turn.context!.modelName(ownModel)}${ownEffort !== null ? ` · ${ownEffort}` : ""}` : null,
     started,
     ended: status === "running" ? null : timing?.started ? timing.ended ?? turn.times.ended : turn.times.ended,
     status,
@@ -935,9 +946,7 @@ function modelOf(chat: ChatState): HostChatRead["model"] {
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const selection = newest?.message.model ?? chat.draft?.model;
   if (!selection) return null;
-  const config = selection.config ?? {};
-  const effort = config["thinkingLevel"] ?? Object.values(config).find((value) => typeof value === "string");
-  return { id: selection.id, effort: typeof effort === "string" ? effort : null };
+  return { id: selection.id, effort: effortOfSelection(selection as { config?: Record<string, unknown> }) };
 }
 
 /** The chat's background work by kind (AHP lists only work still running). */

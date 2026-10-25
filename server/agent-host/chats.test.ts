@@ -867,23 +867,31 @@ describe("host chat turns, whole", () => {
     expect(pendingCount(awaiting)).toBe(1);
   });
 
-  it("subagent_model_only_when_different", () => {
+  it("a subagent says its model and effort, the chat's own too (owner, ZAC-233)", () => {
     const subagent = { type: "subagent", resource: "ahp-chat://default/fictional-sub", title: "Explore", agentName: "explore", description: "FICTIONAL find the config" };
     const parent = (model: string) => reducedChat([
       { type: "chat/turnStarted", turnId: "turn-1", startedAt: AT, message: { ...user("FICTIONAL do it"), model: { id: model } } } as StateAction,
       ...toolCallActions("turn-1", call("c3", "task", "Task"), done([subagent])), finished()]);
-    const sub = (model: string, startedAt = "2026-01-01T00:00:01.000Z", duration = 343_000) => reducedChat([
-      { type: "chat/turnStarted", turnId: "s-1", startedAt, message: { ...user("FICTIONAL find it"), model: { id: model } } } as StateAction,
+    const sub = (model: string, startedAt = "2026-01-01T00:00:01.000Z", duration = 343_000, effort?: string) => reducedChat([
+      { type: "chat/turnStarted", turnId: "s-1", startedAt, message: { ...user("FICTIONAL find it"), model: { id: model, ...(effort ? { config: { thinkingLevel: effort } } : {}) } } } as StateAction,
       { type: "chat/turnComplete", turnId: "s-1", duration } as StateAction,
     ]);
     const names = (id: string) => id === "fictional/model-b" ? "FICTIONAL Model B" : id;
-    const read = (parentModel: string, subModel: string | null) => {
-      const chats = (uri: string) => uri === subagent.resource && subModel !== null ? sub(subModel) : undefined;
+    const read = (parentModel: string, subModel: string | null, effort?: string) => {
+      const chats = (uri: string) => uri === subagent.resource && subModel !== null ? sub(subModel, undefined, undefined, effort) : undefined;
       return turnsFrom(parent(parentModel), { chat: chats, modelName: names })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
     };
-    // a model the chat itself uses is not said again; another one is, by its name
-    expect(read("fictional/model-a", "fictional/model-a").model).toBeNull();
+    // its model by name, the chat's own too: "which model and effort is it on" is the question asked
+    expect(read("fictional/model-a", "fictional/model-a").model).toBe("fictional/model-a");
     expect(read("fictional/model-a", "fictional/model-b").model).toBe("FICTIONAL Model B");
+    expect(read("fictional/model-a", "fictional/model-b", "high").model).toBe("FICTIONAL Model B · high");
+    // the host puts a subagent's effort on its turn's usage (subagent.configured), not in the model's config
+    const metaSub = reducedChat([
+      { type: "chat/turnStarted", turnId: "s-1", startedAt: AT, message: { ...user("FICTIONAL find it"), model: { id: "fictional/model-b" } } } as StateAction,
+      { type: "chat/usage", turnId: "s-1", usage: { inputTokens: 1, outputTokens: 1, _meta: { "vscode.modelConfiguration": { reasoningEffort: "medium" } } } } as unknown as StateAction,
+    ]);
+    const viaMeta = turnsFrom(parent("fictional/model-a"), { chat: (uri) => uri === subagent.resource ? metaSub : undefined, modelName: names })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
+    expect(viaMeta.model).toBe("FICTIONAL Model B · medium");
     // under Auto, the concrete model always shows; an Auto subagent never does
     expect(read("auto", "fictional/model-a").model).toBe("fictional/model-a");
     expect(read("fictional/model-a", "auto").model).toBeNull();
