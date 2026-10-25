@@ -510,13 +510,34 @@ describe("what a host chat waits on, and its context", () => {
 
   it("a read carries the session's todos when it has some, and they change its signature", () => {
     const base = { chat: () => undefined, modelName: (id: string) => id };
-    const one = [{ id: "a", title: "FICTIONAL plan", status: "in_progress" as const }];
-    const done = [{ id: "a", title: "FICTIONAL plan", status: "done" as const }];
-    expect(readFrom("s", "t", chat({}), { ...base, todos: () => one }).todos).toEqual(one);
+    const one = [{ id: "a", title: "FICTIONAL plan", status: "in_progress" as const, created: null }];
+    const done = [{ id: "a", title: "FICTIONAL plan", status: "done" as const, created: null }];
+    expect(readFrom("s", "t", chat({}), { ...base, todos: () => one }).todos).toEqual([{ id: "a", title: "FICTIONAL plan", status: "in_progress" }]);
     expect(readFrom("s", "t", chat({}), { ...base, todos: () => [] })).not.toHaveProperty("todos");
     expect(readFrom("s", "t", chat({}), { ...base, todos: () => null })).not.toHaveProperty("todos");
     expect(readFrom("s", "t", chat({}), { ...base, todos: () => one }).signature)
       .not.toBe(readFrom("s", "t", chat({}), { ...base, todos: () => done }).signature);
+  });
+
+  it("a read's todos start over at each message, as VS Code's list: that turn's, older open ones, none once it was stopped", () => {
+    const base = { chat: () => undefined, modelName: (id: string) => id };
+    const at = (iso: string) => Date.parse(iso);
+    const rows = [
+      { id: "old-done", title: "FICTIONAL old done", status: "done" as const, created: at("2026-01-01T09:00:00Z") },
+      { id: "old-open", title: "FICTIONAL old open", status: "pending" as const, created: at("2026-01-01T09:00:00Z") },
+      { id: "new", title: "FICTIONAL new", status: "in_progress" as const, created: at("2026-01-01T10:00:05Z") },
+    ];
+    const message = { text: "FICTIONAL" };
+    const turn = (id: string, startedAt: string, state = "complete") => ({ id, startedAt, state, message, responseParts: [] });
+    const ids = (read: { todos?: { id: string }[] }) => read.todos?.map((todo) => todo.id);
+    // running: the active turn's start cuts
+    expect(ids(readFrom("s", "t", chat({ turns: [turn("t1", "2026-01-01T09:00:00Z")], activeTurn: { id: "t2", startedAt: "2026-01-01T10:00:00Z", message, responseParts: [] } }), { ...base, todos: () => rows }))).toEqual(["old-open", "new"]);
+    // at rest: the newest turn's
+    expect(ids(readFrom("s", "t", chat({ turns: [turn("t1", "2026-01-01T09:00:00Z"), turn("t2", "2026-01-01T10:00:00Z")] }), { ...base, todos: () => rows }))).toEqual(["old-open", "new"]);
+    // stopped: none
+    expect(readFrom("s", "t", chat({ turns: [turn("t2", "2026-01-01T10:00:00Z", "cancelled")] }), { ...base, todos: () => rows })).not.toHaveProperty("todos");
+    // the time never reaches the client
+    expect(readFrom("s", "t", chat({}), { ...base, todos: () => rows }).todos?.[0]).toEqual({ id: "old-done", title: "FICTIONAL old done", status: "done" });
   });
 
   it("a read carries the session's artifacts and the chat's running work, and either changes its signature", () => {

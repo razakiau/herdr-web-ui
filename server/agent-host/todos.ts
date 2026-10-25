@@ -19,7 +19,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUSES = new Set<HostTodo["status"]>(["pending", "in_progress", "done", "blocked"]);
 
 /** per store: the mtimes it was read at, and what it held */
-const cache = new Map<string, { stamp: string; todos: HostTodo[] | null }>();
+/** A row with when it was written (created_at, ms): todosSince cuts on it, and it stays on the server. */
+export type StoredTodo = HostTodo & { created: number | null };
+
+const cache = new Map<string, { stamp: string; todos: StoredTodo[] | null }>();
 
 /** per VS Code chat: the SDK session it names, by the stamp of the store it was read from */
 const sdkCache = new Map<string, { stamp: number; sdk: string | null }>();
@@ -69,7 +72,7 @@ function mtime(path: string): number | null {
 }
 
 /** The session's todos in the order they were written; null when it has no store or no table. */
-export function readSessionTodos(session: string, home: string = defaultCopilotHome(), agentDirs: readonly string[] = defaultAgentSessionDirs()): HostTodo[] | null {
+export function readSessionTodos(session: string, home: string = defaultCopilotHome(), agentDirs: readonly string[] = defaultAgentSessionDirs()): StoredTodo[] | null {
   const uuid = session.slice(session.indexOf(":/") + 2);
   if (!session.includes(":/") || !UUID.test(uuid)) return null;
   // a CLI chat's own folder first; a VS Code chat's through the SDK session its store names
@@ -82,13 +85,18 @@ export function readSessionTodos(session: string, home: string = defaultCopilotH
   const stamp = `${db}:${mtime(`${path}-wal`)}`;
   const known = cache.get(path);
   if (known?.stamp === stamp) return known.todos;
-  let todos: HostTodo[] | null;
+  let todos: StoredTodo[] | null;
   try {
     const store = new Database(path, { readonly: true });
     try {
       const table = store.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'todos'").get();
-      todos = table === null ? null : (store.query("SELECT id, title, status FROM todos ORDER BY rowid").all() as HostTodo[])
-        .map((row) => ({ id: String(row.id), title: String(row.title), status: STATUSES.has(row.status) ? row.status : "pending" }));
+      // created_at is SQLite's datetime('now'): UTC, to the second, no zone written
+      const hasCreated = store.query("SELECT 1 FROM pragma_table_info('todos') WHERE name = 'created_at'").get() !== null;
+      todos = table === null ? null : (store.query(`SELECT id, title, status${hasCreated ? ", created_at" : ""} FROM todos ORDER BY rowid`).all() as (HostTodo & { created_at?: unknown })[])
+        .map((row) => {
+          const created = typeof row.created_at === "string" ? Date.parse(`${row.created_at.replace(" ", "T")}Z`) : Number.NaN;
+          return { id: String(row.id), title: String(row.title), status: STATUSES.has(row.status) ? row.status : "pending", created: Number.isFinite(created) ? created : null };
+        });
     } finally { store.close(); }
   } catch {
     // locked mid-write or damaged: what it held last time, and try again next read
@@ -96,4 +104,18 @@ export function readSessionTodos(session: string, home: string = defaultCopilotH
   }
   cache.set(path, { stamp, todos });
   return todos;
+}
+
+/**
+ * The list as VS Code's todo widget keeps it: it clears at each request and on a cancel, so the bar shows
+ * the todos the newest message's turn wrote, plus older ones still open (work carried over), and none
+ * once that turn was stopped. `since`: that turn's start (ms), null for the whole list. The table's times
+ * are whole seconds, so the cut is the turn's second.
+ */
+export function todosSince(todos: readonly StoredTodo[], since: number | null, cancelled: boolean): HostTodo[] {
+  if (cancelled && since !== null) return [];
+  const cut = since === null ? null : Math.floor(since / 1000) * 1000;
+  return todos
+    .filter((todo) => cut === null || todo.created === null || todo.created >= cut || todo.status !== "done")
+    .map(({ created: _created, ...todo }) => todo);
 }

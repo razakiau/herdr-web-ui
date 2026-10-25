@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { HostTodo } from "../../shared/host-chats.ts";
-import { forgetSessionTodos, readSessionTodos } from "./todos.ts";
+import { forgetSessionTodos, readSessionTodos, todosSince, type StoredTodo } from "./todos.ts";
 
 const UUID = "1da5c4f1-451b-4845-953f-52a960f82afa";
 const SCHEMA = `CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT,
@@ -48,8 +48,9 @@ describe("readSessionTodos", () => {
       { id: "a-build", title: "Build", status: "in_progress" },
       { id: "c-ship", title: "Ship", status: "pending" },
     ];
-    expect(readSessionTodos(`copilotcli:/${UUID}`, home)).toEqual(expected);
-    expect(readSessionTodos(`ahp-session:/${UUID}`, home)).toEqual(expected);
+    const bare = (todos: StoredTodo[] | null) => todos?.map(({ created: _created, ...todo }) => todo) ?? null;
+    expect(bare(readSessionTodos(`copilotcli:/${UUID}`, home))).toEqual(expected);
+    expect(bare(readSessionTodos(`ahp-session:/${UUID}`, home))).toEqual(expected);
   });
 
   test("is null without a folder, a database or a todos table", () => {
@@ -66,9 +67,9 @@ describe("readSessionTodos", () => {
 
   test("keeps the last good list when the store can't be read", () => {
     const path = store(UUID, [SCHEMA, "INSERT INTO todos (id, title) VALUES ('x', 'X')"]);
-    expect(readSessionTodos(`copilotcli:/${UUID}`, home)).toEqual([{ id: "x", title: "X", status: "pending" }]);
+    expect(readSessionTodos(`copilotcli:/${UUID}`, home)).toMatchObject([{ id: "x", title: "X", status: "pending" }]);
     writeFileSync(path, "not a database at all, just bytes ".repeat(200));
-    expect(readSessionTodos(`copilotcli:/${UUID}`, home)).toEqual([{ id: "x", title: "X", status: "pending" }]);
+    expect(readSessionTodos(`copilotcli:/${UUID}`, home)).toMatchObject([{ id: "x", title: "X", status: "pending" }]);
   });
 
   test("reads again once the store changed", () => {
@@ -85,8 +86,8 @@ describe("readSessionTodos", () => {
     const agentDirs = [join(home, "absent"), join(home, "agentSessionData")];
     expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toBeNull();
     vscodeStore(agentDirs[1]!, CHAT, JSON.stringify({ sdkSessionId: UUID, model: { id: "fictional" } }));
-    expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toEqual([{ id: "t1", title: "FICTIONAL plan", status: "in_progress" }]);
-    expect(readSessionTodos(`ahp-chat:/${CHAT}`, home, agentDirs)).toEqual([{ id: "t1", title: "FICTIONAL plan", status: "in_progress" }]);
+    expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toMatchObject([{ id: "t1", title: "FICTIONAL plan", status: "in_progress" }]);
+    expect(readSessionTodos(`ahp-chat:/${CHAT}`, home, agentDirs)).toMatchObject([{ id: "t1", title: "FICTIONAL plan", status: "in_progress" }]);
   });
 
   test("a VS Code store that names no uuid, or isn't JSON, leads nowhere", () => {
@@ -101,5 +102,43 @@ describe("readSessionTodos", () => {
     rmSync(join(agentDirs[0]!, CHAT), { recursive: true });
     vscodeStore(agentDirs[0]!, CHAT, "not json");
     expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toBeNull();
+  });
+});
+
+describe("todosSince (VS Code clears the list at each request)", () => {
+  test("reads created_at as the UTC time SQLite wrote", () => {
+    store(UUID, [SCHEMA, "INSERT INTO todos (id, title, created_at) VALUES ('x', 'X', '2026-10-25 18:14:04')"]);
+    expect(readSessionTodos(`copilotcli:/${UUID}`, home)?.[0]?.created).toBe(Date.parse("2026-10-25T18:14:04Z"));
+  });
+
+  const at = (iso: string) => Date.parse(iso);
+  const todo = (id: string, status: HostTodo["status"], created: number | null): StoredTodo => ({ id, title: id.toUpperCase(), status, created });
+  const list = [
+    todo("old-done", "done", at("2026-10-25T10:00:00Z")),
+    todo("old-open", "pending", at("2026-10-25T10:00:00Z")),
+    todo("old-going", "in_progress", at("2026-10-25T10:00:00Z")),
+    todo("new-done", "done", at("2026-10-25T12:00:01Z")),
+    todo("new-open", "pending", at("2026-10-25T12:00:05Z")),
+  ];
+
+  test("the newest message's todos, and older ones still open; done ones from before it go", () => {
+    expect(todosSince(list, at("2026-10-25T12:00:00Z"), false).map((row) => row.id)).toEqual(["old-open", "old-going", "new-done", "new-open"]);
+  });
+
+  test("the whole list without a turn to cut at, as before", () => {
+    expect(todosSince(list, null, false).map((row) => row.id)).toEqual(list.map((row) => row.id));
+  });
+
+  test("a stopped turn's list is cleared, as VS Code clears it on cancel", () => {
+    expect(todosSince(list, at("2026-10-25T12:00:00Z"), true)).toEqual([]);
+  });
+
+  test("a row without a time is kept (an older store), and the stored time never leaves the server", () => {
+    const kept = todosSince([todo("unknown", "done", null)], at("2026-10-25T12:00:00Z"), false);
+    expect(kept).toEqual([{ id: "unknown", title: "UNKNOWN", status: "done" }]);
+  });
+
+  test("seconds: a todo written in the turn's own second counts as the turn's", () => {
+    expect(todosSince([todo("same", "done", at("2026-10-25T12:00:00Z"))], at("2026-10-25T12:00:00.700Z"), false).map((row) => row.id)).toEqual(["same"]);
   });
 });

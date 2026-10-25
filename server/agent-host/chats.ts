@@ -46,8 +46,9 @@ import {
   type Turn,
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
+import { todosSince, type StoredTodo } from "./todos.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTodo, HostTokenTotal } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
 import { trimOutput } from "../tool-output.ts";
 
@@ -242,8 +243,8 @@ export interface ReadContext {
   modelWindow?(id: string): number | null;
   /** the most a model writes in one answer as the host lists it (maxOutputTokens), null when it has none */
   modelOutput?(id: string): number | null;
-  /** the session's todo list, null when it has none */
-  todos?(): HostTodo[] | null;
+  /** the session's todo list with when each row was written (server/agent-host/todos.ts), null when it has none */
+  todos?(): StoredTodo[] | null;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -1106,7 +1107,12 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     checkpoints: checkpointsOf(chat),
     restored,
   };
-  const todos = context?.todos?.() ?? null;
+  // as VS Code's list: it starts over at each message, so the newest turn's start cuts it (todosSince)
+  const lastTurn = chat.turns.at(-1);
+  const since = Date.parse(chat.activeTurn?.startedAt ?? lastTurn?.startedAt ?? "");
+  const stopped = chat.activeTurn === undefined && lastTurn !== undefined && "state" in lastTurn && lastTurn.state === TurnState.Cancelled;
+  const stored = context?.todos?.() ?? null;
+  const todos = stored === null ? null : todosSince(stored, Number.isFinite(since) ? since : null, stopped);
   if (todos !== null && todos.length > 0) read.todos = todos;
   const shape = [
     read.title, read.status,

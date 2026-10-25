@@ -17,7 +17,8 @@ export function currentTodo(todos: readonly HostTodo[]): HostTodo | null {
  * VS Code's todo list above the input (chat.todoListWidget), drawn as a tab tucked under the
  * composer's top edge (the Composer's `tray`) so it reads as part of it: closed, how many are done,
  * a short meter and the task the agent is on; open, every todo with its state. Gone when there is none,
- * and once all are done and the chat is idle.
+ * and once all are done and the chat is idle. The list starts over at each message, as VS Code's does
+ * (the server cuts it: server/agent-host/todos.ts todosSince), so it no longer grows for ever (ZAC-233).
  */
 export function HostTodoBar({ todos, busy, defaultOpen = false }: { todos: readonly HostTodo[] | undefined; busy: boolean; defaultOpen?: boolean }) {
   const t = useT();
