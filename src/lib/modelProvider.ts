@@ -100,8 +100,8 @@ export function multiplierLabel(model: Pick<HostModel, "multiplier">): string | 
 
 type PickStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const RECENT_MAX = 5;
-const recentKey = (machineId: string): string => `herdr-web-ui:host-models-recent:${machineId}`;
-const pinnedKey = (machineId: string): string => `herdr-web-ui:host-models-pinned:${machineId}`;
+const recentKey = (machineId: string): string => `ovis:host-models-recent:${machineId}`;
+const pinnedKey = (machineId: string): string => `ovis:host-models-pinned:${machineId}`;
 const local = (): PickStorage | null => { try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; } };
 
 function readIds(key: string, storage: PickStorage | null): string[] {

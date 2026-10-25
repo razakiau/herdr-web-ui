@@ -10,7 +10,7 @@ import { ChevronDown, ChevronRight, Monitor } from "lucide-react";
 import type { Machine } from "../../shared/machines.ts";
 import { useT } from "../lib/i18n.ts";
 
-const OPEN_KEY = "herdr-web-ui:other-pcs-open";
+const OPEN_KEY = "ovis:other-pcs-open";
 
 /** What works and what asks on a PC: its agents' and its host chats'. */
 export interface PcActivity { working: number; asking: number }

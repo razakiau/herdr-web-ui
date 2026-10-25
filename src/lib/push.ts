@@ -1,4 +1,5 @@
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
+import type { Translate } from "./i18n.ts";
 import { ApiError, fetchPushKey, registerPushSubscription, sendTestPush, unregisterPushSubscription } from "./api.ts";
 import { callNative, hasNativePlugin, PUSH_PLUGIN } from "./nativeApp.ts";
 import { notificationState } from "./notifications.ts";
@@ -16,6 +17,14 @@ import { notificationState } from "./notifications.ts";
 
 /** How long to wait for the service worker before giving up on push for this page load. */
 const WORKER_READY_TIMEOUT_MS = 10_000;
+
+/** The Alerts page's line on the deployment's ntfy topic: its name and which alerts it gets; null when it gets none. */
+export function ntfyLine(ntfy: { topic: string; alerts: AlertPrefs } | null, t: Translate): string | null {
+  if (!ntfy) return null;
+  const done = ntfy.alerts.done === "always" ? t("every finished turn") : ntfy.alerts.done === "long" ? t("long turns") : null;
+  const what = ntfy.alerts.input && done ? t("questions and {done}", { done }) : ntfy.alerts.input ? t("questions") : done;
+  return what ? t("This server also posts alerts to the ntfy topic {topic}: {what}.", { topic: ntfy.topic, what }) : null;
+}
 
 /** A subscription the app made for this PC: a browser's PushSubscriptionJSON, its endpoint on the push relay. */
 interface AppSubscription {

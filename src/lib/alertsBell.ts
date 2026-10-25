@@ -11,36 +11,31 @@ export interface AlertsBellParams {
   pushOn: boolean;
   enableNotifications: () => Promise<unknown>;
   disableNotifications: () => Promise<unknown>;
+  /** the server's ntfy topic, when it has one: with it, push off here is a choice, not a gap */
+  ntfyTopic?: string | null;
 }
 
-/** What the Alerts item in the header's More menu shows and does. */
-export function alertsBell({ t, settings, alertsOn, notifications, pushOn, enableNotifications, disableNotifications }: AlertsBellParams) {
-  // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
-  // need none, so they count as on. A device that has not answered the permission question is
-  // asked by the item; one that has answered gets a plain switch.
+/** What the "Push to this device" item in the header's More menu shows and does. */
+export function alertsBell({ t, settings, alertsOn, notifications, pushOn, enableNotifications, disableNotifications, ntfyTopic = null }: AlertsBellParams) {
+  // The menu's push item: web push to this device, one channel of the alerts beside the in-app
+  // ones and the server's ntfy topic (Settings -> Alerts holds all three). A device that has not
+  // answered the permission question is asked by the item; one that has answered gets a plain switch.
   const bell: { state: string; title: string; on: boolean; run: () => Promise<unknown> } =
-    !alertsOn
-      ? { state: t("Off on this device"), title: t("Alerts off on this device. Tap to turn them on"), on: false, run: enableNotifications }
-      : notifications !== "granted"
-        ? !settings.alertInApp
-          ? { state: t("Off on this device"), title: t("Notify me when a pane needs input or finishes"), on: false, run: enableNotifications }
-          : notifications === "default"
-            ? { state: t("On in the app"), title: t("Alerts on in the app. Tap to allow them when it is closed too"), on: true, run: enableNotifications }
-            : { state: t("On in the app"), title: t("Alerts on in the app. Tap to turn them off"), on: true, run: disableNotifications }
-        : pushOn
-          ? { state: t("On, pushed to this device"), title: t("Alerts on, pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
-          : {
-              state: t("On in this tab"),
-              // turning them off and on again retries the push subscription
-              title: pushSupported()
-                ? t("Alerts on while this tab is open. Tap to turn them off")
-                : t("Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to turn them off"),
-              on: true,
-              run: disableNotifications,
-            };
-  // hidden only where it could do nothing: no system notifications and in-app alerts off
-  const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
-  // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
-  const alertsOffDot = bellVisible && !bell.on;
+    !alertsOn || notifications !== "granted"
+      ? { state: t("Off"), title: t("Push alerts to this device, even with the app closed. Tap to turn them on"), on: false, run: enableNotifications }
+      : pushOn
+        ? { state: t("On"), title: t("Alerts are pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
+        : {
+            state: t("On while this tab is open"),
+            // turning them off and on again retries the push subscription
+            title: t("The push service could not be reached: alerts show while this tab is open. Tap to turn them off"),
+            on: true,
+            run: disableNotifications,
+          };
+  // hidden where push cannot work: no push in this browser, or notifications blocked
+  const bellVisible = pushSupported() && notifications !== "denied";
+  // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance,
+  // only when nothing tells this device at all: no push, no in-app alerts, no ntfy topic
+  const alertsOffDot = bellVisible && !bell.on && !settings.alertInApp && ntfyTopic === null;
   return { bell, bellVisible, alertsOffDot };
 }

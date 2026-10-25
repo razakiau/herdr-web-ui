@@ -232,6 +232,21 @@ try {
     for (const opened of [a, b, c, d]) await opened.context.close();
     console.log("PASS shared settings and pins, device settings, gated concurrent writes, new theme sides, event-stream recovery and no correcting PUTs");
 
+    // the app installed again from another browser (Brave, then Chrome, 2026-10-22): voice choices
+    // this browser made while they were its own go out by themselves, and a fresh install takes them
+    const voice = { voiceInput: "on", voiceLanguage: "fr-FR", voicePolishTerminal: true };
+    const brave = await browserAt(browser, voice);
+    await windows([brave]);
+    assert.deepEqual(brave.puts.map((body) => body.settings), [voice], "the old browser shares its voice choices without being touched");
+    const kept = (await held()).settings;
+    assert.deepEqual(Object.fromEntries(Object.keys(voice).map((key) => [key, kept[key]])), voice, "the server holds them");
+    const chrome = await browserAt(browser);
+    await settingsHold(chrome.page, voice);
+    await windows([chrome]);
+    assert.deepEqual(chrome.puts, [], "the new install takes them and sends nothing back");
+    for (const opened of [brave, chrome]) await opened.context.close();
+    console.log("PASS voice settings made on one browser reach an app installed again from another");
+
     // A save that keeps failing pauses after three, keeps what is edited meanwhile, and goes out
     // on Retry or when the event stream reopens; another client converges on the latest values.
     const pinnedWorkspace = (await workspaceCreate({ cwd: root, label: "ovis-test-preferences-pin" })).workspace.workspace_id;

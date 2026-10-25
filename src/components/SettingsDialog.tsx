@@ -12,7 +12,10 @@ import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/s
 import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
 import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
 import { CLAUDE_LAUNCH_MODES, CODEX_LAUNCH_MODES, type ClaudeLaunchMode, type CodexLaunchMode } from "../lib/agentLaunchMode.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type HostAutoOpen, type VoiceButton } from "../lib/settings.ts";
+import { fetchHostModels } from "../lib/hostChats.ts";
+import { APPROVALS_LABEL } from "./ModelPicker.tsx";
+import type { HostModel } from "../../shared/host-chats.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -25,9 +28,10 @@ import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalle
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
-import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
+import { fetchNtfyTopic, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
+import { ntfyLine } from "../lib/push.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
-import type { AgentIntegration, HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
+import type { AgentIntegration, HealthAuth, PluginActions, PushKey, RemoteAccess } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { loadIntegrations, outcomeFor, type IntegrationsResult } from "../lib/integrations.ts";
 import type { VoiceStatus } from "../../shared/voice.ts";
@@ -68,6 +72,8 @@ export interface SettingsDialogProps {
   /** the herdr this app's server talks to, from the last health check */
   herdrVersion: string | null;
   onEnableNotifications: () => Promise<boolean>;
+  /** turns this device's alerts off: its push subscription goes too */
+  onDisableNotifications: () => Promise<void>;
   /** the last change the server refused to save (lib/preferencesSync.ts); null once a save lands */
   saveError: UserError | null;
   /** three saves failed in a row: nothing is sent until Retry, a reconnect or a longer wait */
@@ -313,6 +319,9 @@ function AppearancePage() {
       <SettingsRow label={t("Density")}>
         <Segmented label={t("Density")} value={settings.density} onChange={(density) => update({ density })} options={[{ value: "comfortable", label: t("Comfortable") }, { value: "compact", label: t("Compact") }]} />
       </SettingsRow>
+      <SettingsRow label={t("Smooth animations")} description={t("Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.")}>
+        <Toggle label={t("Smooth animations")} checked={settings.smoothMotion} onChange={(smoothMotion) => update({ smoothMotion })} />
+      </SettingsRow>
       <SettingsRow label={t("Language")} description={t("Follows the browser unless you choose one")} htmlFor="settings-language">
         <select id="settings-language" className="select settings-select" value={settings.language} onChange={(event) => update({ language: event.target.value as typeof settings.language })}>
           {LANGUAGE_SETTINGS.map((language) => <option key={language} value={language}>{language === "system" ? t("System") : LANGUAGE_NAMES[language]}</option>)}
@@ -324,7 +333,7 @@ function AppearancePage() {
       <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed")} wide>
         <Segmented label={t("Agents order")} value={settings.agentOrder} onChange={(agentOrder) => update({ agentOrder })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }]} />
       </SettingsRow>
-      <SettingsRow label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
+      <SettingsRow label={t("Agent logos")} description={t("Draw agent logos and file icons in their colors, or without color")} wide>
         <Segmented label={t("Agent logos")} value={settings.agentMarks} onChange={(agentMarks) => update({ agentMarks })} options={[{ value: "color", label: t("Color") }, { value: "mono", label: t("Mono") }]} />
       </SettingsRow>
       <SettingsRow label={t("Status indicators")} description={t("Classic marks only the states that ask for a look; Dots and Symbols draw every state as herdr's TUI does")} wide>
@@ -481,31 +490,60 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   );
 }
 
-function AlertsPage({ onEnableNotifications }: { onEnableNotifications: () => Promise<boolean> }) {
+function AlertsPage({ onEnableNotifications, onDisableNotifications }: { onEnableNotifications: () => Promise<boolean>; onDisableNotifications: () => Promise<void> }) {
   const { settings, update } = useSettings();
   const t = useT();
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(settings.alertSound);
   return (
-    <SettingsGroup note={t("For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
-      <PushTestControls onEnable={onEnableNotifications} />
-      <SettingsRow label={t("Needs input")} description={t("An agent waits for an answer or a permission")}>
-        <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
-      </SettingsRow>
-      <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
-        <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
-      </SettingsRow>
-      <SettingsRow label={t("In the app")} description={t("While the app is open, these drop in from the top of the screen at once. Tap one to open its pane.")}>
-        <Toggle label={t("In the app")} checked={settings.alertInApp} onChange={(alertInApp) => update({ alertInApp })} />
-      </SettingsRow>
-      <SettingsRow label={t("Sound")} description={t("While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.")}>
-        <Toggle label={t("Sound")} checked={settings.alertSound} onChange={(alertSound) => {
-          update({ alertSound });
-          alertSoundWanted.current = alertSound;
-          // this tap is the gesture the page needs to play audio; the chime is the preview,
-          // unless the switch went off again while the audio was getting ready
-          if (alertSound) void unlockAlertSound().then((ready) => { if (ready && alertSoundWanted.current) previewAlertSound(); });
-        }} />
+    <>
+      <SettingsGroup title={t("What to tell you")} section="what" note={t("An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
+        <SettingsRow label={t("Needs input")} description={t("An agent waits for an answer or a permission")}>
+          <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
+        </SettingsRow>
+        <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
+          <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
+        </SettingsRow>
+      </SettingsGroup>
+      <SettingsGroup title={t("On this device")} section="device">
+        {/* web push alone: the in-app alerts below and the server's ntfy topic are channels of their own */}
+        <SettingsRow label={t("Push to this device")} description={t("A system notification, even with the app closed.")}>
+          <Toggle label={t("Push to this device")} checked={settings.alertsOn} onChange={(on) => void (on ? onEnableNotifications() : onDisableNotifications())} />
+        </SettingsRow>
+        <PushTestControls onEnable={onEnableNotifications} />
+        <SettingsRow label={t("In the app")} description={t("While the app is open, these drop in from the top of the screen at once. Tap one to open its pane.")}>
+          <Toggle label={t("In the app")} checked={settings.alertInApp} onChange={(alertInApp) => update({ alertInApp })} />
+        </SettingsRow>
+        <SettingsRow label={t("Sound")} description={t("While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.")}>
+          <Toggle label={t("Sound")} checked={settings.alertSound} onChange={(alertSound) => {
+            update({ alertSound });
+            alertSoundWanted.current = alertSound;
+            // this tap is the gesture the page needs to play audio; the chime is the preview,
+            // unless the switch went off again while the audio was getting ready
+            if (alertSound) void unlockAlertSound().then((ready) => { if (ready && alertSoundWanted.current) previewAlertSound(); });
+          }} />
+        </SettingsRow>
+      </SettingsGroup>
+      <NtfyChannel />
+    </>
+  );
+}
+
+/** The server's ntfy topic, read-only: the deployment sets it for every phone that follows it, not a device. */
+function NtfyChannel() {
+  const t = useT();
+  const [ntfy, setNtfy] = useState<NonNullable<PushKey["ntfy"]> | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchNtfyTopic().then((topic) => { if (live) setNtfy(topic); }, () => {});
+    return () => { live = false; };
+  }, []);
+  const line = ntfyLine(ntfy, t);
+  if (!ntfy) return null;
+  return (
+    <SettingsGroup title={t("On the server")} section="server">
+      <SettingsRow label={t("ntfy · {topic}", { topic: ntfy.topic })} description={line ?? t("This server's ntfy topic gets no alerts.")}>
+        <span className="settings-value">{line ? t("On") : t("Off")}</span>
       </SettingsRow>
     </SettingsGroup>
   );
@@ -631,6 +669,7 @@ function IntegrationsPage() {
   return (
     <>
       <LaunchModesGroup />
+      <AgentHostGroup />
       <IntegrationsList />
     </>
   );
@@ -660,6 +699,68 @@ function LaunchModesGroup() {
           {CODEX_LAUNCH_MODES.map((mode) => <option key={mode} value={mode}>{codexModeName(mode, t)}</option>)}
         </select>
       </SettingsRow>
+    </SettingsGroup>
+  );
+}
+
+/**
+ * VS Code's agent host chats (an integration, like herdr's own): whether they show at all, which of
+ * their folders open by themselves, the archived ones, and what a new chat starts with. Every
+ * default is what the app did before these existed.
+ */
+function AgentHostGroup() {
+  const { settings, update } = useSettings();
+  const t = useT();
+  const machineId = useMachineId();
+  const [models, setModels] = useState<HostModel[] | null>(null);
+  useEffect(() => {
+    if (!settings.hostChatsShown) return;
+    let live = true;
+    void fetchHostModels(machineId).then((value) => { if (live) setModels(value.models); }, () => { if (live) setModels([]); });
+    return () => { live = false; };
+  }, [machineId, settings.hostChatsShown]);
+  const chosen = settings.hostNewModel;
+  // a model this PC's host does not list (another PC's, or gone) is kept, and shown by its id
+  const listed = models ?? [];
+  const entry = chosen ? listed.find((model) => model.id === chosen.id) : undefined;
+  const efforts = entry?.efforts?.values ?? [];
+  return (
+    <SettingsGroup title={t("Agent host")} section="agent-host" note={t("VS Code's Copilot chats on your PCs. Off, the app is herdr without them: no folders, tabs, agents or alerts of theirs.")}>
+      <SettingsRow label={t("Show agent host chats")}>
+        <Toggle label={t("Show agent host chats")} checked={settings.hostChatsShown} onChange={(hostChatsShown) => update({ hostChatsShown })} />
+      </SettingsRow>
+      {settings.hostChatsShown && <>
+        <SettingsRow label={t("Folders that open by themselves")} description={t("The first time a PC is seen. A chat you open always opens its folder.")} htmlFor="settings-host-auto-open" wide>
+          <select id="settings-host-auto-open" className="select settings-select" value={settings.hostAutoOpen} onChange={(event) => update({ hostAutoOpen: event.target.value as HostAutoOpen })}>
+            <option value="active">{t("Pinned and working")}</option>
+            <option value="pinned">{t("Pinned only")}</option>
+            <option value="none">{t("None")}</option>
+          </select>
+        </SettingsRow>
+        <SettingsRow label={t("Show archived chats")} description={t("In All agents and Chats in a folder, folded at the end.")}>
+          <Toggle label={t("Show archived chats")} checked={settings.hostShowArchived} onChange={(hostShowArchived) => update({ hostShowArchived })} />
+        </SettingsRow>
+        <SettingsRow label={t("New chat model")} description={models !== null && listed.length === 0 ? t("This PC's agent host lists no models: its own default is used.") : undefined} htmlFor="settings-host-new-model" wide>
+          <select id="settings-host-new-model" className="select settings-select" value={chosen?.id ?? ""} onChange={(event) => update({ hostNewModel: event.target.value === "" ? null : { id: event.target.value } })}>
+            <option value="">{t("Host default")}</option>
+            {chosen && !entry && <option value={chosen.id}>{chosen.id}</option>}
+            {listed.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </select>
+        </SettingsRow>
+        {chosen && efforts.length > 0 && <SettingsRow label={t("New chat effort")} htmlFor="settings-host-new-effort" wide>
+          <select id="settings-host-new-effort" className="select settings-select" value={chosen.effort ?? ""} onChange={(event) => update({ hostNewModel: event.target.value === "" ? { id: chosen.id } : { id: chosen.id, effort: event.target.value } })}>
+            <option value="">{t("Model default")}</option>
+            {efforts.map((effort) => <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>)}
+          </select>
+        </SettingsRow>}
+        <SettingsRow label={t("New chat permissions")} htmlFor="settings-host-new-approvals" wide>
+          <select id="settings-host-new-approvals" className="select settings-select" value={settings.hostNewApprovals ?? ""} onChange={(event) => update({ hostNewApprovals: event.target.value === "" ? null : event.target.value })}>
+            <option value="">{t("Host default")}</option>
+            {Object.entries(APPROVALS_LABEL).map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
+            {settings.hostNewApprovals && !(settings.hostNewApprovals in APPROVALS_LABEL) && <option value={settings.hostNewApprovals}>{settings.hostNewApprovals}</option>}
+          </select>
+        </SettingsRow>
+      </>}
     </SettingsGroup>
   );
 }
@@ -1027,7 +1128,7 @@ function SaveFailure({ error, paused, retrying, onRetry }: { error: UserError; p
   </div>;
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, actions, updates, auth, herdrVersion, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, actions, updates, auth, herdrVersion, onEnableNotifications, onDisableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   // opened by Forward, the dialog shows what that entry of the history showed
@@ -1158,7 +1259,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "appearance": return <AppearancePage />;
       case "chat": return <ChatPage />;
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
-      case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} />;
+      case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} onDisableNotifications={onDisableNotifications} />;
       case "voice": return <VoicePage />;
       case "usage": return <UsageSettings onLocalLogin={onUsageLogin} />;
       case "shortcuts": return <ShortcutsPage />;

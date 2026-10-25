@@ -373,10 +373,10 @@ try {
     try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on" })));
+        await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", voiceInput: "on" })));
         // a returning user: Build PC's docs folder and its repo's build chat were opened before (lib/hostWorkspaces.ts)
         await context.addInitScript((session) => {
-          if (localStorage.getItem("herdr-web-ui:host-workspaces") === null) localStorage.setItem("herdr-web-ui:host-workspaces", JSON.stringify({ remote: { open: [{ cwd: "/tmp/fictional-repo", tabs: [session] }, { cwd: "/tmp/fictional-docs", tabs: ["fictional-session-0"] }] } }));
+          if (localStorage.getItem("ovis:host-workspaces") === null) localStorage.setItem("ovis:host-workspaces", JSON.stringify({ remote: { open: [{ cwd: "/tmp/fictional-repo", tabs: [session] }, { cwd: "/tmp/fictional-docs", tabs: ["fictional-session-0"] }] } }));
         }, SESSION);
         // the browser's speech engine, as a phone's: interim words as they come, then the final ones
         await context.addInitScript(() => {
@@ -1761,7 +1761,7 @@ try {
         await pinnedList.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]').waitFor();
         assert.equal(await remoteGroup.locator('.workspace-list:not(.sidebar-pinned) > .host-folder[data-host-folder="/tmp/fictional-docs"]').count(), 0, "a pinned folder leaves the workspace list");
         assert.equal(await remoteGroup.locator(".sidebar-pinned-label").count(), 1, "Pinned says so once");
-        assert.ok((await page.evaluate(() => localStorage.getItem("herdr-web-ui:sidebar-agent-pins")) ?? "").includes("remote:folder:/tmp/fictional-docs"), "the pin is saved by PC and folder");
+        assert.ok((await page.evaluate(() => localStorage.getItem("ovis:sidebar-agent-pins")) ?? "").includes("remote:folder:/tmp/fictional-docs"), "the pin is saved by PC and folder");
         if (shots) await remoteGroup.screenshot({ path: join(shots, "r10-folder-pinned-390.png") });
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
@@ -1873,7 +1873,7 @@ try {
         // 6d. a chat opened from a list is a look: its tab stands while it is on screen, and nothing is
         // saved. Keep open makes it a tab for good; Close tab hides one (never archives), and a
         // workspace's last closes it (lib/hostWorkspaces.ts)
-        const savedTabs = async (): Promise<Record<string, { open: { cwd: string; tabs: string[] }[] }>> => JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:host-workspaces") ?? "{}"));
+        const savedTabs = async (): Promise<Record<string, { open: { cwd: string; tabs: string[] }[] }>> => JSON.parse(await page.evaluate(() => localStorage.getItem("ovis:host-workspaces") ?? "{}"));
         const oldTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-old"]');
         const keepOpen = page.locator(".host-chat .look-bar").getByRole("button", { name: "Keep open", exact: true });
         await keepOpen.waitFor();
@@ -2036,7 +2036,7 @@ try {
         // it; a repository whose folder is not open gets a header row holding its worktrees
         await page.evaluate(() => {
           sessionStorage.setItem("fictional-worktrees", "1");
-          const key = "herdr-web-ui:host-workspaces";
+          const key = "ovis:host-workspaces";
           const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
           // two worktrees' folders: one of the open docs folder's repository, one whose repository's folder is not open
           saved.remote.open.push({ cwd: "/tmp/fictional-docs.wt/feat-a", tabs: ["fictional-wt-a"] }, { cwd: "/tmp/fictional-lib.wt/fix-x", tabs: ["fictional-wt-x"] }, { cwd: "/home/fictional/.copilot/chats", tabs: ["fictional-lost"] });
@@ -2087,7 +2087,7 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "agent-host-worktree-tree-390.png") });
         await page.evaluate(() => {
           sessionStorage.removeItem("fictional-worktrees");
-          const key = "herdr-web-ui:host-workspaces";
+          const key = "ovis:host-workspaces";
           const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
           saved.remote.open = saved.remote.open.filter((folder: { cwd: string }) => !folder.cwd.includes(".wt/") && !folder.cwd.includes(".copilot/chats"));
           localStorage.setItem(key, JSON.stringify(saved));
@@ -2452,7 +2452,7 @@ try {
       // a fresh device: the PC in use is the first, and the fold has never been opened
       const sixContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await sixContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await sixContext.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
         const errors: string[] = [];
         const fits = async (what: string) => {
           const width = await six.evaluate(() => document.documentElement.scrollWidth);
@@ -2547,8 +2547,8 @@ try {
       const bareContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await bareContext.addInitScript(() => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-          localStorage.setItem("herdr-web-ui:selection", JSON.stringify({ machine_id: "remote", pane_id: null }));
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("ovis:selection", JSON.stringify({ machine_id: "remote", pane_id: null }));
         });
         const bare = await bareContext.newPage();
         const errors: string[] = [];
@@ -2563,9 +2563,9 @@ try {
       // stands on the chat's column, the meter is by Send, and the turn rail sits beside the column
       const wideContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
       try {
-        await wideContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await wideContext.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
         await wideContext.addInitScript((session) => {
-          if (localStorage.getItem("herdr-web-ui:host-workspaces") === null) localStorage.setItem("herdr-web-ui:host-workspaces", JSON.stringify({ remote: { open: [{ cwd: "/tmp/fictional-repo", tabs: [session] }] } }));
+          if (localStorage.getItem("ovis:host-workspaces") === null) localStorage.setItem("ovis:host-workspaces", JSON.stringify({ remote: { open: [{ cwd: "/tmp/fictional-repo", tabs: [session] }] } }));
         }, SESSION);
         const wide = await wideContext.newPage();
         const errors: string[] = [];

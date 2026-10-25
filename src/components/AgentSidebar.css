@@ -2,7 +2,8 @@
    workspace list has the rest. Parted from it by space, not a rule. */
 .agents-sidebar {
   display: flex;
-  flex: 0 1 auto;
+  /* its rows' height up to the cap; the workspace list is the one that shrinks and scrolls */
+  flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
   max-height: 50%;
@@ -43,9 +44,16 @@
 .agents-sidebar.is-empty .agent-list-contents::after { display: none; }
 
 .agent-section-toggle {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   width: 100%;
   cursor: pointer;
+}
+
+/* the head: the fold, and "All agents on <PC>…" behind a ⋯ where a PC has host chats */
+.agent-section-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
 }
 
 /* the fold's caret hangs in the leading cell and shows when it is of use */

@@ -23,6 +23,21 @@ describe("preferences sync", () => {
     expect(preferencesChange(unknown, local(light, ["local:w1:p1"]))).toEqual({ settings: { theme: "light" }, pins: ["local:w1:p1"] });
   });
 
+  it("shares a setting the server has never held when this browser set it, so a new install gets it (voice, 2026-10-22)", () => {
+    const voice: Settings = { ...DEFAULT_SETTINGS, voiceInput: "on", voiceLanguage: "fr-FR", voicePolishTerminal: true };
+    // the server holds none of them: this browser's own choices go out with its first sync
+    const known = takePreferences(base(voice, []), { settings: voice, pins: [], muted: null }, { revision: 3, settings: { theme: "dark" }, pins: [] }, null).base;
+    expect(preferencesChange(known, { settings: voice, pins: [], muted: null })).toEqual({ settings: { voiceInput: "on", voiceLanguage: "fr-FR", voicePolishTerminal: true } });
+    // a fresh install, still on the defaults, sends nothing and takes them once they are shared
+    const fresh = takePreferences(base(DEFAULT_SETTINGS, []), { settings: DEFAULT_SETTINGS, pins: [], muted: null }, { revision: 3, settings: {}, pins: [] }, null);
+    expect(preferencesChange(fresh.base, { settings: DEFAULT_SETTINGS, pins: [], muted: null })).toBeNull();
+    const shared = takePreferences(fresh.base, { settings: DEFAULT_SETTINGS, pins: [], muted: null }, { revision: 4, settings: { voiceInput: "on", voiceLanguage: "fr-FR" }, pins: [] }, null);
+    expect(shared.patch).toEqual({ voiceInput: "on", voiceLanguage: "fr-FR" });
+    // once the server holds a value, a browser's differing one is not sent back over it
+    const held = takePreferences(base(voice, []), { settings: voice, pins: [], muted: null }, { revision: 5, settings: { voiceLanguage: "en-US" }, pins: [] }, null);
+    expect(held.patch).toEqual({ voiceLanguage: "en-US" });
+  });
+
   it("takes the shared settings the server holds and leaves the device's own", () => {
     const mine: Settings = { ...light, terminalFontSize: 20, alertsOn: false, wrapCode: true, markdownWidth: "full" };
     const taken = takePreferences(base(mine, null), local(mine, []), { revision: 3, settings: { theme: "dark", palette: "catppuccin" } }, null);
@@ -215,5 +230,35 @@ describe("preferences sync", () => {
     expect(prunePaneMutes(keys, [connected("pc-2", ["w1:p1"])])).toEqual(["w1:p1", "w1:gone", theirs, third]);
     // a remote PC whose id is a prefix of another's prunes only its own keys
     expect(prunePaneMutes([paneStorageId("pc", "w1:p1"), theirs], [connected("pc", [])])).toEqual([theirs]);
+  });
+
+  it("sends_host_workspaces_only_when_changed", () => {
+    const open = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    const known: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: open };
+    expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open, muted: null })).toBeNull();
+    const closed = { m: { open: [] } };
+    expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: closed, muted: null })).toEqual({ settings: {}, hostWorkspaces: closed });
+    // the server has held none: a page with nothing open writes nothing, and what was opened goes out on its own
+    const unknown: Baseline = { ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null };
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: {}, muted: null })).toBeNull();
+    expect(preferencesChange(unknown, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: open, muted: null })).toEqual({ settings: {}, hostWorkspaces: open });
+    expect(preferencesChange(unknown, { settings: light, pins: [], hostWorkspaces: open, muted: null })).toEqual({ settings: { theme: "light" }, hostWorkspaces: open });
+  });
+
+  it("takes_remote_unless_edited_here", () => {
+    const here = { m: { open: [{ cwd: "/a", tabs: ["x"] }] }, local: { open: [{ cwd: "/l", tabs: ["y"] }] } };
+    // the first the server holds: its PCs win, this browser's other PCs are kept
+    const first = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: null }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: here, muted: null }, { revision: 1, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(first.hostWorkspaces).toEqual({ m: { open: [] }, local: here.local });
+    expect(first.base.hostWorkspaces).toEqual({ m: { open: [] } });
+    // after that, the last write wins, unless changed here and not yet sent
+    const known = { m: { open: [{ cwd: "/a", tabs: ["x"] }] } };
+    const later = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: known, muted: null }, { revision: 2, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(later.hostWorkspaces).toEqual({ m: { open: [] } });
+    const edited = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: here, muted: null }, { revision: 2, settings: {}, hostWorkspaces: { m: { open: [] } } }, null);
+    expect(edited.hostWorkspaces).toBeNull();
+    const absent = takePreferences({ ...base(DEFAULT_SETTINGS, []), hostWorkspaces: known }, { settings: DEFAULT_SETTINGS, pins: [], hostWorkspaces: known, muted: null }, { revision: 3, settings: {} }, null);
+    expect(absent.hostWorkspaces).toBeNull();
+    expect(absent.base.hostWorkspaces).toEqual(known);
   });
 });

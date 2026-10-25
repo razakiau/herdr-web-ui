@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import { skillSyntax } from "../../shared/skill-syntax.ts";
-import { agentDisplayLabel, composerDelivery, composerMessage, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, insertNote, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage, pendingActionUncertain } from "./compose.ts";
+import { agentDisplayLabel, composerDelivery, composerMessage, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, insertNote, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage, pendingActionUncertain, HOST_SEND_MENU, hostSendKey } from "./compose.ts";
 import { briefDescription, COMMAND_GROUPS, commandGroup, commandsForTrigger, slashCommandReplacement, terminalCommand, typedTerminalCommand } from "./compose.ts";
+import { roundButton, settingsTone } from "./compose.ts";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "./mentions.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -563,5 +564,53 @@ describe("the menu over a catalog the server built", () => {
     expect(typedTerminalCommand(rows, "/review the auth change")).toBeNull();
     expect(typedTerminalCommand(rows, "/apps")).toBeNull();
     expect(typedTerminalCommand(rows, "/compact")).toBeNull();
+  });
+});
+
+describe("the host send menu (VS Code's queue picker)", () => {
+  it("lists Stop and Send, Add to Queue, Steer with Message in that order, with VS Code's icons", () => {
+    expect(HOST_SEND_MENU.map((item) => [item.mode, item.label])).toEqual([
+      ["stop_and_send", "Stop and Send"], ["queue", "Add to Queue"], ["steer", "Steer with Message"],
+    ]);
+  });
+  it("Enter while working steers (the default), Alt+Enter queues; the default queue swaps them", () => {
+    const key = (over: Partial<{ altKey: boolean; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }> = {}) => ({ key: "Enter", altKey: false, shiftKey: false, metaKey: false, ctrlKey: false, ...over });
+    expect(hostSendKey(key(), "steer", true)).toBe("steer");
+    expect(hostSendKey(key({ altKey: true }), "steer", true)).toBe("queue");
+    expect(hostSendKey(key(), "queue", true)).toBe("queue");
+    expect(hostSendKey(key({ altKey: true }), "queue", true)).toBe("steer");
+    expect(hostSendKey(key({ shiftKey: true }), "steer", true)).toBeNull();
+    expect(hostSendKey({ ...key(), key: "a" }, "steer", true)).toBeNull();
+    // with Enter not sending (the setting), Cmd/Ctrl+Enter is the send and Alt goes with it
+    expect(hostSendKey(key(), "steer", false)).toBeNull();
+    expect(hostSendKey(key({ metaKey: true }), "steer", false)).toBe("steer");
+    expect(hostSendKey(key({ ctrlKey: true, altKey: true }), "steer", false)).toBe("queue");
+  });
+});
+
+describe("roundButton", () => {
+  it("is voice on an empty idle box when dictation is there", () => {
+    expect(roundButton({ working: false, text: "", attachments: 0, voice: true })).toBe("voice");
+  });
+  it("is send as soon as there is text or an attachment", () => {
+    expect(roundButton({ working: false, text: "a", attachments: 0, voice: true })).toBe("send");
+    expect(roundButton({ working: false, text: "  ", attachments: 1, voice: true })).toBe("send");
+  });
+  it("is send, never a dead voice button, without dictation", () => {
+    expect(roundButton({ working: false, text: "", attachments: 0, voice: false })).toBe("send");
+  });
+  it("is stop on a busy chat with nothing typed, send once something is", () => {
+    expect(roundButton({ working: true, text: "", attachments: 0, voice: true })).toBe("stop");
+    expect(roundButton({ working: true, text: "steer", attachments: 0, voice: true })).toBe("send");
+  });
+});
+
+describe("settingsTone", () => {
+  it("is raised only for a non-default level", () => {
+    expect(settingsTone("autoApprove")).toBe("raised");
+    expect(settingsTone("assisted")).toBe("raised");
+    expect(settingsTone("default")).toBe("quiet");
+    expect(settingsTone(null)).toBe("quiet");
+    expect(settingsTone(undefined)).toBe("quiet");
   });
 });

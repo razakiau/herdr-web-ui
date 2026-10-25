@@ -26,10 +26,17 @@ describe("activeTrigger", () => {
     }
   });
 
-  it("finds file mentions with at least one query character anywhere on a line", () => {
+  it("finds file mentions anywhere on a line", () => {
     expect(activeTrigger("see @src/com", 12)).toEqual({ kind: "file", query: "src/com", start: 4, end: 12 });
-    expect(activeTrigger("@", 1)).toBeNull();
     expect(activeTrigger("one\nopen @lib", 13)).toEqual({ kind: "file", query: "lib", start: 9, end: 13 });
+  });
+
+  it("opens the file list on a bare @ at a word start, as VS Code's does", () => {
+    expect(activeTrigger("@", 1)).toEqual({ kind: "file", query: "", start: 0, end: 1 });
+    expect(activeTrigger("look at @", 9)).toEqual({ kind: "file", query: "", start: 8, end: 9 });
+    expect(activeTrigger("one\n@", 5)).toEqual({ kind: "file", query: "", start: 4, end: 5 });
+    // an address being typed is not a mention until it has a letter after the @
+    expect(activeTrigger("mail me@", 8)).toBeNull();
   });
 
   it("uses the caret prefix as the query while replacing the complete token", () => {
@@ -122,11 +129,11 @@ describe("@ skills", () => {
   const slash: SlashCommand = { name: "compact", description: "Compact the context", source: "builtin" };
   const rows = [slash, pdf, docs, hidden];
 
-  it("opens on a bare @ only where the pane has @ skills", () => {
+  it("opens on a bare @ at a word start, with or without @ skills", () => {
     expect(activeTrigger("@", 1, { atSkills: true })).toEqual({ kind: "file", query: "", start: 0, end: 1 });
     expect(activeTrigger("see @", 5, { atSkills: true })).toEqual({ kind: "file", query: "", start: 4, end: 5 });
     expect(activeTrigger("see @pdf", 8, { atSkills: true })).toEqual({ kind: "file", query: "pdf", start: 4, end: 8 });
-    expect(activeTrigger("@", 1)).toBeNull();
+    expect(activeTrigger("@", 1)).toEqual({ kind: "file", query: "", start: 0, end: 1 });
     // an address keeps its @: a mention starts a word
     expect(activeTrigger("mail me@", 8, { atSkills: true })).toBeNull();
   });

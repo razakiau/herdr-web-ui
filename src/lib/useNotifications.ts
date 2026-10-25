@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
 import type { Settings } from "./settings.ts";
-import { sendTestPush } from "./api.ts";
+import { fetchNtfyTopic, sendTestPush } from "./api.ts";
+import { reportPageInUse } from "./presence.ts";
 import { notificationState, refreshNotificationState, requestNotificationPermission, type NotificationState } from "./notifications.ts";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./push.ts";
 import { hasNativePlugin, PUSH_PLUGIN } from "./nativeApp.ts";
@@ -109,4 +110,23 @@ export function useNotificationSwitch({ updateSettings, locked, notifications, s
     };
   }, [locked, notifications, alerts, alertsOn]);
   return { enableNotifications, disableNotifications };
+}
+
+/** The server's own alert channels beside this device's push: this page tells it when it is in use, and its ntfy topic is read. */
+export function useServerAlertChannels({ locked }: { locked: boolean | null }) {
+  // This page tells the server when it is in use, so ntfy and push stay quiet while the in-app
+  // alerts speak, a terminal open or not (lib/presence.ts reportPageInUse)
+  useEffect(() => {
+    if (locked !== false) return;
+    return reportPageInUse();
+  }, [locked]);
+  // the server's ntfy topic, when it has one: with it, push off here is a choice, not a gap
+  const [ntfyTopic, setNtfyTopic] = useState<string | null>(null);
+  useEffect(() => {
+    if (locked !== false) return;
+    let live = true;
+    fetchNtfyTopic().then((ntfy) => { if (live) setNtfyTopic(ntfy?.topic ?? null); }, () => {});
+    return () => { live = false; };
+  }, [locked]);
+  return { ntfyTopic };
 }

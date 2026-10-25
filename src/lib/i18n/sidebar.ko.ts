@@ -4,14 +4,11 @@
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const SIDEBAR_KO: Record<string, string> = {
-  "Pin agent": "에이전트 고정",
-  "Unpin agent": "에이전트 고정 해제",
   "Mute alerts": "알림 끄기",
   "Unmute alerts": "알림 켜기",
   "Alerts muted": "알림 꺼짐",
   "Pin workspace": "워크스페이스 고정",
   "Unpin workspace": "워크스페이스 고정 해제",
-  "Pinned": "고정됨",
   "Background tasks running: {count}": "실행 중인 백그라운드 작업: {count}",
   "Agent waiting on background work": "에이전트가 백그라운드 작업을 기다리는 중",
   "Agent {status}": "에이전트 {status}",
@@ -28,9 +25,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Reorder workspace {name}": "워크스페이스 {name} 순서 바꾸기",
   "Drag to reorder · Alt+↑/↓": "끌어서 순서 바꾸기 · Alt+↑/↓",
   "Resize sidebar": "사이드바 너비 조절",
-  "More for {title}": "{title} 더보기",
   "Rename workspace": "워크스페이스 이름 바꾸기",
-  "Close workspace": "워크스페이스 닫기",
   "New worktree": "새 워크트리",
   "Open worktree…": "워크트리 열기…",
   "Earlier sessions…": "이전 세션…",
@@ -53,4 +48,5 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Collapse": "접기",
   "Expand": "펼치기",
   "Shell": "셸",
+  "VS Code gave these chats no folder": "VS Code가 이 채팅에 폴더를 주지 않았습니다",
 };

@@ -149,6 +149,36 @@ describe("saved theme migration", () => {
   }
 });
 
+it("shares the voice settings with the account, so a new install of the app keeps them (2026-10-22)", () => {
+  for (const key of ["voiceInput", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+});
+
+it("steps endless animations until this account turns smooth motion on", () => {
+  expect(DEFAULT_SETTINGS.smoothMotion).toBe(false);
+  expect(sanitizeSettings({ smoothMotion: "yes" }).smoothMotion).toBe(false);
+  expect(sanitizeSettings({ smoothMotion: true }).smoothMotion).toBe(true);
+  expect(SETTING_SCOPE.smoothMotion).toBe("shared");
+  const root = { lang: "", dataset: {} as Record<string, string>, style: { colorScheme: "", setProperty() {}, removeProperty() {} } };
+  const before = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: root, querySelector: () => null } });
+  // applyToDocument asks whether the stylesheet owns --bg yet (the boot script's background)
+  const computed = Object.getOwnPropertyDescriptor(globalThis, "getComputedStyle");
+  Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "#000" }) });
+  try {
+    const smooth = sanitizeSettings({ smoothMotion: true });
+    applyToDocument(smooth, themeFor(smooth, "dark"), "en");
+    expect(root.dataset["motion"]).toBe("smooth");
+    const stepped = sanitizeSettings({});
+    applyToDocument(stepped, themeFor(stepped, "dark"), "en");
+    expect(root.dataset["motion"]).toBe("stepped");
+  } finally {
+    if (before) Object.defineProperty(globalThis, "document", before);
+    else delete (globalThis as { document?: unknown }).document;
+    if (computed) Object.defineProperty(globalThis, "getComputedStyle", computed);
+    else Reflect.deleteProperty(globalThis, "getComputedStyle");
+  }
+});
+
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
   expect(sanitizeSettings({}).releasePaneAway).toBe(false);
@@ -198,6 +228,35 @@ it("keeps sidebar rows on one line unless two lines were chosen", () => {
   expect(sanitizeSettings({ sidebarRows: "two" }).sidebarRows).toBe("two");
   for (const sidebarRows of [null, true, "three", 2]) {
     expect(sanitizeSettings({ sidebarRows }).sidebarRows).toBe("one");
+  }
+});
+
+it("drops the old host-chats-in-Agents setting, and its stored key on load", () => {
+  expect("vscodeChatsInAgents" in DEFAULT_SETTINGS).toBe(false);
+  expect("vscodeChatsInAgents" in SETTING_SCOPE).toBe(false);
+  expect((SHARED_SETTING_KEYS as readonly string[]).includes("vscodeChatsInAgents")).toBe(false);
+  expect("vscodeChatsInAgents" in sanitizeSettings({ vscodeChatsInAgents: "recent" })).toBe(false);
+  const stored = new Map([["ovis:settings", JSON.stringify({ density: "compact", vscodeChatsInAgents: "recent" })]]);
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } } } });
+  try {
+    expect(loadSettings().density).toBe("compact");
+    expect(JSON.parse(stored.get("ovis:settings")!)).toEqual({ density: "compact" });
+  } finally {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+it("a full storage that refuses the clean-up keeps the user's settings (only the old key stays)", () => {
+  const stored = new Map([["ovis:settings", JSON.stringify({ density: "compact", vscodeChatsInAgents: "recent" })]]);
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: () => { throw new Error("QuotaExceededError"); } } } });
+  try {
+    expect(loadSettings().density).toBe("compact");
+  } finally {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else delete (globalThis as { window?: unknown }).window;
   }
 });
 
@@ -1026,3 +1085,30 @@ describe("shared settings", () => {
   });
 });
 
+
+describe("agent host settings", () => {
+  it("default to what the app did before they existed", () => {
+    expect(sanitizeSettings({})).toMatchObject({ hostChatsShown: true, hostAutoOpen: "active", hostNewModel: null, hostNewApprovals: null, hostShowArchived: true, usageGroup: "provider" });
+  });
+
+  it("keep only values they can take", () => {
+    expect(sanitizeSettings({ hostChatsShown: false, hostAutoOpen: "pinned", hostShowArchived: false, usageGroup: "account" }))
+      .toMatchObject({ hostChatsShown: false, hostAutoOpen: "pinned", hostShowArchived: false, usageGroup: "account" });
+    expect(sanitizeSettings({ hostAutoOpen: "none" }).hostAutoOpen).toBe("none");
+    for (const bad of ["false", 0, null]) expect(sanitizeSettings({ hostChatsShown: bad, hostShowArchived: bad })).toMatchObject({ hostChatsShown: true, hostShowArchived: true });
+    for (const bad of ["all", "", null, 1]) expect(sanitizeSettings({ hostAutoOpen: bad }).hostAutoOpen).toBe("active");
+    for (const bad of ["accounts", null, true]) expect(sanitizeSettings({ usageGroup: bad }).usageGroup).toBe("provider");
+  });
+
+  it("keep a new chat's model and permissions as the host names them, or the host's own", () => {
+    expect(sanitizeSettings({ hostNewModel: { id: "claude-opus-4.5", effort: "high" }, hostNewApprovals: "autoApprove" }))
+      .toMatchObject({ hostNewModel: { id: "claude-opus-4.5", effort: "high" }, hostNewApprovals: "autoApprove" });
+    expect(sanitizeSettings({ hostNewModel: { id: "gpt-5", effort: 3, extra: "x" } }).hostNewModel).toEqual({ id: "gpt-5" });
+    for (const bad of ["gpt-5", { id: "" }, { id: 3 }, { id: "x".repeat(201) }, []]) expect(sanitizeSettings({ hostNewModel: bad }).hostNewModel).toBeNull();
+    for (const bad of ["", 1, "x".repeat(65)]) expect(sanitizeSettings({ hostNewApprovals: bad }).hostNewApprovals).toBeNull();
+  });
+
+  it("are the same on every device", () => {
+    for (const key of ["hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "usageGroup"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+  });
+});

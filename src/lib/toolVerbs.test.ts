@@ -11,6 +11,9 @@ describe("toolVerbKind", () => {
       exec: "run", exec_command: "run", shell: "run", shell_command: "run", local_shell: "run", apply_patch: "edit",
       // pi, omp, gjc and omo name theirs in lowercase
       read: "read", edit: "edit", multiedit: "edit", patch: "edit", write: "write", bash: "run",
+      // Copilot CLI, and VS Code's own tools in a chat moved from its Local harness
+      view: "read", create: "write", run_in_terminal: "run",
+      copilot_readFile: "read", copilot_replaceString: "edit", copilot_multiReplaceString: "edit", copilot_createFile: "write",
     };
     for (const [name, kind] of Object.entries(expected)) expect([name, toolVerbKind(name)]).toEqual([name, kind as ReturnType<typeof toolVerbKind>]);
   });
@@ -25,6 +28,8 @@ describe("toolVerbKind", () => {
       "create_goal", "update_goal", "get_goal", "request_user_input_async",
       // a name that only contains a known one
       "mcp__files__read_all", "read_mcp_resource", "BashOutput", "write_stdin", "tool",
+      // Copilot's searches, listings, pictures and terminal reads: no plain read or run
+      "copilot_findTextInFiles", "copilot_listDirectory", "copilot_viewImage", "copilot_memory", "get_terminal_output", "view_image", "ask_user",
     ];
     for (const name of untouched) expect([name, toolVerbKind(name)]).toEqual([name, null]);
   });
@@ -49,6 +54,22 @@ describe("toolVerb", () => {
     expect(toolVerb(part("Write", { file_path: "notes.md", content: "x" }), "notes.md")).toBe("Wrote");
     expect(toolVerb(part("exec", { cmd: "pnpm test" }), "pnpm test")).toBe("Ran");
     expect(toolVerb(part("bash", { command: "pnpm test" }), "pnpm test")).toBe("Ran");
+  });
+
+  it("reads Copilot's calls by the file or command they name", () => {
+    expect(toolVerb(part("view", { path: "/w/src/a.ts" }), "/w/src/a.ts")).toBe("Read");
+    expect(toolVerb(part("create", { path: "/w/notes.md", file_text: "x" }), "/w/notes.md")).toBe("Wrote");
+    expect(toolVerb(part("run_in_terminal", { command: "bun test", explanation: "Run the tests", goal: "Test", mode: "sync" }), "bun test")).toBe("Ran");
+    // VS Code's own tools name a file `filePath`
+    expect(toolVerb(part("copilot_readFile", { filePath: "/w/src/a.ts", startLine: 1, endLine: 40 }), "/w/src/a.ts")).toBe("Read");
+    expect(toolVerb(part("copilot_replaceString", { filePath: "/w/src/a.ts", oldString: "a", newString: "b" }), "/w/src/a.ts")).toBe("Edited");
+    expect(toolVerb(part("copilot_createFile", { filePath: "/w/new.ts", content: "x" }), "/w/new.ts")).toBe("Wrote");
+    // several files at once: the files the replacements name, as a patch's are
+    const replacements = [{ filePath: "/w/a.ts", oldString: "a", newString: "b" }, { filePath: "/w/b.ts", oldString: "c", newString: "d" }, { filePath: "/w/a.ts", oldString: "e", newString: "f" }];
+    expect(toolVerb(part("copilot_multiReplaceString", { explanation: "Rename", replacements }), "/w/a.ts, /w/b.ts")).toBe("Edited");
+    expect(toolVerb(part("copilot_multiReplaceString", { explanation: "Rename", replacements }), "Rename")).toBeNull();
+    // a filePath is not what a command ran
+    expect(toolVerb(part("run_in_terminal", { filePath: "/w/a.ts" }), "/w/a.ts")).toBeNull();
   });
 
   it("names the files of a patch, bare or inside an exec script", () => {

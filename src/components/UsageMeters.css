@@ -66,6 +66,25 @@
 }
 
 
+/* how many accounts a chip stands for: a count on the logo's upper corner, so the chip keeps its width */
+.usage-chip-mark { position: relative; display: inline-flex; }
+.usage-chip-count {
+  position: absolute;
+  right: -6px;
+  top: -6px;
+  min-width: 11px;
+  height: 11px;
+  padding: 0 2px;
+  border-radius: 6px;
+  background: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 11px;
+  text-align: center;
+  color: var(--bg-panel);
+}
+
 .usage-chip.is-high .usage-chip-value {
   color: var(--status-blocked);
 }
@@ -109,8 +128,31 @@
   text-transform: uppercase;
 }
 
+.usage-popover-head > span:first-child { margin-right: auto; }
+
+/* the panel's order, a word not a caps label: what it does is read before what it is called */
+.usage-sort.btn {
+  height: var(--chip-h);
+  min-height: 0;
+  padding: 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.usage-sort[aria-pressed="true"] { color: var(--text-strong); }
+
+.usage-source {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
 .usage-popover-head .icon-button svg.is-spinning {
-  animation: usage-spin 0.8s steps(8) infinite;
+  animation: usage-spin 0.8s var(--ease-spin) infinite;
 }
 
 @keyframes usage-spin {
@@ -125,26 +167,23 @@
   border-top: var(--hairline) solid var(--border);
 }
 
+/* mark, name and plan on the first line; whose account and where it was read on the second, so a
+   long account name ellipsizes in its own line instead of pushing the source off the card */
 .usage-provider-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) auto 1fr;
   align-items: center;
-  gap: var(--space-2);
+  column-gap: var(--space-2);
+  row-gap: 2px;
   min-width: 0;
 }
 
 .usage-provider-name {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-strong);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
-}
-
-.usage-account {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: var(--fs-2xs);
-  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -152,14 +191,41 @@
 .usage-plan {
   display: inline-flex;
   align-items: center;
+  max-width: 12ch;
   height: var(--chip-h);
   padding: 0 var(--space-2);
+  overflow: hidden;
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-pill);
   color: var(--text-dim);
-  font-family: var(--font-mono);
   font-size: var(--fs-2xs);
-  text-transform: capitalize;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* under the name, starting where the name does (past the mark) */
+.usage-provider-meta {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+}
+
+.usage-account {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-account + .usage-source::before {
+  content: "·";
+  margin-right: var(--space-2);
 }
 
 .usage-note {

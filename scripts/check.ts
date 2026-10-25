@@ -808,6 +808,7 @@ export async function main(groupSeams: GroupSeams & {
     specs.push({ name: "workflow syntax", command: null });
     specs.push({ name: "generated types are fresh", command: [bun, "run", "generate:types", "--check"] });
     specs.push({ name: "generated themes are fresh", command: [bun, "run", "generate:themes", "--check"] });
+    specs.push({ name: "generated file icons are fresh", command: [bun, "run", "generate:file-icons", "--check"] });
     specs.push({ name: "typecheck", command: [bun, "run", "typecheck"] });
     specs.push({ name: "build", command: [bun, "run", "build"] });
     specs.push({ name: "unit tests", command: [bun, "run", "test:unit"] });
@@ -1233,6 +1234,7 @@ export async function main(groupSeams: GroupSeams & {
       for (const [label, command] of [
         ["generated types are fresh", [bun, "run", "generate:types", "--check"]],
         ["generated themes are fresh", [bun, "run", "generate:themes", "--check"]],
+        ["generated file icons are fresh", [bun, "run", "generate:file-icons", "--check"]],
         ["typecheck", [bun, "run", "typecheck"]],
       ] as const) {
         if (code !== 0 || ending) break;

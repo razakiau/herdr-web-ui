@@ -7,3 +7,15 @@ it("includes the bundled highlighter's complete installed license in the distrib
   expect(notices).toContain("@tanstack/highlight");
   expect(notices).toContain(license.trim());
 });
+
+it("includes the diagram renderer's complete installed license", () => {
+  const notices = readFileSync(new URL("../THIRD_PARTY_NOTICES.md", import.meta.url), "utf8");
+  const license = readFileSync(new URL("../node_modules/pele/LICENSE", import.meta.url), "utf8");
+  expect(notices).toContain(license.trim());
+});
+
+it("includes the file icon theme's complete installed license", () => {
+  const notices = readFileSync(new URL("../THIRD_PARTY_NOTICES.md", import.meta.url), "utf8");
+  const license = readFileSync(new URL("../node_modules/material-icon-theme/LICENSE", import.meta.url), "utf8");
+  expect(notices).toContain(license.trim());
+});

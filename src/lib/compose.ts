@@ -254,6 +254,23 @@ export function composerSendShown(state: { working: boolean; text: string }): bo
   return !state.working || state.text.trim().length > 0;
 }
 
+/**
+ * A host chat's one round button: voice while the box is empty and dictation is there, Send once
+ * anything would go (text or a chip), Stop on a busy chat with nothing typed. Without dictation an
+ * empty box keeps Send (disabled), never a voice button that cannot listen.
+ */
+export function roundButton(state: { working: boolean; text: string; attachments: number; voice: boolean }): "stop" | "voice" | "send" {
+  const content = state.text.trim() !== "" || state.attachments > 0;
+  if (state.working && !content) return "stop";
+  if (!content && state.voice) return "voice";
+  return "send";
+}
+
+/** The settings icon says a raised permission level the way the mode pill's shield did. */
+export function settingsTone(approvals: string | null | undefined): "quiet" | "raised" {
+  return approvals && approvals !== "default" ? "raised" : "quiet";
+}
+
 /** While an agent works, Send accepts a follow-up for its next turn. A shell sends immediately. */
 export function composerDelivery(agent: string | null, status?: AgentStatus): "queue" | "immediate" {
   return agent !== null && status === "working" ? "queue" : "immediate";
@@ -418,4 +435,30 @@ export function formatTokens(tokens: number): string {
 export function contextLeftPercent(context: { used: number; window: number | null }): number | null {
   if (context.window === null || context.window <= 0) return null;
   return Math.max(0, Math.min(100, Math.round((1 - context.used / context.window) * 100)));
+}
+
+/**
+ * VS Code's send menu for a message typed while the chat works (chatQueuePickerActionItem.ts), in
+ * its order: Stop and Send (arrow-right), Add to Queue (add), Steer with Message (new-line).
+ */
+export const HOST_SEND_MENU = [
+  { mode: "stop_and_send", label: "Stop and Send" },
+  { mode: "queue", label: "Add to Queue" },
+  { mode: "steer", label: "Steer with Message" },
+] as const;
+export type HostSendPick = (typeof HOST_SEND_MENU)[number]["mode"];
+
+/**
+ * What a key sends while the chat works, as VS Code binds it: the send key is the default (steer
+ * unless the user made queue the default), with Alt the other one. Null: not a send.
+ */
+export function hostSendKey(
+  event: { key: string; altKey: boolean; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  fallback: "steer" | "queue",
+  enterSends: boolean,
+): "steer" | "queue" | null {
+  if (event.key !== "Enter" || event.shiftKey) return null;
+  const sends = enterSends ? !event.metaKey && !event.ctrlKey : event.metaKey || event.ctrlKey;
+  if (!sends) return null;
+  return event.altKey ? (fallback === "steer" ? "queue" : "steer") : fallback;
 }

@@ -9,16 +9,22 @@ import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowT
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentRoster, type AgentRow } from "../lib/agentRoster.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
+import { folderName } from "../lib/paneName.ts";
+import { matchesQuery } from "../lib/paletteSearch.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
 import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { machineFilter } from "../lib/sidebarFilter.ts";
 import { useSidebarFilter } from "../lib/sidebarFilterContext.ts";
-import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, subscribeSidebarPins, toggleSidebarPin } from "../lib/sidebarPins.ts";
+import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
+import { chatAge, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
-import { RowMenu } from "./RowMenu.tsx";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { hostChatItems, useHostChatActions, type HostChatRef } from "./HostChatActions.tsx";
 import { BackgroundBadge, displayPaneTitle, onRowContextMenu, PlanBadge, StatusBadge } from "./Sidebar.tsx";
 import "./AgentSidebar.css";
 
@@ -39,14 +45,14 @@ interface AgentRowBodyProps {
   /** why a row the filter did not match is drawn all the same: it is the selected one */
   note?: string | null;
   /** its alerts are off for everyone (lib/paneMutes.ts): said beside the state, as a word for a screen reader */
-  muted: boolean;
+  muted?: boolean;
 }
 
 /**
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, what
  * its plugins report, and how it is doing.
  */
-function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted }: AgentRowBodyProps) {
+export function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted = false }: AgentRowBodyProps) {
   const t = useT();
   return <>
     <span className="sidebar-mark" aria-hidden="true">{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
@@ -74,6 +80,9 @@ function AgentRowBody({ mark, markKind, title, name, context, tokens, background
   </>;
 }
 
+/** The host chat a row stands for, and the one the app shows (App.tsx selectedHostChat) */
+export interface HostChatTarget { machineId: string; session: string }
+
 export interface AgentSidebarProps {
   machines: Machine[];
   selectedMachineId: string;
@@ -83,6 +92,12 @@ export interface AgentSidebarProps {
   /** this device only watches: it sees the shared mutes and cannot change them */
   watching?: boolean;
   onSelect(machineId: string, paneId: string): void;
+  /** each PC's host chats, for those its bridge has (lib/hostChats.ts) */
+  hostChats?: ReadonlyMap<string, HostPc>;
+  selectedHostChat?: HostChatTarget | null;
+  onSelectHostChat?(target: HostChatTarget): void;
+  /** "All agents on <PC>…", one per PC with host chats: the section head's ⋯ */
+  allAgents?: RowMenuItem[];
 }
 
 /** the width under which the sidebar is a drawer (src/styles.css) */
@@ -92,7 +107,11 @@ const DRAWER_QUERY = "(max-width: 768px)";
  * the menu says of the row is read from the row at each render, so a value that changes while it is
  * open changes in it too.
  */
-interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null }
+interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; host?: HostChatRef }
+/** a host chat in the Agents list: a Copilot agent while it works, asks, is unread or pinned */
+interface ChatRow { machine: Machine; chat: HostChatRow; entry?: undefined }
+type ListRow = (AgentRow & { chat?: undefined }) | ChatRow;
+const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machine.id, row.chat.session) : sidebarPinKey(row.machine.id, row.entry.pane.pane_id);
 
 /**
  * All PCs' live agents form a second list; workspace and PC folds do not hide these rows.
@@ -101,7 +120,8 @@ interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: nu
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it, and mutes or unmutes its alerts for every browser and device.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect, hostChats, selectedHostChat = null, onSelectHostChat, allAgents = [] }: AgentSidebarProps) {
+  const [allMenu, setAllMenu] = useState<HTMLElement | null>(null);
   const t = useT();
   const listId = useId();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
@@ -112,20 +132,39 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const muted = useSyncExternalStore(subscribePaneMutes, currentPaneMutes, currentPaneMutes);
   // which `$name` tokens herdr's own sidebar draws, from this server's herdr config (server/herdr-sidebar.ts)
   const rowTokens = useSyncExternalStore(subscribeAgentRowTokens, currentAgentRowTokens, currentAgentRowTokens);
+  // a host chat's row menu has the chat's own actions too (HostChatActions.tsx)
+  const hostActions = useHostChatActions();
   const activity = useSidebarActivity();
+  const now = useMinuteClock();
   // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes);
   // the pinned rows stand first, in the order they were pinned (lib/agentRoster.ts)
   const byActivity = settings.agentOrder === "activity";
-  const roster = useMemo(() => agentRoster(machines, { byActivity, seqs: activity.seqs, pinned }), [machines, byActivity, activity, pinned]);
+  const herdrRoster = useMemo(() => agentRoster(machines, { byActivity, seqs: activity.seqs, pinned }), [machines, byActivity, activity, pinned]);
+  // each PC's host chats follow its herdr agents: the ones working, asking, unread or pinned
+  const chatRows = useMemo(() => machines.flatMap((machine): ChatRow[] => {
+    const chats = hostChats?.get(machine.id)?.chats ?? [];
+    return agentsListHostChats(chats, (session) => pinned.includes(hostChatPinKey(machine.id, session))).map((chat): ChatRow => ({ machine, chat }));
+  }), [machines, hostChats, pinned]);
+  const roster = useMemo((): { pinned: ListRow[]; rest: ListRow[] } => {
+    if (chatRows.length === 0) return herdrRoster;
+    // the pinned rows of both kinds stand first, in the order they were pinned
+    const chats = splitPinnedRows(chatRows, pinned, rowPinKey);
+    const order = new Map(pinned.map((key, index) => [key, index]));
+    const pinnedRows: ListRow[] = [...herdrRoster.pinned, ...chats.pinned].sort((a, b) => (order.get(rowPinKey(a)) ?? 0) - (order.get(rowPinKey(b)) ?? 0));
+    return { pinned: pinnedRows, rest: [...herdrRoster.rest, ...chats.rest] };
+  }, [herdrRoster, chatRows, pinned]);
   const allRows = useMemo(() => [...roster.pinned, ...roster.rest], [roster]);
   // the sidebar's filter (lib/sidebarFilter.ts) keeps the matched rows and the selected one, in the same
   // order and cards; the pins and their pruning go on reading every row
   const { filter } = useSidebarFilter();
   const split = useMemo(() => {
     if (!filter.active) return roster;
-    const kept = ({ machine, entry }: AgentRow): boolean => machineFilter(filter, machine.id)?.panes.has(entry.pane.pane_id) === true;
+    // a host chat stays when its title or folder matches, or while it is the one shown
+    const kept = (row: ListRow): boolean => row.chat
+      ? (selectedHostChat?.machineId === row.machine.id && selectedHostChat.session === row.chat.session) || [row.chat.title, row.chat.cwd ?? ""].some((label) => label !== "" && matchesQuery(filter.query, label))
+      : machineFilter(filter, row.machine.id)?.panes.has(row.entry.pane.pane_id) === true;
     return { pinned: roster.pinned.filter(kept), rest: roster.rest.filter(kept) };
-  }, [roster, filter]);
+  }, [roster, filter, selectedHostChat]);
   const rows = useMemo(() => [...split.pinned, ...split.rest], [split]);
   // a folded list (a phone's starts so) opens while the filter keeps rows in it, so a match or the selection is
   // seen, not only kept; its caret then folds and opens it for the filter's time, the list's own fold untouched
@@ -135,7 +174,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const togglePin = (key: string): void => {
     // pins of panes gone from this server leave with a change of the user's, never by themselves: the
     // list is shared, and a pane this page has not seen yet (a PC still loading) is not gone
-    const live = new Set(allRows.map(({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)));
+    const live = new Set(allRows.flatMap((row) => row.entry ? [sidebarPinKey(row.machine.id, row.entry.pane.pane_id)] : []));
     setSidebarPins(toggleSidebarPin(pruneSidebarPins(pinned, live, machines), key));
   };
   const toggleMute = (machineId: string, paneId: string): void => {
@@ -154,13 +193,44 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   }, [pinned]);
   const [menu, setMenu] = useState<PinMenu | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
-  const menuRow = menu === null ? undefined : rows.find(({ machine, entry }) => machine.state !== "disconnected" && machine.state !== "error" && sidebarPinKey(machine.id, entry.pane.pane_id) === menu.key);
+  const menuRow = menu === null ? undefined : rows.find((row) => row.machine.state !== "disconnected" && row.machine.state !== "error" && rowPinKey(row) === menu.key);
   // a row that left the list or whose PC stopped connecting takes its menu with it; a retry keeps it
   useEffect(() => {
     if (menu && (menuRow === undefined || !menu.anchor.isConnected)) setMenu(null);
   }, [menu, menuRow]);
   // herdr names a PC only beside another: the rows' line does the same
   const machineName = (machine: Machine): string | null => machines.length > 1 ? machine.name : null;
+
+  const listItem = (row: ListRow) => row.chat ? chatItem(row) : agentItem(row);
+
+  // what a host chat's row says: a Copilot agent, its title, where it works and when it changed
+  const describeChat = ({ machine, chat }: ChatRow) => {
+    const title = chat.title.trim() || t("Copilot chat");
+    const context = [machineName(machine), chat.cwd ? folderName(chat.cwd) : null, chat.status === "error" ? t("Error") : null, chatAge(chat, now, t)].filter(Boolean).join(" · ");
+    return { title, context, tokens: [] as string[] };
+  };
+
+  const chatItem = (row: ChatRow) => {
+    const { machine, chat } = row;
+    const selected = selectedHostChat?.machineId === machine.id && selectedHostChat.session === chat.session;
+    const { title, context } = describeChat(row);
+    const pinKey = hostChatPinKey(machine.id, chat.session);
+    const menuOpen = menu?.key === pinKey;
+    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
+      setMenu(menuOpen ? null : { key: pinKey, anchor, point, previousFocus, host: { machineId: machine.id, chat } });
+    return <li className={`agent-item host-chat-item${selected ? " is-selected" : ""}`} key={pinKey} data-machine={machine.id} data-host-session={chat.session} data-pin-key={pinKey}
+      onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
+      onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
+      <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, context, chat.cwd].filter(Boolean).join("\n")} onClick={() => onSelectHostChat?.({ machineId: machine.id, session: chat.session })}>
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(chat)} />
+      </button>
+      <div className="agent-actions">
+        <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
+          <Ellipsis aria-hidden="true" />
+        </button>
+      </div>
+    </li>;
+  };
 
   // what a row says of its agent, for the row and for its open menu
   const describe = ({ machine, entry }: AgentRow) => {
@@ -225,8 +295,10 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // under the filter an empty list is the filter's doing, which the list above says once (MachineSidebar.tsx)
   const shownEmpty = useAnnouncedText(rows.length === 0 && !filter.active ? (loading ? t("Loading agents…") : t("No agents running")) : null);
   const menuPinned = menu !== null && pinned.includes(menu.key);
-  const menuShown = menuRow === undefined ? null : describe(menuRow);
-  const menuMuted = menuRow !== undefined && muted !== null && muted.includes(paneMuteKey(menuRow.machine.id, menuRow.entry.pane.pane_id));
+  const menuShown = menuRow === undefined ? null : menuRow.chat ? describeChat(menuRow) : describe(menuRow);
+  // a herdr row's pane; a host chat has its own alert switches in its menu (HostChatActions.tsx)
+  const menuPane = menuRow?.entry ? { machineId: menuRow.machine.id, paneId: menuRow.entry.pane.pane_id } : null;
+  const menuMuted = menuPane !== null && muted !== null && muted.includes(paneMuteKey(menuPane.machineId, menuPane.paneId));
   const runPin = (state: PinMenu): void => {
     // where the menu hands the focus back (lib RowMenu): the ⋯ itself unless the right-click said otherwise
     const back = state.previousFocus === undefined ? state.anchor : state.previousFocus;
@@ -237,30 +309,37 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // Settings -> Sidebar rows -> One line: an agent row is one line too, its place dim after its title
   const oneLine = settings.sidebarRows === "one";
   return <section ref={sectionRef} className={`agents-sidebar${folded ? " is-collapsed" : ""}${rows.length === 0 ? " is-empty" : ""}${oneLine ? " is-one-line" : ""}`} aria-label={t("Agents")}>
-    <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!folded} aria-controls={listId} onClick={() => { if (filter.active) setFilterFold(!folded); else setCollapsed(!collapsed); }}>
-      {folded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
-      <span>{t("Agents")}</span>
-      {/* the count is of the agents running, filter or not */}
-      {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
-    </button>
+    <div className="agent-section-head">
+      <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!folded} aria-controls={listId} onClick={() => { if (filter.active) setFilterFold(!folded); else setCollapsed(!collapsed); }}>
+        {folded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
+        <span>{t("Agents")}</span>
+        {/* the count is of the agents running, filter or not */}
+        {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
+      </button>
+      {allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
+    </div>
+    {allMenu && <RowMenu anchor={allMenu} title={t("Agents")} items={allAgents} onClose={() => setAllMenu(null)} />}
     <div className="agent-list-contents" id={listId} hidden={folded}>
       <p className={shownEmpty === null ? "visually-hidden" : "agent-empty"} role="status">{shownEmpty}</p>
       {rows.length > 0 && <>
         {split.pinned.length > 0 && <>
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
-          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(agentItem)}</ul>
+          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(listItem)}</ul>
         </>}
-        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
+        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(listItem)}</ul>}
       </>}
     </div>
-    {menu && menuShown && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menuShown.title} subtitle={menuShown.context} detail={menuShown.tokens.join(" · ") || undefined} onClose={closeMenu} items={[
+    {menu && menuShown && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menuShown.title} subtitle={menuShown.context} detail={menuShown.tokens.join(" · ") || undefined} onClose={closeMenu} items={menu.host && hostActions
+      // the pin keeps this list's own toggle, which hands the focus back to the moved row
+      ? hostChatItems(hostActions, menu.host, t).map((item) => item.id === "pin" || item.id === "unpin" ? { ...item, run: () => runPin(menu) } : item)
+      : [
       menuPinned
         ? { id: "unpin", label: t("Unpin agent"), icon: PinOff, run: () => runPin(menu) }
         : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) },
       // one switch for every alert channel and every browser (lib/paneMutes.ts); a watching device sees its state and cannot flip it
-      ...(muted === null || menuRow === undefined ? [] : [{
+      ...(muted === null || menuPane === null ? [] : [{
         id: "mute", label: menuMuted ? t("Unmute alerts") : t("Mute alerts"), icon: menuMuted ? Bell : BellOff, checked: menuMuted, disabled: watching,
-        run: () => toggleMute(menuRow.machine.id, menuRow.entry.pane.pane_id),
+        run: () => toggleMute(menuPane.machineId, menuPane.paneId),
       }]),
     ]} />}
   </section>;

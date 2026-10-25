@@ -1,5 +1,5 @@
 /**
- * Keeps the shared settings, the pins and the muted panes (shared/preferences.ts) the same in every browser of this
+ * Keeps the shared settings, the pins, the muted panes and the open agent host workspaces (shared/preferences.ts) the same in every browser of this
  * server. Loaded once the app is in (never before the access gate): what the server holds is laid
  * over this browser's settings, setting by setting; a setting nobody has shared yet stays this
  * browser's own, and opening a page writes nothing. A change here sends just what changed, once the
@@ -19,9 +19,11 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { mirrorPalette, SHARED_SETTING_KEYS, type PreferencesChange, type SharedPreferences, type SharedSettingKey } from "../../shared/preferences.ts";
 import { ApiError, fetchPreferences, savePreferences } from "./api.ts";
 import { DEFAULT_THEME } from "./themes.ts";
-import { sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
+import { DEFAULT_SETTINGS, sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
 import { currentPaneMutes, setPaneMutes, subscribePaneMutes } from "./paneMutes.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
+import type { HostWorkspaceState } from "../../shared/host-workspaces.ts";
+import { currentHostWorkspaces, setHostWorkspaces, subscribeHostWorkspaces } from "./hostWorkspaces.ts";
 import { userErrorMessage, type UserError } from "./userError.ts";
 
 const SEND_AFTER_MS = 600;
@@ -37,13 +39,15 @@ const PAUSED_RETRY_MAX_MS = 5 * 60_000;
 const pausedWait = (failures: number): number => Math.min(PAUSED_RETRY_MS * 2 ** Math.max(0, failures - PAUSE_AFTER), PAUSED_RETRY_MAX_MS);
 
 type Shared = Partial<Record<SharedSettingKey, unknown>>;
+/** Settings that were each device's own until 2026-10-22: the app installed again from Chrome lost the voice choices made in Brave. */
+const BACKFILLED: ReadonlySet<SharedSettingKey> = new Set(["voiceInput", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"]);
 /**
  * What this browser last knew the server to hold; `pins` is null while the server has held none,
  * `muted` while no document has carried a list (a server too old to keep one never sends it).
  */
-export interface Baseline { settings: Shared; pins: readonly string[] | null; muted: readonly string[] | null }
+export interface Baseline { settings: Shared; pins: readonly string[] | null; muted: readonly string[] | null; hostWorkspaces?: HostWorkspaceState | null }
 /** What this browser holds; `muted` is null until the server's list arrived (lib/paneMutes.ts). */
-export interface Local { settings: Settings; pins: readonly string[]; muted: readonly string[] | null }
+export interface Local { settings: Settings; pins: readonly string[]; muted: readonly string[] | null; hostWorkspaces?: HostWorkspaceState }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -58,11 +62,17 @@ export function preferencesChange(base: Baseline, local: Local): PreferencesChan
   const settings = Object.fromEntries(Object.entries(now).filter(([key, value]) => !same(value, base.settings[key as SharedSettingKey])));
   const pinsChanged = base.pins !== null && !same(local.pins, base.pins);
   const mutedChanged = base.muted !== null && local.muted !== null && !same(local.muted, base.muted);
-  if (Object.keys(settings).length === 0 && !pinsChanged && !mutedChanged) return null;
+  // the open host workspaces: sent when they differ from what the server holds. Unlike pins they go
+  // out alone while it holds none: a PC's first seed (lib/hostWorkspaces.ts) is new, and waiting for
+  // a setting to change would leave each device with its own. A page with none open writes nothing.
+  const known = base.hostWorkspaces ?? null;
+  const workspacesChanged = local.hostWorkspaces !== undefined && (known === null ? Object.keys(local.hostWorkspaces).length > 0 : !same(local.hostWorkspaces, known));
+  if (Object.keys(settings).length === 0 && !pinsChanged && !mutedChanged && !workspacesChanged) return null;
   return {
     settings,
     ...(pinsChanged || base.pins === null ? { pins: [...local.pins] } : {}),
     ...(mutedChanged ? { muted_panes: [...local.muted!] } : {}),
+    ...(workspacesChanged ? { hostWorkspaces: structuredClone(local.hostWorkspaces!) } : {}),
   };
 }
 
@@ -74,6 +84,8 @@ export interface Taken {
   pins: string[] | null;
   /** the muted panes to set here; null when the server keeps no list (no mute is offered then); undefined leaves them */
   muted: string[] | null | undefined;
+  /** the open host workspaces to set here; null leaves them */
+  hostWorkspaces: HostWorkspaceState | null;
 }
 
 /**
@@ -106,8 +118,12 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
     if (mode === "dark") incoming.darkTheme = incoming.palette;
     if (mode === "light") incoming.lightTheme = incoming.palette;
   }
+  const defaults = sharedSettings(DEFAULT_SETTINGS);
   for (const key of SHARED_SETTING_KEYS) {
-    if (!(key in incoming)) continue;
+    // a setting shared since a release (BACKFILLED) that the server has never held is known as the
+    // default, so a choice this browser made while it was its own goes out with the next sync and
+    // reaches a new install; every other unheld one stays each browser's own, as before
+    if (!(key in incoming)) { if (BACKFILLED.has(key) && !force) settings[key] = defaults[key]; continue; }
     const value = incoming[key];
     if (!same(sanitizeSettings({ [key]: value })[key], value)) continue;
     const sent = inFlight !== null && key in inFlight.settings && same(inFlight.settings[key], local.settings[key]);
@@ -148,11 +164,27 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
       muted = same(merged, now) ? undefined : merged;
     }
   }
+  // the open host workspaces: the pins' rule, joined per PC the first time (the server's PCs win)
+  let hostWorkspaces: HostWorkspaceState | null = null;
+  const knownWorkspaces = base.hostWorkspaces ?? null;
+  const localWorkspaces = local.hostWorkspaces ?? {};
+  if (remote.hostWorkspaces !== undefined) {
+    if (knownWorkspaces === null && !force) hostWorkspaces = { ...localWorkspaces, ...structuredClone(remote.hostWorkspaces) };
+    else {
+      const sent = inFlight?.hostWorkspaces !== undefined && same(inFlight.hostWorkspaces, localWorkspaces);
+      const edited = !same(localWorkspaces, knownWorkspaces) && !sent;
+      if (force || !edited) hostWorkspaces = structuredClone(remote.hostWorkspaces);
+    }
+  }
   return {
-    base: { settings, pins: remote.pins === undefined ? base.pins : [...remote.pins], muted: remote.muted_panes === undefined ? null : [...remote.muted_panes] },
+    base: {
+      settings, pins: remote.pins === undefined ? base.pins : [...remote.pins], muted: remote.muted_panes === undefined ? null : [...remote.muted_panes],
+      ...(remote.hostWorkspaces === undefined ? knownWorkspaces === null ? {} : { hostWorkspaces: knownWorkspaces } : { hostWorkspaces: structuredClone(remote.hostWorkspaces) }),
+    },
     patch: patch as Partial<Settings>,
     pins,
     muted,
+    hostWorkspaces,
   };
 }
 
@@ -183,10 +215,11 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const { settings, update } = useSettings();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const muted = useSyncExternalStore(subscribePaneMutes, currentPaneMutes, currentPaneMutes);
-  const latest = useRef<Local>({ settings, pins, muted });
-  latest.current = { settings, pins, muted };
+  const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
+  const latest = useRef<Local>({ settings, pins, muted, hostWorkspaces });
+  latest.current = { settings, pins, muted, hostWorkspaces };
   // what this browser last knew the server to hold; until a document arrives, what it holds itself
-  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: null, muted: null });
+  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: null, muted: null, hostWorkspaces: null });
   const revision = useRef(0);
   // a document has arrived (the GET, or the event stream's opening): sending begins then
   const loadedRef = useRef(false);
@@ -236,10 +269,14 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     const taken = takePreferences(base.current, latest.current, remote, inFlight.current, readOnly.current, refused.current);
     base.current = taken.base;
     // a second document in the same tick compares against what this one set, not the last render
-    latest.current = { settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins, muted: taken.muted === undefined ? latest.current.muted : taken.muted };
+    latest.current = {
+      settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins,
+      muted: taken.muted === undefined ? latest.current.muted : taken.muted, hostWorkspaces: taken.hostWorkspaces ?? latest.current.hostWorkspaces,
+    };
     if (Object.keys(taken.patch).length > 0) update(taken.patch);
     if (taken.pins !== null) setSidebarPins(taken.pins);
     if (taken.muted !== undefined) setPaneMutes(taken.muted);
+    if (taken.hostWorkspaces !== null) setHostWorkspaces(taken.hostWorkspaces);
     loadedRef.current = true;
     setLoaded(true);
     setTaken((count) => count + 1);
@@ -323,7 +360,7 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     window.clearTimeout(retryTimer.current);
   }, []);
 
-  const change = loaded ? preferencesChange(base.current, { settings, pins, muted }) : null;
+  const change = loaded ? preferencesChange(base.current, { settings, pins, muted, hostWorkspaces }) : null;
   const pending = change === null ? null : JSON.stringify(change);
   // what was unsent now matches the server (another browser saved the same): nothing is left to confirm
   useEffect(() => {

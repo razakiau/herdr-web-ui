@@ -105,7 +105,7 @@ describe("the phone's model and agent choice", () => {
     // another chat, or the same session on another PC, has no choice of its own
     expect(chosenFor("desk", "s2")).toEqual({});
     expect(chosenFor("laptop", "s1")).toEqual({});
-    expect(session.has("herdr-web-ui:host-chat-choice:desk:s1")).toBe(true);
+    expect(session.has("ovis:host-chat-choice:desk:s1")).toBe(true);
     // a send that fails keeps it for the user's next tap
     record(502, { error: { code: "agent_host_failed", message: "down" } });
     await expect(sendHost("desk", { session: "s1", text: "FICTIONAL hello" }, NONE)).rejects.toThrow();
@@ -117,7 +117,7 @@ describe("the phone's model and agent choice", () => {
     // a read naming only the model as used keeps the whole pick
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: null }).agent).toBe("file:///tmp/fictional/agents/Report.agent.md");
     expect(settleChoice("desk", "s1", { model: { id: "fictional/model-b", effort: "high" }, agent: "file:///tmp/fictional/agents/Report.agent.md" })).toEqual({});
-    expect(session.has("herdr-web-ui:host-chat-choice:desk:s1")).toBe(false);
+    expect(session.has("ovis:host-chat-choice:desk:s1")).toBe(false);
   });
 
   it("sendHost carries the mode; stopHost and removeHostPending post their routes", async () => {
@@ -225,7 +225,7 @@ describe("the phone's model and agent choice", () => {
     expect(first).toMatch(UUID);
     expect(retry).toBe(first);
     // kept with the chat (sessionStorage), not the screen; another chat has its own
-    expect(session.has("herdr-web-ui:host-chat-send:desk:s1")).toBe(true);
+    expect(session.has("ovis:host-chat-send:desk:s1")).toBe(true);
     calls = record(200, { queued: false });
     await sendHost("desk", { session: "s2", text: "FICTIONAL once" }, NONE);
     expect(ids(calls)[0]).not.toBe(first);
@@ -238,7 +238,7 @@ describe("the phone's model and agent choice", () => {
     calls = record(200, { queued: false });
     await sendHost("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
     expect(ids(calls)[0]).toBe(edited);
-    expect(session.has("herdr-web-ui:host-chat-send:desk:s1")).toBe(false);
+    expect(session.has("ovis:host-chat-send:desk:s1")).toBe(false);
     await sendHost("desk", { session: "s1", text: "FICTIONAL once, edited" }, NONE);
     expect(ids(calls)[1]).not.toBe(edited);
     expect(ids(calls)[1]).toMatch(UUID);
@@ -251,7 +251,7 @@ describe("the phone's model and agent choice", () => {
     // the user sees the turn in the chat (it went) and does not retry
     calls = record(200, { session: "s1", title: "t", status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, signature: "x", message_ids: [crypto.randomUUID(), lost] });
     await fetchHostChat("desk", "s1");
-    expect(session.has("herdr-web-ui:host-chat-send:desk:s1")).toBe(false);
+    expect(session.has("ovis:host-chat-send:desk:s1")).toBe(false);
     // later, the same words: a new message, under a new id
     calls = record(200, { queued: false });
     await sendHost("desk", { session: "s1", text: "yes" }, NONE);
@@ -275,7 +275,7 @@ describe("the phone's model and agent choice", () => {
     let calls = record(502, {});
     await expect(sendHost("desk", { session: "s1", text: "yes" }, NONE)).rejects.toThrow();
     const lost = (calls[0]!.body as { id: string }).id;
-    const key = "herdr-web-ui:host-chat-send:desk:s1";
+    const key = "ovis:host-chat-send:desk:s1";
     const stored = JSON.parse(session.get(key)!) as Record<string, unknown>;
     session.set(key, JSON.stringify({ ...stored, at: Date.now() - HOST_ATTEMPT_TTL_MS - 1 }));
     calls = record(200, { queued: false });
@@ -347,7 +347,7 @@ describe("the phone's model and agent choice", () => {
     post.resolve();
     await sent;
     expect(readHostDraft("desk", "s1")).toBe("");
-    expect(session.has("herdr-web-ui:host-chat-draft:desk:s1")).toBe(false);
+    expect(session.has("ovis:host-chat-draft:desk:s1")).toBe(false);
   });
 
   it("words typed while a send is on its way stay in the draft", async () => {
@@ -415,9 +415,13 @@ describe("the pushes", () => {
     } finally { stop(); }
   });
 
-  it("App.tsx's event stream hands host chat events over before it invalidates the pane snapshots", () => {
-    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-    const handler = app.slice(app.indexOf('new EventSource("/api/machines/events")'));
+  it("the roster's event stream hands host chat events over before it invalidates the pane snapshots", () => {
+    const roster = readFileSync(new URL("./useMachineRoster.ts", import.meta.url), "utf8");
+    // the handler keepEventStream("/api/machines/events") runs: from its parse of the payload
+    expect(roster).toContain('keepEventStream("/api/machines/events"');
+    const start = roster.indexOf("let payload: MachineEvent;");
+    expect(start).toBeGreaterThan(0);
+    const handler = roster.slice(start);
     const taken = handler.indexOf("if (takeHostChatEvent(");
     const invalidated = handler.indexOf("snapshotRequests.current.invalidate()");
     expect(taken).toBeGreaterThan(0);

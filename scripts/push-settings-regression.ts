@@ -33,7 +33,7 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
       Object.defineProperty(navigator.serviceWorker, "ready", { value: Promise.resolve({ pushManager }) });
       Object.defineProperty(navigator.serviceWorker, "getRegistration", { value: async () => ({ pushManager }) });
     }, endpoint);
-    await context.route("**/api/push", (route) => route.fulfill({ json: { public_key: Buffer.alloc(65, 4).toString("base64url") } }));
+    await context.route("**/api/push", (route) => route.fulfill({ json: { public_key: Buffer.alloc(65, 4).toString("base64url"), ntfy: { topic: "fictional-topic", alerts: { input: true, done: "long" } } } }));
     await context.route("**/api/push/subscribe", (route) => {
       registrations++;
       return route.fulfill({ status: 204 });
@@ -49,7 +49,7 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
     await page.goto(origin);
     await page.locator(".conn-live").waitFor();
     // the More menu's Alerts item says so once this device's push subscription is made
-    for (const deadline = Date.now() + 15_000; (await alertsState(page)) !== "On, pushed to this device";) {
+    for (const deadline = Date.now() + 15_000; (await alertsState(page)) !== "On";) {
       assert.ok(Date.now() < deadline, "alerts are pushed to this device");
       await page.waitForTimeout(100);
     }
@@ -95,13 +95,45 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
     assert.equal(tests.length, beforeMissing);
 
     await page.getByRole("button", { name: "Close settings", exact: true }).click();
-    await runMoreItem(page, "Alerts");
+    await runMoreItem(page, "Push to this device");
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
     await openSettingsPage(page, "Alerts");
     assert.equal(await send.isDisabled(), true, "testing must not turn alerts on implicitly");
     await page.getByRole("button", { name: "Turn alerts on again", exact: true }).waitFor();
+
+    // the page holds the channels apart (ZAC-191): push to this device has its own switch, which
+    // leaves the in-app alerts alone, and the server's ntfy topic is said, not switched, here
+    const device = page.getByRole("switch", { name: "Push to this device", exact: true });
+    const inApp = page.getByRole("switch", { name: "In the app", exact: true });
+    assert.equal(await device.getAttribute("aria-checked"), "false");
+    assert.equal(await inApp.getAttribute("aria-checked"), "true", "push off leaves the in-app alerts on");
+    await device.click();
+    for (const deadline = Date.now() + 10_000; (await device.getAttribute("aria-checked")) !== "true";) {
+      assert.ok(Date.now() < deadline, "the switch turns push on");
+      await page.waitForTimeout(100);
+    }
+    const unsubscribed: string[] = [];
+    await context.route("**/api/push/subscribe", (route) => {
+      if (route.request().method() === "DELETE") unsubscribed.push(route.request().postDataJSON().endpoint);
+      else registrations++;
+      return route.fulfill({ status: 204 });
+    });
+    await device.click();
+    for (const deadline = Date.now() + 10_000; unsubscribed.length === 0;) {
+      assert.ok(Date.now() < deadline, "turning the switch off drops this device's push subscription");
+      await page.waitForTimeout(100);
+    }
+    assert.deepEqual(unsubscribed, [endpoint]);
+    assert.equal(await device.getAttribute("aria-checked"), "false");
+    assert.equal(await inApp.getAttribute("aria-checked"), "true", "push off leaves the in-app alerts on");
+    assert.equal(await send.isDisabled(), true, "off: nothing to test");
+    const server = page.locator('.settings-section[data-section="server"]');
+    assert.equal(await server.getByText("ntfy · fictional-topic", { exact: true }).count(), 1, "the server's ntfy topic has a group of its own");
+    assert.equal(await server.getByText("This server also posts alerts to the ntfy topic fictional-topic: questions and long turns.", { exact: true }).count(), 1);
+    assert.equal(await server.getByRole("switch").count(), 0, "ntfy is the server's to set: no switch here");
+    assert.deepEqual(await page.locator(".settings-section h3").allTextContents(), ["What to tell you", "On this device", "On the server"]);
     assert.deepEqual(errors, []);
-    console.log("PASS Settings push test: sent, stale/local missing subscription, recovery, failure, off, mobile layout");
+    console.log("PASS Settings push test: sent, stale/local missing subscription, recovery, failure, off, push apart from in-app alerts, the ntfy group, mobile layout");
   } finally {
     release?.();
     await context.close();

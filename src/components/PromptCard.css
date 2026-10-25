@@ -55,9 +55,12 @@
   margin: 0;
 }
 
-/* the card's one red: the "input needed" badge is read, not drawn */
+/* the title fills the row and pushes the controls to its end; plain text, as VS Code's carousel
+   title is (owner, round 5: the red heading read as an alarm) */
 .prompt-card-header h2 {
-  color: var(--status-blocked);
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   overflow-wrap: anywhere;
@@ -74,7 +77,6 @@
 
 /* "View plan" sits at the header's end, beside the title */
 .prompt-card-plan-file {
-  margin-inline-start: auto;
   flex: none;
 }
 
@@ -85,7 +87,6 @@
   place-items: center;
   width: var(--control-h);
   height: var(--control-h);
-  margin-inline-start: auto;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -94,10 +95,11 @@
   cursor: pointer;
 }
 
-.prompt-card-plan-file + .prompt-card-fold {
-  margin-inline-start: 0;
+.prompt-card-expand + .prompt-card-fold {
+  margin-inline-start: calc(var(--space-1) - var(--space-2));
 }
 
+.prompt-card-expand svg,
 .prompt-card-fold svg {
   width: var(--fs-md);
   height: var(--fs-md);
@@ -126,6 +128,16 @@
 .prompt-card.is-folded > :not(.prompt-card-header, .prompt-card-status, .prompt-card-error, .visually-hidden) {
   display: none;
 }
+
+/* ...and as short as the todo tab under it (owner, ZAC-228: a folded question was a tall box): a
+   2rem row, its buttons' touch targets reaching past it rather than heightening it */
+.prompt-card.is-folded {
+  padding-block: 0;
+  gap: 0;
+}
+.prompt-card.is-folded::after { display: none; }
+.prompt-card.is-folded .prompt-card-header { min-height: 2rem; }
+.prompt-card.is-folded :is(.prompt-card-expand, .prompt-card-fold) { margin-block: calc((2rem - var(--touch-target)) / 2); }
 
 /* a form of several questions: a chip per question, answered ones checked, the one asked now in
    the accent; the chips name the questions, so the card's title only says where this one stands */
@@ -323,16 +335,18 @@
 .prompt-card-options {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
+/* a row reads as a list item: the number, the title in bold with its tag, the description under
+   it. Rows are parted by space and the hover fill, never by boxes inside the card */
 .prompt-card-option {
   width: 100%;
   min-height: var(--control-h);
   display: flex;
-  /* the number sits on the label's first line whatever the mono font's metrics */
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
   background: transparent;
   border: var(--hairline) solid transparent;
   border-radius: var(--radius-md);
@@ -351,10 +365,6 @@
 .prompt-card-option:hover,
 .prompt-card-option:focus-visible {
   background: var(--bg-hover);
-}
-
-.prompt-card-option:hover .prompt-card-number {
-  color: var(--accent);
 }
 
 /* while an answer is on its way every option waits, the checkbox rows included (the busy state is
@@ -376,24 +386,39 @@
   border-color: var(--accent);
 }
 
-/* the number the agent's menu shows, as the key it is: typing it in the composer picks the
-   option too */
+/* the option's number, as a list marker set on the title's first line; typing it in the composer
+   picks the option too */
 .prompt-card-number {
   flex: none;
-  min-width: var(--space-5);
-  border: var(--hairline) solid var(--border-strong);
+  display: inline-grid;
+  place-items: center;
+  inline-size: 22px;
+  block-size: 22px;
+  /* level with the title's first line */
+  margin-block-start: calc((var(--fs-sm) * var(--lh-base) - 22px) / 2);
   border-radius: var(--radius-sm);
+  background: var(--bg-hover);
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: var(--fs-2xs);
-  font-weight: var(--fw-regular);
-  text-align: center;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
+.prompt-card-option:hover .prompt-card-number,
+.prompt-card-option:focus-visible .prompt-card-number {
+  color: var(--text-strong);
+}
+
+/* the agent's own pick: its number in the accent, the tag beside its title */
+.prompt-card-option.is-recommended .prompt-card-number,
 .prompt-card-option.is-checked .prompt-card-number,
 .prompt-card-option.is-selected .prompt-card-number,
 .prompt-card-option.is-typed .prompt-card-number {
-  border-color: var(--accent);
+  background: var(--accent-tint);
   color: var(--accent);
 }
 
@@ -417,26 +442,36 @@
 }
 
 .prompt-card-option-label {
-  font-weight: var(--fw-medium);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
 }
 
 .prompt-card-option-description {
   color: var(--text-dim);
   font-size: var(--fs-xs);
   font-weight: var(--fw-regular);
+  line-height: var(--lh-base);
 }
 
-/* the menu's own recommendation, told by a tag instead of a "(Recommended)" suffix */
+/* the menu's own recommendation, told by a pill instead of a "(Recommended)" suffix */
 .prompt-card-tag {
-  display: inline-block;
-  padding: 1px var(--space-1);
-  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
   background: var(--accent-tint);
   color: var(--accent);
   font-size: var(--fs-2xs);
   font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
   /* no taller than the label's line, so the number beside it stays level */
   line-height: var(--lh-tight);
+  white-space: nowrap;
 }
 
 /* "Send 2? Confirm / Cancel" is the answer's last step: it stays in sight on the card's fold,
@@ -484,7 +519,50 @@
   align-self: flex-start;
 }
 
+/* a form's footer, as VS Code's carousel lays it out: back and next with the count between them on
+   the left, Submit on the right once the last question is up */
+.prompt-card-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid var(--border);
+}
+
+/* in the header (a mouse window): no rule above it, the count between the arrows, tight to the title's end */
+.prompt-card-pager.is-header {
+  flex: none;
+  gap: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* a phone's pager with no Submit beside it stands in the middle, not at the left edge */
+.prompt-card-pager:not(.is-header):not(:has(.prompt-card-pager-submit)) {
+  justify-content: center;
+}
+
+/* a mouse window's foot holds only Submit, at the card's end */
+.prompt-card-pager:not(.is-header):not(:has(.icon-button)) {
+  justify-content: flex-end;
+}
+
+.prompt-card-pager-count {
+  min-width: 4.5em;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.prompt-card-pager-submit {
+  margin-left: auto;
+}
+
 .prompt-card-custom {
+  /* the dictation pill (VoiceInput.css) floats over the field as it does over the composer, not
+     wherever the nearest positioned ancestor happened to be */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -500,11 +578,39 @@
   gap: var(--space-2);
 }
 
-/* the field grows to the Send button's height, which is the touch target on a phone */
+/* the field grows to the Send button's height, which is the touch target on a phone, and with a
+   long answer (ZAC-207: a one-line field hid most of what was typed) up to six lines, then
+   scrolls in itself. The row's buttons stay at its foot, by the last line, as in the composer */
+.prompt-card-custom-row {
+  align-items: flex-end;
+}
+
+/* a Copilot card's field has three controls by it (attach, mic, Send): on its own line at the
+   card's width, they in a row under it, Send at the end, as VS Code's input lays them out */
+.prompt-card-custom-row.is-stacked {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.prompt-card-custom-row.is-stacked > .input {
+  flex-basis: 100%;
+}
+
+.prompt-card-custom-row.is-stacked > .btn {
+  margin-inline-start: auto;
+}
+
 .prompt-card-custom .input {
   flex: 1 1 auto;
   min-width: 0;
   height: auto;
+  min-height: var(--control-h);
+  max-height: calc(6lh + 2 * var(--space-2));
+  padding-block: var(--space-2);
+  field-sizing: content;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
 }
 
 .prompt-card-custom .btn svg {
@@ -551,6 +657,88 @@
 
   /* a row with a description is already taller than a touch target */
   .prompt-card-option.has-description {
-    padding-block: var(--space-1);
+    padding-block: var(--space-2);
+  }
+}
+
+/* a Copilot card's title, question and message in Markdown (the `markdown` prop): the type stays
+   the card's, the Markdown's own margins go; the message box keeps its scroll but reads as prose */
+.prompt-card-markdown .markdown { font: inherit; color: inherit; }
+.prompt-card-markdown .markdown > :first-child { margin-top: 0; }
+.prompt-card-markdown .markdown > :last-child { margin-bottom: 0; }
+.prompt-card-header h2.prompt-card-markdown .markdown p { margin: 0; }
+.prompt-card-body.prompt-card-markdown {
+  padding-bottom: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  white-space: normal;
+}
+.prompt-card-body.prompt-card-markdown::after { display: none; }
+
+/* ── A Copilot card's extras: expand, attach and the mic beside the typed answer ── */
+
+.prompt-card-expand {
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+}
+
+@media (pointer: coarse) {
+  .prompt-card-expand {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
+
+.prompt-card-attach,
+.prompt-card-mic {
+  flex: none;
+  align-self: center;
+}
+
+/* the composer's chips (Composer.css .composer-attachment), under the field: the card's own gutter */
+.prompt-card-files {
+  padding: var(--space-2) 0 0;
+}
+
+/* Opened: the same card in the app's sheet. The question scrolls on its own and the options and
+   the answer field stay at the bottom, over the keyboard (--app-height). On a wide window the sheet
+   is as tall as its content, up to the window: a fixed height left a short question over a dead
+   band (owner, ZAC-207, a desktop screenshot). A phone keeps the full-height sheet (below). */
+.prompt-card-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 48rem);
+  height: auto;
+  max-height: min(calc(var(--app-height, 100dvh) - 2 * var(--space-4)), 60rem);
+  padding: 0;
+  overflow: hidden;
+}
+
+.prompt-card.is-expanded {
+  flex: 1 1 auto;
+  max-height: none;
+  border: 0;
+  border-radius: inherit;
+}
+
+/* the message keeps its own height (a long one scrolls inside the sheet's cap); a short one leaves
+   no empty band: the sheet is as tall as what it holds, the answers right under the message and
+   the sheet's foot in the thumb's reach (owner, ZAC-207 and ZAC-228, phone screenshots) */
+.prompt-card.is-expanded .prompt-card-body {
+  max-height: none;
+}
+
+/* full screen on a wide window: the sheet's own margins, not the inline card's tight 12 px */
+@media (min-width: 641px) {
+  .prompt-card.is-expanded {
+    padding: var(--space-5) var(--space-6) var(--space-2);
+    gap: var(--space-3);
+  }
+}
+
+@media (max-width: 640px) {
+  .prompt-card-sheet {
+    width: 100%;
+    max-height: calc(var(--app-height, 100dvh) - var(--space-6));
   }
 }

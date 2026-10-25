@@ -7,7 +7,6 @@
  */
 export const DEVICES_ZH: Record<string, string> = {
   "Anyone who can reach {host} on your network can type into every pane: no access token is set and no device is paired yet.": "同一网络上任何能访问 {host} 的人都可以在每个窗格中输入：尚未设置访问 Token，也还没有配对任何设备。",
-  "Alerts off": "提醒已关闭",
   "Tap the Share button, then Add to Home Screen.": "点按“共享”按钮，然后选择“添加到主屏幕”。",
   "Open this page over HTTPS (or on localhost) to install it.": "请通过 HTTPS（或 localhost）打开此页面以进行安装。",
   "Firefox on desktop can't install web apps. Open this page in Chrome or Edge.": "桌面版 Firefox 无法安装 Web 应用。请在 Chrome 或 Edge 中打开此页面。",
@@ -24,7 +23,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "Pairing…": "正在配对…",
   "Pair this device": "配对此设备",
   "Have an access token instead?": "有访问 Token？",
-  "Access token": "访问 Token",
   "Unlocking…": "正在解锁…",
   "Unlock": "解锁",
   "You are on the PC itself.": "你正在 PC 本机上访问。",
@@ -56,9 +54,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "New code": "新代码",
   "Devices are managed on a real server.": "设备只能在真实服务器上管理。",
   "never": "从未",
-  "just now": "刚刚",
-  "{n} min ago": "{n} 分钟前",
-  "{n} h ago": "{n} 小时前",
   "Asking this PC about Tailscale…": "正在查询此 PC 的 Tailscale 状态…",
   "Check again": "重新检查",
   "Open this address on your phone": "在手机上打开此地址",
@@ -78,8 +73,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "Portal serves this PC": "Portal 正在为此 PC 提供服务",
   "Open it on your phone and sign in with the access token, or pair the phone: Devices, below.": "在手机上打开它并用访问令牌登录，或配对手机：请见下方“设备”。",
   "Relay": "中继",
-  "Stop": "停止",
-  "Stopping…": "正在停止…",
   "Recovering…": "正在恢复…",
   "Set OVIS_TOKEN on this PC and restart the app to start Portal.": "要启动 Portal，请在此 PC 上设置 OVIS_TOKEN 并重启应用。",
   "Portal is a second way in: unset OVIS_TAILSCALE_SERVE_ONLY on this PC and restart the app first.": "Portal 是另一条访问途径：请先在此 PC 上取消 OVIS_TAILSCALE_SERVE_ONLY 并重启应用。",
@@ -100,4 +93,5 @@ export const DEVICES_ZH: Record<string, string> = {
   "Allow notifications to test alerts on this device.": "请允许通知，以便在此设备上测试提醒。",
   "Could not send the test notification. Try again.": "无法发送测试通知。请重试。",
   "Turn alerts on again": "重新开启提醒",
+  "Push is off on this device": "此设备上的推送已关闭",
 };

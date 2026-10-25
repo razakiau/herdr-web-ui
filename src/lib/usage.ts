@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ProviderUsage, UsageProviderId, UsageReport, UsageWindow } from "../../shared/protocol.ts";
+import type { ProviderUsage, UsageProviderId, UsageProviderName, UsageReport, UsageWindow } from "../../shared/protocol.ts";
 import { fetchUsage } from "./api.ts";
-import type { UsageCount, UsageGlance } from "./settings.ts";
+import type { UsageCount, UsageGlance, UsageGroup } from "./settings.ts";
 import { t } from "./i18n.ts";
 import { usePageVisible } from "./visibility.ts";
 
@@ -19,6 +19,42 @@ export const PROVIDER_MARK: Readonly<Record<UsageProviderId, string>> = {
   claude: "claude", codex: "codex", cursor: "cursor", copilot: "copilot", grok: "grok", antigravity: "agy", opencode: "opencode",
 };
 
+/** the providers only an OmniRoute gateway reports, as they name themselves; others are title-cased from the id */
+const OTHER_PROVIDER_NAME: Readonly<Record<string, string>> = {
+  glm: "GLM", "glm-cn": "GLM China", zai: "Z.ai", glmt: "GLM", kimi: "Kimi", "kimi-coding": "Kimi", "kimi-coding-apikey": "Kimi",
+  minimax: "MiniMax", "minimax-cn": "MiniMax China", deepseek: "DeepSeek", kiro: "Kiro", "amazon-q": "Amazon Q", qoder: "Qoder",
+  "ollama-cloud": "Ollama Cloud", nanogpt: "NanoGPT", crof: "Crof", "xiaomi-mimo": "Xiaomi MiMo", "xiaomi-mimo-token-plan": "Xiaomi MiMo",
+  vertex: "Vertex AI", "vertex-partner": "Vertex AI", "codebuddy-cn": "CodeBuddy", promptql: "PromptQL", pql: "PromptQL",
+  "adobe-firefly": "Adobe Firefly", firefly: "Adobe Firefly", hyperagent: "HyperAgent", ha: "HyperAgent",
+};
+
+const isKnown = (id: UsageProviderName): id is UsageProviderId => Object.hasOwn(PROVIDER_NAME, id);
+
+/** A provider's name: herdr's own, else the one OmniRoute's providers go by, else the id title-cased. */
+export function providerName(id: UsageProviderName): string {
+  if (isKnown(id)) return PROVIDER_NAME[id];
+  return OTHER_PROVIDER_NAME[id] ?? id.split("-").map((word) => word.length <= 3 ? word.toUpperCase() : word[0]!.toUpperCase() + word.slice(1)).join(" ");
+}
+
+/** AgentMark's name for a provider: its logo, or for one herdr has none of, the id (a lettered mark). */
+export function providerMark(id: UsageProviderName): string {
+  return isKnown(id) ? PROVIDER_MARK[id] : id;
+}
+
+/**
+ * A plan as a pill can hold it: providers report ids ("default_claude_max_20x", "OpenCode Go"),
+ * so the words that only repeat the provider or say "default" go, and the rest is title-cased.
+ * Null when nothing is left: the pill would only repeat the name next to it.
+ */
+export function planLabel(plan: string | null, id: UsageProviderName): string | null {
+  const repeats = new Set(["default", id.toLowerCase(), ...providerName(id).toLowerCase().split(/\s+/)]);
+  const words = (plan ?? "").toLowerCase().split(/[\s_-]+/).filter((word) => word && !repeats.has(word));
+  return words.length ? words.map((word) => word[0]!.toUpperCase() + word.slice(1)).join(" ") : null;
+}
+
+/** An account read through an OmniRoute gateway, not this PC's own sign-in or the Hub's. */
+export const viaOmniRoute = (usage: Pick<ProviderUsage, "key" | "id">): boolean => usage.key.startsWith(`${usage.id}:omniroute:`);
+
 export const WINDOW_LABEL: Readonly<Record<UsageWindow["kind"], string>> = {
   session: "Session",
   day: "Daily",
@@ -32,9 +68,9 @@ export function providerForAgent(agent: string | null | undefined): UsageProvide
 }
 
 /** The first visible account in Settings order supplies the composer's compact reference. */
-export function composerUsage(providers: readonly ProviderUsage[], agent: string | null, order: readonly string[], hidden: readonly string[]): ProviderUsage | undefined {
+export function composerUsage(providers: readonly ProviderUsage[], agent: string | null, order: readonly string[], hidden: readonly string[], shown: readonly string[] = []): ProviderUsage | undefined {
   const providerId = providerForAgent(agent);
-  return orderProviders(providers, order).find((usage) => usage.id === providerId && !hidden.includes(usage.key));
+  return shownUsages(providers, { order, hidden, shown }).find((usage) => usage.id === providerId);
 }
 
 /** Plan-wide five-hour session first, then week; scoped limits do not stand in for either. */
@@ -66,7 +102,7 @@ export function windowLabel(window: UsageWindow): string {
 
 /** A provider and, when known, whose account it is: "Codex · me@example.com". */
 export function usageName(usage: ProviderUsage): string {
-  return usage.account ? `${PROVIDER_NAME[usage.id]} · ${usage.account}` : PROVIDER_NAME[usage.id];
+  return usage.account ? `${providerName(usage.id)} · ${usage.account}` : providerName(usage.id);
 }
 
 /** What a meter shows of a limit: the share used, or what is left. */
@@ -153,4 +189,73 @@ export function useUsage(enabled: boolean) {
 
   const refresh = useCallback(() => { if (enabled) void load(true); }, [enabled, load]);
   return { report, loading, refresh };
+}
+
+/** What decides which accounts the meters show: Settings' order and hidden accounts, and the OmniRoute providers chosen. */
+export interface UsageVisibility { order: readonly string[]; hidden: readonly string[]; shown: readonly string[] }
+
+/**
+ * The accounts the meters show, in Settings' order: this PC's and the Hub's unless hidden; an
+ * OmniRoute gateway's only for the providers chosen in Settings (it can report dozens), unless hidden.
+ */
+export function shownUsages(providers: readonly ProviderUsage[], { order, hidden, shown }: UsageVisibility): ProviderUsage[] {
+  return orderProviders(providers, order).filter((usage) => !hidden.includes(usage.key) && (!viaOmniRoute(usage) || shown.includes(usage.id)));
+}
+
+/** The providers an OmniRoute gateway reports that Settings has not offered yet, in report order. */
+export function newOmniRouteProviders(providers: readonly ProviderUsage[], known: readonly string[]): string[] {
+  return [...new Set(providers.filter(viaOmniRoute).map((usage) => usage.id))].filter((id) => !known.includes(id));
+}
+
+/** The accounts closest to a limit first, by each one's tightest window; one without numbers last. */
+export function closestFirst(providers: readonly ProviderUsage[]): ProviderUsage[] {
+  const used = (usage: ProviderUsage): number => tightestWindow(usage)?.used_percent ?? -1;
+  return [...providers].sort((a, b) => used(b) - used(a));
+}
+
+/** A provider's accounts together, providers in the order their first account is shown; by "account", each its own. */
+export function providerGroups(providers: readonly ProviderUsage[], by: UsageGroup = "provider"): ProviderUsage[][] {
+  if (by === "account") return providers.map((usage) => [usage]);
+  const groups = new Map<string, ProviderUsage[]>();
+  for (const usage of providers) {
+    const group = groups.get(usage.id);
+    if (group) group.push(usage);
+    else groups.set(usage.id, [usage]);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * How big an account's plan is next to its provider's others, for a chip that averages them: a
+ * percentage alone does not say how much it is of. Claude's Max states its multiple of Pro (5x,
+ * 20x); Copilot's plans are their monthly premium requests (Free 50, Pro 300, Pro+ 1500, Business
+ * 300, Enterprise 1000); Codex's Pro is about 10 Plus. Anything else counts as 1, so accounts on
+ * plans not known here average plainly.
+ */
+export function planWeight(usage: Pick<ProviderUsage, "id" | "plan">): number {
+  const plan = (usage.plan ?? "").toLowerCase();
+  if (usage.id === "claude") return /max[\s_-]*20x/.test(plan) ? 20 : /max/.test(plan) ? 5 : 1;
+  if (usage.id === "copilot") {
+    return /pro\s*\+|pro[\s_-]*plus/.test(plan) ? 1500 : /enterprise/.test(plan) ? 1000 : /pro|business/.test(plan) ? 300 : /free/.test(plan) ? 50 : 1;
+  }
+  if (usage.id === "codex") return /\bpro\b/.test(plan) ? 10 : 1;
+  return 1;
+}
+
+/**
+ * The limit a provider's chip shows for all its accounts: the same limit of each (the kind and scope
+ * the first account shows), averaged by plan size, its reset the soonest. One account is its own.
+ */
+export function groupWindow(group: readonly ProviderUsage[], glance: UsageGlance): UsageWindow | null {
+  const lead = group.map((usage) => glanceWindow(usage, glance)).find((window) => window !== null) ?? null;
+  if (lead === null) return null;
+  const same = group.flatMap((usage) => {
+    const window = usage.windows.find((candidate) => candidate.kind === lead.kind && candidate.scope === lead.scope);
+    return window ? [{ window, weight: planWeight(usage) }] : [];
+  });
+  if (same.length === 1) return same[0]!.window;
+  const total = same.reduce((sum, { weight }) => sum + weight, 0);
+  const used = same.reduce((sum, { window, weight }) => sum + window.used_percent * weight, 0) / total;
+  const resets = same.map(({ window }) => window.resets_at).filter((at): at is string => at !== null).sort((a, b) => Date.parse(a) - Date.parse(b));
+  return { ...lead, used_percent: Math.round(used * 10) / 10, resets_at: resets[0] ?? null };
 }

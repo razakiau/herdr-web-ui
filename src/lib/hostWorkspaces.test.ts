@@ -91,7 +91,7 @@ describe("agent host workspaces", () => {
       stop();
       expect(heard).toBe(1);
       expect(currentHostWorkspaces()).toEqual(state);
-      expect(JSON.parse(stored.get("herdr-web-ui:host-workspaces")!)).toEqual(state);
+      expect(JSON.parse(stored.get("ovis:host-workspaces")!)).toEqual(state);
     } finally {
       if (original) Object.defineProperty(globalThis, "localStorage", original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;

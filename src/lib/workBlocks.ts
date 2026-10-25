@@ -2,6 +2,7 @@ import type { ConversationPart, ConversationTurn } from "../../shared/protocol.t
 import { turnSkills } from "./skillActivity.ts";
 import { isTodoTool, todoSnapshot, type TodoItem } from "./todos.ts";
 import { t } from "./i18n.ts";
+import { toolVerbKind } from "./toolVerbs.ts";
 
 export type ToolPart = Extract<ConversationPart, { kind: "tool" }>;
 export type ThinkingPart = Extract<ConversationPart, { kind: "thinking" }>;
@@ -24,8 +25,11 @@ export function splitTurn(parts: ConversationPart[]): SplitTurn {
     if (part?.kind !== "text" || part.phase === "commentary") lastAction = index;
   }
   const isProse = (part: ConversationPart): part is TextPart => part.kind === "text" && part.text.trim().length > 0;
+  // a host chat's subagent and answered question are rows of their own, never folded into the work
+  // (VS Code's); no other agent's reader makes these parts. They still end the narration before them
+  const ownRow = (part: ConversationPart): boolean => part.kind === "subagent" || part.kind === "question";
   return {
-    work: parts.filter((part, index) => part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction)),
+    work: parts.filter((part, index) => !ownRow(part) && (part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction))),
     answer: parts.filter((part, index): part is TextPart => isProse(part) && (part.phase === "final_answer" || index > lastAction)),
   };
 }
@@ -58,9 +62,13 @@ export const CATEGORY_LABEL: Record<WorkCategory, [singular: string, plural: str
 };
 
 function categorize(name: string): WorkCategory {
+  // the verb table's tools first: Copilot's view and create name no category by their words
+  const verb = toolVerbKind(name);
+  if (verb !== null) return verb === "read" ? "read" : verb === "run" ? "command" : "edit";
   const lower = name.toLowerCase();
   if (/edit|write|patch|create_file|multiedit/.test(lower)) return "edit";
-  if (/^(read|glob|grep|ls|list|search|find|cat)/.test(lower)) return "read";
+  // VS Code's own searches and listings (copilot_findTextInFiles, copilot_listDirectory) under its prefix
+  if (/^(copilot_)?(read|glob|grep|ls|list|search|find|cat)/.test(lower)) return "read";
   if (/bash|command|shell|exec|eval|run/.test(lower)) return "command";
   return "other";
 }
@@ -149,7 +157,9 @@ export interface TodoGroup {
 }
 
 function attemptOf(part: ToolPart): TodoAttempt {
-  return { part, state: part.state ?? "unknown", items: todoSnapshot(part) };
+  // a Copilot transcript's richer states (shared/protocol.ts) read as the three a todo run tells apart
+  const state = part.state === "running" || part.state === "awaiting" ? "pending" : part.state === "denied" ? "error" : part.state === "skipped" ? "unknown" : part.state ?? "unknown";
+  return { part, state, items: todoSnapshot(part) };
 }
 
 /**

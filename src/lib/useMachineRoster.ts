@@ -7,6 +7,7 @@ import { receiveSeen } from "./seenFinishes.ts";
 import { takeAuthTokenFromUrl } from "./authLink.ts";
 import { applyPaneStatus } from "./snapshot.ts";
 import { setAgentRowTokens } from "./agentRowTokens.ts";
+import { noteHostChatStreamOpen, takeHostChatEvent } from "./hostChats.ts";
 import { SnapshotRequests } from "./snapshotRequests.ts";
 import { ReorderCoordinator } from "./workspaceOrder.ts";
 import type { AppLink } from "./deepLink.ts";
@@ -187,6 +188,9 @@ export function useRosterEvents({ locked, receivePreferencesRef, snapshotRequest
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
       if (payload.type === "herdr-sidebar") { setAgentRowTokens(payload.agents); return; }
       if (payload.type === "seen") { receiveSeen(payload.finishes); return; }
+      // a PC's agent host or host chats changed: its sidebar group and an open chat read them again;
+      // no pane snapshot is touched, so a streaming chat never voids the roster's polls
+      if (takeHostChatEvent(payload, (id) => machinesRef.current.some((m) => m.id === id))) return;
       // A poll started before this event can carry an older roster or pane status.
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
@@ -235,7 +239,8 @@ export function useRosterEvents({ locked, receivePreferencesRef, snapshotRequest
     };
     return keepEventStream("/api/machines/events", {
       // opened or reopened: a shared-settings save paused by failures gets a new round
-      opened: () => preferencesResubscribedRef.current(),
+      // and a host chat push may have been missed while it was down (lib/hostChats.ts)
+      opened: () => { preferencesResubscribedRef.current(); noteHostChatStreamOpen(); },
       // lost (the browser reconnects by itself): a shared-settings save waits for that instead of retrying
       lost: () => preferencesDisconnectedRef.current(),
       // the browser gave up on it (a proxy's 502 during a restart): a save nobody refused stops waiting for

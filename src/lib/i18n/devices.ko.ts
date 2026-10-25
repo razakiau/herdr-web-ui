@@ -7,7 +7,6 @@
  */
 export const DEVICES_KO: Record<string, string> = {
   "Anyone who can reach {host} on your network can type into every pane: no access token is set and no device is paired yet.": "같은 네트워크에서 {host}에 닿을 수 있는 사람은 누구나 모든 패널에 입력할 수 있습니다. 접속 토큰이 설정되지 않았고, 아직 페어링된 기기도 없습니다.",
-  "Alerts off": "알림 꺼짐",
   "Tap the Share button, then Add to Home Screen.": "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.",
   "Open this page over HTTPS (or on localhost) to install it.": "설치하려면 이 페이지를 HTTPS(또는 localhost)로 여세요.",
   "Firefox on desktop can't install web apps. Open this page in Chrome or Edge.": "데스크톱 Firefox는 웹 앱을 설치할 수 없습니다. Chrome이나 Edge로 여세요.",
@@ -24,7 +23,6 @@ export const DEVICES_KO: Record<string, string> = {
   "Pairing…": "페어링 중…",
   "Pair this device": "이 기기 페어링",
   "Have an access token instead?": "접속 토큰이 있나요?",
-  "Access token": "접속 토큰",
   "Unlocking…": "잠금 해제 중…",
   "Unlock": "잠금 해제",
   "You are on the PC itself.": "지금 PC 자체에서 보고 있습니다.",
@@ -56,9 +54,6 @@ export const DEVICES_KO: Record<string, string> = {
   "New code": "새 코드",
   "Devices are managed on a real server.": "기기 관리는 실제 서버에서만 됩니다.",
   "never": "없음",
-  "just now": "방금",
-  "{n} min ago": "{n}분 전",
-  "{n} h ago": "{n}시간 전",
   "Asking this PC about Tailscale…": "이 PC의 Tailscale 상태를 확인하는 중…",
   "Check again": "다시 확인",
   "Open this address on your phone": "폰에서 이 주소를 여세요",
@@ -78,8 +73,6 @@ export const DEVICES_KO: Record<string, string> = {
   "Portal serves this PC": "Portal이 이 PC를 서빙하고 있습니다",
   "Open it on your phone and sign in with the access token, or pair the phone: Devices, below.": "폰에서 열고 접근 토큰으로 로그인하거나 폰을 페어링하세요. 아래 기기 항목을 보세요.",
   "Relay": "릴레이",
-  "Stop": "중지",
-  "Stopping…": "중지 중…",
   "Recovering…": "복구 중…",
   "Set OVIS_TOKEN on this PC and restart the app to start Portal.": "Portal을 시작하려면 이 PC에 OVIS_TOKEN을 설정하고 앱을 다시 시작하세요.",
   "Portal is a second way in: unset OVIS_TAILSCALE_SERVE_ONLY on this PC and restart the app first.": "Portal은 또 하나의 접속 경로입니다. 먼저 이 PC에서 OVIS_TAILSCALE_SERVE_ONLY를 해제하고 앱을 다시 시작하세요.",
@@ -100,4 +93,5 @@ export const DEVICES_KO: Record<string, string> = {
   "Allow notifications to test alerts on this device.": "이 기기에서 알림을 테스트하려면 알림을 허용하세요.",
   "Could not send the test notification. Try again.": "테스트 알림을 보내지 못했습니다. 다시 시도하세요.",
   "Turn alerts on again": "알림 다시 켜기",
+  "Push is off on this device": "이 기기에서 푸시가 꺼져 있습니다",
 };

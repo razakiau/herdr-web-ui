@@ -3,7 +3,10 @@
    The fold and the + close the header at its right. */
 .machine-list {
   position: relative;
-  flex: 1 1 0;
+  /* as tall as its groups, shrinking to scroll when they are taller than the room: a list that
+     took every spare pixel put a gap above Agents that changed with how many PCs were open
+     (desktop audit, 2026-10-23). The spare height goes above the footer (Sidebar.css) */
+  flex: 0 1 auto;
   min-height: 0;
   padding-top: var(--space-2);
   overflow-y: auto;
@@ -11,12 +14,6 @@
   scroll-padding-bottom: var(--space-4);
 }
 
-/* When every PC is folded, keep this section at its headings instead of reserving the whole
-   flexible column, whether or not Agents has rows: a visible Agents list takes the space below
-   it (AgentSidebar.css) and the footer stays at the bottom (Sidebar.css). */
-.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .machine-list {
-  flex: 0 1 auto;
-}
 
 /* a list that is cut fades out at its lower edge */
 .machine-list::after {
@@ -92,14 +89,17 @@
 /* the + fills the rows' status cell */
 .machine-new { width: var(--side-box); }
 
-/* An SSH PC's manage button takes no room until its header is hovered or focused, its panel is
-   open or the PC is not connected. It stays in the focus order. */
-.machine-manage {
+/* An SSH PC's manage button, and a kept PC's put-back (into Other PCs), take no room until the
+   header is hovered or focused, the manage panel is open or the PC is not connected. Both stay in
+   the focus order; a touch screen shows them. */
+.machine-manage,
+.machine-put-back {
   width: 0;
   overflow: hidden;
   opacity: 0;
 }
 
+.machine-header:focus-within > .machine-put-back,
 .machine-header:focus-within > .machine-manage,
 .machine-manage[aria-expanded="true"],
 .machine-group.is-offline .machine-manage {
@@ -109,6 +109,7 @@
 }
 
 @media (hover: hover) {
+  .machine-header:hover > .machine-put-back,
   .machine-header:hover > .machine-manage {
     width: var(--side-action);
     overflow: visible;
@@ -117,6 +118,7 @@
 }
 
 @media (pointer: coarse) {
+  .machine-put-back,
   .machine-manage {
     width: var(--side-action);
     overflow: visible;
@@ -169,6 +171,45 @@
 }
 
 .machine-offline { opacity: 0.5; }
+
+/* "Other PCs (n)": the PCs not in use, folded as the Agents list folds (AgentSidebar.css) */
+.other-pcs { padding: var(--space-2) var(--side-gutter) 0; }
+.other-pcs-toggle { gap: 0; }
+.other-pcs-list { margin: 0; padding: 0; list-style: none; }
+.other-pcs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--side-row);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.other-pcs-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.other-pcs-state { flex: none; color: var(--text-dim); font-size: var(--fs-sm); }
+.other-pcs-dots { display: inline-flex; gap: var(--space-1); margin-left: auto; padding-right: var(--space-2); }
+.other-pcs-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.other-pcs-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.other-pcs-dot[data-status="working"]::before { background: var(--status-working); }
+.other-pcs-dot[data-status="blocked"]::before { background: var(--status-blocked); }
 
 .machine-controls {
   display: grid;

@@ -7,7 +7,6 @@
  */
 export const DEVICES_JA: Record<string, string> = {
   "Anyone who can reach {host} on your network can type into every pane: no access token is set and no device is paired yet.": "同じネットワークで {host} に届く人なら誰でも、すべてのペインに入力できます。アクセストークンは設定されておらず、ペアリング済みのデバイスもまだありません。",
-  "Alerts off": "通知オフ",
   "Tap the Share button, then Add to Home Screen.": "共有ボタンをタップし、「ホーム画面に追加」を選択してください。",
   "Open this page over HTTPS (or on localhost) to install it.": "インストールするには、このページを HTTPS (または localhost) で開いてください。",
   "Firefox on desktop can't install web apps. Open this page in Chrome or Edge.": "デスクトップ版 Firefox では Web アプリをインストールできません。このページを Chrome または Edge で開いてください。",
@@ -24,7 +23,6 @@ export const DEVICES_JA: Record<string, string> = {
   "Pairing…": "ペアリングしています…",
   "Pair this device": "このデバイスをペアリング",
   "Have an access token instead?": "アクセストークンをお持ちですか?",
-  "Access token": "アクセストークン",
   "Unlocking…": "ロックを解除しています…",
   "Unlock": "ロック解除",
   "You are on the PC itself.": "PC 本体からアクセスしています。",
@@ -56,9 +54,6 @@ export const DEVICES_JA: Record<string, string> = {
   "New code": "新しいコード",
   "Devices are managed on a real server.": "デバイスは実際のサーバー上でのみ管理できます。",
   "never": "なし",
-  "just now": "たった今",
-  "{n} min ago": "{n} 分前",
-  "{n} h ago": "{n} 時間前",
   "Asking this PC about Tailscale…": "この PC の Tailscale の状態を確認しています…",
   "Check again": "再確認",
   "Open this address on your phone": "スマートフォンでこのアドレスを開いてください",
@@ -78,8 +73,6 @@ export const DEVICES_JA: Record<string, string> = {
   "Portal serves this PC": "Portal がこの PC を公開しています",
   "Open it on your phone and sign in with the access token, or pair the phone: Devices, below.": "スマートフォンで開いてアクセストークンでサインインするか、スマートフォンをペアリングしてください。下の「デバイス」を参照してください。",
   "Relay": "リレー",
-  "Stop": "停止",
-  "Stopping…": "停止しています…",
   "Recovering…": "復旧しています…",
   "Set OVIS_TOKEN on this PC and restart the app to start Portal.": "Portal を開始するには、この PC で OVIS_TOKEN を設定してアプリを再起動してください。",
   "Portal is a second way in: unset OVIS_TAILSCALE_SERVE_ONLY on this PC and restart the app first.": "Portal はもう一つの入口です。先にこの PC で OVIS_TAILSCALE_SERVE_ONLY を解除し、アプリを再起動してください。",
@@ -100,4 +93,5 @@ export const DEVICES_JA: Record<string, string> = {
   "Allow notifications to test alerts on this device.": "このデバイスで通知をテストするには、通知を許可してください。",
   "Could not send the test notification. Try again.": "テスト通知を送信できませんでした。もう一度お試しください。",
   "Turn alerts on again": "通知をもう一度オンにする",
+  "Push is off on this device": "このデバイスではプッシュがオフです",
 };

@@ -261,3 +261,11 @@
     transition: none;
   }
 }
+
+/* a state read, not set here (the server's ntfy topic): the control's place, without a control's look */
+.settings-value {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}

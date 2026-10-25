@@ -8,6 +8,8 @@ export const useMachineId = () => useContext(MachineContext);
 /** App's workspace order for every PC (lib/workspaceOrder.ts); a Sidebar outside App gets its own */
 export const ReorderContext = createContext(new ReorderCoordinator());
 export const useReorderCoordinator = () => useContext(ReorderContext);
+/** The machine API bound to one PC (useMachineApi). */
+export type MachineApi = ReturnType<typeof useMachineApi>;
 /** Bound functions retain their owner across an async upload or a fast PC switch. */
 export function useMachineApi() {
   const id = useMachineId();

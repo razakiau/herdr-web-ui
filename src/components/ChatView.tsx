@@ -1,7 +1,7 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleQuestionMark, CircleSlash, CircleX, Copy, Layers, SquareTerminal, Target, Undo2,
+  ArrowDown, ArrowRight, BookOpen, Brain, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleQuestionMark, CircleSlash, CircleX, Copy, Ellipsis, FileDiff, GitFork, Layers, RotateCcw, SquareTerminal, Target, Undo2,
   type LucideProps,
 } from "lucide-react";
 
@@ -25,6 +25,9 @@ import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory
 import { turnRevision } from "../lib/turnRevision.ts";
 import { conversationFinishEvidence, conversationFinishPresented } from "../lib/panePresentation.ts";
 import { seenKey } from "../lib/seenFinishes.ts";
+import { mcpCall, mcpWordsSayMore } from "../lib/mcpCall.ts";
+import { McpIcon } from "./McpIcon.tsx";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
@@ -49,16 +52,21 @@ import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { toolPathLabel, toolPathRoot } from "../lib/workspacePath.ts";
+import { parseInline, type InlineNode } from "../lib/markdown.ts";
 import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
-import { machinePath, paneStorageId } from "../../shared/machines.ts";
+import { machinePath } from "../../shared/machines.ts";
+import { stickyRequestIndex } from "../lib/chatStickyRequest.ts";
+import { checkpointRows, type CheckpointRow } from "../lib/hostCheckpoints.ts";
+import type { HostCheckpoint, HostEditDiff } from "../../shared/host-chats.ts";
+import type { ToolEdit } from "../../shared/protocol.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { useSkillMatcher } from "../lib/useSkillMatcher.ts";
 import type { SkillMatcher } from "../lib/skillMentions.ts";
-import { lineDiff } from "../lib/diff.ts";
+import { foldContext, lineDiff } from "../lib/diff.ts";
 import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
@@ -78,8 +86,21 @@ const READER_ALLOWANCE_PX = 1;
 // growing a few lines shrinks the view before the correction to the end lands. A scroll that sends
 // no input this page sees (a screen reader's, a Firefox scrollbar's) leaves the end only past it.
 const LAYOUT_ALLOWANCE_PX = 48;
-/** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
-const ChatPaneContext = createContext<string | null>(null);
+import { hostSource, paneSource, type ChatSource } from "../lib/chatSource.ts";
+import { baseName, neverFolded, toolFile, toolGroupSummary, toolKind, turnStyle, type TurnStyle } from "../lib/toolGroupSummary.ts";
+import { toolIcon } from "../lib/toolIcons.ts";
+import { FileGlyph } from "./FileGlyph.tsx";
+import { RowText } from "./RowText.tsx";
+import { isSubagentTarget, RevealedSubagentContext, SubagentRow, type SubagentTarget } from "./SubagentRow.tsx";
+import { QuestionSummary } from "./QuestionSummary.tsx";
+
+/** Where this chat reads (a pane, a host chat), for what its rows fetch on request: a tool call's whole output, a picture. */
+const ChatSourceContext = createContext<ChatSource | null>(null);
+/**
+ * A host chat's subagent row reads the subagent's own chat through this: its turns, by its chat URI.
+ * Null for a pane, whose agents make no subagent parts.
+ */
+export const SubagentChatContext = createContext<((chat: string) => Promise<ConversationTurn[]>) | null>(null);
 const ChatHistoryContext = createContext("");
 /**
  * Opens the image viewer for a message's pictures. The viewer is held by ChatView, not by the row:
@@ -93,6 +114,8 @@ import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, CommandOutcome, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult, SlashCommand } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
+import { providerMark } from "../lib/modelProvider.ts";
+import { alignBreath } from "../lib/breath.ts";
 import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
@@ -128,6 +151,9 @@ const NO_ROW = Object.freeze({});
  * was at the end can so land after the reader paged or scrolled away, and pull them back. Any newer
  * scroll request supersedes a waiting one; a request for no row supersedes it without moving.
  */
+/** How far under the chat's top edge the pinned request reaches (two lines and its padding). */
+const STICKY_BAND = 64;
+
 function dropPendingListScroll(list: LegendListRef | null): void {
   void list?.scrollToItem({ item: NO_ROW, animated: false });
 }
@@ -144,12 +170,24 @@ export interface ChatViewProps {
   presentationKey?: string;
   finishEpoch?: string;
   finishId?: number;
+  /** "" with a `source` that is not a pane's (a host chat) */
   paneId: string;
+  /**
+   * Where the chat reads, when not the pane's conversation (lib/chatSource.ts: a host chat). With
+   * one, everything only a pane has is off: herdr's scrollback and the terminal output, the pane's
+   * prompt state, its conversation-watch and its skill list; the source's own watch and changes
+   * stand in for the last two. Its `key` is what the chat's memory is kept under.
+   */
+  source?: ChatSource;
+  /** the transcript's accessible name, when not "conversation of <pane>" */
+  label?: string;
   /** Only the active pane owns the chat-local Mod+F shortcut. */
   active?: boolean;
   /** false while the pane sits off-tab (a cached or retained pane): no reads, no conversation-watch */
   visible?: boolean;
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
+  /** set by the view: takes the reader to a subagent's row by its chat and opens it (a host chat's "N running" sheet); false when no loaded turn holds it */
+  revealSubagent?: { current: ((target: SubagentTarget) => boolean) | null };
   refreshKey: number;
   /** bumped by a conversation push; coalesced to at most one read a second */
   invalidationKey?: number;
@@ -211,6 +249,12 @@ export interface ChatViewProps {
   onRewindInTerminal?: () => void;
   /** the pane's folder: a tool card's file reads from it (`app/src/a.ts`), while its title and what it opens stay the path as written */
   cwd?: string | null;
+  /** a host chat's checkpoints (HostChatRead), the one restored, and what a tap on one does */
+  checkpoints?: { list: HostCheckpoint[]; restored: string | null; onPick(turn: string): void; /** VS Code's Fork Conversation at a request (never the first) */ onFork?(turn: string): void;
+    /** an answer's "View" on its changes line: the chat's diff sheet cut to these paths (ZAC-228) */ onViewChanges?(paths: string[]): void;
+    /** the paths the chat's changeset holds now: View shows only for an answer with one of them (null: none) */ changedPaths?: ReadonlySet<string> | null } | null;
+  /** drawn after the last turn, in the transcript (a host chat's waiting messages, VS Code's pending requests) */
+  tail?: ReactNode;
 }
 
 
@@ -416,13 +460,14 @@ function ToolInputView({ part }: { part: ToolPartType }) {
 
 /** A cut output's rest, fetched when asked for: the page carries the first few thousand characters. */
 function useWholeOutput(ref: string | undefined): { text: string | null; state: "idle" | "loading" | "failed"; load: () => void } {
-  const paneId = useContext(ChatPaneContext);
-  const machineId = useMachineId();
+  const source = useContext(ChatSourceContext);
   const history = useContext(ChatHistoryContext);
-  const url = ref === undefined || paneId === null ? null : machinePath(machineId, `pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref }).toString()}`);
+  // the target's identity: the chat's own (its PC and pane, or its host chat) and the call's
+  const target = ref === undefined || source === null ? null : `${source.key}\n${ref}`;
+  const read = useCallback((signal: AbortSignal) => source!.toolOutput(ref!, signal), [source, ref]);
   const memory = useContext(ChatRowMemoryContext);
   const saved = ref === undefined ? undefined : memory?.outputs.get(ref);
-  const result = useScopedOutput(saved === undefined ? url : null, history);
+  const result = useScopedOutput(saved === undefined ? target : null, history, read);
   useLayoutEffect(() => {
     if (ref !== undefined && result.text !== null && memory && memory.outputs.get(ref) !== result.text) {
       memory.outputs.set(ref, result.text);
@@ -450,13 +495,20 @@ function ImageGallery({ images, className }: { images: GalleryImage[]; className
   </div>;
 }
 
+/** A picture's URL by its ref: the chat's source names it; a row drawn alone (no source) names its pane's. */
+function useImageUrl(paneId: string): (ref: string) => string {
+  const source = useContext(ChatSourceContext);
+  const machineId = useMachineId();
+  return source !== null ? source.image : (ref) => machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref }).toString()}`);
+}
+
 /** Images a tool returned (pi reads a picture into the result); opened with the row. */
 function ToolImages({ paneId, part }: { paneId: string; part: ToolPartType }) {
   const t = useT();
-  const machineId = useMachineId();
+  const imageUrl = useImageUrl(paneId);
   if (part.images === undefined || part.images.length === 0) return null;
   const images = part.images.map((image, index): GalleryImage => ({
-    src: machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: image.ref }).toString()}`),
+    src: imageUrl(image.ref),
     // a tool's picture carries no file name: it is named by its place and the tool that read it
     name: t("Image {n} from {tool}", { n: index + 1, tool: part.name }),
     file: attachmentFileName(image.media_type, index),
@@ -556,6 +608,26 @@ function ThinkingRow({ text, stateKey }: { text: string; stateKey: string }) {
 }
 
 /**
+ * Reasoning as VS Code's thinking part shows it: "Thinking" and the first of its words on one line,
+ * the whole of it, as markdown, on request.
+ */
+function VscodeThinkingRow({ text, stateKey }: { text: string; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  const preview = text.replace(/[*_`#>]/g, "").split("\n").find((line) => line.trim().length > 0)?.trim() ?? "";
+  return <div className="work-row is-vscode work-row-reasoning">
+    <div className="work-row-line">
+      <button type="button" className="work-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Brain className="work-row-icon" aria-hidden="true" />
+        <span className="work-row-text"><span className="work-reasoning-word">{t("Thinking")}</span>{!open && preview.length > 0 && <span className="work-reasoning-preview"> {preview}</span>}</span>
+      </button>
+    </div>
+    {open && <div className="work-row-detail work-reasoning-text"><Markdown style="vscode">{text}</Markdown></div>}
+  </div>;
+}
+
+/**
  * Everything the agent did on the way — tool calls, reasoning and the narration
  * between them — under one header ("Worked for 7s · 1 edit"). Rows stay one line
  * each until opened; the narration between them is answer prose while the turn runs, dim after.
@@ -609,6 +681,306 @@ function WorkBlockView({ paneId, parts, turnParts, rowKey, duration, live, waiti
   </section>;
 }
 
+/** The pictures a turn's tools returned, as one gallery: a press opens ChatView's viewer on them. */
+function WorkImages({ paneId, parts }: { paneId: string; parts: ConversationPart[] }) {
+  const t = useT();
+  const imageUrl = useImageUrl(paneId);
+  const images = parts.flatMap((part) => part.kind === "tool" ? (part.images ?? []) : []).map((image, index): GalleryImage => ({
+    src: imageUrl(image.ref),
+    name: t("Attached image"),
+    file: attachmentFileName(image.media_type, index),
+  }));
+  if (images.length === 0) return null;
+  return <ImageGallery images={images} className="chat-tool-images work-images" />;
+}
+
+/** A file a row names, as VS Code's pill: its icon and its name, opening the viewer where one can. */
+function FilePill({ path }: { path: string }) {
+  const t = useT();
+  const open = useContext(OpenFileContext);
+  const name = baseName(path);
+  if (open === null) return <span className="work-file-pill" title={path}><FileGlyph name={name} /><span>{name}</span></span>;
+  return <button type="button" className="work-file-pill" title={t("Open {path}", { path })} onClick={() => open(path)}><FileGlyph name={name} /><span>{name}</span></button>;
+}
+
+/** Lines of unchanged text kept each side of a change in an edit's diff, as VS Code's inline diff. */
+const EDIT_CONTEXT = 3;
+
+/** One edit's diff, read from the host when its chip opens: the changes and a little around them. */
+function EditDiffBody({ edit }: { edit: ToolEdit }) {
+  const source = useContext(ChatSourceContext);
+  const openFile = useContext(OpenFileContext);
+  const load = useMemo(() => source?.editDiff === undefined || edit.ref === undefined ? null
+    : (signal: AbortSignal) => source.editDiff!(edit.ref!, signal), [source, edit.ref]);
+  return <DiffBody load={load} onOpen={openFile !== null && edit.kind !== "delete" ? () => openFile(edit.path) : null} />;
+}
+
+/** A file change's diff, read when shown: its lines with unchanged runs folded, or why there are none. */
+export function DiffBody({ load, onOpen }: { load: ((signal: AbortSignal) => Promise<HostEditDiff>) | null; onOpen: (() => void) | null }) {
+  const t = useT();
+  const [diff, setDiff] = useState<HostEditDiff | "loading" | "failed">("loading");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (load === null) { setDiff("failed"); return; }
+    const abort = new AbortController();
+    setDiff("loading");
+    load(abort.signal).then(setDiff, () => { if (!abort.signal.aborted) setDiff("failed"); });
+    return () => abort.abort();
+  }, [load, attempt]);
+  const lines = useMemo(() => typeof diff === "object" && (diff.before !== null || diff.after !== null)
+    ? foldContext(lineDiff(diff.before ?? "", diff.after ?? ""), EDIT_CONTEXT) : null, [diff]);
+  return <div className="edit-diff">
+    {onOpen !== null && <button type="button" className="btn btn-ghost edit-diff-open" onClick={onOpen}>{t("Open file")}<ArrowRight aria-hidden="true" /></button>}
+    {diff === "loading" ? <p className="edit-diff-note">{t("Loading the diff…")}</p>
+      : diff === "failed" ? <p className="edit-diff-note">{t("Couldn't load the diff")} <button type="button" className="btn btn-ghost" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>
+        : diff.binary ? <p className="edit-diff-note">{t("Binary or too large to show")}</p>
+          : diff.unavailable ? <p className="edit-diff-note">{t("The host no longer keeps this change")}</p>
+            : lines !== null && lines.length > 0 ? <pre className="chat-diff edit-diff-lines">{lines.map((line, index) => line.kind === "fold"
+              ? <span key={index} className="chat-diff-fold">{t(line.count === 1 ? "⋯ 1 unchanged line" : "⋯ {n} unchanged lines", { n: line.count })}{"\n"}</span>
+              : <span key={index} className={line.kind === "add" ? "chat-diff-add" : line.kind === "del" ? "chat-diff-del" : undefined}>{line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}{line.text}{"\n"}</span>)}</pre>
+              : <p className="edit-diff-note">{t("No changes to the text")}</p>}
+  </div>;
+}
+
+/**
+ * The files a host call changed, as VS Code lists them under the call: the file's icon and name,
+ * what happened to it when it was not a plain edit, and its lines; a tap opens its diff under it.
+ */
+function EditChips({ edits, stateKey }: { edits: ToolEdit[]; stateKey: string }) {
+  return <div className="edit-chips">{edits.map((edit) => <EditChip key={edit.ref} edit={edit} stateKey={`${stateKey}:edit:${edit.ref}`} />)}</div>;
+}
+
+function EditChip({ edit, stateKey }: { edit: ToolEdit; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  const name = baseName(edit.path);
+  const tag = edit.kind === "create" ? t("new") : edit.kind === "delete" ? t("deleted") : edit.kind === "rename" ? t("renamed") : null;
+  return <div className={`edit-chip-wrap${open ? " is-open" : ""}`}>
+    <button type="button" className={`edit-chip is-${edit.kind ?? "edit"}`} aria-expanded={open} title={edit.from !== undefined ? `${edit.from} → ${edit.path}` : edit.path} onClick={() => setOpen(!open)}>
+      <FileGlyph name={name} />
+      <span className="edit-chip-name">{name}</span>
+      {tag !== null && <span className="edit-chip-tag">{tag}</span>}
+      {(edit.added > 0 || edit.removed > 0) && <span className="edit-chip-lines"><span className="chat-diff-add">+{edit.added}</span><span className="chat-diff-del">−{edit.removed}</span></span>}
+      <ChevronDown className="edit-chip-caret" aria-hidden="true" />
+    </button>
+    {open && <EditDiffBody edit={edit} />}
+  </div>;
+}
+
+/** The command a terminal call ran: the host's, else its input's. */
+function rowCommand(part: ToolPartType): string | null {
+  if (part.command !== undefined && part.command.trim().length > 0) return part.command;
+  if (toolKind(part) !== "command") return null;
+  try {
+    const args = JSON.parse(part.input) as Record<string, unknown>;
+    const command = args?.command ?? args?.cmd;
+    return typeof command === "string" && command.trim().length > 0 ? command : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A call's output in its opened row, and the button for the rest of a cut one; the classic row's markup. */
+function ToolOutput({ part, output, whole }: { part: ToolPartType; output: string; whole: ReturnType<typeof useWholeOutput> }) {
+  const t = useT();
+  const openFile = useContext(OpenFileContext);
+  return <section className="chat-tool-output"><h4>{t(part.error ? "Error" : "Output")}</h4><pre className={`chat-tool-io${whole.text !== null ? " is-whole" : ""}`}>{linkFilePaths(output, openFile)}</pre>
+    {part.output_ref !== undefined && whole.text === null && <button type="button" className="btn btn-ghost chat-tool-more" disabled={whole.state === "loading"} onClick={whole.load}>
+      {t(whole.state === "loading" ? "Loading the whole output…" : whole.state === "failed" ? "Couldn't load the whole output — retry" : "Show the whole output ({size} characters)", { size: formatTokens(part.output_size ?? 0) })}
+    </button>}</section>;
+}
+
+/**
+ * A call the way VS Code lists it in a tool group: its kind's icon (the error's when it failed),
+ * then what it did (`past`, else what it set out to do). A terminal call reads "Ran `cmd`" and opens
+ * to its output; a file it read or changed is a pill that opens the viewer.
+ */
+function VscodeWorkRow({ part, stateKey }: { part: ToolPartType; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  const whole = useWholeOutput(part.output_ref);
+  const kind = toolKind(part);
+  const Icon = toolIcon(kind, part.state === "skipped" || part.state === "denied" ? "skipped" : part.error ? "failed" : "done");
+  const command = rowCommand(part);
+  const summary = part.arguments_omitted ? t("Arguments omitted (too large)") : todoCallSummary(part) ?? part.summary;
+  const { verb } = useMemo(() => workRowLabel({ name: part.name, input: part.input }, summary), [part.name, part.input, summary]);
+  // a file the call read, listed or changed, unless the host's own words name it already
+  const file = (kind === "read" || kind === "edit" || kind === "list") ? toolFile(part) : null;
+  // the words the row shows: the host's past tense, or, while it runs, its invocation
+  const hostWords = part.past ?? (part.tool_id !== undefined && part.state === "running" ? summary : undefined);
+  const named = hostWords !== undefined && parseInline(hostWords, false).some(function names(node: InlineNode): boolean {
+    return node.type === "file" || ("children" in node && node.children.some(names));
+  });
+  // a host call's edits list each file it changed, its diff a tap away: the pill would name one again
+  const diffable = (part.edits ?? []).filter((edit) => edit.ref !== undefined);
+  const pill = file !== null && !named && diffable.length === 0 ? file : null;
+  const output = isTodoTool(part.name) && parseTodoAnswer(part.output) !== null ? "" : whole.text ?? part.output;
+  // without the host's words (a Copilot pane), the row keeps what the classic row says
+  // VS Code's terminal title (chatTerminalToolProgressPart.ts): the intention first when there is
+  // one, else what happened to the command; skipped keeps its word, as it never ran
+  // an MCP call (ZAC-228): VS Code's "Ran `tool`" and its server, never the proxy's bare name
+  const mcp = command === null ? mcpCall(part) : null;
+  const label = mcp !== null && !mcpWordsSayMore(part.past, part)
+    ? <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : part.error ? "Failed" : "Ran")} <code>{mcp.tool}</code>{mcp.server !== null && <> <span className="work-row-server">{mcp.server}</span></>}</>
+    : command !== null
+    ? part.intention !== undefined && part.state !== "skipped" ? <>{part.intention} <code>{command}</code></>
+      : <>{t(part.state === "skipped" ? "Skipped" : part.state === "running" ? "Running" : "Ran")} <code>{command}</code></>
+    : part.past !== undefined && part.past.trim().length > 0 ? <RowText text={part.past} />
+      // a host call still running has only its invocation words ("Creating [payload.json](…)"):
+      // VS Code shows those alone, its link as the file's name (live crawl, ZAC-228)
+      : part.tool_id !== undefined && part.state === "running" && summary.trim().length > 0 ? <RowText text={summary} />
+      : pill !== null && verb !== null ? <>{t(verb)}</>
+        : verb !== null ? <>{t(verb)} {summary}</>
+          : <>{part.name}{summary.length > 0 && summary !== part.name && <> {summary}</>}</>;
+  return <div className={`work-row is-vscode${part.error ? " is-error" : ""}`}>
+    <div className="work-row-line">
+      <button type="button" className="work-row-head" aria-expanded={open} title={`${part.name} · ${summary}`} onClick={() => setOpen(!open)}>
+        <Icon className="work-row-icon" aria-hidden="true" />
+        <span className="work-row-text">{label}</span>
+      </button>
+      {pill !== null && <FilePill path={pill} />}
+    </div>
+    {diffable.length > 0 && <EditChips edits={diffable} stateKey={stateKey} />}
+    {open && <div className="work-row-detail">
+      {command !== null
+        // VS Code's terminal part: the command line as a code block, its output under it
+        ? <><pre className="work-row-command"><code>{command}</code></pre>
+          {output.length > 0 ? <ToolOutput part={part} output={output} whole={whole} /> : <p className="work-row-empty">{t("No output was produced by the command.")}</p>}</>
+        : mcp !== null
+          // VS Code's MCP part: the arguments it was given, then what it answered
+          ? <><p className="work-row-section">{t("Input")}</p><pre className="work-row-command"><code>{typeof mcp.args === "string" ? mcp.args : JSON.stringify(mcp.args, null, 2)}</code></pre>
+            {output.length > 0 && <><p className="work-row-section">{t("Output")}</p><ToolOutput part={part} output={output} whole={whole} /></>}</>
+          : <><p className="work-row-tool">{part.name}</p><ToolInputView part={part} />{output.length > 0 && <ToolOutput part={part} output={output} whole={whole} />}</>}
+    </div>}
+  </div>;
+}
+
+/** From this many MCP calls in a row, they fold into one line that opens to them (owner, ZAC-228: ten Linear calls filled a screen). */
+export const MCP_RUN_FOLD = 3;
+
+/** The calls kept out of the tool group, in runs: MCP calls together; one waiting for an answer, or a diagram, alone. */
+export function standaloneRuns(parts: readonly ToolPartType[]): ToolPartType[][] {
+  const runs: ToolPartType[][] = [];
+  for (const part of parts) {
+    const foldable = toolKind(part) === "mcp" && part.state !== "awaiting";
+    const last = runs.at(-1);
+    if (foldable && last !== undefined && last.every((each) => toolKind(each) === "mcp" && each.state !== "awaiting")) last.push(part);
+    else runs.push([part]);
+  }
+  return runs;
+}
+
+/** A run of MCP calls as one line, "Ran 10 MCP tools" with their servers, that opens to each call. */
+function McpRun({ parts, stateKey, rowKey }: { parts: ToolPartType[]; stateKey: string; rowKey(part: ToolPartType): string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, null);
+  const running = parts.some((part) => part.state === "running");
+  const open = chosen ?? false;
+  const failed = parts.filter((part) => part.error === true).length;
+  const servers = [...new Set(parts.map((part) => mcpCall(part)?.server).filter((server): server is string => typeof server === "string"))];
+  const Icon = failed > 0 ? CircleX : McpIcon;
+  return <div className={`work-row is-vscode mcp-run${failed > 0 ? " is-error" : ""}`}>
+    <div className="work-row-line">
+      <button type="button" className="work-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {running ? <span className="work-block-dot" aria-hidden="true" onAnimationStart={alignBreath} /> : <Icon className="work-row-icon" aria-hidden="true" />}
+        <span className="work-row-text">{t("Ran {n} MCP tools", { n: parts.length })}{servers.length > 0 && <> <span className="work-row-server">{servers.join(", ")}</span></>}
+          {failed > 0 && <> <span className="mcp-run-failed">{t("{n} failed", { n: failed })}</span></>}</span>
+        <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
+      </button>
+    </div>
+    {open && <div className="mcp-run-rows">{parts.map((part) => <VscodeWorkRow key={rowKey(part)} stateKey={rowKey(part)} part={part} />)}</div>}
+  </div>;
+}
+
+/**
+ * The work block in VS Code's words: one per turn, open and folded as the classic one, its head the
+ * tool group's sentence ("Edited x.ts, ran 2 commands") with a wrench, a check once done or the error
+ * icon when a call failed, and on its quiet right the edits' lines and how long it worked. The
+ * pictures the tools returned and the calls VS Code never folds (MCP, mermaid) sit after it.
+ */
+function VscodeWorkBlockView({ paneId, parts, live, waiting, defaultOpen, stateKey = "work", offset = 0 }: { paneId: string; parts: ConversationPart[]; live: boolean; waiting: boolean; defaultOpen: boolean; stateKey?: string; offset?: number }) {
+  const t = useT();
+  const [chosenOpen, setOpen] = useChatRowToggle(stateKey, null);
+  const open = chosenOpen ?? defaultOpen;
+  const keepOpen = () => { if (chosenOpen === null) setOpen(true); };
+  const apart = (part: ConversationPart): boolean => part.kind === "tool" && neverFolded(part);
+  const folded: ConversationPart[] = parts.filter((part) => !apart(part));
+  // VS Code always shows a Copilot turn's reasoning (chat.agent.thinkingStyle has no "off"): the
+  // pane setting that hides an agent's thinking is not this chat's
+  const visible = folded.filter((part) => part.kind !== "skill" && (part.kind !== "thinking" || part.text.trim().length > 0));
+  const standalone = parts.filter((part): part is ToolPartType => part.kind === "tool" && apart(part));
+  const { title, added, removed } = toolGroupSummary(folded, t);
+  const failed = folded.some((part) => part.kind === "tool" && part.error === true);
+  const Icon = failed ? CircleX : Check;
+  const heading = waiting ? t("Needs you") : live ? t("Working…") : title;
+  const space = heading.indexOf(" ");
+  return <>
+    {visible.length > 0 && <section className={`work-block is-vscode${live ? " is-live" : ""}${waiting ? " is-waiting" : ""}${open ? "" : " is-folded"}${failed ? " is-failed" : ""}`}>
+      <button type="button" className="work-block-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {/* running, the sidebar's breathing dot (owner, ZAC-228): one sign for "in progress" everywhere */}
+        {live && !failed ? <span className="work-block-dot" aria-hidden="true" onAnimationStart={alignBreath} /> : <Icon className="work-block-icon" aria-hidden="true" />}
+        <span className="work-block-title">{space < 0 || live ? heading : <>{heading.slice(0, space)}<span className="work-title-detail">{heading.slice(space)}</span></>}</span>
+        <span className="work-block-meta">
+          {(added > 0 || removed > 0) && <span className="work-block-lines"><span className="chat-diff-add">+{added}</span> <span className="chat-diff-del">−{removed}</span></span>}
+        </span>
+        <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
+      </button>
+      <AnimatedHeight open={open} animateContent={false}>
+        <div className="work-block-rows" onFocus={keepOpen} onClick={keepOpen}>{visible.map((part, index) =>
+          part.kind === "thinking" ? <VscodeThinkingRow key={index} stateKey={`thinking:${offset + parts.indexOf(part)}`} text={part.text} />
+            : part.kind === "text" ? <div key={index} className="work-narration"><Markdown style="vscode">{part.text}</Markdown></div>
+              : part.kind === "tool" ? <VscodeWorkRow key={index} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} /> : null)}
+        </div>
+      </AnimatedHeight>
+    </section>}
+    <WorkImages paneId={paneId} parts={parts} />
+    {standalone.length > 0 && <div className="work-standalone">{standaloneRuns(standalone).map((run) => run.length >= MCP_RUN_FOLD
+      ? <McpRun key={parts.indexOf(run[0]!)} parts={run} stateKey={`mcp-run:${offset + parts.indexOf(run[0]!)}`} rowKey={(part) => `tool:${offset + parts.indexOf(part)}`} />
+      : run.map((part) => <VscodeWorkRow key={parts.indexOf(part)} stateKey={`tool:${offset + parts.indexOf(part)}`} part={part} />))}</div>}
+  </>;
+}
+
+/**
+ * A Copilot turn's work as VS Code lays it out: what the agent said between its tool calls stands in
+ * the open, and each run of calls between two of its words folds into one group with its own
+ * sentence ("Ran 2 commands"). The last group carries the turn's state (Working…, Needs you), its
+ * time and the open fold; the earlier ones are done and closed. Row memory keys stay per part.
+ */
+function VscodeWork({ paneId, work, all, live, waiting, answered, skills }: { paneId: string; work: ConversationPart[]; all: ConversationPart[]; live: boolean; waiting: boolean; answered: boolean; skills: SkillMatcher | null }) {
+  const segments = useMemo(() => {
+    const out: ({ kind: "words"; text: string; at: number } | { kind: "own"; part: Extract<ConversationPart, { kind: "subagent" | "question" | "notice" }>; at: number } | { kind: "group"; parts: ConversationPart[]; at: number })[] = [];
+    work.forEach((part, at) => {
+      if (part.kind === "text") { out.push({ kind: "words", text: part.text, at }); return; }
+      if (part.kind === "subagent" || part.kind === "question" || part.kind === "notice") { out.push({ kind: "own", part, at }); return; }
+      const last = out.at(-1);
+      if (last?.kind === "group") last.parts.push(part);
+      else out.push({ kind: "group", parts: [part], at });
+    });
+    return out;
+  }, [work]);
+  const lastGroup = segments.reduce((found, segment, index) => segment.kind === "group" ? index : found, -1);
+  return <>{segments.map((segment, index) => segment.kind === "words"
+    ? <div key={`words:${segment.at}`} className="work-words"><Markdown skills={skills} style="vscode">{segment.text}</Markdown></div>
+    : segment.kind === "own"
+      // keyed by the turn's part index, as these rows always were: an opened row stays open
+      ? segment.part.kind === "subagent" ? <TurnSubagent key={`subagent:${all.indexOf(segment.part)}`} part={segment.part} live={live} />
+        : segment.part.kind === "notice" ? <SystemNotice key={`notice:${all.indexOf(segment.part)}`} notice={segment.part} memoryKey={`notice:${all.indexOf(segment.part)}`} />
+        : <QuestionSummary key={`question:${all.indexOf(segment.part)}`} part={segment.part} memoryKey={`question:${all.indexOf(segment.part)}`} attached={<AnswerImages paneId={paneId} part={segment.part} />} />
+    : <VscodeWorkBlockView key={`group:${segment.at}`} paneId={paneId} parts={segment.parts} offset={segment.at} stateKey={index === lastGroup ? "work" : `work:${segment.at}`}
+      live={live && index === lastGroup} waiting={waiting && index === lastGroup}
+      defaultOpen={groupStartsOpen(index === lastGroup, live, answered || segments.slice(index + 1).some((next) => next.kind === "words"))} />)}</>;
+}
+
+/**
+ * Whether a tool group starts open (ZAC-228, VS Code's): only the live turn's last group, and only
+ * until the agent writes after it. The reader's own open or close wins over this (`useChatRowToggle`).
+ */
+export function groupStartsOpen(last: boolean, live: boolean, textAfter: boolean): boolean {
+  return last && live && !textAfter;
+}
+
 /** Skill evidence stays visible even when the surrounding work block is folded. */
 function SkillActivityList({ parts }: { parts: ConversationPart[] }) {
   const t = useT();
@@ -649,19 +1021,30 @@ function GoalActivity({ goal }: { goal: GoalState }) {
   </ChatDetails>;
 }
 
+/** The pictures attached to a typed answer (a host chat's question), as a message's are shown. */
+function AnswerImages({ paneId, part }: { paneId: string; part: Extract<ConversationPart, { kind: "question" }> }) {
+  const t = useT();
+  const imageUrl = useImageUrl(paneId);
+  if (!part.images || part.images.length === 0) return null;
+  const images = part.images.map((image, index): GalleryImage => ({ src: imageUrl(image.ref), name: t("Attached image"), file: attachmentFileName(image.media_type, index) }));
+  return <ImageGallery images={images} className="question-summary-images" />;
+}
+
 /** Image files a message mentions as `@path`, the way this app attaches them: shown as thumbnails. */
 const IMAGE_MENTION = /(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi;
 
 function UserImages({ paneId, parts, text }: { paneId: string; parts: ConversationPart[]; text: string }) {
   const t = useT();
   const machineId = useMachineId();
+  const imageUrl = useImageUrl(paneId);
   const pasted = parts.filter((part): part is Extract<ConversationPart, { kind: "image" }> => part.kind === "image");
-  const mentioned = [...new Set([...text.matchAll(IMAGE_MENTION)].map((match) => match[1]!))];
+  // no pane (a host chat's turn): no file is read through one, so a mentioned file is not shown
+  const mentioned = paneId === "" ? [] : [...new Set([...text.matchAll(IMAGE_MENTION)].map((match) => match[1]!))];
   if (pasted.length === 0 && mentioned.length === 0) return null;
   // one gallery for the message: its pasted pictures first, then the files it mentioned
   const images: GalleryImage[] = [
     ...pasted.map((part, index): GalleryImage => ({
-      src: machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: part.ref }).toString()}`),
+      src: imageUrl(part.ref),
       name: t("Attached image"),
       file: attachmentFileName(part.media_type, index),
     })),
@@ -800,8 +1183,9 @@ function OutcomeRow({ outcome, actions, skills = null }: { outcome: CommandOutco
 interface TurnProps {
   paneId: string;
   turn: ConversationTurn;
-  /** the turn's stable row in the timeline (ChatRow.key): what its folded todo runs are named by */
-  rowKey: string;
+  /** the turn's stable row in the timeline (ChatRow.key): what its folded todo runs are named by; a
+   *  turn drawn outside the timeline (a subagent's opened chat, a test) has none of its own */
+  rowKey?: string;
   /** the last turn while the agent runs: its work block reads "Working…" */
   live: boolean;
   /** ...and "Needs you" while the agent is blocked */
@@ -816,6 +1200,58 @@ interface TurnProps {
   outcomeActions?: OutcomeActions | null;
   /** Claude Code, grok, agy: the message offers to open the terminal, where the agent's own rewind is run (lib/rewindAction.ts) */
   onRewindInTerminal?: (() => void) | null;
+  /** how the turn reads (lib/toolGroupSummary.ts `turnStyle`): "vscode" for Copilot, else today's "classic" */
+  style?: TurnStyle;
+  /** a host chat's checkpoint for this row: a user message's Restore Checkpoint (Start Over on the first), or faded after a restore */
+  checkpoint?: CheckpointRow | null;
+  /** the checkpoint's action was tapped */
+  onCheckpoint?: (turn: string) => void;
+  /** Fork Conversation was tapped on this request: a new chat with the turns before it */
+  onFork?: (turn: string) => void;
+  /** an answer's own edits (its host turn's checkpoint, ZAC-228): the changes line under it */
+  changes?: HostCheckpoint["files"] | null;
+  /** View on the changes line: the chat's diff sheet, cut to these paths */
+  onViewChanges?: (paths: string[]) => void;
+  /** the next message's checkpoint turn, when this answer changed files: the checkpoint line under it */
+  checkpointAfter?: string | null;
+}
+
+/** What an answer changed, summed (ZAC-228). */
+export function changesLine(files: readonly { added: number; removed: number }[]): { files: number; added: number; removed: number } {
+  return { files: files.length, added: files.reduce((sum, file) => sum + file.added, 0), removed: files.reduce((sum, file) => sum + file.removed, 0) };
+}
+
+/** "📄 2 files changed +30 −3 · View": what this answer changed, its diffs a tap away (ZAC-228). */
+function TurnChanges({ files, onView }: { files: HostCheckpoint["files"]; onView: ((paths: string[]) => void) | undefined }) {
+  const t = useT();
+  const sum = changesLine(files);
+  return <div className="chat-turn-changes">
+    <FileDiff className="chat-turn-changes-icon" aria-hidden="true" />
+    <span>{t(sum.files === 1 ? "1 file changed" : "{n} files changed", { n: sum.files })}</span>
+    {sum.added > 0 && <span className="chat-diff-add">+{sum.added}</span>}
+    {sum.removed > 0 && <span className="chat-diff-del">−{sum.removed}</span>}
+    {onView && <button type="button" className="chat-turn-changes-view" onClick={() => onView(files.map((file) => file.path))}>{t("View")}<ChevronRight aria-hidden="true" /></button>}
+  </div>;
+}
+
+/** The model that answered, with its maker's mark as the composer's chip wears it (owner, ZAC-228). */
+function AnswerModel({ name }: { name: string }) {
+  const mark = providerMark({ id: name, name, provider: "" });
+  return <span className="chat-meta-model">
+    {mark !== "sparkle" && <span aria-hidden="true"><AgentMark agent={mark} size={12} /></span>}
+    <span className="chat-meta-model-name">{name}</span>
+  </span>;
+}
+
+/** VS Code's ⋯ on a message or an answer: its actions in a menu (a sheet on a phone). */
+function TurnMenu({ title, items }: { title: string; items: RowMenuItem[] }) {
+  const t = useT();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  return <>
+    <button type="button" className="chat-meta-btn chat-more-btn" aria-label={t("More actions")} title={t("More actions")} aria-haspopup="menu" aria-expanded={anchor !== null}
+      onClick={(event) => setAnchor(anchor === null ? event.currentTarget : null)}><Ellipsis aria-hidden="true" /></button>
+    {anchor !== null && <RowMenu anchor={anchor} title={title} items={items} onClose={() => setAnchor(null)} />}
+  </>;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -886,8 +1322,65 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
   return first.length > 96 ? `${first.slice(0, 95)}…` : first;
 }
 
-// a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThinking, skills = null, userSkills = null, outcome = null, outcomeActions = null, onRewindInTerminal = null }: TurnProps) {
+type NoticePart = Extract<ConversationPart, { kind: "notice" }>;
+const isNotice = (part: ConversationPart): part is NoticePart => part.kind === "notice";
+const isSystemNotice = (part: ConversationPart): part is NoticePart => part.kind === "notice" && part.source === "system";
+
+/**
+ * A host's system notification as VS Code draws it (chatSystemNotificationPart): a check and its
+ * Markdown, quiet, where it came in the turn; more than a line folds the rest under the first.
+ */
+function SystemNotice({ notice, memoryKey }: { notice: NoticePart; memoryKey: string }) {
+  const [open, setOpen] = useChatRowToggle(memoryKey, false);
+  const text = notice.text.trim();
+  const cut = text.indexOf("\n");
+  const head = cut < 0 ? text : text.slice(0, cut);
+  const rest = cut < 0 ? "" : text.slice(cut).trim();
+  if (rest.length === 0) return <div className="chat-system-notification">
+    <Check className="chat-system-notification-icon" aria-hidden="true" /><Markdown style="vscode">{head}</Markdown>
+  </div>;
+  return <div className={`chat-system-notification is-disclosure${open === true ? "" : " is-collapsed"}`}>
+    <button type="button" className="chat-system-notification-head" aria-expanded={open === true} onClick={() => setOpen(open !== true)}>
+      <Check className="chat-system-notification-icon" aria-hidden="true" /><Markdown style="vscode">{head}</Markdown>
+      <ChevronRight className="chat-system-notification-caret" aria-hidden="true" />
+    </button>
+    {open === true && <div className="chat-system-notification-body"><Markdown style="vscode">{rest}</Markdown></div>}
+  </div>;
+}
+
+/** A notice as the quiet divider, its label in the rule and its text on request; a host chat's error in the error colour. */
+function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey: string; time: ReactNode }) {
+  const t = useT();
+  const source = useContext(ChatSourceContext);
+  const [retry, setRetry] = useState<"idle" | "sending" | { failed: string | null }>("idle");
+  // VS Code's error row (chatErrorContentPart): the error icon and its message in the open, Try
+  // Again under it when the host can resume the turn. Only a host chat's errors: the turn ended on it
+  if (notice.source === "error" && source?.resume !== undefined) {
+    const resume = source.resume;
+    return <div className="chat-turn-error" role="alert">
+      <CircleX className="chat-turn-error-icon" aria-hidden="true" />
+      <div className="chat-turn-error-body">
+        <p className="chat-turn-error-text">{notice.text}</p>
+        {notice.resumable === true && <div className="chat-turn-error-actions">
+          <button type="button" className="btn btn-secondary chat-turn-error-retry" disabled={retry === "sending"}
+            onClick={() => { setRetry("sending"); resume().then(() => setRetry("idle"), (error: unknown) => setRetry({ failed: error instanceof ApiError && error.code !== "not_resumable" ? error.detail : null })); }}>
+            <RotateCcw aria-hidden="true" />{t(retry === "sending" ? "Trying again…" : "Try again")}
+          </button>
+          {typeof retry === "object" && <span className="chat-turn-error-note">{retry.failed === null ? t("Couldn't try again. The chat may have moved on.") : t("Couldn't try again: {reason}", { reason: retry.failed })}</span>}
+        </div>}
+      </div>
+    </div>;
+  }
+  return <ChatDetails memoryKey={memoryKey} className={`chat-compact chat-notice${notice.source === "error" ? " chat-notice-error" : ""}`}>
+    <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>
+    <pre className="chat-compact-text chat-notice-text">{notice.text}</pre>
+  </ChatDetails>;
+}
+
+// a turn that did not change keeps its object across polls: skip re-rendering it. A host chat's
+// row has paneId "": its pictures and outputs come through the chat's source, and UserImages shows
+// no `@image` mention without a pane, so such a row reads no file
+export const Turn = memo(function Turn({ paneId, turn, rowKey = "turn", live, waiting, showThinking, skills = null, userSkills = null, outcome = null, outcomeActions = null, onRewindInTerminal = null, style = "classic", checkpoint = null, onCheckpoint, onFork, changes = null, onViewChanges, checkpointAfter = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -910,14 +1403,12 @@ const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThink
       {ended.tasks.map((task) => <TaskResultRow key={task.id} task={task} />)}
     </section>;
   }
-  // the runtime spoke, not the user: a quiet divider like a compaction, the text on request
-  const notice = turn.parts.find((part): part is Extract<ConversationPart, { kind: "notice" }> => part.kind === "notice");
-  if (notice !== undefined) {
-    return <ChatDetails memoryKey="notice" className="chat-compact chat-notice">
-      <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>
-      <pre className="chat-compact-text chat-notice-text">{notice.text}</pre>
-    </ChatDetails>;
-  }
+  // the runtime spoke, not the user: a quiet divider like a compaction, the text on request. Only a
+  // turn that is nothing but notices: a host chat's notice inside an answer is a row among its parts
+  const notices = turn.parts.filter(isNotice);
+  if (notices.length > 0 && notices.length === turn.parts.length) return style === "vscode" && notices.every(isSystemNotice)
+    ? <article className="chat-turn chat-turn-agent">{notices.map((notice, index) => <SystemNotice key={index} notice={notice} memoryKey={`notice:${index}`} />)}</article>
+    : <NoticeRow notice={notices[0]!} memoryKey="notice" time={time} />;
   if (turn.role === "user") {
     if (outcome !== null && terminalOnlyOutcome(outcome, outcomeActions)) return <TerminalCommandRow outcome={outcome} actions={outcomeActions} />;
     const text = userText(turn);
@@ -930,16 +1421,35 @@ const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThink
       <div className="chat-turn-meta">{time}<CopyButton text={text} label={t("Copy message")} onResult={copied} /></div>
       {copyError}
     </section>;
-    return <article className="chat-turn chat-turn-user">
+    const action = checkpoint?.turn && onCheckpoint && !checkpoint.faded ? checkpoint : null;
+    // VS Code forks before a request, so the first has nothing to fork
+    const forkAt = checkpoint?.turn && onFork && !checkpoint.faded && !checkpoint.first ? checkpoint.turn : null;
+    return <article className={`chat-turn chat-turn-user${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
       <UserImages paneId={paneId} parts={turn.parts} text={text} />
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
         {text.length > 0 && <UserMessage text={text} skills={userSkills} />}
-        <div className="chat-turn-meta">{time}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}
+        {style === "vscode" ? <div className="chat-turn-meta">{time}
+          {/* ZAC-228: VS Code keeps a request's restore and fork behind its ⋯; only a message has them */}
+          {(action || forkAt || text.length > 0) && <TurnMenu title={t("Message")} items={[
+            ...(text.length > 0 ? [{ id: "copy", label: t("Copy"), icon: Copy, run: () => { void copyText(text).then(copied); } }] : []),
+            ...(action ? [{ id: "restore", label: t(action.first ? "Start Over" : "Restore to before this message"), icon: RotateCcw, run: () => onCheckpoint!(action.turn!) }] : []),
+            ...(forkAt ? [{ id: "fork", label: t("Fork from here"), icon: GitFork, run: () => onFork!(forkAt) }] : []),
+          ]} />}</div>
+        : <div className="chat-turn-meta">{time}
+          {/* VS Code's checkpoint toolbar on a request: Start Over on the first, Restore Checkpoint on the rest */}
+          {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
+            aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
+            <RotateCcw aria-hidden="true" /><span className="chat-checkpoint-word">{t(action.first ? "Start Over" : "Restore")}</span>
+          </button>}
+          {forkAt && <button type="button" className="chat-meta-btn chat-fork-btn" title={t("Fork Conversation")} aria-label={t("Fork Conversation")} onClick={() => onFork!(forkAt)}>
+            <GitFork aria-hidden="true" />
+          </button>}
+          {text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}
           {text.length > 0 && onRewindInTerminal !== null && (
             <button type="button" className="icon-button chat-copy chat-rewind" aria-label={t("Rewind in terminal")} title={t("Rewind in terminal")} onClick={onRewindInTerminal}><Undo2 aria-hidden="true" /></button>
           )}
-        </div>
+        </div>}
       </div>
       {copyError}
       {outcome !== null && <OutcomeChip outcome={outcome} actions={outcomeActions} />}
@@ -947,24 +1457,80 @@ const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThink
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { work, answer } = splitTurn(turn.parts);
+  // a notice is neither work nor answer: the turn splits as if it were not there, and each notice
+  // sits after the work when it came before the answer, else after the answer
+  const said = turn.parts.filter((part) => !isNotice(part));
+  const { work, answer } = splitTurn(said);
+  // a Copilot turn's subagents and answered questions are rows of their own where they came, between
+  // its tool groups (VS Code's); the classic style keeps them after the work, in order
+  // so is a host's system notification ("`x` has completed") that came before the answer
+  const answerAt = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
+  // the host's "Subagent `x` has completed" for a subagent this turn draws as a card: its card says it (ZAC-228)
+  // and "Background agent `<task>` is complete" (the host's own words, 2026-10-24), when the card is in this turn
+  const carded = style === "vscode" ? new Set(turn.parts.flatMap((part) => part.kind === "subagent" ? [part.agent, part.description] : [])) : new Set<string>();
+  const saidByCard = (part: ConversationPart): boolean => {
+    if (!isSystemNotice(part)) return false;
+    const named = /^(?:Subagent|Background agent) `([^`]+)` (?:has completed|has failed|is complete)\.?$/.exec(part.text.trim());
+    return named !== null && carded.has(named[1]!);
+  };
+  const inWork = (part: ConversationPart): boolean => isSystemNotice(part) && !saidByCard(part) && (answerAt < 0 || turn.parts.indexOf(part) < answerAt);
+  const vscodeWork = style === "vscode" ? turn.parts.filter((part) => work.includes(part) || part.kind === "subagent" || part.kind === "question" || inWork(part)) : work;
+  const worked = style === "vscode" && !live && vscodeWork.length > 0 ? formatWorkDuration(turn.ts, turn.end_ts ?? null) : null;
+  const ownRows = style !== "vscode" ? turn.parts.flatMap((part, index) =>
+    part.kind === "subagent" ? [<TurnSubagent key={`subagent:${index}`} part={part} live={live} />]
+      : part.kind === "question" ? [<QuestionSummary key={`question:${index}`} part={part} memoryKey={`question:${index}`} attached={<AnswerImages paneId={paneId} part={part} />} />]
+        : []) : [];
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
-  return <article className="chat-turn chat-turn-agent">
+  const firstAnswer = answer.length > 0 ? turn.parts.indexOf(answer[0]!) : -1;
+  const noticeRows = (before: boolean) => turn.parts.flatMap((part, index) =>
+    isNotice(part) && !saidByCard(part) && !(style === "vscode" && inWork(part)) && (firstAnswer >= 0 && index < firstAnswer) === before
+      ? [style === "vscode" && isSystemNotice(part) ? <SystemNotice key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} />
+        : <NoticeRow key={`notice:${index}`} notice={part} memoryKey={`notice:${index}`} time={null} />] : []);
+  return <article className={`chat-turn chat-turn-agent${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
-    {(work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} turnParts={turn.parts} rowKey={rowKey} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} pendingHead={answer.length === 0} />}
-    {answer.map((part, index) => <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
-    {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
+    {style === "vscode"
+      ? vscodeWork.length > 0 ? <VscodeWork paneId={paneId} work={vscodeWork} all={turn.parts} live={live} waiting={waiting} answered={answer.length > 0} skills={skills} />
+        : live && answer.length === 0 && <PendingWorkHead title={waiting ? t("Needs you") : t("Working…")} />
+      : (work.length > 0 || (live && answer.length === 0)) && <WorkBlockView paneId={paneId} parts={work} turnParts={turn.parts} rowKey={rowKey} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, said)} showThinking={showThinking} pendingHead={answer.length === 0} />}
+    {ownRows}
+    {noticeRows(true)}
+    {answer.map((part, index) => style === "vscode" ? <Markdown key={index} skills={skills} style="vscode">{part.text}</Markdown> : <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
+    {noticeRows(false)}
+    {(answerText.length > 0 || (worked !== null && vscodeWork.length > 0)) && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
-      <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
-      <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")} onResult={copied}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>
+      {answerText.length > 0 && <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>}
+      {answerText.length > 0 && <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")} onResult={copied}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>}
       {time}
+      {/* how long it worked, once for the turn (VS Code's groups carry none) */}
+      {worked !== null && <span className="chat-meta-duration">{t("Worked for {duration}", { duration: worked })}</span>}
+      {style === "vscode" && turn.model !== undefined && <AnswerModel name={turn.model} />}
+      {style === "vscode" && answerText.length > 0 && <TurnMenu title={t("Answer")} items={[
+        { id: "md", label: t("Copy as markdown"), icon: Copy, run: () => { void copyText(answerText).then(copied); } },
+        { id: "txt", label: t("Copy as plain text"), icon: Copy, run: () => { void copyText(plainText(answerText)).then(copied); } },
+      ]} />}
     </div>}
     {copyError}
+    {style === "vscode" && !live && changes !== null && changes.length > 0 && <TurnChanges files={changes} onView={onViewChanges} />}
+    {style === "vscode" && !live && changes !== null && changes.length > 0 && checkpointAfter !== null && onCheckpoint &&
+      <button type="button" className="chat-checkpoint-line" onClick={() => onCheckpoint(checkpointAfter)} title={t("Restore to before the next message")}>
+        <span className="chat-checkpoint-line-word">{t("Checkpoint")}</span>
+      </button>}
   </article>;
 });
+
+/** A subagent's row, its opened chat read through the host chat's source and drawn with the same Turn. */
+function TurnSubagent({ part, live }: { part: Extract<ConversationPart, { kind: "subagent" }>; live: boolean }) {
+  const readChat = useContext(SubagentChatContext);
+  const machineId = useMachineId();
+  // its turns' pictures and whole outputs are its own chat's: refs are read there, not in the parent
+  const own = useMemo(() => part.chat === null ? null : hostSource(machineId, part.chat), [machineId, part.chat]);
+  const renderTurn = useCallback((turn: ConversationTurn, index: number) =>
+    <ChatSourceContext.Provider value={own}><ChatRowMemoryContext.Provider value={null}><Turn key={index} paneId="" turn={turn} rowKey={`subagent:${index}`} live={false} waiting={false} showThinking={false} style="vscode" /></ChatRowMemoryContext.Provider></ChatSourceContext.Provider>, [own]);
+  return <SubagentRow part={part} live={live} {...(readChat !== null ? { readChat, renderTurn } : {})} />;
+}
 
 function fallbackTurn(message: TranscriptMessage): ConversationTurn {
   return { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
@@ -1026,13 +1592,23 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, localSend, navigation, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, onOpenTerminal, covered = false, peek = null, onCommandScreenClosed, onOutcomes, interactive = false, onRewindInTerminal, cwd = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, source, label, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, revealSubagent, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, localSend, navigation, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, onOpenTerminal, covered = false, peek = null, onCommandScreenClosed, onOutcomes, interactive = false, onRewindInTerminal, cwd = null, checkpoints = null, tail = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   const machineId = useMachineId();
-  const skillMatcher = useSkillMatcher(paneId, agent);
-  const commands = usePaneCommands(paneId, agent);
+  /** a host chat (or any source that is not the pane's): the pane-only reads below are off */
+  const hosted = source !== undefined;
+  const chat = useMemo(() => source ?? paneSource(machineId, paneId, { fetchPaneConversation }), [source, machineId, paneId, fetchPaneConversation]);
+  // what the chat's row identities and remembered rows are scoped by: a pane's as they always
+  // were, a host chat's its source's key, never a pane's
+  const scopeId = hosted ? chat.key : paneId;
+  const skillMatcher = useSkillMatcher(hosted ? null : paneId, agent);
+  const commands = usePaneCommands(hosted ? null : paneId, agent);
+  /** how its turns read: Copilot's like VS Code, every other agent's as before */
+  const style = turnStyle(agent, hosted);
+  /** a host chat's subagent rows read their own chats through its source */
+  const subagentTurns = useMemo(() => chat.subagentTurns === undefined ? null : (uri: string) => chat.subagentTurns!(uri), [chat]);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
   const visible = paneVisible && pageVisible;
@@ -1057,6 +1633,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const [newMessages, setNewMessages] = useState(false);
   /** scrolled up from the end: the way back is offered even when nothing new came */
   const [away, setAway] = useState(false);
+  // the user message VS Code keeps at the chat's top while its turn is read (vscode style only)
+  const [sticky, setSticky] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ images: GalleryImage[]; index: number } | null>(null);
   const openViewer = useCallback((images: GalleryImage[], index: number) => setViewer({ images, index }), []);
   const closeViewer = useCallback(() => setViewer(null), []);
@@ -1125,7 +1703,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const [older, setOlder] = useState<ConversationTurn[]>([]);
   const olderCount = useRef(0);
   const incarnation = useRef(0);
-  const slots = useRef(createChatRowSlots({ machineId, paneId, historyId: null, incarnation: 0 }, 0));
+  const slots = useRef(createChatRowSlots({ machineId, paneId: scopeId, historyId: null, incarnation: 0 }, 0));
   /** the page before everything shown; null at the conversation's beginning, undefined when unknown */
   const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined);
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
@@ -1135,7 +1713,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const olderGeneration = useRef(0);
   const history = useRef<string | undefined>(undefined);
   const [historyId, setHistoryId] = useState<string | undefined>(undefined);
-  const shownPane = useRef(paneId);
+  const shownPane = useRef(scopeId);
   const prependAnchor = useRef<{ key: string; offset: number } | null>(null);
   /** where the reader left this pane before (lib/chatScrollMemory.ts), until the first answer puts it back */
   const restoring = useRef<ChatPosition | null>(null);
@@ -1161,7 +1739,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     heldFrom.current = null; olderCount.current = 0; setOlder([]); setOlderCursor(undefined); setOlderState("idle");
     incarnation.current += 1;
     prependAnchor.current = null;
-    slots.current = createChatRowSlots({ machineId, paneId, historyId: history.current ?? null, incarnation: incarnation.current }, 0);
+    slots.current = createChatRowSlots({ machineId, paneId: scopeId, historyId: history.current ?? null, incarnation: incarnation.current }, 0);
   };
 
   /** What an answer says beside its turns: where older pages start, its metadata, abandoned turns. */
@@ -1178,7 +1756,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     if (next.source === "conversation") {
       const count = olderCount.current + next.turns.length;
       if (slots.current.scope.historyId !== (history.current ?? null) || lastAnswer.current?.source === "scrollback") {
-        slots.current = createChatRowSlots({ machineId, paneId, historyId: history.current ?? null, incarnation: ++incarnation.current }, count);
+        slots.current = createChatRowSlots({ machineId, paneId: scopeId, historyId: history.current ?? null, incarnation: ++incarnation.current }, count);
       } else if (count > slots.current.rows.length) {
         slots.current = appendChatRowSlots(slots.current, count - slots.current.rows.length);
       } else if (count < slots.current.rows.length) {
@@ -1198,9 +1776,9 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   };
 
   useLayoutEffect(() => {
-    shownPane.current = paneId;
+    shownPane.current = scopeId;
     stopRestore.current?.();
-    restoring.current = readChatPosition(paneStorageId(machineId, paneId)) ?? null;
+    restoring.current = readChatPosition(chat.key) ?? null;
     history.current = undefined; setHistoryId(undefined);
     pagingAway.current = false; stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setAway(false); setLoaded(false); setError(null); setErrorStatus(null); setFailures(0); setPrompt(null); setAbandoned(null); setRestored(null); setOutcomes([]); setScreenRead(false);
     dropOlder();
@@ -1209,18 +1787,21 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     wasConnected.current = connected;
     // Stale while revalidating: the last answer read for this pane draws before paint, and the
     // mount read still asks the server; an unchanged answer (a 304) is this object and is skipped.
-    const cached = peekPaneConversation(paneId);
+    const cached = hosted ? undefined : peekPaneConversation(paneId);
     if (cached !== undefined && cached.source !== "scrollback" && loadedChatTimeline() !== null) {
       history.current = cached.history_id; setHistoryId(cached.history_id);
       showAnswerDetails(cached);
       showAnswer(cached, conversationState(cached));
     }
-  }, [paneId, machineId]);
+  }, [paneId, machineId, chat.key]);
 
 
   useEffect(() => {
     if (seenSent.current === sentKey) return;
     seenSent.current = sentKey;
+    // a host chat follows the user's own message (VS Code does): read from wherever they were, the
+    // turn they just sent comes into view on its next read, with no "New messages" to press
+    if (hosted) { pagingAway.current = false; stickToBottom.current = true; setNewMessages(false); setAway(false); }
     // sent into a run (a queued message sent now): that turn is the one running, not one to finish
     const page = heldPage.current;
     const last = page[page.length - 1];
@@ -1245,7 +1826,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       try {
         for (let step = 0; step < 32 && before !== held; step++) {
           if (cancelled) return null;
-          const page = await fetchPaneConversation(paneId, { before, ...(held === null ? {} : { since: held }) });
+          const page = await chat.read({ before, ...(held === null ? {} : { since: held }) });
           if (page.cursor === held) {
             pages.unshift(page.turns);
             return pages.flat();
@@ -1268,14 +1849,14 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       try {
         let conversation;
         try {
-          conversation = await fetchPaneConversation(paneId, page);
+          conversation = await chat.read(page);
         } catch (cause) {
           // a new session or a Codex backtrack replaced the transcript the older pages came from
           if (heldFrom.current === null || !(cause instanceof ApiError) || cause.status !== 409) throw cause;
           if (cancelled || generation !== olderGeneration.current) return;
           dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
           generation = olderGeneration.current;
-          conversation = await fetchPaneConversation(paneId);
+          conversation = await chat.read();
         }
         if (cancelled || generation !== olderGeneration.current) return;
         if (conversation !== previousAnswer) validatedPresentation.current = readKey;
@@ -1315,7 +1896,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         }
         showAnswerDetails(conversation);
         let next: ChatState;
-        if (conversation.source !== "scrollback") next = conversationState(conversation);
+        // a host chat never answers with scrollback: the terminal reads below are a pane's only
+        if (conversation.source !== "scrollback" || hosted) next = conversationState(conversation);
         else if (agent !== null) next = { source: "scrollback", turns: [], messages: [], truncated: false };
         else {
           // The reader has rejected this history. Hide it before the separate terminal
@@ -1340,22 +1922,25 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       }
     };
     conversationRefresh.setRead(read);
-    onConversationWatch?.(paneId, true);
+    // shown, the chat is watched: a pane through its conversation-watch, a host chat by its source's lease
+    if (hosted) chat.watch?.(true);
+    else onConversationWatch?.(paneId, true);
     return () => {
       cancelled = true;
       // Older pages queued behind this reader must not start for a hidden/replaced screen.
       olderGeneration.current += 1;
       loadingOlder.current = false; setOlderState("idle");
-      onConversationWatch?.(paneId, false);
+      if (hosted) chat.watch?.(false);
+      else onConversationWatch?.(paneId, false);
       conversationRefresh.stop();
     };
-  }, [paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
+  }, [paneId, chat, hosted, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
 
   // Sends, status/history repairs and visibility return read immediately without cancelling
   // the answer in flight. The reader is installed before this effect requests its first read.
   useEffect(() => {
     if (visible) conversationRefresh.refresh();
-  }, [paneId, presentationKey, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
+  }, [paneId, chat, presentationKey, refreshKey, pollKey, visible, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
 
   // Mount/visibility return already read immediately; only a changed push key invalidates.
   useEffect(() => {
@@ -1364,17 +1949,23 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     if (seen.pane === paneId && seen.key !== invalidationKey && visible) conversationRefresh.invalidate();
   }, [paneId, invalidationKey, visible, conversationRefresh]);
 
-  useEffect(() => { conversationRefresh.setPushes(conversationPushes); }, [conversationPushes, conversationRefresh]);
+  // a host chat's source pushes its changes: the backstop is the pushed chat's
+  useEffect(() => { conversationRefresh.setPushes(conversationPushes || hosted); }, [conversationPushes, hosted, conversationRefresh]);
+
+  // A source's own changes (a host chat's push, its host back, the page or the event stream back)
+  // read the newest page at once, one read at a time: changes during a read make exactly one more
+  // (ConversationRefresh's lane; chatSource.test.ts holds a host chat's pushes to it).
+  useEffect(() => chat.onChange?.(() => conversationRefresh.refresh()), [chat, conversationRefresh]);
 
   // A scrollback stand-in has no native file for the server to watch, and neither have settings
   // read off the agent's screen (a conversation not begun). Their source is the pane's own
   // screen, so terminal output is the invalidation, under the same 1s bound: a model switched in
   // the terminal shows once the agent draws it.
   useEffect(() => {
-    if ((state.source !== "scrollback" && !screenRead) || !visible || onTerminalOutput === undefined) return;
+    if (hosted || (state.source !== "scrollback" && !screenRead) || !visible || onTerminalOutput === undefined) return;
     onTerminalOutput(() => conversationRefresh.invalidate());
     return () => onTerminalOutput(null);
-  }, [state.source, screenRead, visible, onTerminalOutput, conversationRefresh]);
+  }, [hosted, state.source, screenRead, visible, onTerminalOutput, conversationRefresh]);
 
   // Catch writes made offline as soon as the existing socket is connected again. The first
   // connection after the pane shows (a fresh attach) is no reconnect: while the mount read is
@@ -1398,9 +1989,9 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     setOlderState("loading");
     await conversationRefresh.page(async () => {
       try {
-        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
-        const page = await fetchPaneConversation(paneId, { before });
-        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+        if (shownPane.current !== scopeId || olderGeneration.current !== generation) return;
+        const page = await chat.read({ before });
+        if (shownPane.current !== scopeId || olderGeneration.current !== generation) return;
         if (page.history_id !== history.current) {
           dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
           setPollKey((key) => key + 1); return;
@@ -1422,7 +2013,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         // the newest page may have slid since it was read: poll it from the held start now
         if (first) setPollKey((key) => key + 1);
       } catch (cause) {
-        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+        if (shownPane.current !== scopeId || olderGeneration.current !== generation) return;
         if (cause instanceof ApiError && cause.status === 409) {
           dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
           setPollKey((key) => key + 1);
@@ -1432,7 +2023,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         if (olderGeneration.current === generation) loadingOlder.current = false;
       }
     });
-  }, [fetchPaneConversation, olderCursor, paneId, conversationRefresh]);
+  }, [chat, olderCursor, scopeId, conversationRefresh]);
 
   // Reconcile the estimated prepend with the actual reader row, through the list's
   // own scroll command. No scrollHeight delta or second virtualizer owns the position.
@@ -1448,7 +2039,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // menu can appear while idle without any file mutation. Keep their independent 2s poll.
   const [promptStale, setPromptStale] = useState(false);
   const failedPromptReads = useRef(0);
-  const pollPrompt = connected && !ended && agent !== null;
+  // a host chat's question is its host's (the screen around the chat asks it): no pane to poll
+  const pollPrompt = !hosted && connected && !ended && agent !== null;
   useEffect(() => {
     if (!pollPrompt) { setPrompt(null); setPromptStale(false); failedPromptReads.current = 0; setRestored(null); onSuggestionRef.current?.(paneId, null); onRestoredRef.current?.(paneId, null); return; }
     if (!visible) return;
@@ -1698,6 +2290,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     setAway(!stickToBottom.current);
     measureEnd();
     if (loaded && restoring.current === null && state.source === "conversation") rememberPlace(node);
+    if (style === "vscode" && state.source === "conversation") pinRequest(node);
     if (node.scrollTop < LOAD_OLDER_PX && olderState === "idle") void loadOlder();
   };
   onScrollRef.current = onScroll;
@@ -1705,7 +2298,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const rememberPlace = (node: HTMLDivElement): void => {
     if (stickToBottom.current) {
       // End restoration ignores row anchors; only readers away from it need geometry.
-      rememberChatPosition(paneStorageId(machineId, paneId), {
+      rememberChatPosition(chat.key, {
         historyId: history.current ?? null, turn: "", offset: 0, atEnd: true,
       });
       return;
@@ -1717,12 +2310,35 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       if (rect.bottom > top && (first === null || rect.top < first.top)) first = { key: row.dataset.chatRow ?? "", top: rect.top };
     }
     const row = first === null ? undefined : timelineRows.find((candidate) => candidate.key === first.key);
-    rememberChatPosition(paneStorageId(machineId, paneId), {
+    rememberChatPosition(chat.key, {
       historyId: history.current ?? null,
       turn: row === undefined ? "" : row.turn === null ? `outcome|${row.outcome.id}` : chatTurnAnchor(row.turn),
       offset: first === null ? 0 : first.top - top,
       atEnd: row === undefined,
     });
+  };
+  const pinRequest = (node: HTMLDivElement): void => {
+    const top = node.getBoundingClientRect().top;
+    // the row read is the one under the pinned band, not a row's trailing gap at the very edge;
+    // a user message entering that band is right there, so nothing is pinned over it
+    let first: { key: string; top: number } | null = null;
+    let entering = false;
+    for (const row of node.querySelectorAll<HTMLElement>("[data-chat-row]")) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom > top + STICKY_BAND && (first === null || rect.top < first.top)) first = { key: row.dataset.chatRow ?? "", top: rect.top };
+      const bubble = row.querySelector(":scope > .chat-turn-user .chat-bubble")?.getBoundingClientRect();
+      if (bubble && bubble.bottom > top && bubble.top < top + STICKY_BAND) entering = true;
+    }
+    if (entering) { setSticky(null); return; }
+    const at = first === null ? -1 : timelineRows.findIndex((row) => row.key === first.key);
+    const index = stickyRequestIndex(timelineRows.map((row) => row.turn === null ? "user" : row.turn.role), at, first === null ? 0 : first.top - top);
+    setSticky(index === null ? null : timelineRows[index]!.key);
+  };
+  const toStickyRequest = (): void => {
+    const index = stickyRow === undefined ? -1 : timelineRows.indexOf(stickyRow);
+    if (index < 0) return;
+    pagingAway.current = true; stickToBottom.current = false; setAway(true);
+    void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
   };
   const scrollToBottom = (): void => {
     const node = scroller.current;
@@ -1835,6 +2451,30 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       return { ...row, beforeUser: row.turn?.role === "assistant" && next !== undefined && (next.turn === null || next.turn.role === "user") };
     });
   }, [withOutcomes, shownTurns, rowSlots]);
+  const checkpointList = checkpoints?.list ?? null;
+  const restoredTurn = checkpoints?.restored ?? null;
+  const pickCheckpoint = checkpoints?.onPick;
+  const forkAt = checkpoints?.onFork;
+  const rowCheckpoints = useMemo(() => checkpointList === null ? null
+    : checkpointRows(shownTurns, checkpointList, restoredTurn, olderCursor !== null && olderCursor !== undefined), [shownTurns, checkpointList, restoredTurn, olderCursor]);
+  // ZAC-228: an answer's own edits are its host turn's, which the user row before it holds; the
+  // checkpoint line under it restores to before the next user row
+  const viewChanges = checkpoints?.onViewChanges;
+  const changedPaths = checkpoints?.changedPaths ?? null;
+  const answerEnds = useCallback((index: number): { changes?: HostCheckpoint["files"]; onViewChanges?: (paths: string[]) => void; checkpointAfter?: string } => {
+    if (rowCheckpoints === null || shownTurns[index]?.role !== "assistant") return {};
+    if (shownTurns[index + 1]?.role === "assistant") return {};
+    let user = index - 1;
+    while (user >= 0 && shownTurns[user]?.role !== "user") user -= 1;
+    const own = user >= 0 ? rowCheckpoints.get(user) : undefined;
+    if (own === undefined || own.faded || own.files.length === 0) return {};
+    const next = rowCheckpoints.get(index + 1);
+    // View opens the changeset cut to these files: with none of them left (committed, reverted, no changeset) it would open nothing
+    const viewable = viewChanges !== undefined && changedPaths !== null && own.files.some((file) => changedPaths.has(file.path));
+    return { changes: own.files, ...(viewable ? { onViewChanges: viewChanges } : {}), ...(next?.turn && !next.faded ? { checkpointAfter: next.turn } : {}) };
+  }, [rowCheckpoints, shownTurns, viewChanges, changedPaths]);
+  const stickyRow = sticky === null ? undefined : timelineRows.find((row) => row.key === sticky);
+  const stickyText = stickyRow?.turn == null ? "" : stickyRow.turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n").trim();
   // Back in a pane the reader left away from the end: the first answer read puts the turn they
   // were on back where it sat, before paint. The list's index scroll starts from estimated heights,
   // so the row is brought to its offset once measured, for a few frames at most; any scroll of the
@@ -1917,19 +2557,47 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const outcomeActions = useMemo((): OutcomeActions => ({ answer: promptUp ? focusPrompt : null, terminal: onOpenTerminal ?? null, commands }), [promptUp, focusPrompt, onOpenTerminal, commands]);
   // Nothing is typed: drafts and the agent's own rewind remain in the terminal.
   const offered = rewindOffer({ agent, interactive, connected, ended, conversation: state.source === "conversation" });
-  const rewindInTerminal = offered === "terminal" ? onRewindInTerminal ?? null : null;
+  const rewindInTerminal = !hosted && offered === "terminal" ? onRewindInTerminal ?? null : null;
+  // a running subagent tapped in the pills' sheet: its turn brought to the top, and its row (read
+  // through RevealedSubagentContext) opens itself and is marked a moment, mounted now or later
+  const [revealed, setRevealed] = useState<(SubagentTarget & { at: number }) | null>(null);
+  useLayoutEffect(() => {
+    if (!revealSubagent) return;
+    const reveal = (target: SubagentTarget): boolean => {
+      const index = timelineRows.findIndex((row) => row.turn !== null && row.turn.parts.some((part) => part.kind === "subagent" && isSubagentTarget(part, target)));
+      if (index < 0) return false;
+      const at = Date.now();
+      setRevealed({ ...target, at });
+      pagingAway.current = true; stickToBottom.current = false; setAway(true);
+      // the list's index scroll can land after the row has scrolled itself (a tall last turn, live):
+      // the turn's top then sits over the row, a screen or more above it. Once it lands, the row
+      // scrolls itself again (a new `at` for the same reveal)
+      void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 })
+        .then(() => setRevealed((now) => now !== null && now.at === at ? { ...now, at: at + 1 } : now));
+      return true;
+    };
+    revealSubagent.current = reveal;
+    return () => { if (revealSubagent.current === reveal) revealSubagent.current = null; };
+  });
+  useEffect(() => {
+    if (revealed === null) return;
+    const done = setTimeout(() => setRevealed(null), 2000);
+    return () => clearTimeout(done);
+  }, [revealed]);
   const renderTurn = useCallback((row: ChatRow) => {
     if (row.turn === null) return <OutcomeRow outcome={row.outcome} actions={outcomeActions} skills={skillMatcher} />;
-    const { turn } = row;
-    const live = isLiveWorkTurn(turn, row.index === shownTurns.length - 1, workStatus, finishedBeforeSend);
-    return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error" data-pane-content-error>{t("This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} rowKey={row.key} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} outcome={row.outcome} outcomeActions={outcomeActions}
-        onRewindInTerminal={turn.role === "user" ? rewindInTerminal : null} />
+    const { turn, index } = row;
+    const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
+    return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error" data-pane-content-error>{t(hosted ? "This message can't be shown here." : "This message can't be shown here. The terminal has it.")}</p>}>
+      <Turn paneId={paneId} turn={turn} rowKey={row.key} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} style={style}
+        outcome={row.outcome} outcomeActions={outcomeActions} onRewindInTerminal={turn.role === "user" ? rewindInTerminal : null}
+        checkpoint={rowCheckpoints?.get(index) ?? null} {...(pickCheckpoint ? { onCheckpoint: pickCheckpoint } : {})} {...(forkAt ? { onFork: forkAt } : {})}
+        {...answerEnds(index)} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher, outcomeActions, rewindInTerminal]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, hosted, agentStatus, settings.showThinking, skillMatcher, style, outcomeActions, rewindInTerminal, rowCheckpoints, pickCheckpoint, forkAt, answerEnds]);
   // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
   const shownTitle = title?.trim() ?? "";
-  const logLabel = shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation");
+  const logLabel = label ?? (shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation"));
   const header = <>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -1972,18 +2640,19 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
           in. One Working at a time. */}
       {connected && !ended && activity !== "idle" && agentStatus !== "blocked" && prompt === null && (activity === "thinking" || !workBlockLive) && (workBlockLive
         // under the running turn's own head, a second head would read as a second block
-        ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" />{t("Thinking…")}</p>
+        ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" /><span className="chat-activity-text">{t("Thinking…")}</span></p>
         // under a running turn's words: removing a line below them moves nothing when it ends
         : answerOnlyLive
-          ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" />{activity === "thinking" ? t("Thinking…") : t("Working…")}</p>
+          ? <p className="chat-activity chat-activity-line" role="status"><CircleDot aria-hidden="true" /><span className="chat-activity-text">{activity === "thinking" ? t("Thinking…") : t("Working…")}</span></p>
           // before the turn has a row at all, where its work block will be drawn
           : <PendingWorkHead className="chat-activity" title={activity === "thinking" ? t("Thinking…") : t("Working…")} />)}
       {loaded && empty && error === null && prompt === null && activity === "idle" && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
+      {tail}
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
-  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}><ToolPathRootContext.Provider value={toolPathRoot(cwd)}>
+  return <ChatSourceContext.Provider value={chat}><RevealedSubagentContext.Provider value={revealed}><SubagentChatContext.Provider value={subagentTurns}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}><ToolPathRootContext.Provider value={toolPathRoot(cwd)}>
     {/* a reader away from the end has not seen the answer a finish lands there: presented only at the end */}
     <div className="chat-frame" data-pane-content={active && visible && !covered && connected && !ended && loaded && error === null && !away && !newMessages
       && endPresentation?.state === state && endPresentation.key === presentationKey
@@ -2018,6 +2687,10 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         {footer}
       </div>
     </div>}
+    {/* VS Code's sticky request: the turn's own message, two lines, a tap takes the reader back to it */}
+    {stickyText.length > 0 && <button type="button" className="chat-sticky-request" aria-label={t("Go to your message: {text}", { text: stickyText.slice(0, 120) })} onClick={toStickyRequest}>
+      <span className="chat-sticky-request-text"><span className="chat-sticky-request-clamp">{stickyText}</span></span>
+    </button>}
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} onWheel={minimapWheel} />}
     {jump}
     </div>
@@ -2026,7 +2699,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
       re-read) stays here. */}
   {prompt !== null && promptDock !== null && createPortal(
-    <PromptCard key={promptOccurrence.current.count} paneId={paneId} prompt={prompt} stale={promptStale} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={() => onPendingAnswerDone?.(paneId, prompt.id)} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={(toMessageBox) => {
+    <PromptCard key={promptOccurrence.current.count} paneId={paneId} prompt={prompt} stale={promptStale} {...(style === "vscode" ? { markdown: true } : {})} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={() => onPendingAnswerDone?.(paneId, prompt.id)} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={(toMessageBox) => {
       // the card reports only while it is the one shown; still, only its own prompt is cleared
       onPromptAnswered?.(toMessageBox);
       setPrompt((current) => current === prompt ? null : current);
@@ -2038,5 +2711,5 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ToolPathRootContext.Provider></ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider>;
+  </ToolPathRootContext.Provider></ImageViewerContext.Provider></ChatHistoryContext.Provider></SubagentChatContext.Provider></RevealedSubagentContext.Provider></ChatSourceContext.Provider>;
 });

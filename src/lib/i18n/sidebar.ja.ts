@@ -4,14 +4,11 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const SIDEBAR_JA: Record<string, string> = {
-  "Pin agent": "エージェントを固定",
-  "Unpin agent": "エージェントの固定を解除",
   "Mute alerts": "通知をミュート",
   "Unmute alerts": "通知のミュートを解除",
   "Alerts muted": "通知ミュート中",
   "Pin workspace": "ワークスペースを固定",
   "Unpin workspace": "ワークスペースの固定を解除",
-  "Pinned": "固定済み",
   "Background tasks running: {count}": "実行中のバックグラウンドタスク: {count}",
   "Agent waiting on background work": "エージェントがバックグラウンドの作業を待っています",
   "Agent {status}": "エージェント {status}",
@@ -28,9 +25,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Reorder workspace {name}": "ワークスペース {name} を並べ替え",
   "Drag to reorder · Alt+↑/↓": "ドラッグで並べ替え · Alt+↑/↓",
   "Resize sidebar": "サイドバーの幅を変更",
-  "More for {title}": "{title} のその他",
   "Rename workspace": "ワークスペース名を変更",
-  "Close workspace": "ワークスペースを閉じる",
   "New worktree": "新しいワークツリー",
   "Open worktree…": "ワークツリーを開く…",
   "Earlier sessions…": "以前のセッション…",
@@ -53,4 +48,5 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Collapse": "折りたたむ",
   "Expand": "展開",
   "Shell": "シェル",
+  "VS Code gave these chats no folder": "VS Code がこれらのチャットにフォルダーを渡しませんでした",
 };

@@ -4,14 +4,11 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const SIDEBAR_ZH: Record<string, string> = {
-  "Pin agent": "固定 Agent",
-  "Unpin agent": "取消固定 Agent",
   "Mute alerts": "静音提醒",
   "Unmute alerts": "取消静音提醒",
   "Alerts muted": "提醒已静音",
   "Pin workspace": "固定工作区",
   "Unpin workspace": "取消固定工作区",
-  "Pinned": "已固定",
   "Background tasks running: {count}": "正在运行的后台任务：{count}",
   "Agent waiting on background work": "Agent 正在等待后台工作",
   "Agent {status}": "Agent 状态：{status}",
@@ -28,9 +25,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Reorder workspace {name}": "调整工作区 {name} 的顺序",
   "Drag to reorder · Alt+↑/↓": "拖动以调整顺序 · Alt+↑/↓",
   "Resize sidebar": "调整侧边栏宽度",
-  "More for {title}": "{title} 的更多操作",
   "Rename workspace": "重命名工作区",
-  "Close workspace": "关闭工作区",
   "New worktree": "新建工作树",
   "Open worktree…": "打开工作树…",
   "Earlier sessions…": "之前的会话…",
@@ -53,4 +48,5 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Collapse": "折叠",
   "Expand": "展开",
   "Shell": "Shell",
+  "VS Code gave these chats no folder": "VS Code 没有为这些聊天提供文件夹",
 };

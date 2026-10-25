@@ -70,6 +70,9 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   border-radius: var(--radius-sm);
 }
 
+/* an agent host workspace's face: its project's icon, else a folder */
+.host-folder-face { position: relative; display: inline-flex; flex: 0 0 var(--side-box); }
+
 /* the marks that ride currentColor (codex, cursor, pi) read as the title does */
 .sidebar-mark .agent-mark {
   display: inline-flex;
@@ -247,7 +250,10 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* at the rows' start, as every other head in the sidebar: a centred caption was the one head
+     that broke the sidebar's left edge (desktop audit, 2026-10-23) */
+  justify-content: flex-start;
+  padding-inline-start: var(--space-2);
   /* half the caption's height above the card's edge, half below it */
   margin: var(--space-1) 0 calc(var(--fs-2xs) * var(--lh-tight) / -2);
   color: var(--text-dim);
@@ -638,7 +644,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
    steps, so it reads as alive at a glance without tugging at the eye, and the browser draws only
    those steps. Every dot shares one phase (alignBreath), so several runs breathe together. */
 .sidebar-status[data-status="working"] .sidebar-status-dot {
-  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
+  animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite;
 }
 
 .sidebar-status[data-status="waiting"] .sidebar-status-dot {
@@ -678,17 +684,18 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 .sidebar-status[data-status="done"] .sidebar-status-glyph { color: var(--indicator-done); }
 
 .sidebar-status[data-status="working"] .sidebar-status-glyph {
-  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
+  animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite;
 }
 
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }
 
+/* one slow breath across the whole cycle: out for half, in for half. The old one held full, dropped
+   to half in a tenth of the cycle, held, and jumped back, which read as a light blinking on and off
+   (owner, ZAC-228) */
 @keyframes sidebar-breathe {
   0%,
-  40% { opacity: 1; }
-  50%,
-  90% { opacity: 0.5; }
   100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* background tasks still running, and a pane's plan: a number beside the state, quieter than it */
@@ -728,8 +735,8 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   padding: var(--space-2) var(--side-gutter) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
 }
 
-/* Keep the footer at the bottom when both lists are short after the upper section folds. */
-.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .sidebar-footer {
+/* The footer stays at the bottom when both lists are short: the spare height is above it */
+.sidebar-footer {
   margin-top: auto;
 }
 

@@ -66,6 +66,9 @@ import type {
   UsageReport,
   WorkspaceCreated,
   PluginActionRequest,
+  ModelPrice,
+  ModelPrices,
+  OmniRouteStatus,
   PluginActionResult,
   PluginActions,
   PluginActionsResponse,
@@ -111,6 +114,35 @@ export function fetchUsage(refresh = false): Promise<UsageReport> {
 }
 
 /** Local server's CLIProxyAPI controls; secrets are only ever sent, never read back. */
+/** The OmniRoute gateway this server reads plan limits from, if any (its environment, else Settings). */
+export function fetchOmniRouteStatus(signal?: AbortSignal): Promise<OmniRouteStatus> {
+  return getJson<OmniRouteStatus>("/api/usage/omniroute", { cache: "no-store", ...(signal ? { signal } : {}) });
+}
+
+/**
+ * List prices for a chat's cost estimate, from this server (the one the browser talks to) whichever
+ * PC the chat is on: OmniRoute's table, and LiteLLM's maker prices by bare name behind it (ZAC-224).
+ * Each null when missing (no gateway, a failed read, or a server too old to have it).
+ */
+export interface ChatPrices { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null }
+let prices: Promise<ChatPrices> | null = null;
+export function fetchModelPrices(): Promise<ChatPrices> {
+  // kept for the page once both are in; a missing one is asked again on the next open
+  prices ??= getJson<{ prices?: ModelPrices | null; fallback?: Record<string, ModelPrice> | null }>("/api/usage/omniroute/pricing").then(
+    (answer) => {
+      const found = { prices: answer.prices ?? null, fallback: answer.fallback ?? null };
+      if (!found.prices || !found.fallback) prices = null;
+      return found;
+    },
+    () => { prices = null; return { prices: null, fallback: null }; });
+  return prices;
+}
+
+/** Save (PUT `{url, token?}`) or forget (DELETE) the OmniRoute gateway this server reads; the server's environment refuses both. */
+export function omniRouteRequest(init: RequestInit): Promise<OmniRouteStatus> {
+  return getJson<OmniRouteStatus>("/api/usage/omniroute", { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(30_000) });
+}
+
 export function cliProxyRequest<T>(path = "", init: RequestInit = {}): Promise<T> {
   return getJson<T>(`/api/cliproxy${path}`, { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(60_000) });
 }
@@ -247,7 +279,7 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
-async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+export async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
@@ -435,7 +467,7 @@ export async function signOut(): Promise<void> {
 }
 
 /** Chunked btoa: the naive one-liner blows the stack on multi-MB screenshots. */
-function base64FromBytes(bytes: Uint8Array): string {
+export function base64FromBytes(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -879,6 +911,11 @@ export async function answerPanePrompt(answer: PromptAnswer, machineId = "local"
 /** GET /api/push: the server's VAPID key, the `applicationServerKey` this device subscribes with. */
 export async function fetchPushKey(): Promise<string> {
   return (await getJson<PushKey>("/api/push")).public_key;
+}
+
+/** The ntfy topic the server also posts alerts to, as GET /api/push says; null without one (or from an older server). */
+export async function fetchNtfyTopic(): Promise<NonNullable<PushKey["ntfy"]> | null> {
+  return (await getJson<PushKey>("/api/push")).ntfy ?? null;
 }
 
 /** `alerts`: what this device wants to hear about; the server applies it to every alert it sends here. */

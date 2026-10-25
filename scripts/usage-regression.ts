@@ -37,9 +37,10 @@ const RELOADED = "x-usage-qa-reloaded";
 async function staged(context: BrowserContext): Promise<{ asked: string[]; afterReload: string[] }> {
   const asked: string[] = [];
   const afterReload: string[] = [];
-  await context.route("**/api/usage*", (route) => {
+  await context.route("**/api/usage**", (route) => {
     asked.push(new URL(route.request().url()).search);
     if (route.request().headers()[RELOADED]) afterReload.push(route.request().url());
+    if (new URL(route.request().url()).pathname === "/api/usage/omniroute") return route.fulfill({ json: { configured: false, url: null, ok: false, problem: null, checked_at: null } });
     return route.fulfill({ json: report() });
   });
   return { asked, afterReload };
@@ -73,11 +74,12 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     // limit near its end that the chip does not show. As many chips as the row holds, the rest in "+N"
     const chipCount = await page.locator(".usage-chip").count();
     const more = await page.locator(".usage-more").count() === 0 ? 0 : Number((await page.locator(".usage-more").textContent())!.slice(1));
-    assert.equal(chipCount + more, 7, "every account is a chip or counted in +N");
+    assert.equal(chipCount + more, 6, "every provider is a chip or counted in +N: two Codex accounts share one");
     assert.ok(chipCount >= 4, `the row beside the Settings gear holds at least four chips (${chipCount})`);
     assert.equal(await strip.getAttribute("aria-label"),
-      "Subscription usage: Claude · me@example.com 58% left, Codex · me@work.example 88% left (Weekly 9% left), Codex · me@example.com 70% left, Cursor 80% left, GitHub Copilot · me 100% left, Grok 100% left, Antigravity —");
-    assert.deepEqual((await page.locator(".usage-chip-value").allTextContents()).slice(0, 4), ["58%", "88%", "70%", "80%"]);
+      "Subscription usage: Claude · me@example.com 58% left, Codex, 2 accounts 88% left (near a limit: Codex · me@work.example), Cursor 80% left, GitHub Copilot · me 100% left, Grok 100% left, Antigravity —");
+    assert.deepEqual((await page.locator(".usage-chip-value").allTextContents()).slice(0, 4), ["58%", "88%", "80%", "100%"]);
+    assert.deepEqual(await page.locator(".usage-chip-count").allTextContents(), ["2"], "the Codex chip says it stands for two accounts");
     assert.equal(await page.locator(".usage-chip.is-high").count(), 0, "no session is near its end");
     assert.equal(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth), true, "the chips fit beside Settings");
     const [settings, meters] = await Promise.all([page.locator(".sidebar-footer-row .sidebar-footer-action").boundingBox(), strip.boundingBox()]);
@@ -102,7 +104,8 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await popover.waitFor({ state: "hidden" });
     assert.equal(await strip.evaluate((el) => el === document.activeElement), true, "Escape hands focus back to the strip");
 
-    // Settings: the week instead, where one near its limit is red; then the share used, an account
+    // Settings: the week instead, where one near its limit is red (Codex: Pro at 91% and Plus at 30%,
+    // weighted 10 to 1 by plan size, 85.5% used); then the share used, an account
     // hidden from the strip, another moved up
     const names = () => page.locator(".usage-popover .usage-provider").evaluateAll((sections) => sections.map((section) => section.getAttribute("aria-label")));
     await settingsButton.click();
@@ -112,7 +115,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     }
     await page.locator('.segmented[aria-label="Limit shown"]').getByRole("button", { name: "Weekly", exact: true }).click();
     await page.keyboard.press("Escape");
-    assert.match(await strip.getAttribute("aria-label") ?? "", /^Subscription usage: Claude · me@example\.com 37% left, Codex · me@work\.example 9% left, Codex · me@example\.com 70% left,/);
+    assert.match(await strip.getAttribute("aria-label") ?? "", /^Subscription usage: Claude · me@example\.com 37% left, Codex, 2 accounts 15% left \(near a limit: Codex · me@work\.example\), Cursor/);
     assert.equal(await page.locator(".usage-chip").nth(1).evaluate((chip) => chip.classList.contains("is-high")), true);
     await settingsButton.click();
     await openSettingsPage(page, "Subscription usage");
@@ -144,7 +147,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await context.setExtraHTTPHeaders({ [RELOADED]: "1" });
     await page.reload();
     await page.locator(".sidebar-footer").waitFor();
-    assert.deepEqual(afterReload, [], "a hidden strip asks for nothing");
+    assert.deepEqual(afterReload, [], `a hidden strip asks for nothing: ${JSON.stringify(afterReload)}`);
     await context.setExtraHTTPHeaders({});
     assert.deepEqual(errors, []);
   } finally {
@@ -182,6 +185,214 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await phone.close();
   }
   console.log("PASS plan meters beside the Settings gear: session left by default, accounts, order, hiding, week and used, row fit, popover, refresh, Escape, off switch and phone fit");
+  await checkOmniRouteUsage(browser, origin);
+}
+
+/** An OmniRoute gateway's accounts: opt-in per provider, New until Settings is left, searchable past eight, closest-first in the panel. */
+const GATEWAY_IDS = ["claude", "copilot", "opencode", "glm", "kimi-coding", "minimax", "deepseek", "kiro", "qoder", "nanogpt"];
+// as OmniRoute reports them: Claude's plan is an id, OpenCode's repeats the provider
+const GATEWAY_PLANS: Record<string, string> = { claude: "default_claude_max_20x", opencode: "OpenCode Go", glm: "coding_lite" };
+const LONG_ACCOUNT = "default.workspace.account.with.a.long.name@example.com";
+const gatewayReport = (): UsageReport => ({ providers: [
+  { id: "codex", key: "codex:me", account: "me@example.com", plan: "pro", problem: null, checked_at: at(0), windows: [{ kind: "week", scope: null, used_percent: 20, resets_at: at(90), starts_at: null }] },
+  ...GATEWAY_IDS.map((id, index) => ({ id, key: `${id}:omniroute:c${index}`, account: index === 0 ? LONG_ACCOUNT : null, plan: GATEWAY_PLANS[id] ?? null, problem: null, checked_at: at(-0.1),
+    windows: [{ kind: "week" as const, scope: null, used_percent: 10 + index * 8, resets_at: at(100), starts_at: null }] })),
+] });
+
+async function checkOmniRouteUsage(browser: Browser, origin: string): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "en-US" });
+  try {
+    await context.route("**/api/usage**", (route) => new URL(route.request().url()).pathname === "/api/usage/omniroute"
+      ? route.fulfill({ json: { configured: true, url: "http://omniroute.example:20128", ok: true, problem: null, checked_at: at(0) } })
+      : route.fulfill({ json: gatewayReport() }));
+    await context.addInitScript(() => { if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ showUsage: true })); });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(origin);
+    await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+    const strip = page.locator(".usage-strip");
+    await strip.waitFor();
+    assert.equal(await strip.locator(".usage-chip").count(), 1, "a gateway's providers stay out of the strip until chosen");
+
+    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await openSettingsPage(page, "Subscription usage");
+    const gateway = page.locator(".usage-gateway");
+    await gateway.waitFor();
+    assert.equal(await gateway.locator(".usage-gateway-row").count(), GATEWAY_IDS.length, "every reported provider is listed");
+    assert.equal(await gateway.locator(".usage-gateway-new").count(), GATEWAY_IDS.length, "all new on first sight");
+    assert.equal(await gateway.getByRole("switch", { checked: true }).count(), 0, "none shown until chosen");
+    assert.equal(await page.locator(".usage-accounts-row").count(), 1, "the accounts list holds only this PC's until a provider is chosen");
+    assert.match(await gateway.locator(".usage-gateway-head").innerText(), /0 of 10 shown/);
+    // the integration wears OmniRoute's own mark, not a generic route icon
+    assert.equal(await gateway.locator('.usage-connection svg[aria-label="omniroute"]').count(), 1, "the gateway card wears OmniRoute's mark");
+    assert.ok(await gateway.locator(".usage-connection").evaluate((row) => { const mark = row.querySelector("svg")!.getBoundingClientRect(); const name = row.querySelector(".settings-label")!.getBoundingClientRect(); return mark.right <= name.left && mark.bottom > name.top; }), "its mark stands beside its name, as the Hub card's icon does");
+    // past eight: search and Shown/All
+    const search = gateway.getByRole("searchbox", { name: "Search providers" });
+    await search.fill("glm");
+    assert.deepEqual((await gateway.locator(".usage-gateway-name").allInnerTexts()).map((text) => text.replace(/\s*New$/, "")), ["GLM"], "search by name");
+    await gateway.getByRole("switch", { name: "Show GLM", exact: true }).click();
+    await search.fill("");
+    await gateway.getByRole("switch", { name: "Show Claude", exact: true }).click();
+    await gateway.getByRole("button", { name: "Shown", exact: true }).click();
+    assert.deepEqual((await gateway.locator(".usage-gateway-name").allInnerTexts()).map((text) => text.replace(/\s*New$/, "")), ["Claude", "GLM"], "Shown lists the chosen ones");
+    assert.ok(await gateway.evaluate((card) => [...card.querySelectorAll(".usage-gateway-row")].every((row) => row.scrollWidth <= row.clientWidth)), "each provider row fits the phone");
+    if (process.env.UI_EVIDENCE_DIR) await page.getByRole("tabpanel", { name: "Subscription usage", exact: true }).screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-omniroute-phone.png") });
+    assert.equal(await page.locator(".usage-accounts-row").count(), 3, "chosen providers' accounts join the list, marked OmniRoute");
+    assert.equal(await page.locator(".usage-accounts-row .usage-account-meta", { hasText: "OmniRoute" }).count(), 2);
+    assert.equal(await page.locator('.usage-accounts-row .usage-account-meta svg[aria-label="omniroute"]').count(), 2, "an OmniRoute account says so with its mark");
+
+    // leaving Settings, the New marks are spent
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").first().waitFor({ state: "detached" }).catch(() => undefined);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as { usageShown?: string[]; usageKnown?: string[] });
+    assert.deepEqual(saved.usageShown, ["glm", "claude"]);
+    assert.deepEqual([...saved.usageKnown ?? []].sort(), [...GATEWAY_IDS].sort(), "every offered provider is known after leaving");
+
+    // the strip holds the chosen ones, the panel can sort closest first, each says via OmniRoute
+    await page.getByRole("button", { name: "Open workspace list", exact: true }).click().catch(() => undefined);
+    await strip.click();
+    const panel = page.getByRole("dialog", { name: "Subscription usage", exact: true });
+    await panel.waitFor();
+    const names = async () => (await panel.locator(".usage-provider").evaluateAll((sections) => sections.map((section) => section.getAttribute("aria-label"))));
+    assert.deepEqual(await names(), ["Codex · me@example.com", `Claude · ${LONG_ACCOUNT}`, "GLM"]);
+    assert.equal(await panel.locator(".usage-source").count(), 2, "the gateway's accounts say where they come from");
+    assert.deepEqual(await panel.locator(".usage-plan").allTextContents(), ["Pro", "Max 20x", "Coding Lite"], "plans as their providers sell them, not raw ids");
+    // a long account or plan stays in its line: nothing sideways, the source still in view
+    assert.equal(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth), true, "the panel never scrolls sideways");
+    assert.equal(await panel.locator(".usage-provider-head").evaluateAll((heads) => heads.every((head) => [...head.querySelectorAll("*")].every((child) => {
+      const box = child.getBoundingClientRect(), outer = head.getBoundingClientRect();
+      return box.right <= outer.right + 0.5 && box.height <= 24;
+    }))), true, "every header part fits the card on one line");
+    await panel.getByRole("button", { name: "Your order", exact: true }).click();
+    assert.deepEqual(await names(), ["GLM", "Codex · me@example.com", `Claude · ${LONG_ACCOUNT}`], "closest to a limit first");
+    assert.equal(await panel.getByRole("button", { name: "Closest first", exact: true }).getAttribute("aria-pressed"), "true");
+    if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-omniroute-panel-phone.png") });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+  console.log("PASS OmniRoute accounts: opt-in per provider, New until Settings is left, search and Shown past eight, OmniRoute labels, closest-first panel");
+}
+
+/**
+ * Linking OmniRoute from Settings against a stand-in gateway and a real server: the form saves the
+ * URL and token on the server (never shown back), the gateway's providers appear, Edit keeps the
+ * saved token, Remove forgets it; a gateway the server's environment names is locked.
+ */
+export async function checkOmniRouteLink(browser: Browser): Promise<void> {
+  const { mkdtempSync, readFileSync, rmSync, statSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { createServer } = await import("../server/index.ts");
+  const { UsageService } = await import("../server/usage.ts");
+  const { OmniRouteLink } = await import("../server/omniroute.ts");
+  const TOKEN = "oma_FICTIONAL_link_token";
+  const seen: string[] = [];
+  const gatewayServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+    seen.push(request.headers.get("authorization") ?? "");
+    if (request.headers.get("authorization") !== `Bearer ${TOKEN}`) return new Response("no", { status: 401 });
+    const path = new URL(request.url).pathname;
+    if (path === "/api/providers") return Response.json({ connections: [{ id: "g1", provider: "glm", isActive: true, name: "FICTIONAL glm" }] });
+    if (path === "/api/usage/provider-limits") return Response.json({ caches: { g1: { fetchedAt: new Date().toISOString(), plan: null, quotas: {
+      tokens_5h: { used: 40, total: 100, resetAt: new Date(Date.now() + 2 * 3600_000).toISOString(), unlimited: false } } } } });
+    return new Response("{}", { status: 404 });
+  } });
+  const gatewayUrl = `http://127.0.0.1:${gatewayServer.port}`;
+  const roots: string[] = [];
+  const serve = (env: Record<string, string>) => {
+    const stateDir = mkdtempSync(join(tmpdir(), "herdr-omniroute-link-"));
+    roots.push(stateDir);
+    const omniRoute = new OmniRouteLink(stateDir, env);
+    // no provider of this PC is read: only the gateway's accounts, as the server adds them
+    return { stateDir, server: createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir, omniRoute, usage: new UsageService(undefined, [], (refresh) => omniRoute.report(refresh)) }) };
+  };
+  const open = async (port: number) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "en-US" });
+    await context.addInitScript(() => { if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ showUsage: true, language: "en" })); });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`http://127.0.0.1:${port}`);
+    await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await openSettingsPage(page, "Subscription usage");
+    return { context, page, errors };
+  };
+  try {
+    const { stateDir, server } = serve({});
+    try {
+      const { context, page, errors } = await open(server.port);
+      try {
+        assert.equal(await page.locator(".usage-gateway").count(), 0, "no gateway card before one is linked");
+        await page.getByRole("button", { name: "Add account", exact: true }).click();
+        await page.getByRole("button", { name: "OmniRoute", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Connect OmniRoute", exact: true });
+        await dialog.getByLabel("OmniRoute URL", { exact: true }).fill(gatewayUrl);
+        await dialog.getByLabel("Access token", { exact: true }).fill("oma_FICTIONAL_wrong");
+        await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+        assert.equal(await dialog.getByRole("alert").innerText(), "OmniRoute refused the token", "a refused token says so in fixed words");
+        await dialog.getByLabel("Access token", { exact: true }).fill(TOKEN);
+        await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+        await dialog.getByRole("status").filter({ hasText: "Connected" }).waitFor();
+        if (process.env.UI_EVIDENCE_DIR) await dialog.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "omniroute-link-connected-phone.png") });
+        await dialog.getByRole("button", { name: "Done", exact: true }).click();
+        const saved = join(stateDir, "omniroute.json");
+        assert.equal(statSync(saved).mode & 0o777, 0o600, "the token is saved readable by the server only");
+        assert.deepEqual(JSON.parse(readFileSync(saved, "utf8")), { url: gatewayUrl, token: TOKEN });
+        const card = page.locator(".usage-gateway");
+        await card.locator(".usage-gateway-row").filter({ hasText: "GLM" }).waitFor();
+        assert.ok(!(await page.content()).includes(TOKEN), "the page never holds the token");
+        await dialog.waitFor({ state: "detached" });
+        await page.locator(".usage-account-dialog").waitFor({ state: "detached" });
+        await page.getByText("Connect OmniRoute", { exact: true }).waitFor({ state: "hidden" });
+        assert.ok(await card.locator(".usage-connection").evaluate((row) => row.scrollWidth <= row.clientWidth), "the card's Edit and Remove fit the phone");
+        await card.scrollIntoViewIfNeeded();
+        assert.ok(await page.evaluate(() => { const box = document.querySelector(".usage-gateway .usage-connection")!.getBoundingClientRect(); return document.elementFromPoint(box.left + 20, box.bottom - 10)?.closest(".usage-gateway") !== null; }), "nothing covers the gateway card once its sheet closed");
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        if (process.env.UI_EVIDENCE_DIR) await card.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "omniroute-link-card-phone.png") });
+        // Edit with a blank token keeps the saved one
+        await card.getByRole("button", { name: "Edit", exact: true }).click();
+        const edit = page.getByRole("dialog", { name: "Connect OmniRoute", exact: true });
+        assert.equal(await edit.getByLabel("OmniRoute URL", { exact: true }).inputValue(), gatewayUrl);
+        assert.equal(await edit.getByLabel("Access token", { exact: true }).inputValue(), "", "the saved token is never filled back in");
+        await edit.getByRole("button", { name: "Connect", exact: true }).click();
+        await edit.getByRole("status").filter({ hasText: "Connected" }).waitFor();
+        await edit.getByRole("button", { name: "Done", exact: true }).click();
+        assert.equal(JSON.parse(readFileSync(saved, "utf8")).token, TOKEN, "a blank token kept the saved one");
+        // Remove forgets it
+        await card.getByRole("button", { name: "Remove", exact: true }).click();
+        await page.getByRole("alertdialog", { name: "Remove OmniRoute?", exact: true }).getByRole("button", { name: "Remove", exact: true }).click();
+        await card.waitFor({ state: "detached" });
+        assert.deepEqual(JSON.parse(readFileSync(saved, "utf8")), {}, "Remove forgets the URL and token");
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    } finally { server.stop(); }
+
+    // the server's environment names the gateway: shown, locked, not offered in Add account
+    const pinned = serve({ HERDR_WEB_OMNIROUTE_URL: gatewayUrl, HERDR_WEB_OMNIROUTE_TOKEN: TOKEN });
+    try {
+      const { context, page, errors } = await open(pinned.server.port);
+      try {
+        const card = page.locator(".usage-gateway");
+        await card.locator(".usage-connection").filter({ hasText: "Set by the server" }).waitFor();
+        assert.equal(await card.getByRole("button", { name: "Edit", exact: true }).count(), 0, "an environment gateway has no Edit");
+        assert.equal(await card.getByRole("button", { name: "Remove", exact: true }).count(), 0, "an environment gateway has no Remove");
+        if (process.env.UI_EVIDENCE_DIR) await card.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "omniroute-link-env-phone.png") });
+        await page.getByRole("button", { name: "Add account", exact: true }).click();
+        await page.getByRole("button", { name: "Hub", exact: true }).waitFor();
+        assert.equal(await page.getByRole("button", { name: "OmniRoute", exact: true }).count(), 0, "Add account does not offer a second OmniRoute");
+        const refused = await page.evaluate(async () => (await fetch("/api/usage/omniroute", { method: "DELETE" })).status);
+        assert.equal(refused, 409, "the server refuses to remove an environment gateway");
+        assert.equal(existsSync(join(pinned.stateDir, "omniroute.json")), false, "nothing saved");
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    } finally { pinned.server.stop(); }
+    assert.ok(seen.every((auth) => auth === `Bearer ${TOKEN}` || auth === "Bearer oma_FICTIONAL_wrong"), "only the typed tokens reach the gateway");
+  } finally {
+    gatewayServer.stop(true);
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+  }
+  console.log("PASS OmniRoute link: Settings saves URL and token on the server, refused token in fixed words, Edit keeps the token, Remove forgets it, an environment gateway is locked");
 }
 
 if (import.meta.main) {
@@ -202,6 +413,7 @@ if (import.meta.main) {
     });
     browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     await checkUsageMeters(browser, `http://127.0.0.1:${server.port}`);
+    await checkOmniRouteLink(browser);
   } finally {
     await browser?.close();
     server?.stop();

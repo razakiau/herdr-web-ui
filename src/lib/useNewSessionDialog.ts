@@ -16,6 +16,8 @@ export function useNewSessionState({ initialLink }: { initialLink: { create?: Cr
   // the New workspace dialog in the address (lib/deepLink.ts): the fields a link filled for this
   // opening, and what the fields say now
   const [newPrefill, setNewPrefill] = useState<Omit<CreateDraft, "kind"> | null>(null);
+  // New agent host chat… from a folder: the dialog makes a chat in that folder (no folder list)
+  const [newChatIn, setNewChatIn] = useState<string | null>(null);
   const [newFields, setNewFields] = useState<Omit<CreateDraft, "kind"> | null>(null);
   // a link to the dialog, opened once the PCs are in (a tab, once its workspace is found)
   const pendingCreate = useRef<CreateDraft | null>(initialLink?.create ?? null);
@@ -23,18 +25,19 @@ export function useNewSessionState({ initialLink }: { initialLink: { create?: Cr
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   // the earlier sessions of a workspace's folder (components/SessionHistory.tsx), while open
   const [sessionHistory, setSessionHistory] = useState<{ machineId: string; workspaceId: string; agent: SessionHistoryAgent; paneId: string | null; askingPaneId: string | null; selectedPaneId: string | null } | null>(null);
-  return { newSessionOpen, setNewSessionOpen, newPrefill, setNewPrefill, newFields, setNewFields, pendingCreate, newTab, setNewTab, sessionHistory, setSessionHistory };
+  return { newSessionOpen, setNewSessionOpen, newPrefill, setNewPrefill, newChatIn, setNewChatIn, newFields, setNewFields, pendingCreate, newTab, setNewTab, sessionHistory, setSessionHistory };
 }
 
-export function useSessionHistoryList({ machines, sessionHistory, setSessionHistory, setNewSessionOpen, setNewPrefill, setNewFields }: {
+export function useSessionHistoryList({ machines, sessionHistory, setSessionHistory, setNewSessionOpen, setNewPrefill, setNewChatIn, setNewFields }: {
   machines: Machine[];
   sessionHistory: { machineId: string; workspaceId: string; agent: SessionHistoryAgent; paneId: string | null; askingPaneId: string | null; selectedPaneId: string | null } | null;
   setSessionHistory: (value: { machineId: string; workspaceId: string; agent: SessionHistoryAgent; paneId: string | null; askingPaneId: string | null; selectedPaneId: string | null } | null) => void;
   setNewSessionOpen: (value: boolean) => void;
   setNewPrefill: (value: Omit<CreateDraft, "kind"> | null) => void;
+  setNewChatIn: (value: string | null) => void;
   setNewFields: (value: Omit<CreateDraft, "kind"> | null) => void;
 }) {
-  const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewFields(null); }, []);
+  const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewChatIn(null); setNewFields(null); }, []);
   const closeSessionHistory = useCallback(() => setSessionHistory(null), []);
   // the Resumes of a moment ago, kept across the list's openings until herdr reports their panes' sessions
   const { standing: recentResumes, remember: rememberResume } = useRecentResumes(machines);

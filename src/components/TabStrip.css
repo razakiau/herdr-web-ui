@@ -19,6 +19,39 @@
   display: none;
 }
 
+/* the edge with tabs out of view fades (TabStrip.tsx useStripOverflow); a mask, as the key bar's,
+   so it is the strip's own colours in every palette. A strip whose + is pinned at its end keeps
+   the + whole: its end fade stops short of it */
+.tab-strip {
+  --strip-fade: var(--space-8);
+  --strip-fade-start: 0px;
+  --strip-fade-end: 0px;
+}
+
+.tab-strip[data-overflow-start],
+.tab-strip[data-overflow-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    currentColor var(--strip-fade-start),
+    currentColor calc(100% - var(--strip-fade-end)),
+    transparent
+  );
+}
+
+.tab-strip[data-overflow-start] { --strip-fade-start: var(--strip-fade); }
+.tab-strip[data-overflow-end] { --strip-fade-end: var(--strip-fade); }
+.tab-strip[data-overflow-end]:has(> .tab-strip-add) {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    currentColor var(--strip-fade-start),
+    currentColor calc(100% - var(--control-h) - var(--strip-fade)),
+    transparent calc(100% - var(--control-h)),
+    currentColor calc(100% - var(--control-h))
+  );
+}
+
 /* a split view half's row: its tabs scroll, as wide as they are, and the end (App's grip and
    close) takes the rest of the row */
 .tab-strip-row {
@@ -98,14 +131,17 @@
   border-radius: var(--radius-pill);
 }
 
-.tab-strip-dot[data-status="working"] { background: var(--status-working); }
+/* running breathes as the sidebar's dot does, in step with it (lib/breath.ts): a still blue dot
+   read as finished-and-unread (owner, ZAC-228) */
+.tab-strip-dot[data-status="working"] { background: var(--status-working); animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite; }
 .tab-strip-dot[data-status="blocked"] { background: var(--status-blocked); }
 .tab-strip-dot[data-status="done"] { background: var(--status-done); }
 /* waiting on its background work: something still runs, the agent does not */
 .tab-strip-dot[data-status="waiting"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-working); }
 
-/* Settings -> Status indicators, Dots or Symbols: the sidebar's herdr glyph and color, held still
-   (Sidebar.css .sidebar-status-glyph). Same specificity as the dot's rules, so order wins. */
+/* Settings -> Status indicators, Dots or Symbols: the sidebar's herdr glyph and color
+   (Sidebar.css .sidebar-status-glyph); RUN breathes there and here. Same specificity as the dot's
+   rules, so order wins. */
 .tab-strip-glyph {
   width: auto;
   height: auto;
@@ -266,3 +302,12 @@
 }
 .tab-strip-item.is-drop-before::before { left: 0; }
 .tab-strip-item.is-drop-after::after { right: 0; }
+
+/* a host chat's tab: Copilot's mark before its title, and the host glyph beside it where the workspace also runs Copilot in a pane */
+.host-chat-tab .tab-strip-tab > svg { flex: none; }
+.host-chat-tab-glyph {
+  width: 10px;
+  height: 10px;
+  margin-left: -2px;
+  color: var(--text-dim);
+}

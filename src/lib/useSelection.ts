@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatc
 import type { Machine } from "../../shared/machines.ts";
 import { fetchSession } from "./api.ts";
 import { fileFromLink, resolveLink, type AppLink, type LinkNote } from "./deepLink.ts";
-import { machineGone, notificationLanding, notificationTargetFromSearch, sameLink, onNotificationTarget, type NotificationTarget } from "./notificationTarget.ts";
+import { isHostChatTarget, machineGone, notificationLanding, notificationTargetFromSearch, sameLink, onNotificationTarget, type HostChatAlertTarget, type NotificationTarget } from "./notificationTarget.ts";
+import type { HostChatTarget } from "../components/AgentSidebar.tsx";
 import type { TerminalPeek } from "./terminalPeek.ts";
 import { markSelection, type SelectionMark } from "./selectionMark.ts";
 import type { PaneView } from "./actions.ts";
@@ -29,6 +30,12 @@ export function useSelectionState({ initialLink }: { initialLink: AppLink | null
     if (initialLink && (initialLink.workspace || fileFromLink(initialLink))) return null;
     return storedSelection()?.pane_id ?? null;
   });
+  // a host chat shown in the pane's place (lib/hostChats.ts): picking one clears the pane, and a pane picked clears it
+  const [selectedHostChat, setSelectedHostChat] = useState<HostChatTarget | null>(null);
+  const selectedHostChatRef = useRef(selectedHostChat); selectedHostChatRef.current = selectedHostChat;
+  useEffect(() => {
+    if (selectedPaneId !== null) setSelectedHostChat(null);
+  }, [selectedPaneId]);
   const [notificationViewTarget, setNotificationViewTarget] = useState<NotificationTarget | null>(
     () => notificationTargetFromSearch(window.location.search),
   );
@@ -53,7 +60,7 @@ export function useSelectionState({ initialLink }: { initialLink: AppLink | null
   // was, changes nothing they watch), and on a link a tap set (its pane may be the one selected)
   const [rosterTick, setRosterTick] = useState(0);
   const [linkTick, setLinkTick] = useState(0);
-  return { selectedPaneId, setSelectedPaneId, notificationViewTarget, setNotificationViewTarget, terminalPeek, setTerminalPeek, endPeek, pendingLink, linkLanded, setLinkLanded, rosterSeq, linkSince, selectionSince, rosterTick, setRosterTick, linkTick, setLinkTick };
+  return { selectedPaneId, setSelectedPaneId, selectedHostChat, setSelectedHostChat, selectedHostChatRef, notificationViewTarget, setNotificationViewTarget, terminalPeek, setTerminalPeek, endPeek, pendingLink, linkLanded, setLinkLanded, rosterSeq, linkSince, selectionSince, rosterTick, setRosterTick, linkTick, setLinkTick };
 }
 
 export function useLinkLanding({ initialLink, otherRecheck, setOtherRosterTick, pendingLink, rosterSeq, setRosterTick, linkLanded, t }: {
@@ -106,12 +113,14 @@ export function useSelectionMark({ selectedMachineId, selectedPaneId }: { select
   return { selectionRef };
 }
 
-export function useSelectTarget({ selectedMachineId, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setDrawerOpen, setOutputStopped, setNotificationViewTarget, setTerminalPeek, pendingLink, pendingFile, setLinkLanded, selectionHint, selectionSince, rosterSeq, snapshot, selectedMachine, selectedPaneId, setHeaderNote, linkTick }: {
+export function useSelectTarget({ selectedMachineId, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, selectedHostChat, setSelectedHostChat, setAutoSelected, setDrawerOpen, setOutputStopped, setNotificationViewTarget, setTerminalPeek, pendingLink, pendingFile, setLinkLanded, selectionHint, selectionSince, rosterSeq, snapshot, selectedMachine, selectedPaneId, setHeaderNote, linkTick }: {
   selectedMachineId: string;
   setConnected: Dispatch<SetStateAction<boolean>>;
   setConnectedBefore: Dispatch<SetStateAction<boolean>>;
   setSelectedMachineId: Dispatch<SetStateAction<string>>;
   setSelectedPaneId: Dispatch<SetStateAction<string | null>>;
+  selectedHostChat: HostChatTarget | null;
+  setSelectedHostChat: Dispatch<SetStateAction<HostChatTarget | null>>;
   setAutoSelected: Dispatch<SetStateAction<boolean>>;
   setDrawerOpen: Dispatch<SetStateAction<boolean>>;
   setOutputStopped: Dispatch<SetStateAction<boolean>>;
@@ -138,6 +147,7 @@ export function useSelectTarget({ selectedMachineId, setConnected, setConnectedB
     if (machineId !== selectedMachineRef.current) { setConnected(false); setConnectedBefore(false); }
     // the active half alone takes the pick, whatever the other half shows (lib/split.ts)
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
+    setSelectedHostChat(null);
     setOutputStopped(false);
     setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
     setTerminalPeek(null);
@@ -197,6 +207,8 @@ export function useSelectTarget({ selectedMachineId, setConnected, setConnectedB
       }
     }
     if (snapshot.panes.some((pane) => pane.pane_id === selectedPaneId)) return;
+    // a host chat in the pane's place is a choice, not an empty selection to fill
+    if (selectedPaneId === null && selectedHostChat !== null) return;
     if (selectedPaneId === null) { setSelectedPaneId(fallback(snapshot)); return; }
     // The combined roster is cached: a newly created pane can be selected before it
     // appears there. Confirm absence against this PC before discarding the selection.
@@ -218,7 +230,7 @@ export function useSelectTarget({ selectedMachineId, setConnected, setConnectedB
       setAutoSelected(true);
     }).catch(() => { /* a failed read is not evidence that the pane disappeared */ });
     return () => { cancelled = true; };
-  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick]);
+  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick, selectedHostChat]);
   useEffect(() => {
     storeSelection(selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);
@@ -247,9 +259,11 @@ export function useSelectPane({ pendingLink, pendingFile, setLinkLanded, selecti
   return { selectPane };
 }
 
-export function useNotificationTargets({ machinesRef, selectTargetRef, selectionHint, pendingLink, pendingFile, setLinkLanded, linkSince, rosterSeq, setLinkTick, load }: {
+export function useNotificationTargets({ machinesRef, selectTargetRef, selectHostChatRef, selectionHint, pendingLink, pendingFile, setLinkLanded, linkSince, rosterSeq, setLinkTick, load }: {
   machinesRef: RefObject<Machine[]>;
   selectTargetRef: RefObject<SelectTarget>;
+  /** a host chat's alert opens the chat in the pane's place (App.tsx selectHostChat) */
+  selectHostChatRef: RefObject<(target: HostChatTarget) => void>;
   selectionHint: RefObject<SelectionHint>;
   pendingLink: RefObject<AppLink | null>;
   pendingFile: RefObject<string | null>;
@@ -263,7 +277,10 @@ export function useNotificationTargets({ machinesRef, selectTargetRef, selection
   // yet waits as a link does (this also keeps a cold start's link, which the worker names again
   // once the page is up), and so does one on a PC this roster lacks: a roster asked for now says
   // whether it was removed (the [machines] effect below) or set up since this one was read
-  const takeNotificationTarget = useCallback((target: NotificationTarget): void => {
+  const takeNotificationTarget = useCallback((tapped: NotificationTarget | HostChatAlertTarget): void => {
+    // a host chat's alert opens the chat in the pane's place (server/push.ts onHostChats)
+    if (isHostChatTarget(tapped)) { selectHostChatRef.current({ machineId: tapped.machine_id, session: tapped.session }); return; }
+    const target = tapped;
     const landing = notificationLanding(machinesRef.current, target);
     if (landing.kind === "select") {
       selectTargetRef.current(target.machine_id, target.pane_id, target.view);

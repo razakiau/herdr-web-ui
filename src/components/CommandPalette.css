@@ -245,7 +245,7 @@
 }
 
 .palette-plugin-action.is-running svg {
-  animation: palette-spin var(--dur-spin) steps(8) infinite;
+  animation: palette-spin var(--dur-spin) var(--ease-spin) infinite;
 }
 
 .palette-plugin-action[aria-disabled="true"]:not(.is-running) {

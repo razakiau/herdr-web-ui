@@ -854,25 +854,31 @@ try {
   await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
   await page.getByRole("button", { name: "Close files", exact: true }).click();
   await page.getByRole("dialog", { name: "Files", exact: true }).waitFor({ state: "detached" });
-  // before the permission question is answered the item already reads as on: in-app alerts show
-  assert.equal(await alertsState(page), "On in the app");
-  assert.equal(await alertsOffMarked(page), false, "alerts that are on leave the More button unmarked");
+  // the item is web push alone: off until the permission is given, and the in-app alerts are no part of it
+  assert.equal(await alertsState(page), "Off");
+  assert.equal(await alertsOffMarked(page), false, "push off with the in-app alerts on: the device still hears, no dot");
   await context.grantPermissions(["notifications"], { origin });
-  await runMoreItem(page, "Alerts");
-  await until(async () => await alertsState(page) !== "On in the app", "the item's tap takes the permission");
-  assert.match(await alertsState(page), /^On[ ,]/);
+  await runMoreItem(page, "Push to this device");
+  await until(async () => await alertsState(page) !== "Off", "the item's tap takes the permission");
+  assert.match(await alertsState(page), /^On/);
   assert.equal(await alertsOffMarked(page), false);
-  await runMoreItem(page, "Alerts");
-  await until(async () => await alertsState(page) === "Off on this device", "alerts off");
-  assert.equal(await alertsOffMarked(page), true, "alerts that are off mark the More button, in its dot and its name");
+  await runMoreItem(page, "Push to this device");
+  await until(async () => await alertsState(page) === "Off", "push off");
+  assert.equal(await alertsOffMarked(page), false, "the in-app alerts still tell this device");
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}").alertsOn), false);
-  assert.equal(await page.evaluate(async () => (await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription()) ?? null), null, "turning alerts off drops the push subscription");
-  await runMoreItem(page, "Alerts");
-  await until(async () => /^On[ ,]/.test(await alertsState(page)), "alerts on again");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}").alertInApp ?? true), true, "push off leaves the in-app alerts on");
+  assert.equal(await page.evaluate(async () => (await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription()) ?? null), null, "turning push off drops the push subscription");
+  // nothing left to tell it: the in-app alerts off too, and the dot says so
+  await page.evaluate(() => { const s = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}"); localStorage.setItem("ovis:settings", JSON.stringify({ ...s, alertInApp: false })); });
+  await page.reload();
+  await page.locator(".header-more-button").waitFor();
+  await until(async () => await alertsOffMarked(page), "push and in-app alerts off mark the More button, in its dot and its name");
+  await runMoreItem(page, "Push to this device");
+  await until(async () => /^On/.test(await alertsState(page)), "push on again");
   assert.equal(await alertsOffMarked(page), false);
-  console.log("PASS the Alerts item turns alerts off and on again");
+  console.log("PASS the push item turns web push off and on again, apart from the in-app alerts");
 
-  // where notifications are blocked the item is still there, and switches the in-app alerts
+  // where notifications are blocked push cannot work: the item is gone, and so is the dot
   const blocked = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   await blocked.addInitScript(() => {
     if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
@@ -883,18 +889,14 @@ try {
   csp.push(await watchCsp(blockedPage));
   await blockedPage.goto(origin);
   await blockedPage.locator(".header-more-button").waitFor();
-  assert.equal(await alertsState(blockedPage), "On in the app");
-  assert.equal(await alertsOffMarked(blockedPage), false);
-  await runMoreItem(blockedPage, "Alerts");
-  await until(async () => await alertsState(blockedPage) === "Off on this device", "blocked alerts off");
-  assert.equal(await alertsOffMarked(blockedPage), true);
-  assert.equal(await blockedPage.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}").alertsOn), false);
-  await runMoreItem(blockedPage, "Alerts");
-  await until(async () => await alertsState(blockedPage) === "On in the app", "blocked alerts on again");
+  await blockedPage.locator(".header-more-button").click();
+  await blockedPage.locator('.row-menu [role="menuitem"], .row-menu [role="menuitemcheckbox"]').first().waitFor();
+  assert.equal(await blockedPage.locator(".row-menu").getByText("Push to this device").count(), 0, "no push item where notifications are blocked");
+  await blockedPage.keyboard.press("Escape");
   assert.equal(await alertsOffMarked(blockedPage), false);
   if (blockedEvidence) await blockedEvidence.finish();
   await blocked.close();
-  console.log("PASS a device that blocks notifications keeps the Alerts item as the switch for in-app alerts");
+  console.log("PASS a device that blocks notifications has no push item and no dot");
 
   // The pending protocol has a real foreground agent and an owned byte recorder: merely
   // reporting an idle shell as working would not prove that server-side queueing happened.

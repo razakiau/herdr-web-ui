@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isWorkspacePinKey, loadSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, workspacePinKey } from "./sidebarPins.ts";
+import { pinnedRowKeys, reorderPinnedRows, isHostChatPinKey, isWorkspacePinKey, loadSidebarPins, migratePins, pinnedGroupIds, pinnedWorkspaceIds, pruneSidebarPins, pruneWorkspacePins, reorderWorkspacePins, sidebarPinKey, splitPinnedGroups, splitPinnedRows, toggleSidebarPin, hostChatPinKey, hostFolderPinKey, isHostFolderPinKey, pinnedHostFolders, pruneHostFolderPins, toggleHostFolderPin, workspacePinKey } from "./sidebarPins.ts";
 
 describe("sidebar agent pins", () => {
   it("moves workspace pins in both directions without moving other pin slots", () => {
@@ -41,6 +41,18 @@ describe("sidebar agent pins", () => {
 
   it("matches the complete machine key instead of a shared prefix", () => {
     expect(pruneSidebarPins(["pc:p1", "pc-extra:p2"], new Set(), [{ id: "pc", snapshot: null }])).toEqual(["pc:p1"]);
+  });
+
+  it("keys a host chat by PC and session, apart from every pane and workspace", () => {
+    expect(hostChatPinKey("m", "copilotcli:/x")).toBe("m:host:copilotcli:/x");
+    expect(isHostChatPinKey(hostChatPinKey("m", "copilotcli:/x"))).toBe(true);
+    expect(isHostChatPinKey(sidebarPinKey("m", "w1:p1"))).toBe(false);
+    expect(isHostChatPinKey(workspacePinKey("m", "w1"))).toBe(false);
+    expect(isWorkspacePinKey(hostChatPinKey("m", "s"))).toBe(false);
+  });
+
+  it("pruning agent pins keeps host chat pins", () => {
+    expect(pruneSidebarPins(["m:host:copilotcli:/x", "m:gone-pane"], new Set(), [{ id: "m", snapshot: {} }])).toEqual(["m:host:copilotcli:/x"]);
   });
 
   it("places pinned rows first and keeps source order for the rest", () => {
@@ -133,6 +145,24 @@ describe("sidebar agent pins", () => {
     ]);
   });
 
+  it("pin_value_migrates", () => {
+    // a stored "vscode:<s>" pin is read as "host:<s>", in its place, and written back that way
+    expect(migratePins(["m:p1", "m:vscode:copilotcli:/x", "m:workspace:w1", "pc-b:vscode:s"])).toEqual(["m:p1", "m:host:copilotcli:/x", "m:workspace:w1", "pc-b:host:s"]);
+    // the same chat pinned under both words is one pin; a pane id that merely holds the word is left alone
+    expect(migratePins(["m:vscode:s", "m:host:s", "m:w1:vscode:x"])).toEqual(["m:host:s", "m:w1:vscode:x"]);
+    const stored = new Map<string, string>([["ovis:sidebar-agent-pins", JSON.stringify(["m:vscode:copilotcli:/x", "m:p1"])]]);
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } } });
+    try {
+      expect(loadSidebarPins()).toEqual(["m:host:copilotcli:/x", "m:p1"]);
+      expect(JSON.parse(stored.get("ovis:sidebar-agent-pins")!)).toEqual(["m:host:copilotcli:/x", "m:p1"]);
+      expect(isHostChatPinKey(loadSidebarPins()[0]!)).toBe(true);
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
+
   it("starts with no pins when storage denies the read", () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem() { throw new Error("denied"); } } });
@@ -140,6 +170,54 @@ describe("sidebar agent pins", () => {
     finally {
       if (original) Object.defineProperty(globalThis, "localStorage", original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
+});
+
+describe("host folder pins", () => {
+  it("keys a Copilot folder by PC and path, one trailing slash dropped, apart from every other pin", () => {
+    expect(hostFolderPinKey("m", "/w/a/")).toBe("m:folder:/w/a");
+    expect(hostFolderPinKey("m", "/w/a")).toBe(hostFolderPinKey("m", "/w/a/"));
+    expect(isHostFolderPinKey(hostFolderPinKey("m", "/w/a"))).toBe(true);
+    expect(isHostFolderPinKey(hostChatPinKey("m", "s"))).toBe(false);
+    expect(isHostFolderPinKey(workspacePinKey("m", "w1"))).toBe(false);
+    expect(isHostChatPinKey(hostFolderPinKey("m", "/w/a"))).toBe(false);
+    expect(isWorkspacePinKey(hostFolderPinKey("m", "/w/a"))).toBe(false);
+  });
+
+  it("lists one PC's pinned folders in pin order", () => {
+    const keys = [hostFolderPinKey("m", "/b"), workspacePinKey("m", "w1"), hostFolderPinKey("other", "/x"), hostFolderPinKey("m", "/a")];
+    expect(pinnedHostFolders(keys, "m")).toEqual(["/b", "/a"]);
+  });
+
+  it("pruning agent pins keeps folder pins", () => {
+    expect(pruneSidebarPins([hostFolderPinKey("m", "/w/a"), "m:gone-pane"], new Set(), [{ id: "m", snapshot: {} }])).toEqual(["m:folder:/w/a"]);
+  });
+
+  it("prunes only this PC's folder pins whose folder has no chat left", () => {
+    const keys = [hostFolderPinKey("m", "/kept"), hostFolderPinKey("m", "/gone"), hostFolderPinKey("o", "/gone"), workspacePinKey("m", "w9")];
+    expect(pruneHostFolderPins(keys, "m", new Set(["/kept"]))).toEqual(["m:folder:/kept", "o:folder:/gone", "m:workspace:w9"]);
+  });
+});
+
+describe("toggleHostFolderPin", () => {
+  it("pins a folder at the end, unpins it, and drops dead folder pins of that PC only on the change", () => {
+    const keys = [hostFolderPinKey("m", "/gone"), workspacePinKey("m", "w1")];
+    expect(toggleHostFolderPin(keys, "m", "/w/a/", new Set(["/w/a"]))).toEqual(["m:workspace:w1", "m:folder:/w/a"]);
+    expect(toggleHostFolderPin(["m:folder:/w/a", "m:workspace:w1"], "m", "/w/a", new Set(["/w/a"]))).toEqual(["m:workspace:w1"]);
+  });
+
+  it("pinned_rows_mix_workspaces_and_folders_in_pin_order", () => {
+    const pins = ["pc:workspace:a", "pc:p1", "pc:folder:/docs", "other:folder:/x", "pc:host:s1", "pc:workspace:b"];
+    expect(pinnedRowKeys(pins, "pc")).toEqual(["pc:workspace:a", "pc:folder:/docs", "pc:workspace:b"]);
+  });
+
+  it("reorders_pinned_rows_across_kinds_leaving_other_slots", () => {
+    const pins = ["pc:workspace:a", "pc:p1", "pc:folder:/docs", "other:workspace:a", "pc:workspace:b"];
+    expect(reorderPinnedRows(pins, "pc", "pc:folder:/docs", "pc:workspace:a")).toEqual(["pc:folder:/docs", "pc:p1", "pc:workspace:a", "other:workspace:a", "pc:workspace:b"]);
+    expect(reorderPinnedRows(pins, "pc", "pc:workspace:a", "pc:workspace:b")).toEqual(["pc:folder:/docs", "pc:p1", "pc:workspace:b", "other:workspace:a", "pc:workspace:a"]);
+    for (const [source, target] of [["pc:workspace:a", "pc:workspace:a"], ["pc:folder:/gone", "pc:workspace:a"], ["pc:p1", "pc:workspace:a"]]) {
+      expect(reorderPinnedRows(pins, "pc", source!, target!)).toEqual(pins);
     }
   });
 });

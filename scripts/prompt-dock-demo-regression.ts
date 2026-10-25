@@ -328,7 +328,7 @@ try {
             assert.equal(layout.scrolls, false, "a three-option approval is whole");
             assert.equal(layout.placeholder, "Type 1–3 to choose…");
             assert.equal(await page.evaluate(() => { const box = document.querySelector<HTMLTextAreaElement>(".composer-text")!; const probe = document.createElement("span"); probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${getComputedStyle(box).font}`; probe.textContent = box.placeholder; document.body.append(probe); const fits = probe.getBoundingClientRect().width <= box.clientWidth - parseFloat(getComputedStyle(box).paddingLeft) - parseFloat(getComputedStyle(box).paddingRight); probe.remove(); return fits; }), true, "the placeholder is whole on one line");
-            // the command is the card's mono box; the title, the card's one red, is its heading
+            // the command is the card's mono box; the title is its heading
             assert.equal(await page.locator(".prompt-card-body").textContent(), "git push origin feat/export-guard");
             assert.equal(await page.locator(".prompt-card-question").count(), 0, "a heading that is the question is said once");
             // every option weighs the same: none is filled or outlined as the default

@@ -186,7 +186,7 @@ export async function applyNewChatDefaults(machineId: string, session: string, d
 /** The model and agent the phone picked for a chat's next message; `agent: null` is "Agent", no custom agent. */
 export interface HostChoice { model?: { id: string; effort?: string }; agent?: string | null }
 
-const choiceKey = (machineId: string, session: string): string => `herdr-web-ui:host-chat-choice:${machineId}:${session}`;
+const choiceKey = (machineId: string, session: string): string => `ovis:host-chat-choice:${machineId}:${session}`;
 
 function storage(): Storage | null {
   try { return typeof window === "undefined" ? null : window.sessionStorage; } catch { return null; }
@@ -220,7 +220,7 @@ function clearChoice(machineId: string, session: string): void {
 // ─── The composer's draft ────────────────────────────────────────────────────
 
 /** Where a host chat's box keeps its words (the app's Composer draft store reads and writes it too). */
-export const hostDraftKey = (machineId: string, session: string): string => `herdr-web-ui:host-chat-draft:${machineId}:${session}`;
+export const hostDraftKey = (machineId: string, session: string): string => `ovis:host-chat-draft:${machineId}:${session}`;
 const draftKey = hostDraftKey;
 
 /**
@@ -256,7 +256,7 @@ export function attemptFor(previous: { key: string; id: string } | null, key: st
   return previous !== null && previous.key === key ? previous : { key, id: mint() };
 }
 
-const attemptKey = (machineId: string, session: string): string => `herdr-web-ui:host-chat-send:${machineId}:${session}`;
+const attemptKey = (machineId: string, session: string): string => `ovis:host-chat-send:${machineId}:${session}`;
 
 /**
  * The chat's failed send whose id a retry of the same words reuses: none once it is older than
@@ -631,8 +631,8 @@ export function openHostChatClosed(pc: HostPc | undefined, session: string): boo
 export function useMinuteClock(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
   }, []);
   return now;
 }

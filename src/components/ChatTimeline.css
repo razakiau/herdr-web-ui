@@ -43,3 +43,54 @@
 .chat-new-messages.chat-virtual-jump {
   position: absolute;
 }
+
+/* VS Code's sticky request (chat.stickyScroll): while a turn is read, its user message stays at
+   the chat's top as the bubble it is, cut to two lines; a tap takes the reader back to it */
+.chat-sticky-request {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  /* on the chat's column, as the user's bubble it stands for: across the whole pane it ran past
+     the column into the tab strip's corner on a wide screen (desktop audit, 2026-10-23) */
+  inset-inline: max(var(--space-3), (100% - var(--chat-w)) / 2);
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.chat-sticky-request-text {
+  display: block;
+  max-width: 80%;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  border: var(--hairline) solid var(--bubble-border, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-prose);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+/* the clamp on an inner box: with the bubble's own padding under it, a clamped box shows a sliver
+   of its third line in the padding (live, 2026-10-24) */
+.chat-sticky-request-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+@media (hover: hover) {
+  .chat-sticky-request:hover .chat-sticky-request-text { border-color: var(--border-strong, var(--border)); }
+}
+
+.chat-sticky-request:focus-visible { outline: none; }
+.chat-sticky-request:focus-visible .chat-sticky-request-text { outline: var(--ring); outline-offset: var(--ring-offset); }

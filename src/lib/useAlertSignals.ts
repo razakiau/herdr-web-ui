@@ -45,7 +45,8 @@ export function useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRe
   // In-app alerts (components/Droplet.tsx): only while the app is on screen - a hidden app has
   // its system notifications - and never for the pane already open in front of the user.
   const dropIn = useCallback((machine: Machine, pane: HerdrPane, kind: DropletKind) => {
-    if (!alertsOnRef.current || !alertInAppRef.current || document.visibilityState !== "visible") return;
+    // a channel of its own: push to this device (alertsOn) does not hold it
+    if (!alertInAppRef.current || document.visibilityState !== "visible") return;
     const open = selectionRef.current;
     if (open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
     if (splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
@@ -68,7 +69,7 @@ export function useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRe
       // meanwhile still silences it (asked here, and again on each mute change while it waits)
       play: (kind, key) => {
         const [machineId, paneId] = JSON.parse(key) as [string, string];
-        const wanted = () => alertsOnRef.current && alertSoundRef.current && !paneAlertsMuted(currentPaneMutes(), machineId, paneId);
+        const wanted = () => alertSoundRef.current && !paneAlertsMuted(currentPaneMutes(), machineId, paneId);
         return wanted() && playAlertSound(kind, wanted);
       },
     });
@@ -77,7 +78,7 @@ export function useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRe
     return () => { stopMutes(); player.dispose(); alertTurns.current = null; };
   }, []);
   const chime = useCallback((machine: Machine, pane: HerdrPane, kind: AlertSoundKind) => {
-    if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
+    if (!alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
     if (document.visibilityState === "visible" && splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;

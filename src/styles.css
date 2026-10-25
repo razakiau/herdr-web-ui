@@ -20,6 +20,12 @@
 
 :root {
   color-scheme: dark;
+  /*
+   * GitHub's PR and issue state colours (Primer fg: open, done, closed, attention), kept apart
+   * from the palettes: a palette's "number" colour is amber in several themes and a merged PR
+   * then read orange (owner, 2026-10-22, ZAC-207).
+   */
+  --gh-open: #3fb950; --gh-done: #ab7df8; --gh-closed: #f85149; --gh-attention: #d29922;
 
   /* surfaces (tonal steps, darkest to lightest): lamp-lit graphite, warm not tinted */
   --bg: #12100e;
@@ -200,14 +206,21 @@
   /* one turn of a stepped spinner: it draws its steps and nothing else, so the step count is
      the frame rate and this only sets how fast it looks */
   --dur-spin: 1600ms;
-  /* one breath of the sidebar's working dot: held full, dimmed, held, back (Sidebar.css) */
-  --dur-breathe: 2000ms;
+  /* one breath of the sidebar's working dot: dims for half, brightens for half (Sidebar.css) */
+  --dur-breathe: 2400ms;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
   /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
      every display refresh for as long as an agent works (60+ a second), which stutters a
      video playing beside the app; two steps draw about one frame a second */
   --ease-pulse: steps(2, jump-none);
+  /* the other endless easings, stepped for the same reason: a spinner's eight steps per turn
+     are its frame rate, the sidebar's breath fourteen per half (about 12 a second, small enough
+     steps of opacity to read as a fade, not a blink), the "Working" shimmer ten. Every endless
+     animation takes one of these four, so Smooth animations (below) reaches all of them */
+  --ease-spin: steps(8);
+  --ease-breathe: steps(14);
+  --ease-shimmer: steps(10, jump-none);
   /* a phone's sheet rises on the spring and drops faster than it rose */
   --dur-sheet: 360ms;
   --dur-sheet-out: 240ms;
@@ -233,8 +246,20 @@
   --droplet-shadow: rgba(0, 0, 0, 0.35);
 }
 
+/* Settings > Appearance > Smooth animations (an account setting, off by default): the endless
+   animations draw every display refresh instead of jumping between steps. Smoother on a phone,
+   at the cost the stepped default avoids: a video playing beside the app may stutter while an
+   agent works. Reduced motion still turns them off. */
+[data-motion="smooth"] {
+  --ease-pulse: ease-in-out;
+  --ease-spin: linear;
+  --ease-breathe: ease-in-out;
+  --ease-shimmer: linear;
+}
+
 [data-theme="light"] {
   color-scheme: light;
+  --gh-open: #1a7f37; --gh-done: #8250df; --gh-closed: #cf222e; --gh-attention: #9a6700;
   --bg: #eeeae2;
   --bg-panel: #faf8f3;
   --bg-elevated: #f2eee6;
@@ -2370,6 +2395,12 @@ button {
   color: var(--text-strong);
 }
 
+/* a lens this target has not (a host chat's Terminal): dim, and saying why on hover */
+.segmented > button[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* the chosen lens carries the selection color on its glyph, like the rail does in the list */
 .segmented > button[aria-pressed="true"] svg {
   color: var(--accent);
@@ -2474,14 +2505,19 @@ button {
 
   /* A stroke on a sheet or its scrim is the sheet's: it pans nothing behind it, the chat
      included. Its own lists still scroll, each a scroll container where touch-action starts
-     afresh, and keep their overscroll to themselves; a drag down is lib/sheets.ts's. Two
-     fingers still zoom the page, begun on a sheet as anywhere else (WCAG 1.4.4). */
+     afresh; a drag down is lib/sheets.ts's. Two fingers still zoom the page, begun on a sheet as
+     anywhere else (WCAG 1.4.4). The sheet's lists keep their overscroll to themselves, and the
+     sheet holds what reaches it. Not every element in it: a clipped line (overflow: hidden, a row's
+     ellipsis) is a scroll container too, and one that contains its overscroll keeps a stroke begun
+     on it from ever reaching the list, which then stalls under the finger. */
   .modal-scrim,
   .modal-scrim > * {
     touch-action: pinch-zoom;
   }
 
-  .modal-scrim * {
+  .modal-scrim,
+  .modal-scrim > *,
+  .modal-scrim .modal-body {
     overscroll-behavior: contain;
   }
 

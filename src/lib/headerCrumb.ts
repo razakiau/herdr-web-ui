@@ -44,10 +44,41 @@ export function headerCrumb(input: { machine: string; machineCount: number; work
 }
 
 /**
+ * A host chat's crumb: PC › folder (a host chat has no workspace; its folder is where it works),
+ * the folder by its last name. With no folder, the PC alone.
+ */
+export function hostHeaderCrumb(input: { machine: string; machineCount: number; title: string; cwd: string | null | undefined; name?: string }): HeaderCrumb {
+  const machine = input.machine.trim();
+  const title = input.title.trim();
+  const path = input.cwd?.trim() ? input.cwd : null;
+  const folder = path === null ? null : folderName(path);
+  return {
+    machine,
+    showMachine: input.machineCount > 1,
+    workspace: "",
+    // the header's name (hostHeaderName) said it already: "zhomelab › zhomelab" tells nobody anything
+    folder: folder === input.name?.trim() ? null : folder,
+    place: folder === null ? machine : `${machine} › ${folder}`,
+    path,
+    tooltip: path === null ? title : `${title} · ${path}`,
+  };
+}
+
+/**
  * Whether the pane column draws the chat: the header's pane zone and the tab strip take the
  * chat's surface only then. A pane herdr could not restore draws a placeholder on the terminal's
  * surface whatever the lens, and so does no pane at all.
  */
 export function showsChat(pane: { restore_error?: unknown } | null | undefined, view: string): boolean {
   return !!pane && !pane.restore_error && view === "chat";
+}
+
+/**
+ * The header's name over a host chat: where it works, as a pane's header says its workspace. The
+ * chat's own title is on its tab already; it is the header's name only when nothing else is known.
+ */
+export function hostHeaderName(input: { workspace: string | null | undefined; cwd: string | null | undefined; title: string }): string {
+  const workspace = input.workspace?.trim();
+  if (workspace) return workspace;
+  return input.cwd?.trim() ? folderName(input.cwd) : input.title;
 }

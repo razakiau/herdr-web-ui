@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { fileIconKind, folderIconKind } from "./fileIcons.ts";
+import { readFileSync } from "node:fs";
+
+import { fileIcon, fileIconKind, folderIcon, folderIconKind } from "./fileIcons.ts";
+import { FALLBACK_ICONS, render } from "../../scripts/generate-file-icons.ts";
 
 describe("fileIconKind", () => {
   it("tells code, data, text and media apart by extension, whatever its case", () => {
@@ -70,5 +73,69 @@ describe("folderIconKind", () => {
     expect(folderIconKind("src")).toBe("folder");
     expect(folderIconKind(".github")).toBe("folder");
     expect(folderIconKind("node_modules")).toBe("folder");
+  });
+});
+
+describe("fileIcon", () => {
+  it("draws VS Code's Material icon for a file's language", () => {
+    expect(fileIcon("App.tsx")).toBe("react_ts");
+    expect(fileIcon("index.ts")).toBe("typescript");
+    expect(fileIcon("main.py")).toBe("python");
+    expect(fileIcon("main.go")).toBe("go");
+    expect(fileIcon("lib.rs")).toBe("rust");
+    expect(fileIcon("notes.MD")).toBe("markdown");
+    expect(fileIcon("ci.yml")).toBe("yaml");
+    expect(fileIcon("run.sh")).toBe("console");
+    expect(fileIcon("Photo.PNG")).toBe("image");
+  });
+
+  it("knows a file by its whole name before its extension, whatever its case", () => {
+    expect(fileIcon("package.json")).toBe("nodejs");
+    expect(fileIcon("tsconfig.json")).toBe("tsconfig");
+    expect(fileIcon("Dockerfile")).toBe("docker");
+    expect(fileIcon("README.md")).toBe("readme");
+    expect(fileIcon("CLAUDE.md")).toBe("claude");
+    expect(fileIcon("src/vite.config.ts")).toBe("vite");
+    expect(fileIcon("C:\\repo\\bun.lock")).toBe("bun");
+  });
+
+  it("tries the longest dotted ending first", () => {
+    expect(fileIcon("a.test.ts")).toBe("test-ts");
+    expect(fileIcon("types.d.ts")).toBe("typescript-def");
+    expect(fileIcon("x.spec.tsx")).toBe("test-jsx");
+  });
+
+  it("falls back to the kind's icon for a name the theme does not know", () => {
+    expect(fileIcon(".env")).toBe("tune");
+    expect(fileIcon(".env.local")).toBe("tune");
+    expect(fileIcon(".zshrc")).toBe("console");
+    expect(fileIcon("Dockerfile.dev")).toBe("docker");
+    expect(fileIcon("yarn.lockb")).toBe("lock");
+    expect(fileIcon("notes.xyz")).toBe("file");
+    expect(fileIcon("noext")).toBe("file");
+    expect(fileIcon("name.")).toBe("file");
+    expect(fileIcon("")).toBe("file");
+  });
+
+  it("uses the light theme's variant when there is one", () => {
+    expect(fileIcon("t.jinja")).toBe("jinja");
+    expect(fileIcon("t.jinja", true)).toBe("jinja_light");
+    expect(fileIcon("a.ts", true)).toBe("typescript");
+  });
+
+  it("only names icons the URL table can draw", () => {
+    const manifest = JSON.parse(readFileSync(new URL("../../node_modules/material-icon-theme/dist/material-icons.json", import.meta.url), "utf8"));
+    const urls = render(manifest, "x").urls;
+    for (const icon of [...FALLBACK_ICONS, folderIcon("a"), folderIcon("a", true), folderIcon(".git", true)]) expect(urls).toContain(`"${icon}": `);
+    for (const name of [".env", ".zshrc", "bun.lockb", "notes.xyz", "Dockerfile.dev", "a.pfx", "tool.dylib", "a.war"]) expect(urls).toContain(`"${fileIcon(name)}": `);
+  });
+});
+
+describe("folderIcon", () => {
+  it("draws a folder, and .git as the git folder", () => {
+    expect(folderIcon("src")).toBe("folder");
+    expect(folderIcon(".git")).toBe("folder-git");
+    expect(folderIcon("src", true)).toBe("folder-open");
+    expect(folderIcon(".git", true)).toBe("folder-git-open");
   });
 });

@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, MessageSquarePlus, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowRight, ArrowUp, ChevronDown, CornerDownLeft, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, MessageSquarePlus, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 
 import "./Composer.css";
 
@@ -45,7 +45,12 @@ import {
   submitNote,
   terminalCommand,
   typedTerminalCommand,
+  hostSendKey,
+  HOST_SEND_MENU,
+  type HostSendPick,
+  roundButton,
 } from "../lib/compose.ts";
+import type { HostSlashItem } from "../lib/hostSlash.ts";
 import { compactCommandText } from "../lib/compactContext.ts";
 import { composerStrip } from "../lib/composerStrip.ts";
 import { composerLabelDraw } from "../lib/composerLabelFit.ts";
@@ -59,6 +64,7 @@ import { resolveComposerMenuActiveItemId } from "../lib/composerMenuHighlight.ts
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
 import { composerUsage, formatPercent, formatResetIn, HIGH_PERCENT, meterPercent, meterText, providerForAgent, statusWindows, usageName, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { usePaneCommands } from "../lib/usePaneCommands.ts";
@@ -114,12 +120,65 @@ export interface ComposerProps {
   /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
    * note offers to send again with `clearDraft`, which clears that draft from the terminal first, or,
    * where it named none, with `sendAnyway`; a promise settles to any of them */
-  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean, attached?: SentAttachment[]) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
-  onUploadImage: (file: File) => Promise<string>;
+  /** absent: no attaching (the button, a paste or a drop of files does nothing) */
+  onUploadImage?: (file: File) => Promise<string>;
+  /**
+   * A host chat's send menu (VS Code's queue picker): while the agent works and the box has text,
+   * Send goes as `default` (Enter), Alt+Enter as the other, and the caret beside Send (a long press
+   * on a phone) offers Stop and Send, Add to Queue and Steer with Message. `onPick` sends the box's
+   * text that way and settles like `onSend`. Absent: Send is the pane's.
+   */
+  sendMenu?: { default: "steer" | "queue"; onPick(mode: HostSendPick, text: string, attached?: SentAttachment[]): Promise<boolean | string> };
+  /**
+   * A host chat's attachments, VS Code's way: a file stays a chip above the box (no `@path` in the
+   * text), an "@" pick becomes one too, and Send hands the chips to `onSend`/`onPick` with the text.
+   */
+  attachAsChips?: boolean;
+  /** a note over the box after a send (a steer that joined the waiting one: "Added to your steer"); the waiting messages themselves are the transcript's (HostPendingRequests) */
+  pendingNote?: string | null;
+  /** a strip tucked under the box's top edge, part of the composer (a host chat's todos) */
+  tray?: ReactNode;
+  /** a row under the box, on its column (a host chat's session pills) */
+  foot?: ReactNode;
+  /** where the box's draft is kept, in place of the pane's (a host chat has no pane) */
+  draftKey?: string;
+  /** the words dictation listens for beside the agent's name (a host chat's agents) */
+  keywords?: readonly string[];
+  /**
+   * A host chat's `/` and `@` sources, in place of the pane's: its "/" menu (VS Code's config
+   * commands, then the host's commands) and its folder's files.
+   */
+  hostMenus?: { slash(query: string): HostSlashItem[]; files(query: string): Promise<string[]> };
+  /** drawn in the status pill's place: a host chat's model and agent pills, which press */
+  pills?: ReactNode;
+  /** drawn before Send/Stop, as VS Code's input toolbar ends: a host chat's context meter */
+  toolbarEnd?: ReactNode;
+  /** drawn right after attach: a host chat's settings button (mode, permissions, agent) */
+  settingsButton?: ReactNode;
+  /** a host chat's +: opens its attach sheet with the composer's handle instead of the device's picker */
+  attachMenu?: (api: AttachApi) => void;
 }
 
+/**
+ * What a host chat's attach sheet can do with the composer (ZAC-207 redesign): open the device's
+ * picker (images only, the camera), add a path of the chat's folder as an "@" pick's chip, or add a
+ * file it already holds (the clipboard's picture).
+ */
+export interface AttachApi {
+  pickFiles(opts?: { accept?: string; capture?: boolean }): void;
+  addPicked(path: string): void;
+  addFile(file: File): void;
+}
+
+/** A chip sent with a host chat's message: an uploaded file (its type and name), or an "@" pick (a path of the chat's folder). */
+export interface SentAttachment { path: string; media_type?: string; name?: string }
+
 const UPLOADS_AT_ONCE = 3;
+/** How long a press on Send opens a host chat's send menu instead of sending. */
+const LONG_PRESS_MS = 500;
+const SEND_ICONS: Record<HostSendPick, LucideIcon> = { stop_and_send: ArrowRight, queue: Plus, steer: CornerDownLeft };
 /** files one paste, pick or drop takes; the rest are left out with a note */
 const ATTACH_LIMIT = 100;
 /**
@@ -152,6 +211,8 @@ type Attachment = {
   missing?: number;
   /** what the pick this file came in with left out, repeated beside an upload error of the batch */
   leftOut: string | null;
+  /** an "@" pick of the chat's folder (attachAsChips): never uploaded, `path` is the folder's */
+  picked?: true;
 };
 
 /** an upload that failed: its tile, and the failure's parts for the note over the box */
@@ -256,6 +317,18 @@ export function Composer({
   onSend,
   onAbort,
   onUploadImage,
+  sendMenu,
+  pendingNote = null,
+  tray,
+  foot,
+  draftKey: hostDraftKey,
+  keywords,
+  hostMenus,
+  pills,
+  toolbarEnd,
+  settingsButton,
+  attachMenu,
+  attachAsChips = false,
 }: ComposerProps) {
   const t = useT();
   const activeRef = useRef(active);
@@ -266,7 +339,7 @@ export function Composer({
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
-  const usage = usageEnabled && usageReport !== null ? composerUsage(usageReport.providers, agent, settings.usageOrder, settings.usageHidden) : undefined;
+  const usage = usageEnabled && usageReport !== null ? composerUsage(usageReport.providers, agent, settings.usageOrder, settings.usageHidden, settings.usageShown) : undefined;
   const usageWindows = usage === undefined ? [] : statusWindows(usage);
   const usageLimit = usageWindows[0];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -277,6 +350,9 @@ export function Composer({
   /** the card's own width: a narrow one shows the task chip's count */
   const [cardWidth, setCardWidth] = useState(0);
   const [contextShown, setContextShown] = useState(false);
+  /** the host send menu's anchor while it is open */
+  const [sendMenuAt, setSendMenuAt] = useState<HTMLElement | null>(null);
+  const longPress = useRef<{ timer: ReturnType<typeof setTimeout>; fired: boolean } | null>(null);
   const composingRef = useRef(false);
   // the chat lens's input surface takes the keyboard when it appears (a pane switch remounts
   // it), as the grid does in the terminal lens: a pane picked from the drawer is typed into
@@ -288,7 +364,7 @@ export function Composer({
   const attachmentsRef = useRef<Attachment[]>([]);
   const removedAttachments = useRef(new Set<number>());
   const fileRequest = useRef(0);
-  const draftKey = `ovis:composer-draft:${paneStorageId(machineId, paneId)}`;
+  const draftKey = hostDraftKey ?? `ovis:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
   const mounted = useRef(true);
@@ -297,7 +373,8 @@ export function Composer({
   const caretRef = useRef(caret);
   /** the restored text the box was filled with: only that fill is ever cleared, never the user's own typing */
   const filledFrom = useRef<string | null>(null);
-  const commands = usePaneCommands(paneId, agent);
+  // a host chat's "/" comes from its host (hostMenus), not from a pane
+  const commands = usePaneCommands(hostMenus ? null : paneId, agent);
   const [files, setFiles] = useState<string[]>([]);
   /** the file list could not be read: said in the menu, never drawn as "no matches" */
   const [filesFailed, setFilesFailed] = useState(false);
@@ -332,6 +409,8 @@ export function Composer({
   /** /resume retains the session picker instead of being sent to the terminal. */
   const terminalTyped = useMemo(() => typedTerminalCommand(commands, text), [commands, text]);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
+  // something to send: words, or (where the host takes them on their own) a chip that is ready
+  const hasContent = text.trim().length > 0 || (attachAsChips && attachments.some((attachment) => attachment.state === "ready" && attachment.path !== null));
   /** a finished upload whose path waits for the message to be shortened: Send waits with it */
   const roomless = attachments.find((attachment) => attachment.state === "no-room");
   const agentLabel = agentDisplayLabel(agent);
@@ -373,7 +452,7 @@ export function Composer({
       return;
     }
     const timer = window.setTimeout(() => {
-      void fetchPaneFiles(paneId, trigger.query, 20)
+      void (hostMenus ? hostMenus.files(trigger.query) : fetchPaneFiles(paneId, trigger.query, 20))
         .then((next) => {
           if (request === fileRequest.current) { setFiles(next); setFilesFailed(false); }
         })
@@ -536,13 +615,16 @@ export function Composer({
     () => (trigger?.kind === "file" ? rankSlashCommands(atSkills, trigger.query, slashUsage, true) : []),
     [atSkills, slashUsage, trigger],
   );
-  const choices: readonly (SlashCommand | string)[] = trigger?.kind === "slash" ? orderedCommands : [...atChoices, ...files];
+    // a host chat's "/" lists its host's at the message start only (VS Code's leading command)
+  const hostItems = useMemo(() => hostMenus && trigger?.kind === "slash" && trigger.start === 0 ? hostMenus.slash(trigger.query) : [],
+    [hostMenus, trigger?.kind, trigger?.start, trigger?.query]);
+  const choices: readonly (SlashCommand | HostSlashItem | string)[] = trigger?.kind === "slash" ? (hostMenus ? hostItems : orderedCommands) : [...atChoices, ...files];
   const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
   // a failed listing opens the menu on its one line, which no key picks; beside listed skills it is a line of theirs
   const filesFailedShown = !menuDismissed && trigger?.kind === "file" && filesFailed && files.length === 0 && !menuOpen;
   // clamped as the list is drawn, not by an effect after it: a Tab or Enter typed before that
   // effect's render found no row at the old index and did nothing
-  const choiceIds = choices.map((choice) => typeof choice === "string" ? `file:${choice}` : `${choice.source}:${choice.name}`);
+  const choiceIds = choices.map((choice) => typeof choice === "string" ? `file:${choice}` : "insert" in choice ? `host:${choice.label}` : `${choice.source}:${choice.name}`);
   const activeItemId = resolveComposerMenuActiveItemId({
     items: choiceIds.map((id) => ({ id })),
     highlightedItemId: searchKey === null ? null : highlightedItemId.current,
@@ -567,7 +649,7 @@ export function Composer({
     connected,
     phone: mobile,
     polish: settings.voicePolishChat,
-    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name)],
+    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name), ...(keywords ?? [])],
     box: textareaRef,
     read: () => textRef.current,
     // a dictation that does not fit is refused whole: cutting would drop the draft after the caret
@@ -680,8 +762,31 @@ export function Composer({
     return () => cancelAnimationFrame(frame);
   }, [placeWaitingMentions, text]);
 
+  // an "@" pick or the attach sheet's folder pick: a chip with the folder's path, never uploaded
+  const addPicked = useCallback((path: string) => {
+    setAttachments((current) => current.some((item) => item.picked && item.path === path) ? current : [...current, {
+      id: ++attachmentSequence, file: new File([], path.split("/").pop() ?? path), previewUrl: "", path, state: "ready", leftOut: null, picked: true,
+    }]);
+  }, []);
+
   const selectCompletion = useCallback(
-    (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
+    (choice: SlashCommand | HostSlashItem | string, currentTrigger: ActiveTrigger) => {
+      if (typeof choice === "object" && "insert" in choice) {
+        // a host command: an on/off is whole and goes as typed; one that takes words leaves the caret after it
+        const completed = applyCompletion(text, currentTrigger, choice.insert);
+        setTextAndCaret(completed.text, completed.caret);
+        setMenuDismissed(true);
+        return;
+      }
+      if (attachAsChips && currentTrigger.kind === "file" && typeof choice === "string") {
+        // VS Code's "@" in an agent-host chat: the pick attaches the file; the "@query" typed goes
+        const path = choice;
+        const completed = applyCompletion(text, currentTrigger, "");
+        setTextAndCaret(completed.text, completed.caret);
+        setMenuDismissed(true);
+        addPicked(path);
+        return;
+      }
       const replacement = typeof choice === "string" ? `@${choice} `
         : currentTrigger.kind === "slash" ? slashCommandReplacement(choice, agent, currentTrigger) : atSkillReplacement(choice);
       const completed = applyCompletion(text, currentTrigger, replacement);
@@ -701,7 +806,7 @@ export function Composer({
         });
       }
     },
-    [agent, onOpenHistory, setTextAndCaret, text],
+    [addPicked, agent, attachAsChips, onOpenHistory, setTextAndCaret, text],
   );
 
   const pumpUploads = useCallback(() => {
@@ -709,11 +814,17 @@ export function Composer({
     while (mounted.current && uploadsRunning.current < UPLOADS_AT_ONCE && uploadQueue.current.length > 0) {
       const attachment = uploadQueue.current.shift()!;
       if (removedAttachments.current.has(attachment.id)) continue;
+      if (!onUploadImage) continue;
       uploadsRunning.current += 1;
       void onUploadImage(attachment.file)
         .then(
           (path) => {
             if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
+            // a host chat's file stays a chip and goes with the message, never as text
+            if (attachAsChips) {
+              setAttachments((current) => current.map((item) => (item.id === attachment.id ? { ...item, path, state: "ready" } : item)));
+              return;
+            }
             waitingMentions.current.push({ id: attachment.id, path, name: attachment.file.name });
             placeWaitingMentions();
           },
@@ -737,12 +848,12 @@ export function Composer({
           pumpUploads();
         });
     }
-  }, [onUploadImage, placeWaitingMentions]);
+  }, [attachAsChips, onUploadImage, placeWaitingMentions]);
 
   const uploadImages = useCallback(
     (incoming: readonly File[]) => {
       const images = incoming.slice(0, ATTACH_LIMIT);
-      if (images.length === 0) return;
+      if (images.length === 0 || !onUploadImage) return;
 
       // the files left out of this pick: told now, and again beside an upload error of this batch
       const leftOut = images.length < incoming.length
@@ -766,7 +877,7 @@ export function Composer({
       uploadQueue.current.push(...added);
       pumpUploads();
     },
-    [pumpUploads, t],
+    [onUploadImage, pumpUploads, t],
   );
 
   /** Try again on a failed upload: the tile uploads once more, its note gone */
@@ -784,6 +895,7 @@ export function Composer({
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
     // the note about this tile's failed upload goes with the tile
     setNote((current) => typeof current === "object" && current !== null && "failure" in current && current.attachment.id === attachment.id ? null : current);
+    if (attachAsChips) return;
     if (attachment.path) {
       const mention = imageMention(attachment.path);
       setText((current) => {
@@ -797,13 +909,13 @@ export function Composer({
       // would wait for the next edit: try them now
       placeWaitingMentions();
     }
-  }, [placeWaitingMentions]);
+  }, [attachAsChips, placeWaitingMentions]);
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
-   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. */
-  const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
+   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. False: nothing went out */
+  const send = useCallback((clearDraft?: string, sendAnyway = false, pick?: HostSendPick): boolean => {
     if (composingRef.current) return false;
-    if (role === "observe" || !connected || uploading || roomless || sending || text.trim().length === 0) return false;
+    if (role === "observe" || !connected || uploading || roomless || sending || !hasContent) return false;
     if (terminalTyped?.name === "resume" && onOpenHistory) { setMenuDismissed(true); onOpenHistory(); return true; }
     const sent = text;
     const sentAttachments = attachments;
@@ -826,7 +938,11 @@ export function Composer({
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
-      const result = onSend(text, clearDraft, sendAnyway);
+      // a host chat at work: a plain Send goes as its menu's default
+      const how = sendMenu && (pick ?? (agentStatus === "working" ? sendMenu.default : undefined));
+      const attached = attachAsChips ? sentAttachments.flatMap((each): SentAttachment[] => each.path === null || each.state !== "ready" ? []
+        : [each.picked ? { path: each.path } : { path: each.path, media_type: each.file.type || "application/octet-stream", name: each.file.name }]) : undefined;
+      const result = how ? sendMenu.onPick(how, text, attached) : onSend(text, clearDraft, sendAnyway, attached);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return true; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
@@ -834,7 +950,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [attachments, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, terminalTyped, text, uploading]);
+  }, [agentStatus, attachAsChips, attachments, connected, dictation.forget, draftKey, hasContent, onOpenHistory, onSend, role, roomless, sendMenu, sending, terminalTyped, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
@@ -962,6 +1078,14 @@ export function Composer({
         return;
       }
       if (event.key !== "Enter") return;
+      // a host chat at work: Enter goes as its menu's default, Alt+Enter as the other (VS Code's keys)
+      if (sendMenu && agentStatus === "working") {
+        const pick = hostSendKey(event, sendMenu.default, settings.enterSends);
+        if (pick === null) return;
+        event.preventDefault();
+        send(undefined, false, pick);
+        return;
+      }
       const shouldSend = settings.enterSends
         ? !event.shiftKey && !event.metaKey && !event.ctrlKey
         : (event.metaKey || event.ctrlKey) && !event.shiftKey;
@@ -969,7 +1093,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
+    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, sendMenu, setTextAndCaret, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
@@ -1004,13 +1128,19 @@ export function Composer({
   );
 
   const isWorking = agentStatus === "working";
+  // a host chat's one round button (ZAC-207): voice on an empty box, Send once anything would go
+  const round = pills === undefined ? null : roundButton({ working: isWorking, text, attachments: attachments.length, voice: dictation.shown });
   // an explicit click sends /compact the way a typed message goes; only where the agent lists it, never while it works
   const compactText = compactCommandText(commands);
   const compactNow = compactText !== null && connected && !sending && !isWorking && agentStatus !== "blocked" ? () => sendQuick(compactText) : undefined;
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  const sendShown = sending || composerSendShown({ working: isWorking, text });
+  // a host chat's chip alone is a message (the bridge sends attachments without words), so it turns
+  // Stop into Send as words do
+  const sendShown = sending || composerSendShown({ working: isWorking, text: hasContent ? "x" : "" });
+  // VS Code offers its send menu while the chat works and the box has something to send
+  const hostMenuShown = sendMenu !== undefined && isWorking && hasContent;
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1056,6 +1186,7 @@ export function Composer({
     <div className={`composer${notices ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined} inert={inert || undefined}>
       {greeting}
       {notices}
+      {pendingNote !== null && <p className="composer-note host-pending-note" role="status"><span className="composer-note-text">{pendingNote}</span></p>}
       {/* no Tab key on a phone: the suggestion can be a chip there that fills the box, when Settings asks for it */}
       {settings.suggestionChip && offered !== null && text === "" && (
         <div className="composer-quick composer-suggestion-row">
@@ -1098,11 +1229,12 @@ export function Composer({
               not tell empty, sent over only in the same Claude terminal the refusal was for */}
           {typeof note === "object" && ("failure" in note
             ? offersRetry(note.failure) && <button type="button" className="composer-note-action" disabled={!connected} onClick={() => retryUpload(note.attachment)}>{t("Try again")}</button>
-            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || !hasContent}
               onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>)}
         </div>
       )}
 
+      {tray}
       <div
         ref={surfaceRef}
         className={`composer-surface${dragging ? " is-dragging" : ""}`}
@@ -1121,7 +1253,17 @@ export function Composer({
           <div className="menu composer-menu">
             {menuClose}
             <div id={menuId} className="composer-menu-list" role="listbox" aria-label={t(trigger.kind === "slash" ? "Slash commands" : atSkills.length > 0 ? "Skills and files" : "Files")}>
-            {(() => {
+            {trigger.kind === "slash" && hostMenus ? (
+              <div className="composer-menu-group">
+                {hostItems.map((item, index) => (
+                  <button id={`${menuId}-${index}`} key={item.label} type="button" className="menu-item" role="option" data-host-command={item.kind}
+                    aria-selected={index === selectedIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => selectCompletion(item, trigger)}>
+                    <span className="menu-item-main">{item.label}{item.hint && <span className="menu-item-arg"> {t(item.hint)}</span>}</span>
+                    <span className="menu-item-hint">{item.kind === "config" ? t(item.description) : item.description}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (() => {
                 // a row says what a command does in one sentence (the full text is the row's
                 // tooltip), and a skill's icon says where it comes from: yours, this project's,
                 // one that came with the agent, or one of its plugins'; a command that runs in the
@@ -1320,20 +1462,44 @@ export function Composer({
             onChange={(event) => {
               const picked = Array.from(event.currentTarget.files ?? []);
               event.currentTarget.value = "";
+              event.currentTarget.removeAttribute("accept");
+              event.currentTarget.removeAttribute("capture");
               void uploadImages(picked);
             }}
           />
-          <button
+          {onUploadImage && <button
             type="button"
             className="icon-button composer-attach"
             aria-label={t("Attach files")}
             title={t("Attach files")}
             disabled={!connected || uploading}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (!attachMenu) {
+                // a dismissed Camera/Photos picker fires no change: never let its filter narrow this pick
+                fileInputRef.current?.removeAttribute("accept");
+                fileInputRef.current?.removeAttribute("capture");
+                fileInputRef.current?.click();
+                return;
+              }
+              attachMenu({
+                pickFiles: (opts) => {
+                  const input = fileInputRef.current;
+                  if (!input) return;
+                  // the sheet's choice holds for this one pick; the change event puts the input back
+                  if (opts?.accept) input.accept = opts.accept; else input.removeAttribute("accept");
+                  if (opts?.capture) input.setAttribute("capture", "environment"); else input.removeAttribute("capture");
+                  input.click();
+                },
+                addPicked,
+                addFile: (file) => { void uploadImages([file]); },
+              });
+            }}
           >
             <Plus aria-hidden="true" />
-          </button>
-          {dictation.shown && <MicButton dictation={dictation} />}
+          </button>}
+          {settingsButton}
+          {/* a host chat's mic is on the right, in or beside the round button (roundButton) */}
+          {dictation.shown && pills === undefined && <MicButton dictation={dictation} />}
           {/* only once this device turned it on (Settings → Chat → Composer; the composer's row stays minimal, and
               the tab menu opens the same dialog), and in a mouse-driven window only, like the usage glance: a phone's
               card has no row to spare beside the mic and the tasks chip, and its tab menu carries New tab with agent… already */}
@@ -1349,6 +1515,8 @@ export function Composer({
             </button>
           )}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
+          {/* a host chat's pickers take the row after the mic, where they have the width the status pill had */}
+          {pills !== undefined && <div className="composer-pickers">{pills}</div>}
         </div>
         {/* between the two control groups of the card's last row. The agent's name, its separator and the
             state word are read, not drawn: the mark and the header name the agent, and Stop, the live row and
@@ -1364,6 +1532,7 @@ export function Composer({
             {/* the mark, the model, the level and the context ring as one quiet pill. It only shows: no role,
                 no focus, nothing to press but the ring inside it. A pane that names no model draws no pill
                 (.is-bare): the mark, a level if it has one, and the ring stand in the row as they are */}
+{pills === undefined && (
             <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
               {agent && <AgentMark agent={agent} size={14} />}
               {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
@@ -1389,6 +1558,7 @@ export function Composer({
                 <span className="visually-hidden">{usageAccessible}</span>
               </span>}
             </span>
+            )}
             {/* the chip is a button in the left controls; its count is still said here, where a change is announced */}
             {backgroundTasks > 0 && <span className="composer-task-count visually-hidden">{t(backgroundTasks === 1 ? "{n} background task" : "{n} background tasks", { n: backgroundTasks })}</span>}
           </span>
@@ -1399,7 +1569,11 @@ export function Composer({
           )}
         </div>
         <div className="composer-controls composer-controls-right">
-          {!sendShown ? (
+          {toolbarEnd}
+          {round === "voice" && <MicButton dictation={dictation} round className="composer-voice-wrap" />}
+          {/* the quiet mic before Send, and before Stop on a busy chat: steering by voice must not wait on a typed character (owner, ZAC-207) */}
+          {round !== null && round !== "voice" && dictation.shown && <MicButton dictation={dictation} />}
+          {round === "voice" ? null : !sendShown ? (
             <button
               type="button"
               className="composer-action composer-stop"
@@ -1417,19 +1591,44 @@ export function Composer({
               aria-label={t("Send message")}
               title={sending ? t("Sending…") : t("Send message")}
               aria-busy={sending || undefined}
-              disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+              disabled={!connected || uploading || roomless !== undefined || sending || !hasContent}
               // focus stays in the text box: leaving it closes the soft keyboard and moves the button
               // out from under the tap before the click lands
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={sendTapped}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                // a phone has no caret to aim at: a long press on Send opens the host's send menu
+                if (!hostMenuShown) return;
+                const button = event.currentTarget;
+                const press = { fired: false, timer: setTimeout(() => { press.fired = true; setSendMenuAt(button); }, LONG_PRESS_MS) };
+                longPress.current = press;
+              }}
+              onPointerUp={() => { if (longPress.current && !longPress.current.fired) clearTimeout(longPress.current.timer); }}
+              onPointerLeave={() => { if (longPress.current && !longPress.current.fired) clearTimeout(longPress.current.timer); }}
+              onClick={() => {
+                const press = longPress.current;
+                longPress.current = null;
+                if (press?.fired) return;
+                sendTapped();
+              }}
             >
               {sending ? <LoaderCircle className="composer-send-progress" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
             </button>
           )}
+          {hostMenuShown && sendShown && (
+            <button type="button" className="composer-action composer-send-menu" aria-haspopup="menu" aria-expanded={sendMenuAt !== null}
+              aria-label={t("More send options")} title={t("More send options")} disabled={!connected || uploading || roomless !== undefined || sending}
+              onPointerDown={(event) => event.preventDefault()} onClick={(event) => setSendMenuAt(event.currentTarget)}>
+              <ChevronDown aria-hidden="true" />
+            </button>
+          )}
+          {sendMenuAt !== null && sendMenu && <RowMenu anchor={sendMenuAt} title={t("Send")} align="end" onClose={() => setSendMenuAt(null)}
+            items={HOST_SEND_MENU.map((item): RowMenuItem => ({ id: item.mode, label: t(item.label), icon: SEND_ICONS[item.mode], current: item.mode === sendMenu.default,
+              run: () => { setSendMenuAt(null); send(undefined, false, item.mode); } }))} />}
         </div>
       </div>
       {/* the strip tucked under the card (t3code's composer context strip): the pane's working folder and its
           branch, each drawn only when the caller passes it. It only names them; nothing in it is pressed */}
+      {foot}
       {strip !== null && (
         <div className="composer-strip">
           {strip.folder !== null && <span className="composer-strip-item composer-strip-folder" title={strip.path ?? undefined}>

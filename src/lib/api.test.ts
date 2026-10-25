@@ -1,7 +1,7 @@
 import { afterEach, expect, it, jest } from "bun:test";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry.ts";
-import { AttachmentTooLargeError, ApiError, changeTelemetry, fetchAgentKinds, fetchTelemetry, uploadPaneImage, verifySourceBoot } from "./api.ts";
+import { AttachmentTooLargeError, ApiError, changeTelemetry, fetchAgentKinds, fetchModelPrices, fetchTelemetry, uploadPaneImage, verifySourceBoot } from "./api.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "./settings.ts";
 
 const realFetch = globalThis.fetch;
@@ -167,4 +167,18 @@ it("offers Letta Code in the agent menus where it is installed, and from an olde
   agents = [unsaid];
   expect(await fetchAgentKinds("remote-pc")).toEqual([unsaid]);
   expect(requests).toEqual(["/api/agents", "/api/agents", "/api/machines/remote-pc/agents"]);
+});
+
+it("asks for prices again until both tables are in, then keeps them (ZAC-224)", async () => {
+  // no gateway yet, or a failed read: a later open must ask again; an old server sends no fallback
+  const table = { cc: { "fictional-opus": { input: 4, output: 20 } } };
+  const map = { "fictional-flash": { input: 0.3, output: 1.2 } };
+  const answers: unknown[] = [{ prices: null, fallback: null }, { prices: table }, { prices: table, fallback: map }];
+  let asked = 0;
+  globalThis.fetch = (async () => { asked += 1; return Response.json(answers.shift() ?? { prices: null, fallback: null }); }) as unknown as typeof fetch;
+  expect(await fetchModelPrices()).toEqual({ prices: null, fallback: null });
+  expect(await fetchModelPrices()).toEqual({ prices: table, fallback: null });
+  expect(await fetchModelPrices()).toEqual({ prices: table, fallback: map });
+  expect(await fetchModelPrices()).toEqual({ prices: table, fallback: map });
+  expect(asked).toBe(3);
 });

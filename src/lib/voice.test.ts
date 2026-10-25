@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VoiceEvent } from "../../shared/voice.ts";
 import type { InsertedSpan } from "./voice.ts";
 import {
+  speechTranscript,
   applyDictation,
   barScales,
   classifyRelease,
@@ -377,10 +378,12 @@ describe("createVoiceEngine", () => {
     continuous = false;
     interimResults = false;
     onaudiostart: (() => void) | null = null;
-    onresult = null;
-    onerror = null;
+    onresult: ((event: { readonly results: Parameters<typeof speechTranscript>[0] }) => void) | null = null;
+    onerror: ((event: { error: string }) => void) | null = null;
     onend: (() => void) | null = null;
     constructor() { FakeSpeech.made.push(this); }
+    /** what Chrome sends: every result of this session so far */
+    hear(...results: Array<[string, boolean]>) { this.onresult?.({ results: results.map(([transcript, isFinal]) => ({ isFinal, 0: { transcript } })) }); }
     start() { this.onaudiostart?.(); }
     stop() { this.onend?.(); }
     abort() { this.onend?.(); }
@@ -391,12 +394,15 @@ describe("createVoiceEngine", () => {
   const define = (target: object, name: string, value: unknown) => Object.defineProperty(target, name, { configurable: true, writable: true, value });
   /** each getUserMedia call, to be answered by the test in the order it chooses */
   let micRequests: Array<(stream: FakeStream) => void> = [];
+  /** the constraints each getUserMedia call asked for */
+  let micConstraints: unknown[] = [];
   let frames: FrameRequestCallback[] = [];
   let uploads: Array<(response: Response) => void> = [];
   let uploadedLanguages: Array<FormDataEntryValue | null> = [];
 
   beforeEach(() => {
     micRequests = [];
+    micConstraints = [];
     frames = [];
     uploads = [];
     uploadedLanguages = [];
@@ -413,7 +419,7 @@ describe("createVoiceEngine", () => {
       uploadedLanguages.push((init.body as FormData).get("language"));
       return new Promise<Response>((resolve) => { uploads.push(resolve); });
     });
-    define(navigator, "mediaDevices", { getUserMedia: () => new Promise<FakeStream>((resolve) => { micRequests.push(resolve); }) });
+    define(navigator, "mediaDevices", { getUserMedia: (constraints: unknown) => { micConstraints.push(constraints); return new Promise<FakeStream>((resolve) => { micRequests.push(resolve); }); } });
   });
 
   afterEach(() => {
@@ -450,6 +456,39 @@ describe("createVoiceEngine", () => {
   /** lets the engine's own continuations after a resolved promise run; nothing here waits on time */
   const drain = async (): Promise<void> => { for (let turn = 0; turn < 10; turn++) await Promise.resolve(); };
 
+  it("keeps listening when Chrome ends a browser take on its own at a pause, with the words heard so far", () => {
+    // Chrome on Android ends recognition at the first pause, the last phrase still not final
+    const { voice, states, texts } = engine("en-US", "browser");
+    voice.press();
+    FakeSpeech.made[0]!.hear(["hello world", true], ["how are", false]);
+    FakeSpeech.made[0]!.onend!();
+    expect(FakeSpeech.made).toHaveLength(2);
+    expect(states.at(-1)).toBe("recording");
+    expect(texts).toEqual([]);
+    FakeSpeech.made[1]!.hear(["you", true]);
+    voice.press();
+    expect(texts).toEqual(["hello world how are you"]);
+    expect(states.at(-1)).toBe("idle");
+  });
+
+  it("does not listen again after a refusal, and stops after three silent restarts", () => {
+    const refused = engine("en-US", "browser");
+    refused.voice.press();
+    FakeSpeech.made[0]!.onerror!({ error: "not-allowed" });
+    FakeSpeech.made[0]!.onend!();
+    expect(FakeSpeech.made).toHaveLength(1);
+    expect(refused.states.at(-1)).toBe("idle");
+
+    FakeSpeech.made = [];
+    const quiet = engine("en-US", "browser");
+    quiet.voice.press();
+    FakeSpeech.made[0]!.hear(["note this", true]);
+    for (let index = 0; index < 5; index++) FakeSpeech.made[index]!.onend!();
+    expect(FakeSpeech.made).toHaveLength(5);
+    expect(quiet.texts).toEqual(["note this"]);
+    expect(quiet.states.at(-1)).toBe("idle");
+  });
+
   it("passes the selected full locale to browser recognition without uploading audio", () => {
     const { voice } = engine("hu-HU", "browser");
     try {
@@ -474,6 +513,15 @@ describe("createVoiceEngine", () => {
       const idle = reached("idle");
       uploads[0]!(new Response('{"type":"done","text":"teszt"}\n'));
       await idle;
+    } finally { voice.cancel(); }
+  });
+
+  it("opens the mic without echo cancellation, so Android leaves the music playing (ZAC-207)", () => {
+    const { voice } = engine();
+    try {
+      voice.press();
+      // echo cancellation puts Android in call mode: other audio pauses or ducks, then jumps back when the mic closes
+      expect(micConstraints).toEqual([{ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } }]);
     } finally { voice.cancel(); }
   });
 
@@ -520,5 +568,21 @@ describe("createVoiceEngine", () => {
     await drain();
     expect(FakeRecorder.made).toHaveLength(2);
     voice.cancel();
+  });
+});
+
+describe("speechTranscript (the browser engine's results, Chrome on Android included)", () => {
+  const r = (transcript: string, isFinal: boolean) => ({ isFinal, 0: { transcript } });
+  it("joins a desktop browser's results, each a new stretch of speech", () => {
+    expect(speechTranscript([r("hello world", true), r(" how are", false)])).toEqual({ final: "hello world", interim: " how are" });
+    expect(speechTranscript([r("hello world", true), r(" how are you", true)])).toEqual({ final: "hello world how are you", interim: "" });
+  });
+  it("keeps one copy when Android repeats each result as the phrase so far", () => {
+    expect(speechTranscript([r("hello", true), r("hello world", true), r("hello world how are you", true)]).final).toBe("hello world how are you");
+    expect(speechTranscript([r("hello world", true), r("hello world", true)]).final).toBe("hello world");
+    expect(speechTranscript([r("hello world", true), r("hello world how", false)])).toEqual({ final: "hello world", interim: " how" });
+  });
+  it("never drops words that only look alike", () => {
+    expect(speechTranscript([r("no", true), r(" no way", true)]).final).toBe("no no way");
   });
 });

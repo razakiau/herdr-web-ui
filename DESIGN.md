@@ -2853,7 +2853,7 @@ The values are the ones in `src/styles.css`.
 | Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
 | Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting dots (trough opacity 0.35; text never pulses) |
 | Spin | `--dur-spin` | `1600ms` | One turn of a stepped spinner (the command palette's busy arc); the step count sets the frame rate |
-| Breathe | `--dur-breathe` | `2000ms` | The sidebar's working dot: full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
+| Breathe | `--dur-breathe` | `2400ms` | The sidebar's working dot: full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
 | Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
 | Spring easing | `--ease-spring` | `cubic-bezier(0.32, 0.72, 0, 1)` | Voice recording pill enter (180ms, scale 0.96->1 + opacity, from the mic button) and exit (120ms); a phone's sheet rising and springing back |

@@ -427,6 +427,23 @@
   height: auto;
 }
 
+/* Pele's colours and fonts (lib/mermaid.ts): the app's tokens, so a theme switch recolours a
+   drawn diagram with no redraw; inline here and in the lightbox, which shares the svg */
+.markdown-mermaid,
+.mermaid-lightbox-canvas {
+  --pele-bg: transparent;
+  --pele-fg: var(--text);
+  --pele-muted: var(--text-dim);
+  --pele-line: var(--text-dim);
+  --pele-surface: var(--bg-elevated);
+  --pele-surface-alt: color-mix(in srgb, var(--bg-elevated) 70%, var(--border));
+  --pele-border: var(--border);
+  --pele-accent: var(--accent);
+  --pele-font: var(--font-ui);
+  --pele-font-mono: var(--font-mono);
+  --pele-radius: var(--radius-sm);
+}
+
 .markdown-mermaid-zoom {
   position: absolute;
   top: var(--space-1);
@@ -663,8 +680,12 @@
   overflow-x: auto;
 }
 
+/* ZAC-228: Claude's and VS Code's table: no box and no vertical rules, a stronger rule under the
+   header, a hairline between rows. A table that fits fills the reply; a wider one keeps its
+   columns and scrolls in its wrap, inside the reply's column. */
 .markdown table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: var(--fs-sm);
 }
@@ -675,17 +696,25 @@
    every column down to a letter or two and never overflowed. */
 .markdown th,
 .markdown td {
-  padding: var(--space-2);
-  border: var(--hairline) solid var(--border);
+  min-width: 6em;
+  max-width: 28em;
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  border: 0;
+  border-bottom: var(--hairline) solid var(--border);
   overflow-wrap: normal;
   text-align: left;
+  vertical-align: top;
 }
+.markdown th:last-child,
+.markdown td:last-child { padding-right: 0; }
+.markdown tr:last-child td { border-bottom: 0; }
 
 .markdown th {
-  background: var(--bg-elevated);
+  border-bottom-color: var(--border-strong);
   color: var(--text-strong);
   font-weight: var(--fw-semibold);
 }
+
 
 /* ---------- work block: "Worked for 7s · 1 edit" over one-line rows ---------- */
 
@@ -772,6 +801,30 @@
   border-radius: var(--radius-pill);
   background: currentColor;
   animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
+}
+
+/* the words shimmer as VS Code's "Working" does (chatThinkingContent.css): a lighter band crosses
+   the working color every 2 s, clipped to the letters. The dot keeps its own color and pulse.
+   Ten steps, not linear: an endless smooth animation redraws every frame and stutters a video next
+   to the app (motion.test.ts); five redraws a second still read as a sweep */
+.work-block.is-live:not(.is-waiting) .work-block-title,
+.chat-activity-text {
+  background: linear-gradient(90deg,
+    var(--status-working) 0%,
+    var(--status-working) 30%,
+    color-mix(in srgb, var(--status-working) 35%, var(--text-strong)) 50%,
+    var(--status-working) 70%,
+    var(--status-working) 100%);
+  background-size: 400% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: work-shimmer 2s var(--ease-shimmer) infinite;
+}
+
+@keyframes work-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
 }
 
 /* A blocked agent is not working: the open block keeps its live layout and reads "Needs you",
@@ -973,7 +1026,9 @@
   font-size: var(--fs-xs);
 }
 
-.chat-inline-error { color: var(--status-blocked); }
+/* .chat-compact dims its divider later in this file: an error notice keeps the error colour over it */
+.chat-inline-error,
+.chat-compact.chat-notice-error { color: var(--status-blocked); }
 
 /* a read that failed (ChatView.tsx FailureLine): the one line, Try again beside it where it is the
    way on, and a dim Details toggle under them for the advice and the PC's own words */
@@ -1147,6 +1202,8 @@
   .markdown-code-header,
   .work-block { transition: none; }
   .work-block.is-live .work-block-title::before { animation: none; }
+  .work-block.is-live:not(.is-waiting) .work-block-title,
+  .chat-activity-text { animation: none; background: none; -webkit-text-fill-color: currentColor; }
 }
 
 .todo-list ul {
@@ -1400,6 +1457,14 @@
   justify-content: flex-end;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
+}
+
+/* the pictures a typed answer carried: under its "Answered:" line, at its indent */
+.question-summary-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-left: var(--space-5);
 }
 
 .chat-user-image {
@@ -1864,3 +1929,662 @@
 .chat-abandoned { margin: var(--space-2) 0; }
 .chat-abandoned > summary { font-style: italic; }
 .chat-abandoned-note { margin: var(--space-2) 0 0; color: var(--text-dim); }
+
+/* ---------- the vscode style (Copilot: host chats and copilot panes; lib/toolGroupSummary.ts turnStyle) ---------- */
+
+/* the head: the group's icon, its sentence (the first word plain, the rest quieter), then on the
+   quiet right the edits' lines and the time, the caret last */
+.work-block.is-vscode .work-block-head { gap: var(--space-1); }
+.work-block-icon {
+  flex: none;
+  width: var(--fs-md);
+  height: var(--fs-md);
+  color: var(--text-dim);
+}
+.work-block.is-vscode.is-failed .work-block-icon { color: var(--status-blocked); }
+.work-block.is-vscode:not(.is-live) .work-block-title {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.work-title-detail { color: var(--text-dim); }
+.work-block-meta {
+  flex: none;
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.work-block-lines { font-family: var(--font-mono); }
+
+/* a row: its kind's icon, then what it did, in the interface face; a file it names a pill */
+.work-row-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.work-row.is-vscode .work-row-line .work-row-head {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  margin-inline: calc(-1 * var(--space-1)) 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+}
+.work-row-icon {
+  flex: none;
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+.work-row.is-vscode.is-error .work-row-icon { color: var(--status-blocked); }
+.work-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-row-head[aria-expanded="true"] .work-row-text { white-space: normal; overflow-wrap: anywhere; }
+.work-row-text code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.work-row-empty { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); }
+
+.work-file-pill,
+.markdown-file.is-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-decoration: none;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.work-file-pill { flex: 0 1 auto; min-width: 0; }
+.work-file-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-file-pill svg,
+.work-file-pill .file-glyph,
+.markdown-file.is-pill svg,
+.markdown-file.is-pill .file-glyph { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.markdown-file.is-pill code { text-decoration: none; }
+.markdown-file-line { color: var(--text-dim); }
+.work-file-pill:hover,
+.markdown-file.is-pill:hover { color: var(--accent); border-color: currentColor; }
+
+/* the pictures the tools returned, under the block and outside its fold */
+.work-images { margin-top: var(--space-1); }
+/* a call VS Code never folds: its own row after the block */
+.work-standalone { display: flex; flex-direction: column; }
+/* a run spans the turn's column (the turn aligns its children to the start, so it took its words' width) */
+.work-standalone:has(> .mcp-run) { align-self: stretch; }
+/* a run of MCP calls folded to one line (ZAC-228): its calls open under it, indented to its words */
+.mcp-run-rows { display: flex; flex-direction: column; padding-inline-start: calc(var(--fs-md) + var(--space-2)); }
+.mcp-run.is-error .mcp-run-failed { color: var(--status-blocked); }
+.mcp-run .work-row-head .work-row-caret { margin-inline-start: auto; }
+/* the run's head spans the row so its caret sits on the far edge, as a work group's does (it took
+   the text's width, and the caret hung right after the words) */
+.work-row.is-vscode.mcp-run > .work-row-line > .work-row-head { flex: 1 1 auto; width: calc(100% + var(--space-1)); }
+
+.markdown-host-link {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 0.2em;
+}
+/* running, the sidebar's working dot, breathing in step with it (Sidebar.css sidebar-breathe): one
+   sign for "in progress" everywhere (owner, ZAC-228: a wrench, then a spinner, read wrong here). It
+   sits in the icon's square, so the title doesn't move when the group ends; the classic dot before
+   the title is not drawn twice, and a blocked turn's own dot turns red */
+/* one dot: the group's own, waiting or not (a waiting group read "● ● Needs you" on a phone, ZAC-228) */
+.work-block.is-vscode.is-live .work-block-title::before { display: none; }
+.work-block-dot {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--fs-md);
+  height: var(--fs-md);
+  animation: sidebar-breathe var(--dur-breathe) var(--ease-breathe) infinite;
+}
+.work-block-dot::before {
+  content: "";
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--status-working);
+}
+.work-block.is-waiting .work-block-dot { animation: none; }
+.work-block.is-waiting .work-block-dot::before { background: var(--status-blocked); }
+
+/* ---------- a subagent's row (vscode style only; SubagentRow.tsx) ---------- */
+/* the turn's column lays its rows out at their own width: these take the column's, so a long
+   task ellipsises before the time instead of pushing it out */
+.subagent-row,
+.question-summary {
+  align-self: stretch;
+  max-width: 100%;
+}
+.subagent-row {
+  margin: var(--space-2) 0;
+  min-width: 0;
+}
+/* ZAC-228: a card the reader can open, like Claude's and VS Code's subagent blocks */
+.subagent-card {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.subagent-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+button.subagent-row-head { cursor: pointer; }
+button.subagent-row-head:hover { background: var(--bg-hover); }
+button.subagent-row-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.subagent-row-icon {
+  flex: none;
+  width: var(--fs-md);
+  height: var(--fs-md);
+  color: var(--text-dim);
+}
+.subagent-row.is-failed .subagent-row-icon { color: var(--status-blocked); }
+.subagent-row-main {
+  flex: 1 1 0;
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.subagent-row-name { flex: none; color: var(--text-strong); font-weight: var(--fw-semibold); }
+.subagent-row-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.subagent-row-model { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); }
+/* opened: the task's words whole, then the agent's own description, quieter */
+.subagent-row-about { display: grid; gap: var(--space-1); margin-bottom: var(--space-2); }
+.subagent-row-intent, .subagent-row-blurb { margin: 0; overflow-wrap: anywhere; }
+.subagent-row-intent { color: var(--text); font-size: var(--fs-sm); }
+.subagent-row-blurb { color: var(--text-dim); font-size: var(--fs-xs); }
+.subagent-row-time {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+/* while it runs: what it does now, under the head */
+.subagent-row-activity {
+  margin: calc(-1 * var(--space-1)) 0 0;
+  padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + var(--fs-md) + var(--space-2));
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subagent-row-note { margin: var(--space-1) 0; color: var(--text-dim); font-size: var(--fs-sm); }
+.subagent-row-body {
+  display: flex; flex-direction: column; gap: var(--space-3); min-width: 0;
+  padding: var(--space-3); border-top: var(--hairline) solid var(--border);
+}
+.subagent-row-about { margin-bottom: 0; }
+.subagent-section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.subagent-caption {
+  margin: 0; color: var(--text-dim);
+  font-size: var(--fs-2xs); font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase;
+}
+.subagent-asked, .subagent-answer { min-width: 0; }
+.subagent-asked { color: var(--text-dim); }
+/* a long brief folds to four lines, the last fading into the card (SubagentAsked) */
+.subagent-asked.is-capped {
+  max-height: calc(4 * var(--chat-fs-body) * var(--lh-prose));
+  overflow: hidden;
+  mask-image: linear-gradient(currentColor calc(100% - var(--chat-fs-body) * var(--lh-prose)), transparent);
+}
+.subagent-asked-fold {
+  align-self: flex-start;
+  min-height: var(--chip-h);
+  margin-left: calc(-1 * var(--space-1));
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.subagent-asked-fold:hover { background: var(--bg-hover); color: var(--text-strong); }
+@media (pointer: coarse) { .subagent-asked-fold { min-height: var(--touch-target); } }
+/* a subagent's subagent: a card inside the card, on the page's own ground */
+.subagent-card .subagent-card { background: var(--bg); }
+.subagent-row-turn { min-width: 0; max-width: 100%; }
+.subagent-row-turn .chat-turn { width: 100%; }
+
+/* ---------- an answered question (vscode style only; QuestionSummary.tsx), VS Code's conversation summary ---------- */
+.question-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+.question-summary-question {
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  color: var(--text-dim);
+}
+.question-summary-prefix { flex: none; font-weight: 600; }
+.question-summary-question-value,
+.question-summary-answer-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* the L connector: a left and bottom border, rounded at the corner */
+.question-summary-decision {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: calc(4 * var(--space-1));
+}
+.question-summary-decision::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  left: var(--space-1);
+  width: calc(1.5 * var(--space-1));
+  height: calc(4 * var(--space-1));
+  border-left: var(--hairline) solid var(--border-strong);
+  border-bottom: var(--hairline) solid var(--border-strong);
+  border-bottom-left-radius: var(--radius-sm);
+  pointer-events: none;
+}
+.question-summary-answer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+button.question-summary-answer { cursor: pointer; }
+.question-summary-answer-icon,
+.question-summary-answer .work-row-caret svg {
+  flex: none;
+  width: var(--fs-sm);
+  height: var(--fs-sm);
+  color: var(--text-dim);
+}
+.question-summary-options {
+  margin-top: var(--space-1);
+  padding: calc(2.5 * var(--space-1));
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.question-summary-options-title {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2) var(--space-1);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--text);
+}
+.question-summary-option-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.question-summary-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.question-summary-option.is-selected { background: var(--bg-hover); color: var(--text); }
+.question-summary-option-label { flex: 1; min-width: 0; }
+.question-summary-option-check { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
+/* the report an ask_user form came with, above its questions: one line, as "Question:" reads,
+   that opens to the message read as the reply reads */
+.question-summary-report { display: flex; flex-direction: column; min-width: 0; }
+.question-summary-report-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.question-summary-report-toggle:hover { color: var(--text); }
+.question-summary-report-toggle:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); border-radius: var(--radius-sm); }
+.question-summary-report-toggle .work-row-caret svg { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
+.question-summary-report + .question-summary-question { margin-top: var(--space-1); }
+.question-summary-report-body {
+  min-width: 0;
+  margin-top: var(--space-1);
+  padding: var(--space-2) calc(2.5 * var(--space-1));
+  border-left: var(--hairline) solid var(--border-strong);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.question-summary-report-body .markdown > :first-child { margin-top: 0; }
+.question-summary-report-body .markdown > :last-child { margin-bottom: 0; }
+
+/* VS Code's words between two tool groups: the agent's own voice, in the open, answer prose
+   (ChatView.tsx VscodeWork); the groups around them fold. The turn is a column that starts its
+   children (align-items: flex-start): without a width of its own, words holding a wide table or
+   a long path took their unwrapped width and ran off the phone's edge */
+.work-words {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) 0;
+  color: var(--text);
+}
+
+/* a host's system notification ("`x` has completed"), VS Code's chatSystemNotificationPart: a quiet
+   check and the host's Markdown in the description colour, where it came; more folds under it */
+.chat-system-notification {
+  margin: var(--space-1) 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.chat-system-notification:not(.is-disclosure),
+.chat-system-notification-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.chat-system-notification-head {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.chat-system-notification .markdown { min-width: 0; color: inherit; font-size: inherit; }
+.chat-system-notification .markdown p { margin: 0; }
+
+.chat-system-notification-icon,
+.chat-system-notification-caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+}
+
+.chat-system-notification-icon { color: var(--status-done); }
+.chat-system-notification-caret { opacity: 0.6; transition: transform 120ms ease; }
+.chat-system-notification:not(.is-collapsed) .chat-system-notification-caret { transform: rotate(90deg); }
+
+@media (hover: hover) {
+  .chat-system-notification-head:hover { color: var(--text); }
+  .chat-system-notification-head:hover .chat-system-notification-caret { opacity: 1; }
+}
+
+.chat-system-notification-head:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); border-radius: var(--radius-sm); }
+
+.chat-system-notification-body {
+  margin: var(--space-1) 0 0 calc(14px + var(--space-1));
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-system-notification-caret { transition: none; }
+}
+
+/* a host chat's turn that ended on an error (ChatView.tsx NoticeRow), VS Code's error part: the
+   icon and the host's words in the open, never folded, and Try Again under them when resumable */
+.chat-turn-error {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--status-blocked) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-blocked) 8%, transparent);
+  font-size: var(--fs-sm);
+}
+
+.chat-turn-error-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--status-blocked);
+}
+
+.chat-turn-error-body { min-width: 0; flex: 1; }
+
+.chat-turn-error-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-turn-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.chat-turn-error-retry { display: inline-flex; align-items: center; gap: var(--space-1); }
+.chat-turn-error-retry svg { width: 14px; height: 14px; }
+.chat-turn-error-note { color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* the command line of an opened terminal row (VS Code's command block), above its output */
+.work-row-command {
+  max-height: calc(var(--row-h) * 4);
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.work-row-command > code { font: inherit; background: none; padding: 0; }
+
+/* a Copilot turn's reasoning (VS Code's thinking part): "Thinking" and its first words, dim, cut to one line */
+.work-row-reasoning .work-row-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-reasoning-word { color: var(--text); }
+.work-reasoning-preview { color: var(--text-dim); }
+.work-reasoning-text {
+  padding-left: calc(16px + var(--space-2));
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* VS Code's checkpoint action on a request: Restore Checkpoint, Start Over on the first; a glyph
+   and a short word, quiet as the meta row it sits in */
+.chat-checkpoint-btn {
+  letter-spacing: normal;
+  font-weight: var(--fw-medium, 500);
+  font-size: var(--fs-xs);
+}
+
+.chat-checkpoint-btn svg,
+.chat-fork-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* restored: the message and what came after it are set aside until the next send (VS Code dims
+   them the same way); still readable, never hidden */
+.chat-turn.is-checkpoint-faded {
+  opacity: 0.45;
+  transition: opacity 160ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-turn.is-checkpoint-faded { transition: none; }
+}
+
+/* a host call's changed files (VS Code's file chips under an edit): each opens its diff under it */
+.edit-chips { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-1) 0 0 calc(1em + var(--space-2)); min-width: 0; }
+.edit-chip-wrap { min-width: 0; }
+.edit-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  max-width: 100%; min-height: 1.75rem; padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border); border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-strong); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+}
+.edit-chip:hover, .edit-chip[aria-expanded="true"] { border-color: var(--text-dim); background: var(--bg-hover); }
+.edit-chip > svg:first-child,
+.edit-chip > .file-glyph:first-child { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.edit-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.edit-chip.is-delete .edit-chip-name { text-decoration: line-through; color: var(--text-dim); }
+.edit-chip-tag { flex: none; color: var(--text-dim); }
+.edit-chip-lines { flex: none; display: inline-flex; gap: 0.35em; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.edit-chip-caret { flex: none; width: 0.9em; height: 0.9em; color: var(--text-dim); transition: transform var(--dur-fast, 120ms) ease; }
+.edit-chip[aria-expanded="true"] .edit-chip-caret { transform: rotate(180deg); }
+.edit-diff { margin-top: var(--space-1); border: var(--hairline) solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.edit-diff-open { display: inline-flex; align-items: center; gap: var(--space-1); margin: var(--space-1); font-size: var(--fs-xs); }
+.edit-diff-open svg { width: 0.9em; height: 0.9em; }
+.edit-diff-note { margin: var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); }
+.edit-diff-lines { margin: 0; padding: var(--space-1) 0; font-size: var(--fs-xs); max-height: 24rem; overflow: auto; }
+.edit-diff-lines > span { display: block; padding: 0 var(--space-2); min-width: max-content; }
+.edit-diff-lines .chat-diff-add { background: color-mix(in srgb, var(--status-done) 12%, transparent); }
+.edit-diff-lines .chat-diff-del { background: color-mix(in srgb, var(--status-blocked) 12%, transparent); }
+.chat-diff-fold { color: var(--text-dim); font-style: italic; background: var(--bg-hover); }
+
+/* a subagent row the "N running" sheet took the reader to: marked a moment, as VS Code's reveal */
+.subagent-row.is-revealed {
+  /* clear of the sticky request bar over the transcript's top */
+  scroll-margin-top: calc(var(--control-h) + var(--space-3));
+  border-radius: var(--radius-md);
+  animation: subagent-revealed 1.6s ease-out;
+}
+
+@keyframes subagent-revealed {
+  0%, 40% { box-shadow: 0 0 0 var(--hairline) var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  100% { box-shadow: 0 0 0 var(--hairline) transparent; background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-row.is-revealed { animation: none; outline: var(--hairline) solid var(--accent); }
+}
+
+/* how long a host turn worked, once in its footer (ZAC-228): VS Code's groups carry no time */
+.chat-meta-duration { font-variant-numeric: tabular-nums; }
+/* the model that answered (ZAC-228), its maker's mark before it as on the composer's chip; cut
+   short before it can wrap the line */
+.chat-meta-model { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 18em; color: var(--text-dim); }
+.chat-meta-model .agent-mark { display: inline-flex; }
+.chat-meta-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* time · how long it worked · the model: VS Code's dots between the footer's facts (owner: they
+   ran together with the gap alone) */
+.chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-model) + :is(.chat-meta-duration, .chat-meta-model)::before {
+  /* the row's gap is the space before the dot, this the space after: even on both sides */
+  content: "·"; margin-inline: 0 var(--space-2); color: var(--text-dim);
+}
+
+/* each fact stays on one line: on a phone "09:05 AM" and "Worked for 1h 13m" broke in two and
+   stacked beside each other (live crawl at 390 px, ZAC-228); the model's name is what gives way */
+.chat-agent-meta { align-self: stretch; min-width: 0; }
+.chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-btn) { flex: none; white-space: nowrap; }
+.chat-agent-meta { flex-wrap: wrap; row-gap: 0; }
+/* ...but never to nothing: on a phone "yesterday at 09:05 AM · Worked for 1h 13m" left the
+   model 0 px (live crawl at 390 px, ZAC-228), so it takes the next line instead */
+.chat-agent-meta .chat-meta-model { flex: 0 1 auto; min-width: min(9em, 100%); overflow: hidden; }
+.chat-agent-meta .chat-meta-model .agent-mark { flex: none; }
+/* touch drops the row's gap (Copy's target reaches the next fact), so the dot carries both sides */
+@media (pointer: coarse) {
+  .chat-agent-meta :is(time, .chat-meta-duration, .chat-meta-model) + :is(.chat-meta-duration, .chat-meta-model)::before { margin-inline: var(--space-2); }
+  /* a phone's row never holds the copies, time, duration and model: the model wrapped under a
+     stray "·" (live at 390 px, ZAC-228), so it always starts its own line, the ⋯ after it */
+  .chat-agent-meta .chat-meta-model { flex: 1 1 calc(100% - var(--touch-target)); max-width: none; }
+  .chat-agent-meta :is(time, .chat-meta-duration) + .chat-meta-model::before { content: none; }
+}
+/* an MCP call's server beside its tool (ZAC-228), and the captions of its opened input and output */
+.work-row-server { color: var(--text-dim); font-size: var(--fs-xs); }
+.work-row-section {
+  margin: var(--space-2) 0 var(--space-1); color: var(--text-dim);
+  font-size: var(--fs-2xs); font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase;
+}
+
+/* ZAC-228: what an answer changed, its diffs a tap away */
+.chat-turn-changes {
+  display: flex; align-items: center; gap: var(--space-2); align-self: stretch;
+  padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md);
+  color: var(--text); font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+}
+.chat-turn-changes-icon { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.chat-turn-changes-view {
+  display: inline-flex; align-items: center; gap: 2px; margin-inline-start: auto; padding: 0 var(--space-1);
+  border: 0; border-radius: var(--radius-sm); background: none; color: var(--accent); font: inherit; cursor: pointer;
+}
+.chat-turn-changes-view:hover { background: var(--bg-hover); }
+.chat-turn-changes-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chat-turn-changes-view svg { width: 1em; height: 1em; }
+/* the dashed checkpoint after a turn that changed files: a tap restores to before the next message */
+.chat-checkpoint-line {
+  display: flex; align-items: center; gap: var(--space-2); align-self: stretch; margin: var(--space-1) 0 0; padding: 0;
+  border: 0; background: none; color: var(--text-dim); font: inherit; font-size: var(--fs-2xs); cursor: pointer;
+}
+.chat-checkpoint-line::before, .chat-checkpoint-line::after { content: ""; flex: 1; border-top: var(--hairline) dashed var(--border-strong); }
+.chat-checkpoint-line:hover { color: var(--text); }
+.chat-checkpoint-line:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-checkpoint-line-word { letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.chat-more-btn svg { width: var(--fs-sm); height: var(--fs-sm); }

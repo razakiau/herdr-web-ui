@@ -52,6 +52,12 @@
   margin-bottom: var(--space-4);
 }
 
+/* a card over the composer stands clear of it (the todo tab or the box): touching, the card, the
+   tab and the box read as one stack of borders (owner's phone screenshot, ZAC-228) */
+.prompt-dock:not(:empty) {
+  margin-bottom: var(--space-3);
+}
+
 /* opened held rows end in buttons: a little air before the card */
 .composer-queue + .prompt-dock:not(:empty) {
   margin-top: var(--space-2);
@@ -462,7 +468,9 @@
     "text text text"
     "left status right";
   background: var(--bg-elevated);
-  border: var(--hairline) solid var(--border);
+  /* --border is within a few shades of --bg-elevated in the dark palettes: the box had no edge at
+     rest and read as a floating slab (desktop audit, 2026-10-23) */
+  border: var(--hairline) solid var(--border-strong);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-card);
   transition:
@@ -632,15 +640,22 @@
   --composer-action-fill: var(--primary);
 }
 
-/* the one round button: Stop is Send's circle in the text colour, in the same place at the same
-   size, so only the glyph changes when the agent starts and ends a turn */
+/* the one round button: Stop is Send's circle in the same place at the same size, so only the glyph
+   and the fill change when the agent starts and ends a turn. Its fill is a raised neutral with the
+   text colour's glyph: a solid --text-strong disc was the loudest thing on screen for the whole of
+   every turn (desktop audit, 2026-10-23); the danger colour comes on hover and focus */
 .composer-stop {
-  --composer-action-fill: var(--text-strong);
-  color: var(--bg);
+  --composer-action-fill: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.composer-stop::before {
+  border-color: var(--border-strong);
 }
 
 .composer-stop:focus-visible:not(:disabled) {
   --composer-action-fill: var(--status-blocked);
+  color: var(--primary-text);
 }
 
 /* not connected, it stops nothing: it must not read as live */
@@ -664,7 +679,7 @@
 }
 
 .composer-send-progress {
-  animation: composer-send-spin var(--dur-spin) steps(8) infinite;
+  animation: composer-send-spin var(--dur-spin) var(--ease-spin) infinite;
 }
 
 @keyframes composer-send-spin {
@@ -678,6 +693,7 @@
 
   .composer-stop:hover:not(:disabled) {
     --composer-action-fill: var(--status-blocked);
+    color: var(--primary-text);
   }
 
   .composer-controls .icon-button:hover:not(:disabled) {
@@ -1518,4 +1534,47 @@
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
   }
+}
+
+/* A host chat's send menu (VS Code's queue picker): a caret beside Send while the chat works */
+.composer-send-menu {
+  width: var(--chip-h);
+  min-width: var(--chip-h);
+  /* tight against Send, as its split half: across the row's gap it read as a stray control (owner, ZAC-207) */
+  margin-inline-start: calc(var(--space-2) * -1);
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.composer-send-menu svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.host-pending-note {
+  width: min(100%, var(--chat-w));
+  margin: 0 auto var(--space-2);
+}
+
+/* a host chat's model chip (Composer's `pills`): it takes the left group's room and the status cell
+   gives way; a narrow row drops the effort word, then the name ellipsizes (HostChatView.css,
+   @container pickers). Nothing scrolls sideways: the chip is the row's only words */
+.composer-surface:has(.composer-pickers) {
+  grid-template-columns: minmax(0, 1fr) 0 auto;
+}
+
+.composer-controls-left:has(> .composer-pickers) {
+  min-width: 0;
+}
+
+.composer-pickers {
+  flex: 1 1 0;
+  min-width: 0;
+  container: pickers / inline-size;
+  overflow: hidden;
+}
+
+.composer-pickers::-webkit-scrollbar {
+  display: none;
 }

@@ -3,7 +3,7 @@ import { createElement, useLayoutEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import { DEFAULT_ALERTS } from "../../shared/notify-policy.ts";
-import { ensurePushSubscription, pushSupported, removePushSubscription, testDevicePush } from "./push.ts";
+import { ensurePushSubscription, ntfyLine, pushSupported, removePushSubscription, testDevicePush } from "./push.ts";
 import { ApiError } from "./api.ts";
 import { notificationState, refreshNotificationState, requestNotificationPermission } from "./notifications.ts";
 import { useNotificationSwitch } from "./useNotifications.ts";
@@ -519,4 +519,15 @@ it("preserves a rapid on-off-on sequence instead of reusing a subscription being
   expect(issued).toBe(2);
   expect(await reenable).toBe(live!.endpoint);
   expect(live!.unsubscribed).toBe(false);
+});
+
+describe("ntfyLine: what the Alerts page says of the deployment's ntfy topic", () => {
+  const t = (key: string, vars?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? `{${name}}`));
+  it("names the topic and the alerts it gets, or nothing without one", () => {
+    expect(ntfyLine(null, t)).toBeNull();
+    expect(ntfyLine({ topic: "herdr-agents", alerts: { input: true, done: "long" } }, t)).toBe("This server also posts alerts to the ntfy topic herdr-agents: questions and long turns.");
+    expect(ntfyLine({ topic: "x", alerts: { input: false, done: "always" } }, t)).toBe("This server also posts alerts to the ntfy topic x: every finished turn.");
+    expect(ntfyLine({ topic: "x", alerts: { input: true, done: "off" } }, t)).toBe("This server also posts alerts to the ntfy topic x: questions.");
+    expect(ntfyLine({ topic: "x", alerts: { input: false, done: "off" } }, t)).toBeNull();
+  });
 });

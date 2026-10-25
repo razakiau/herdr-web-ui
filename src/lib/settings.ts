@@ -29,8 +29,16 @@ export type AgentOrder = "workspace" | "activity";
 export type AgentMarks = "color" | "mono";
 /** what the plan meters count: the share of a limit used, or what is left of it */
 export type UsageCount = "used" | "left";
+/** the plan meters: one chip per provider (its accounts averaged by plan size), or one per account */
+export const USAGE_GROUPS = ["provider", "account"] as const;
+export type UsageGroup = (typeof USAGE_GROUPS)[number];
+/** which agent host folders open by themselves the first time a PC is seen (lib/hostWorkspaces.ts seedPc) */
+export const HOST_AUTO_OPENS = ["active", "pinned", "none"] as const;
+export type HostAutoOpen = (typeof HOST_AUTO_OPENS)[number];
 /** the limit a plan meter shows: the plan's week, or its short session (5 hours on Claude and Codex) */
 export type UsageGlance = "week" | "session";
+/** the plan meters' panel order: Settings' order, or the limit closest to running out first */
+export type UsageSort = "order" | "closest";
 /** amber: the herdr look (the default before codex); charcoal: neutral Ghostty-style dark;
  *  catppuccin: Catppuccin Mocha in dark, Latte in light. A record naming a palette that was removed
  *  (report, lilac, forest) loads as amber. */
@@ -153,6 +161,14 @@ export interface Settings {
   usageOrder: string[];
   /** accounts left out of the plan meters, strip and popover alike, by ProviderUsage.key */
   usageHidden: string[];
+  /** the providers an OmniRoute gateway reports that the meters show (by ProviderUsage.id): one it starts reporting stays out until chosen */
+  usageShown: string[];
+  /** the OmniRoute providers already offered in Settings: the others are marked New */
+  usageKnown: string[];
+  /** the plan meters' panel: in the order above, or the limit closest to running out first */
+  usageSort: UsageSort;
+  /** the strip: a provider's accounts as one chip (averaged by plan size), or a chip per account */
+  usageGroup: UsageGroup;
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
   /** the language dictation listens for; auto: the UI language's, or the browser's the UI lacks (src/lib/voice.ts dictationLocale) */
@@ -174,6 +190,18 @@ export interface Settings {
   claudeLaunchMode: ClaudeLaunchMode;
   /** the same for Codex: a sandbox and approval preset */
   codexLaunchMode: CodexLaunchMode;
+  /** the PCs' VS Code agent host chats in the sidebar, Agents and New: off is herdr without them (their alerts too) */
+  hostChatsShown: boolean;
+  /** the folders opened the first time a PC is seen: pinned, working or asking, and on screen; pinned only; none */
+  hostAutoOpen: HostAutoOpen;
+  /** a new agent host chat's model as the host names it; null leaves the host's default */
+  hostNewModel: { id: string; effort?: string } | null;
+  /** a new agent host chat's permissions (the host's autoApprove value); null leaves the host's default */
+  hostNewApprovals: string | null;
+  /** archived chats in All agents and Chats in <folder> (folded at the end); off leaves them out */
+  hostShowArchived: boolean;
+  /** endless animations draw every frame instead of stepping (src/styles.css [data-motion="smooth"]) */
+  smoothMotion: boolean;
 }
 
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
@@ -183,12 +211,13 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks, the launch modes, followHerdrFocus and composerNewTabButton are not collected: the
- * telemetry schema (shared/telemetry.ts) does not carry them. */
+ * fileOpen, webLinks, the launch modes, followHerdrFocus, composerNewTabButton, the OmniRoute choices, smoothMotion and the agent host ones
+ * are not collected: the telemetry schema (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
-  | "followHerdrFocus" | "composerNewTabButton">;
+  | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
+  | "followHerdrFocus" | "composerNewTabButton"
+  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -261,7 +290,7 @@ export const SETTING_SCOPE = {
   theme: "shared", palette: "shared", darkTheme: "shared", lightTheme: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared",
   agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
-  usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device", suggestionChip: "device",
+  usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", usageShown: "shared", usageKnown: "shared", usageSort: "shared", defaultView: "device", suggestionChip: "device",
   terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", density: "device",
   terminalFontSize: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
@@ -272,11 +301,14 @@ export const SETTING_SCOPE = {
   composerNewTabButton: "device",
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
   paletteLight: "device", paletteDark: "device", statusIndicators: "device",
-  voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
+  // the account's, so an app installed again (from another browser, 2026-10-22) keeps them
+  voiceInput: "shared", voiceLanguage: "shared", voicePolishChat: "shared", voicePolishTerminal: "shared",
   // Viewer layout follows this screen, as chatWidth does.
   wrapCode: "device", markdownWidth: "device", diffStyle: "device", fileOpen: "device", webLinks: "device",
   // a new agent starts the same way whichever device opened it
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
+  usageGroup: "shared", hostChatsShown: "shared", hostAutoOpen: "shared", hostNewModel: "shared", hostNewApprovals: "shared", hostShowArchived: "shared",
+  smoothMotion: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -330,6 +362,10 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultView: "auto",
   usageOrder: [],
   usageHidden: [],
+  usageShown: [],
+  usageKnown: [],
+  usageSort: "order",
+  usageGroup: "provider",
   voiceInput: "auto",
   voiceLanguage: "auto",
   voicePolishChat: true,
@@ -341,6 +377,12 @@ export const DEFAULT_SETTINGS: Settings = {
   webLinks: "tab",
   claudeLaunchMode: "default",
   codexLaunchMode: "default",
+  hostChatsShown: true,
+  hostAutoOpen: "active",
+  hostNewModel: null,
+  hostNewApprovals: null,
+  hostShowArchived: true,
+  smoothMotion: false,
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -378,6 +420,8 @@ export function alertPrefs(settings: Settings): AlertPrefs {
   return { input: settings.alertInput, done: settings.alertDone };
 }
 
+/** settings that are gone: "Copilot chats in Agents" (a host chat is an agent now, listed by the agents' rule) */
+const REMOVED_KEYS: readonly string[] = ["vscodeChatsInAgents"];
 export const TERMINAL_FONT_MIN = 10;
 export const TERMINAL_FONT_MAX = 22;
 export const TERMINAL_WHEEL_SPEED_MIN = 1;
@@ -508,6 +552,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     defaultView: record["defaultView"] === "chat" || record["defaultView"] === "terminal" || record["defaultView"] === "auto" ? record["defaultView"] : DEFAULT_SETTINGS.defaultView,
     usageOrder: usageKeys(record["usageOrder"]),
     usageHidden: usageKeys(record["usageHidden"]),
+    usageShown: usageKeys(record["usageShown"]),
+    usageKnown: usageKeys(record["usageKnown"]),
+    usageSort: record["usageSort"] === "closest" || record["usageSort"] === "order" ? record["usageSort"] : DEFAULT_SETTINGS.usageSort,
     voiceInput: voiceButton(record["voiceInput"]),
     voiceLanguage: DICTATION_LANGUAGES.includes(record["voiceLanguage"] as (typeof DICTATION_LANGUAGES)[number]) ? record["voiceLanguage"] as DictationLanguage : DEFAULT_SETTINGS.voiceLanguage,
     voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
@@ -519,10 +566,35 @@ export function sanitizeSettings(raw: unknown): Settings {
     webLinks: WEB_LINK_TARGETS.find((target) => target === record["webLinks"]) ?? DEFAULT_SETTINGS.webLinks,
     claudeLaunchMode: CLAUDE_LAUNCH_MODES.find((mode) => mode === record["claudeLaunchMode"]) ?? DEFAULT_SETTINGS.claudeLaunchMode,
     codexLaunchMode: CODEX_LAUNCH_MODES.find((mode) => mode === record["codexLaunchMode"]) ?? DEFAULT_SETTINGS.codexLaunchMode,
+    usageGroup: USAGE_GROUPS.find((group) => group === record["usageGroup"]) ?? DEFAULT_SETTINGS.usageGroup,
+    hostChatsShown: typeof record["hostChatsShown"] === "boolean" ? record["hostChatsShown"] : DEFAULT_SETTINGS.hostChatsShown,
+    hostAutoOpen: HOST_AUTO_OPENS.find((policy) => policy === record["hostAutoOpen"]) ?? DEFAULT_SETTINGS.hostAutoOpen,
+    hostNewModel: hostModelChoice(record["hostNewModel"]),
+    hostNewApprovals: typeof record["hostNewApprovals"] === "string" && record["hostNewApprovals"] !== "" && record["hostNewApprovals"].length <= 64 ? record["hostNewApprovals"] : DEFAULT_SETTINGS.hostNewApprovals,
+    hostShowArchived: typeof record["hostShowArchived"] === "boolean" ? record["hostShowArchived"] : DEFAULT_SETTINGS.hostShowArchived,
+    smoothMotion: typeof record["smoothMotion"] === "boolean" ? record["smoothMotion"] : DEFAULT_SETTINGS.smoothMotion,
   };
 }
 
+/** A model as the host names it, with its effort if a string: anything else is the host's default. */
+function hostModelChoice(value: unknown): { id: string; effort?: string } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const { id, effort } = value as Record<string, unknown>;
+  if (typeof id !== "string" || id === "" || id.length > 200) return null;
+  return typeof effort === "string" && effort !== "" && effort.length <= 64 ? { id, effort } : { id };
+}
+
 export function loadSettings(): Settings {
+  // a setting this version removed leaves the stored record too; a storage that refuses the write
+  // (full) keeps the record as it was, and the settings still load
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    const parsed: unknown = raw === null ? null : JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null && REMOVED_KEYS.some((key) => key in parsed)) {
+      const kept = Object.fromEntries(Object.entries(parsed).filter(([key]) => !REMOVED_KEYS.includes(key)));
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(kept));
+    }
+  } catch { /* left for the next load */ }
   // read as the page's boot script reads them (themeBoot.ts), so React starts on the row the first frame showed
   const stored = readStoredAppearance(() => window.localStorage);
   const settings = stored.main === null ? DEFAULT_SETTINGS : sanitizeSettings(stored.main.value);
@@ -563,6 +635,7 @@ export function applyToDocument(settings: Settings, entry: ThemeEntry, language:
   else root.style.backgroundColor = entry.bg;
   root.dataset["density"] = settings.density;
   root.dataset["chatWidth"] = settings.chatWidth;
+  root.dataset["motion"] = settings.smoothMotion ? "smooth" : "stepped";
   // src/components/AgentMark.css keys the mono logos on it
   root.dataset["marks"] = settings.agentMarks;
   // src/styles.css multiplies every --fs-* token but --fs-input by this: the interface's body size over the density's

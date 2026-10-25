@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
-import { composerUsage, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, orderProviders, providerForAgent, statusWindows, tightestWindow, usageName, windowLabel } from "./usage.ts";
+import { closestFirst, composerUsage, groupWindow, planLabel, planWeight, providerGroups, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, newOmniRouteProviders, orderProviders, providerForAgent, providerMark, providerName, shownUsages, statusWindows, tightestWindow, usageName, viaOmniRoute, windowLabel } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const window = (used_percent: number, kind: UsageWindow["kind"] = "week", scope: string | null = null): UsageWindow => ({ kind, scope, used_percent, resets_at: null, starts_at: null });
@@ -88,5 +88,94 @@ describe("usage meters", () => {
     expect(windowLabel(window(1, "week", "Sonnet"))).toBe("Weekly · Sonnet");
     expect(windowLabel(window(1, "month", "Premium"))).toBe("Monthly · Premium");
     expect(windowLabel(window(1, "month", "Cursor models"))).toBe("Monthly · Cursor models");
+  });
+});
+
+describe("OmniRoute accounts", () => {
+  const own = provider("claude", [window(10)], "me");
+  const viaClaude: ProviderUsage = { ...provider("claude", [window(90)]), key: "claude:omniroute:c1", account: "work" };
+  const viaGlm: ProviderUsage = { ...provider("glm", [window(40, "session")]), key: "glm:omniroute:g1" };
+
+  it("names providers herdr does not know, and gives them a lettered mark", () => {
+    expect(providerName("glm")).toBe("GLM");
+    expect(providerName("kimi-coding")).toBe("Kimi");
+    expect(providerName("acme-cloud")).toBe("Acme Cloud");
+    expect(providerName("copilot")).toBe("GitHub Copilot");
+    expect(providerMark("antigravity")).toBe("agy");
+    expect(providerMark("glm")).toBe("glm");
+    expect(usageName(viaGlm)).toBe("GLM");
+  });
+
+  it("tells an OmniRoute account from this PC's", () => {
+    expect([own, viaClaude, viaGlm].map(viaOmniRoute)).toEqual([false, true, true]);
+  });
+
+  it("shows this PC's accounts unless hidden, and OmniRoute's only for providers chosen", () => {
+    const all = [own, viaClaude, viaGlm];
+    expect(shownUsages(all, { order: [], hidden: [], shown: [] }).map((usage) => usage.key)).toEqual(["claude:me"]);
+    expect(shownUsages(all, { order: [], hidden: [], shown: ["glm"] }).map((usage) => usage.key)).toEqual(["claude:me", "glm:omniroute:g1"]);
+    expect(shownUsages(all, { order: [], hidden: ["glm:omniroute:g1"], shown: ["glm", "claude"] }).map((usage) => usage.key)).toEqual(["claude:me", "claude:omniroute:c1"]);
+  });
+
+  it("the providers OmniRoute reports that Settings has not offered yet, once each", () => {
+    expect(newOmniRouteProviders([own, viaClaude, viaGlm, { ...viaGlm, key: "glm:omniroute:g2" }], [])).toEqual(["claude", "glm"]);
+    expect(newOmniRouteProviders([own, viaClaude, viaGlm], ["claude"])).toEqual(["glm"]);
+  });
+
+  it("closest to its limit first, by each account's tightest window; ties keep their order", () => {
+    const a = provider("codex", [window(20), window(70, "session")], "a");
+    const b = provider("codex", [window(50)], "b");
+    const c = provider("codex", [], "c");
+    const d = provider("codex", [window(50)], "d");
+    expect(closestFirst([c, b, a, d]).map((usage) => usage.account)).toEqual(["a", "b", "d", "c"]);
+  });
+});
+
+describe("planLabel", () => {
+  it("names a plan the way its provider sells it, short enough for a pill", () => {
+    expect(planLabel("default_claude_max_20x", "claude")).toBe("Max 20x");
+    expect(planLabel("claude_pro", "claude")).toBe("Pro");
+    expect(planLabel("default_raven", "claude")).toBe("Raven");
+    expect(planLabel("OpenCode Go", "opencode")).toBe("Go");
+    expect(planLabel("business", "copilot")).toBe("Business");
+    expect(planLabel("max", "claude")).toBe("Max");
+  });
+  it("shows no pill for an empty plan or one that only repeats the provider", () => {
+    expect(planLabel(null, "claude")).toBeNull();
+    expect(planLabel("  ", "claude")).toBeNull();
+    expect(planLabel("OpenCode", "opencode")).toBeNull();
+    expect(planLabel("default", "claude")).toBeNull();
+  });
+});
+
+describe("one chip per provider", () => {
+  const plan = (usage: ProviderUsage, name: string): ProviderUsage => ({ ...usage, plan: name });
+  it("groups a provider's accounts in the order its first one is shown", () => {
+    const a = provider("codex", [window(10)], "a@x"), b = provider("claude", [window(20)], "b@x"), c = provider("codex", [window(30)], "c@x");
+    expect(providerGroups([a, b, c])).toEqual([[a, c], [b]]);
+    expect(providerGroups([a, b, c], "account")).toEqual([[a], [b], [c]]);
+  });
+  it("weighs each account by its plan's size: a Max 20x counts four times a Max 5x", () => {
+    const big = plan(provider("claude", [window(10)], "a"), "default_claude_max_20x");
+    const small = plan(provider("claude", [window(90)], "b"), "default_claude_max_5x");
+    expect(planWeight(big)).toBe(20);
+    expect(planWeight(small)).toBe(5);
+    expect(groupWindow([big, small], "week")?.used_percent).toBe(26);
+  });
+  it("weighs Copilot by its monthly premium requests, and an unknown plan as 1", () => {
+    expect(planWeight(plan(provider("copilot", []), "Copilot Pro"))).toBe(300);
+    expect(planWeight(plan(provider("copilot", []), "Copilot Pro+"))).toBe(1500);
+    expect(planWeight(plan(provider("copilot", []), "free"))).toBe(50);
+    expect(planWeight(plan(provider("opencode", []), "OpenCode Go"))).toBe(1);
+    expect(planWeight(provider("codex", []))).toBe(1);
+  });
+  it("same-plan accounts average plainly; an account without the limit is left out", () => {
+    expect(groupWindow([provider("codex", [window(20)], "a"), provider("codex", [window(60)], "b")], "week")?.used_percent).toBe(40);
+    expect(groupWindow([provider("codex", [window(20)], "a"), provider("codex", [], "b")], "week")?.used_percent).toBe(20);
+    expect(groupWindow([provider("codex", [], "a")], "week")).toBeNull();
+  });
+  it("a single account is its own window", () => {
+    const one = provider("claude", [window(22, "session"), window(84)], "a");
+    expect(groupWindow([one], "session")).toEqual(window(22, "session"));
   });
 });

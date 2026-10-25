@@ -17,7 +17,7 @@ import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 
 const RECENT_MAX = 3;
-const recentKey = (machineId: string, session: string): string => `herdr-web-ui:host-attached:${machineId}:${session}`;
+const recentKey = (machineId: string, session: string): string => `ovis:host-attached:${machineId}:${session}`;
 
 /** the chat's last few sent file paths (an "@" or folder pick), newest first */
 export function recentAttached(machineId: string, session: string): string[] {

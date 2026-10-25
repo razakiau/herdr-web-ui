@@ -1,3 +1,4 @@
+import { FILE_EXTENSIONS, FILE_NAMES, LIGHT_FILE_EXTENSIONS, LIGHT_FILE_NAMES } from "./fileIcons.generated.ts";
 import { pathParts } from "./filePaths.ts";
 
 /**
@@ -67,4 +68,39 @@ export function fileIconKind(path: string): FileIconKind {
 /** The kind of glyph for a folder, from its name. */
 export function folderIconKind(name: string): FolderIconKind {
   return name === ".git" ? "git" : "folder";
+}
+
+// the Material icon for each kind, for a name the theme's tables do not know
+const KIND_ICONS: Record<FileIconKind, string> = {
+  file: "file", code: "file", json: "json", config: "settings", text: "document", image: "image", video: "video",
+  audio: "audio", archive: "zip", shell: "console", lock: "lock", diff: "diff", font: "font", key: "key",
+  binary: "exe", spreadsheet: "table",
+};
+
+/**
+ * The Material Icon Theme icon VS Code's explorer draws for the file at the end of `path`
+ * (lib/fileIcons.generated.ts, from material-icon-theme): its whole name first, then each of its
+ * dotted endings, longest first (`a.test.ts` tries `test.ts`, then `ts`), all case-insensitively,
+ * each in the light theme's variant when `light` and the theme has one. A name the tables do not
+ * know falls back to its kind's icon (`.zshrc` a console, `.env` a settings file).
+ */
+export function fileIcon(path: string, light = false): string {
+  const { stem, extension } = pathParts(path.toLowerCase());
+  const name = stem + extension;
+  const named = (light ? LIGHT_FILE_NAMES[name] : undefined) ?? FILE_NAMES[name];
+  if (named !== undefined) return named;
+  for (let dot = name.indexOf(".", 1); dot >= 0 && dot < name.length - 1; dot = name.indexOf(".", dot + 1)) {
+    const ending = name.slice(dot + 1);
+    const icon = (light ? LIGHT_FILE_EXTENSIONS[ending] : undefined) ?? FILE_EXTENSIONS[ending];
+    if (icon !== undefined) return icon;
+  }
+  if (name === ".env") return "tune";
+  if (name.startsWith("dockerfile.")) return "docker";
+  return KIND_ICONS[fileIconKind(path)];
+}
+
+/** The Material icon for a folder: the theme's plain folder, and its git folder for `.git`, each open or shut. */
+export function folderIcon(name: string, open = false): string {
+  const icon = folderIconKind(name) === "git" ? "folder-git" : "folder";
+  return open ? `${icon}-open` : icon;
 }

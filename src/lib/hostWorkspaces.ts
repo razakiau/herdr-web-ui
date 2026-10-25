@@ -304,7 +304,7 @@ export function withOrder(stored: HostWorkspaceState, machineId: string, order: 
   return { ...stored, [machineId]: { ...was, order: [...order] } };
 }
 
-const STORAGE_KEY = "herdr-web-ui:host-workspaces";
+const STORAGE_KEY = "ovis:host-workspaces";
 
 function storage(): Storage | null {
   try { return typeof localStorage === "undefined" ? null : localStorage; }
