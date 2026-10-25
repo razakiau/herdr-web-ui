@@ -134,6 +134,10 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
         archived: (summary.status & SessionStatus.IsArchived) !== 0,
         ...where,
       };
+      // what it is doing now, in the host's words (its intent, a command's progress): only while it works,
+      // as a word kept from a finished turn would read as current
+      const activity = summary.activity?.trim();
+      if (activity && row.status === "working") row.activity = activity;
       const forks = (summary.chats ?? []).filter((chat) => chat.resource !== summary.defaultChat
         && chat.interactivity !== ChatInteractivity.Hidden && (chat.origin === undefined || chat.origin.kind === ChatOriginKind.Fork || chat.origin.kind === ChatOriginKind.User));
       return [row, ...forks.map((chat): HostChatRow => {

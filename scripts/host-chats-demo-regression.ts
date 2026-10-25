@@ -167,7 +167,7 @@ const patch = `(() => {
   // the PC's agent host stops (VS Code closed) and comes back: its state and list say so
   window.setHostDown = (down) => { state.hostDown = down; push({ type: "host-chat-state", host: down ? { state: "no_server" } : { state: "connected", signed_in: true, protocol: "1.0.0" } }); };
   // a turn that ends takes its steering and queued messages with it, as a host does
-  window.setHostBusy = (busy) => { state.busy = busy; if (!busy) state.pending = []; push({ type: "host-chat-changed", session: SESSION }); };
+  window.setHostBusy = (busy) => { state.busy = busy; if (!busy) state.pending = []; push({ type: "host-chat-changed", session: SESSION }); push({ type: "host-chat-changed", session: null }); };
   // a turn made on the PC: only its push tells the phone
   window.rereadHost = () => push({ type: "host-chat-changed", session: SESSION });
   window.pushHostTurn = (text) => { state.pushed.push(text); push({ type: "host-chat-changed", session: SESSION }); };
@@ -207,7 +207,7 @@ const patch = `(() => {
       if (state.hostDown && (path === "/api/host-chats/state" || path === "/api/host-chats/chats")) return path.endsWith("/state") ? json({ host: { state: "no_server" } }) : json({ error: { code: "agent_host_down", message: "FICTIONAL the agent host is down" }, host: { state: "no_server" } }, 503);
       if (path === "/api/host-chats/state") return json({ host: { state: "connected", signed_in: true, protocol: "1.0.0" } });
       if (path === "/api/host-chats/chats") return json({ chats: edited([
-        { session: SESSION, title: "FICTIONAL build chat", status: SIX || state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo", unread: false, archived: false },
+        { session: SESSION, title: "FICTIONAL build chat", status: SIX || state.answered ? (state.busy ? "working" : "idle") : "asks", modified_at: at(2), cwd: "/tmp/fictional-repo", unread: false, archived: false, ...(state.busy ? { activity: "FICTIONAL running the tests" } : {}) },
         { session: "fictional-session-0", title: "FICTIONAL docs chat", status: "idle", modified_at: at(60 * 30), cwd: "/tmp/fictional-docs", unread: false, archived: false, ...(sessionStorage.getItem("fictional-worktrees") === "1" ? { branch: "main" } : {}) },
         // 20 days old: only "All agents on Build PC…" lists it
         { session: "fictional-session-old", title: "FICTIONAL old release notes", status: "idle", modified_at: at(60 * 24 * 20), cwd: "/tmp/fictional-repo", unread: false, archived: false },
@@ -1378,6 +1378,8 @@ try {
         // 5. a busy chat: VS Code's send menu. Send steers by default, a second steer joins the first,
         // Add to Queue waits for the turn, and Stop and Send ends the turn and sends
         await page.evaluate(() => (window as unknown as { setHostBusy(busy: boolean): void }).setHostBusy(true));
+        // its row says what it does, in the host's words (SessionSummary.activity), as VS Code's Sessions list
+        await page.locator(`.host-chat-item[data-host-session="${SESSION}"] .agent-now`, { hasText: "FICTIONAL running the tests" }).waitFor({ state: "attached" });
         assert.equal(await view.locator(".composer-send-menu").count(), 0, "no send menu while the box is empty");
         // steering by voice: a busy chat's empty box offers the mic beside Stop, no typed character first (owner, ZAC-207)
         await view.locator(".composer-stop").waitFor();

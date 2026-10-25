@@ -29,6 +29,8 @@ export interface HostChatRow {
   detached?: boolean;
   /** the host was given no folder: `cwd` is the parent of its scratch folders, one row for all of them */
   no_folder?: boolean;
+  /** what it is doing now, in the host's words (SessionSummary.activity), only while it works; absent before bundle 1061 */
+  activity?: string;
 }
 
 /**

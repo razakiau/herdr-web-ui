@@ -346,6 +346,18 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("rowsFrom says what a working chat is doing, the host's activity, and nothing for one at rest", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const summary = (n: number, status: number, activity?: string | null): SessionSummary => ({
+      resource: `copilotcli:/${n}`, provider: "copilotcli", title: `FICTIONAL_${n}`, status, createdAt: AT, modifiedAt: at, ...(activity === undefined ? {} : { activity }),
+    } as SessionSummary);
+    const rows = rowsFrom([summary(1, 8, "Running the fictional tests"), summary(2, 1, "a stale word"), summary(3, 8, "  "), summary(4, 8), summary(5, 8, null)]);
+    // VS Code's summary notifier sends `activity: null` when it clears
+    expect(rows.map((row) => [row.session, row.activity])).toEqual([
+      ["copilotcli:/1", "Running the fictional tests"], ["copilotcli:/2", undefined], ["copilotcli:/3", undefined], ["copilotcli:/4", undefined], ["copilotcli:/5", undefined],
+    ]);
+  });
+
   it("rowsFrom_names_a_worktree_folders_repo: the host's project, when it is a local folder other than the chat's own", () => {
     const at = "2026-01-01T00:00:00.000Z";
     const summary = (n: number, cwd: string, project?: string): SessionSummary => ({

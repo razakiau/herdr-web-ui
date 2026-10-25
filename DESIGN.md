@@ -1079,7 +1079,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   tab (only when the workspace has two or more tabs or the tab was renamed, and never when it repeats
   the workspace), then what it does now (`.agent-now`, lib/agentNow.ts): **Waiting for you** in
   `--status-blocked` when it asks, else its plan's current step and `done/total`, which then takes
-  the plan badge's place. An agent with a live name follows the PC with it in `--font-mono` and
+  the plan badge's place. A host chat's row says, while it works, the host's own word for what it
+  does (`SessionSummary.activity`: its intent, a command's progress, as VS Code's Sessions list
+  shows; lib/agentNow.ts hostChatNow), kept live by the host's summary changes and dropped at rest,
+  so a word from a finished turn never reads as current. An agent with a live name follows the PC with it in `--font-mono` and
   `--text` (`.agent-name`); the kind takes the label's place beside it, and the tooltip keeps the
   name. A row that works or asks draws its title in `--text-strong` medium; one at rest stays plain.
   Its background-task count and compact status sit at the right; under the status, how long the

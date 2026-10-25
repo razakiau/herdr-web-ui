@@ -7,7 +7,7 @@ import { paneTokenValues } from "../../shared/pane-tokens.ts";
 import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
-import { agentNow, type AgentNow } from "../lib/agentNow.ts";
+import { agentNow, hostChatNow, type AgentNow } from "../lib/agentNow.ts";
 import { sinceOf, type Since } from "../lib/since.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentRoster, byAttention, type AgentRow } from "../lib/agentRoster.ts";
@@ -260,7 +260,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
       onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
       <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, subtitle, chat.cwd].filter(Boolean).join("\n")} onClick={() => onSelectHostChat?.({ machineId: machine.id, session: chat.session })}>
-        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={place} context={context} tokens={[]} status={hostChatStatus(chat)} now={chat.status === "asks" ? { text: t("Waiting for you"), tone: "ask" } : null} />
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={place} context={context} tokens={[]} status={hostChatStatus(chat)} now={hostChatNow(chat, t)} />
       </button>
       <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
