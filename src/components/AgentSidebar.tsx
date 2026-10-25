@@ -126,7 +126,7 @@ export function SummaryMarks({ parts, indicators }: { parts: readonly SummaryPar
   const { settings } = useSettings();
   const style = indicators ?? settings.statusIndicators;
   return <>{parts.map((part) => <span key={part.status} className="agent-summary-part" data-status={part.status} title={part.text}>
-    <span className="badge sidebar-status agent-summary-mark" data-status={part.status} aria-hidden="true">
+    <span className={`badge badge-${part.status} sidebar-status agent-summary-mark`} data-status={part.status} aria-hidden="true">
       {style !== "classic" && <span className="sidebar-status-glyph" onAnimationStart={part.status === "working" ? alignBreath : undefined}>{indicatorGlyph(part.status, style)}</span>}
       {style === "classic" && part.status === "blocked" && <span className="sidebar-status-mark" aria-hidden="true">?</span>}
       {style === "classic" && part.status !== "blocked" && <span className="sidebar-status-dot" aria-hidden="true" onAnimationStart={part.status === "working" ? alignBreath : undefined} />}

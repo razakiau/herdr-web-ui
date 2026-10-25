@@ -53,6 +53,8 @@ describe("agentsSummary", () => {
     expect(classic).toContain('class="sidebar-status-mark" aria-hidden="true">?</span>');
     expect(classic).toMatch(/data-status="done"[^>]*>(<[^>]+>)*<span class="sidebar-status-dot"/);
     expect(head("dots")).toContain("sidebar-status-glyph");
+    // each mark in its state's colour, as a row's badge is (styles.css .badge-<status>)
+    for (const status of ["working", "blocked", "done"]) expect(classic).toContain(`class="badge badge-${status} sidebar-status agent-summary-mark"`);
     // a decoration beside the words: no live region per mark
     expect(classic).not.toContain('role="status"');
   });

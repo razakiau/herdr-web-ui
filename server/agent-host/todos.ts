@@ -108,14 +108,18 @@ export function readSessionTodos(session: string, home: string = defaultCopilotH
 
 /**
  * The list as VS Code's todo widget keeps it: it clears at each request and on a cancel, so the bar shows
- * the todos the newest message's turn wrote, plus older ones still open (work carried over), and none
- * once that turn was stopped. `since`: that turn's start (ms), null for the whole list. The table's times
- * are whole seconds, so the cut is the turn's second.
+ * the todos the newest message's turn wrote, plus older plans still open (work carried over), and none
+ * once that turn was stopped. A plan is the todos written in one second (the agent writes its list in
+ * one call: in the owner's stores every plan shares one created_at, e.g. T1-T10 + final review) and
+ * stays whole while any of it is open: dropping its checked items read as T1-T3 vanishing beside T4
+ * (owner, ZAC-233). `since`: that turn's start (ms), null for the whole list. The table's times are
+ * whole seconds, so the cut is the turn's second.
  */
 export function todosSince(todos: readonly StoredTodo[], since: number | null, cancelled: boolean): HostTodo[] {
   if (cancelled && since !== null) return [];
   const cut = since === null ? null : Math.floor(since / 1000) * 1000;
+  const open = new Set(todos.filter((todo) => todo.status !== "done").map((todo) => todo.created));
   return todos
-    .filter((todo) => cut === null || todo.created === null || todo.created >= cut || todo.status !== "done")
+    .filter((todo) => cut === null || todo.created === null || todo.created >= cut || open.has(todo.created))
     .map(({ created: _created, ...todo }) => todo);
 }

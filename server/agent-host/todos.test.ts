@@ -121,8 +121,16 @@ describe("todosSince (VS Code clears the list at each request)", () => {
     todo("new-open", "pending", at("2026-10-25T12:00:05Z")),
   ];
 
-  test("the newest message's todos, and older ones still open; done ones from before it go", () => {
-    expect(todosSince(list, at("2026-10-25T12:00:00Z"), false).map((row) => row.id)).toEqual(["old-open", "old-going", "new-done", "new-open"]);
+  test("the newest message's todos, and older plans still open, whole; a plan all done before it goes", () => {
+    expect(todosSince(list, at("2026-10-25T12:00:00Z"), false).map((row) => row.id)).toEqual(["old-done", "old-open", "old-going", "new-done", "new-open"]);
+    const finished = [todo("a1", "done", at("2026-10-25T09:00:00Z")), todo("a2", "done", at("2026-10-25T09:00:00Z")), ...list];
+    expect(todosSince(finished, at("2026-10-25T12:00:00Z"), false).map((row) => row.id)).not.toContain("a1");
+  });
+
+  test("a plan written in one go stays together: T1-T3 checked beside T4 still going (owner, ZAC-233)", () => {
+    const plan = at("2026-10-25T10:00:00Z");
+    const rows = ["t1", "t2", "t3", "t4", "t5"].map((id, i) => todo(id, i < 3 ? "done" : i === 3 ? "in_progress" : "pending", plan));
+    expect(todosSince(rows, at("2026-10-25T12:00:00Z"), false).map((row) => row.id)).toEqual(["t1", "t2", "t3", "t4", "t5"]);
   });
 
   test("the whole list without a turn to cut at, as before", () => {

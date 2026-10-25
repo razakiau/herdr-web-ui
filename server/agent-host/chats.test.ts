@@ -543,7 +543,7 @@ describe("what a host chat waits on, and its context", () => {
       .not.toBe(readFrom("s", "t", chat({}), { ...base, todos: () => done }).signature);
   });
 
-  it("a read's todos start over at each message, as VS Code's list: that turn's, older open ones, none once it was stopped", () => {
+  it("a read's todos start over at each message: that turn's, older plans still open (whole), none once it was stopped", () => {
     const base = { chat: () => undefined, modelName: (id: string) => id };
     const at = (iso: string) => Date.parse(iso);
     const rows = [
@@ -555,9 +555,9 @@ describe("what a host chat waits on, and its context", () => {
     const turn = (id: string, startedAt: string, state = "complete") => ({ id, startedAt, state, message, responseParts: [] });
     const ids = (read: { todos?: { id: string }[] }) => read.todos?.map((todo) => todo.id);
     // running: the active turn's start cuts
-    expect(ids(readFrom("s", "t", chat({ turns: [turn("t1", "2026-01-01T09:00:00Z")], activeTurn: { id: "t2", startedAt: "2026-01-01T10:00:00Z", message, responseParts: [] } }), { ...base, todos: () => rows }))).toEqual(["old-open", "new"]);
+    expect(ids(readFrom("s", "t", chat({ turns: [turn("t1", "2026-01-01T09:00:00Z")], activeTurn: { id: "t2", startedAt: "2026-01-01T10:00:00Z", message, responseParts: [] } }), { ...base, todos: () => rows }))).toEqual(["old-done", "old-open", "new"]);
     // at rest: the newest turn's
-    expect(ids(readFrom("s", "t", chat({ turns: [turn("t1", "2026-01-01T09:00:00Z"), turn("t2", "2026-01-01T10:00:00Z")] }), { ...base, todos: () => rows }))).toEqual(["old-open", "new"]);
+    expect(ids(readFrom("s", "t", chat({ turns: [turn("t1", "2026-01-01T09:00:00Z"), turn("t2", "2026-01-01T10:00:00Z")] }), { ...base, todos: () => rows }))).toEqual(["old-done", "old-open", "new"]);
     // stopped: none
     expect(readFrom("s", "t", chat({ turns: [turn("t2", "2026-01-01T10:00:00Z", "cancelled")] }), { ...base, todos: () => rows })).not.toHaveProperty("todos");
     // the time never reaches the client
