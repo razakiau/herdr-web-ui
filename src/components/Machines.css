@@ -31,12 +31,21 @@
   padding: 0 var(--side-gutter);
 }
 
+/* the name row is the PC's fold (MachineSidebar.tsx): a button drawn as the title it was */
 .machine-title {
   display: flex;
   align-items: center;
   flex: 1 1 auto;
   min-width: 0;
   min-height: var(--side-row);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
   color: var(--text-strong);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
@@ -79,42 +88,14 @@
 /* the + fills the rows' status cell */
 .machine-new { width: var(--side-box); }
 
-/* An SSH PC's manage button, and a kept PC's put-back (into Other PCs), take no room until the
-   header is hovered or focused, the manage panel is open or the PC is not connected. Both stay in
-   the focus order; a touch screen shows them. */
-.machine-manage,
-.machine-put-back {
-  width: 0;
-  overflow: hidden;
-  opacity: 0;
-}
-
-.machine-header:focus-within > .machine-put-back,
-.machine-header:focus-within > .machine-manage,
-.machine-manage[aria-expanded="true"],
-.machine-group.is-offline .machine-manage {
-  width: var(--side-action);
-  overflow: visible;
-  opacity: 1;
-}
-
+/* the caret in the monitor's place: dim, a notch up on hover and focus, as the Agents head's */
+.machine-caret { color: var(--text-dim); }
+.machine-title:focus-visible { outline-offset: calc(var(--ring-offset) * -1); }
 @media (hover: hover) {
-  .machine-header:hover > .machine-put-back,
-  .machine-header:hover > .machine-manage {
-    width: var(--side-action);
-    overflow: visible;
-    opacity: 1;
-  }
+  .machine-title:hover .machine-caret { color: var(--text); }
 }
 
 @media (pointer: coarse) {
-  .machine-put-back,
-  .machine-manage {
-    width: var(--side-action);
-    overflow: visible;
-    opacity: 1;
-  }
-
   .machine-new {
     width: var(--touch-target);
     height: var(--touch-target);
@@ -164,7 +145,8 @@
 
 /* "Other PCs (n)": the PCs not in use, folded as the Agents list folds (AgentSidebar.css) */
 .other-pcs { padding: var(--space-2) var(--side-gutter) 0; }
-.other-pcs-toggle { gap: 0; width: 100%; }
+/* the whole row (AgentSidebar.css sizes the Agents toggle to its words): the count then reaches the right edge */
+.agent-section-toggle.other-pcs-toggle { flex: 1 1 auto; gap: 0; width: 100%; }
 .other-pcs-label { flex: none; color: var(--text); }
 /* while folded, who is in it, dim after the label */
 .other-pcs-names { min-width: 0; margin-left: var(--space-2); overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
@@ -186,7 +168,9 @@
 }
 .other-pcs-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .other-pcs-state { flex: none; color: var(--text-dim); font-size: var(--fs-sm); }
-.other-pcs-dots { display: inline-flex; gap: var(--space-1); margin-left: auto; padding-right: var(--space-2); }
+/* the count sits in the rows' status column, the head's and each row's on one right edge, never against
+   the label (the owner, 2026-10-25: "Other PCs (8)● 1") */
+.other-pcs-dots { display: inline-flex; flex: none; gap: var(--space-2); margin-left: auto; padding-left: var(--space-4); }
 .other-pcs-dot {
   display: inline-flex;
   align-items: center;

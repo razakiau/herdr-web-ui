@@ -1037,8 +1037,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   then carries its asking dot. Keeping a PC open takes it off the folded list and folding it takes
   it off the kept one. Everything else folds. Folded, **Other PCs** names its first two PCs dim after
   its label (`services, node2 +6`).
-- A PC's header is the head of its workspaces, and the caret beside its `+` is the one fold over
-  them. The roster has no label or fold of its own.
+- A PC's header is the head of its workspaces, and its name row is the one fold over them: a caret
+  in the monitor's place, then the name, its **Host** tag and its state dot. The rest is in words
+  behind one ⋯ (**Move to Other PCs**, **Manage PC** for an SSH PC, which opens its panel under the
+  head), shown only when it holds something, and the `+` stays at the end (the owner, 2026-10-25:
+  sliders, put-back, caret and `+` side by side cut the name to `sparklin-b…` on a phone). **Other
+  PCs**' counts sit at its right edge, in the rows' status column, never against its label. The
+  roster has no label or fold of its own.
 - A repository's parent row keeps `workspace.label`; its opened linked
   worktree rows show their actual checkout branches. Each row's compact status
   glyph rolls up all of the workspace's panes as herdr does (blocked, then done, then working,
@@ -1047,7 +1052,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   selected pane in that workspace, else the last viewed pane, else the pane herdr has focused,
   else its first pane. Tabs are selected from the tab strip; panes are selected on the canvas or from the command palette.
 - A top-level workspace row starts with its project's icon in the grid's leading cell, under the
-  PC's monitor, or a folder glyph when its folder keeps none; the row's mark and name follow it.
+  PC's caret, or a folder glyph when its folder keeps none; the row's mark and name follow it.
   For a repository workspace with linked worktree workspaces that cell is the group's fold, a
   button (`.workspace-toggle`) in `--text`: the folder (no icon) is open while the worktrees show
   and closed while they are folded, when a dim `+N` after the name counts the checkouts put away;

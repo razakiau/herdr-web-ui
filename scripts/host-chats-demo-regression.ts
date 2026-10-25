@@ -1799,7 +1799,7 @@ try {
         await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
         console.log("PASS a Copilot folder pins from its row's ⋯ into Pinned, and unpins from the header's");
 
-        // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row has no ⋯): search finds the
+        // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row's ⋯ is the PC's own): search finds the
         // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
         const drawerOpen = async () => {
           if (await page.locator("#workspace-drawer.is-open").count() === 0) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
@@ -1809,7 +1809,8 @@ try {
           await page.locator(".agents-sidebar").getByRole("button", { name: "More for Agents", exact: true }).click();
         };
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-        assert.equal(await remoteGroup.locator(".machine-header").getByRole("button", { name: "More for Build PC" }).count(), 0, "a PC row keeps sliders, fold and + only");
+        // a PC's head: its name is the fold, its ⋯ holds Manage and the put-back, its + stays (the owner, 2026-10-25)
+        assert.deepEqual(await remoteGroup.locator(".machine-header > button").evaluateAll((buttons) => buttons.map((button) => button.className.split(" ").find((name) => ["machine-toggle", "machine-menu", "machine-new"].includes(name)))), ["machine-toggle", "machine-menu", "machine-new"], "a PC row is its name's fold, a ⋯ and a +");
         await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
         await agentsMenu();
         await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
@@ -2527,11 +2528,42 @@ try {
         await six.getByRole("button", { name: "Open workspace list", exact: true }).click();
         await six.getByRole("region", { name: "PC FICTIONAL PC D", exact: true }).waitFor();
         assert.equal(await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).count(), 1, "and both stay open on this device after a reload");
-        // put back from its header, it folds into Other PCs again
-        await six.getByRole("button", { name: "Move FICTIONAL PC C to Other PCs", exact: true }).click();
-        await six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true }).waitFor({ state: "detached" });
+        // the PC's head (the owner, 2026-10-25: four icons cut its name): the name row is the fold, one ⋯ holds
+        // the rest, the + stays
+        const pcC = six.getByRole("region", { name: "PC FICTIONAL PC C", exact: true });
+        assert.equal(await pcC.locator(".machine-header .machine-manage, .machine-header .machine-put-back").count(), 0, "no icon per action on the head");
+        assert.equal(await pcC.locator(".machine-header > button").count(), 3, "the name's fold, the ⋯ and the +");
+        assert.ok(await pcC.locator(".machine-name").evaluate((name) => name.scrollWidth <= name.clientWidth), "the PC's name is whole at 390 px");
+        await pcC.locator(".machine-toggle").click();
+        assert.equal(await pcC.locator(".machine-toggle").getAttribute("aria-expanded"), "false", "a tap on the name folds the PC");
+        await pcC.locator(".machine-toggle").click();
+        // put back from its ⋯, it folds into Other PCs again
+        const putBack = async (name: string) => {
+          await six.getByRole("region", { name: `PC ${name}`, exact: true }).getByRole("button", { name: `More for ${name}`, exact: true }).click();
+          await six.locator('[data-item="put-back"]').click();
+          await six.getByRole("region", { name: `PC ${name}`, exact: true }).waitFor({ state: "detached" });
+          await six.waitForTimeout(600);
+          assert.equal(await six.locator(".row-sheet-item, .menu-item").filter({ hasText: "Move to Other PCs" }).count(), 0, "the menu goes with the PC it was about");
+        };
+        await putBack("FICTIONAL PC C");
         assert.equal(await six.getByRole("region", { name: "Other PCs", exact: true }).locator('.other-pcs-item[data-machine="pc-c"]').count(), 1, "it is a row of the fold again");
-        assert.equal(await six.getByRole("button", { name: "Move Laptop to Other PCs", exact: true }).count(), 0, "the PC in use has no put-back: it is always open");
+        // the PC in use has no put-back (it is always open), and as the Host it has no Manage: no ⋯ at all
+        assert.equal(await six.getByRole("region", { name: "PC Laptop", exact: true }).getByRole("button", { name: "More for Laptop", exact: true }).count(), 0, "the PC in use has no put-back: it is always open");
+        // a PC that asks, put back: the fold's count sits at the right edge, in the rows' status column, not
+        // against its label (the owner's "Other PCs (8)● 1")
+        await six.evaluate(() => (window as unknown as { askOnPcE(): void }).askOnPcE());
+        await six.getByRole("region", { name: "PC FICTIONAL PC E", exact: true }).waitFor();
+        await six.locator(".droplet-close").click().catch(() => {});
+        await putBack("FICTIONAL PC E");
+        const otherPcs = six.getByRole("region", { name: "Other PCs", exact: true });
+        await otherPcs.locator('.other-pcs-item[data-machine="pc-e"] .other-pcs-dot').waitFor();
+        const place = await otherPcs.evaluate((region) => {
+          const box = (selector: string) => region.querySelector(selector)!.getBoundingClientRect();
+          return { label: box(".other-pcs-label").right, head: box(".other-pcs-toggle .other-pcs-dots").left, headRight: box(".other-pcs-toggle .other-pcs-dots").right, rowRight: box('.other-pcs-item[data-machine="pc-e"] .other-pcs-dots').right };
+        });
+        assert.ok(Math.abs(place.headRight - place.rowRight) <= 2, `the fold's count lines up with its rows' (${place.headRight} vs ${place.rowRight})`);
+        assert.ok(place.head - place.label >= 16, `the fold's count stands apart from its label (${place.head - place.label} px)`);
+        if (shots) { await six.evaluate(() => document.querySelector(".machine-list, .sidebar-list")?.scrollTo(0, 0)); await six.screenshot({ path: join(shots, "pc-head-and-fold-390.png") }); }
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS six PCs: Other PCs folds the ones not in use, the one that needs you stays open, and the fold is remembered");
         console.log("PASS a host chat that asks drops in as an in-app alert");

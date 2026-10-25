@@ -11,6 +11,12 @@ import { chromium, type Locator, type Page } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
 import { prepareMachineControlsDemo } from "./sidebar-machine-controls-fixture.ts";
 
+/** A PC's Manage panel is behind its head's ⋯ now (the owner, 2026-10-25): open the menu, pick Manage. */
+const manageOf = (group: Locator) => ({
+  click: async () => { await group.locator(".machine-menu").click(); await group.page().locator('[data-item="manage"]').click(); },
+  tap: async () => { await group.locator(".machine-menu").tap(); await group.page().locator('[data-item="manage"]').tap(); },
+});
+
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-machine-layout-"));
 const evidenceDir = process.env.UI_EVIDENCE_DIR;
 const geometryOnly = process.argv.includes("--geometry-only") || process.env.SIDEBAR_GEOMETRY_ONLY === "1";
@@ -190,8 +196,7 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
     await remoteGroup.waitFor({ state: "attached" });
 
     if (geometryOnly) {
-      if (!scenario.touch) await remoteGroup.locator(".machine-header").hover();
-      const manage = remoteGroup.locator(".machine-manage");
+      const manage = manageOf(remoteGroup);
       if (scenario.touch) await manage.tap();
       else await manage.click();
       const controls = remoteGroup.locator(".machine-controls");
@@ -205,12 +210,11 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
 
     const host = machineGroup(page, "workstation");
     await host.waitFor({ state: "attached" });
-    assert.equal(await host.locator(".machine-manage").count(), 0, `${scenario.name} local host has no Manage button`);
+    assert.equal(await host.locator(".machine-menu").count(), 0, `${scenario.name} local host has no Manage (nor a ⋯ with nothing in it)`);
     assert.ok((await host.locator(".machine-kind").textContent() ?? "").trim().length > 0, `${scenario.name} local host has a localized kind label`);
 
     const managed = machineGroup(page, MANAGED_NAME);
-    if (!scenario.touch) await managed.locator(".machine-header").hover();
-    const managedManage = managed.locator(".machine-manage");
+    const managedManage = manageOf(managed);
     if (scenario.touch) await managedManage.tap();
     else await managedManage.click();
     const managedControls = managed.locator(".machine-controls");
@@ -223,8 +227,7 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
     else await managedManage.click();
     await managedControls.waitFor({ state: "detached" });
 
-    if (!scenario.touch) await remoteGroup.locator(".machine-header").hover();
-    const remoteManage = remoteGroup.locator(".machine-manage");
+    const remoteManage = manageOf(remoteGroup);
     if (scenario.touch) await remoteManage.tap();
     else await remoteManage.click();
     const controls = remoteGroup.locator(".machine-controls");
@@ -259,7 +262,7 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
         return hooks.observerRoster(index)?.some((machine) => machine.id === "sidebar-fixture");
       }, observer);
 
-      const remoteManage = remoteGroup.locator(".machine-manage");
+      const remoteManage = manageOf(remoteGroup);
       if (scenario.touch) await remoteManage.tap();
       else await remoteManage.click();
       await controls.waitFor({ state: "detached" });

@@ -12,6 +12,12 @@ import { chromePath } from "./chrome-path.ts";
 import { prepareMachineControlsDemo } from "./sidebar-machine-controls-fixture.ts";
 import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
 
+/** A PC's Manage panel is behind its head's ⋯ now (the owner, 2026-10-25): open the menu, pick Manage. */
+const manageOf = (group: Locator) => ({
+  click: async () => { await group.locator(".machine-menu").click(); await group.page().locator('[data-item="manage"]').click(); },
+  tap: async () => { await group.locator(".machine-menu").tap(); await group.page().locator('[data-item="manage"]').tap(); },
+});
+
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-machine-removal-"));
 const evidenceDir = process.env.UI_EVIDENCE_DIR;
 const REMOTE_NAME = "Demo remote PC";
@@ -226,8 +232,7 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
 
     const group = machineGroup(page);
     await group.waitFor({ state: "attached" });
-    const manage = group.locator(".machine-manage");
-    await group.locator(".machine-header").hover();
+    const manage = manageOf(group);
     await manage.click();
     const controls = group.locator(".machine-controls");
     await controls.waitFor({ state: "visible" });
@@ -249,10 +254,8 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
     await capture(controls, scenario, "armed");
     await checkDangerPresentation(page, scenario.theme, "armed", confirm);
 
-    await group.locator(".machine-header").hover();
     await manage.click();
     await controls.waitFor({ state: "detached" });
-    await group.locator(".machine-header").hover();
     await manage.click();
     await controls.waitFor({ state: "visible" });
     assert.equal(await group.getByRole("button", { name: REMOVE_LABEL, exact: true }).count(), 1, `${scenario.theme} closing and reopening Manage resets confirmation`);

@@ -394,8 +394,9 @@ try {
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
   await agentRow(paneB).waitFor();
   const machineToggle = page.locator(".machine-group .machine-toggle");
-  // the PC's fold is the caret beside its +
-  assert.equal(await page.locator(".machine-group .machine-toggle + .machine-new").count(), 1);
+  // the PC's fold is its name row, the + at the head's end (the owner, 2026-10-25)
+  assert.equal(await page.locator(".machine-group .machine-header > .machine-toggle .machine-name").count(), 1);
+  assert.equal(await page.locator(".machine-group .machine-header > .machine-new:last-child").count(), 1);
   await machineToggle.click();
   await workspaceGroup(workspaces[0]!).waitFor({ state: "detached" });
   assert.equal(await agentRow(paneA).isVisible(), true, "PC folding leaves Agents visible");

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, FoldVertical, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, ListTree, MessageSquarePlus, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -13,7 +13,7 @@ import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebar
 import { basename, type HostPc } from "../lib/hostChats.ts";
 import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
 import { foldPc, foldPcs, keptPcs, openPc, pcPlacement, samePath, searchPlace, type PcLists } from "../lib/hostPlacement.ts";
-import type { RowMenuItem } from "./RowMenu.tsx";
+import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { AllAgentsSheet } from "./AllAgentsSheet.tsx";
 import { OtherPcsFold, type PcActivity } from "./OtherPcsFold.tsx";
 import { SidebarActivityProvider, type SidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -301,23 +301,29 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutB
     setCollapsed(!collapsed);
     try { localStorage.setItem(`ovis:pc-collapsed:${machine.id}`, collapsed ? "0" : "1"); } catch {}
   };
-  // the PC's name is the head of its workspaces, and the caret beside its + the one fold over them
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const headItems: RowMenuItem[] = [
+    ...(onPutBack ? [{ id: "put-back", label: t("Move to Other PCs"), icon: FoldVertical, run: onPutBack }] : []),
+    ...(machine.kind === "ssh" ? [{ id: "manage", label: t("Manage PC"), icon: SlidersHorizontal, checked: editing, run: () => { setEditing(!editing); setConfirmDelete(false); } }] : []),
+  ];
+  // the PC's name is the head of its workspaces and their fold; its ⋯ holds the rest, its + makes a workspace
   return <section className={`machine-group${props.selectedMachineId === machine.id ? " is-current" : ""}${online ? "" : " is-offline"}${context ? " is-filter-context" : ""}`} hidden={hidden} aria-label={t("PC {name}", { name: machine.name })}>
     <header className="machine-header">
-      <div className="machine-title">
-        <span className="sidebar-mark" aria-hidden="true"><Monitor /></span>
+      {/* the name row is the PC's fold (the owner, 2026-10-25: four icons beside it cut its name on a phone);
+          the caret takes the monitor's place */}
+      <button type="button" className="machine-title machine-toggle" aria-expanded={!folded} title={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>
+        <span className="sidebar-mark machine-caret" aria-hidden="true">{folded ? <ChevronRight /> : <ChevronDown />}</span>
         <span className="machine-name">{machine.name}</span>
         {/* the computer this app's server runs on; on a phone "this PC" read as the phone */}
         {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
         {searchNote && <span className="machine-kind machine-search-place" title={searchNote}>{searchNote}</span>}
         <span className={`machine-dot is-${machine.action_required === "setup" ? "setup" : machine.state}`} title={machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state])} aria-hidden="true" />
-      </div>
-      {machine.kind === "ssh" && <button className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}
-      {onPutBack && <button className="sidebar-row-action machine-put-back" aria-label={t("Move {name} to Other PCs", { name: machine.name })} title={t("Move to Other PCs")} onClick={onPutBack}><FoldVertical aria-hidden="true" /></button>}
-      {/* the fold over this PC's workspaces sits beside the + */}
-      <button className="sidebar-row-action machine-toggle" aria-expanded={!folded} aria-label={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} title={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>{folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
+      </button>
+      {/* the rest in words, in one menu: Manage opens its panel under the head, as its button did */}
+      {headItems.length > 0 && <button type="button" className="sidebar-row-action row-menu-toggle machine-menu" aria-label={t("More for {title}", { title: machine.name })} aria-haspopup="menu" aria-expanded={menuAnchor !== null} onClick={(event) => setMenuAnchor(menuAnchor ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
       <button className="sidebar-row-action machine-new" disabled={!online} aria-label={t("New workspace on {name}", { name: machine.name })} title={t("New workspace")} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
     </header>
+    {menuAnchor && <RowMenu anchor={menuAnchor} title={machine.name} items={headItems} onClose={() => setMenuAnchor(null)} />}
     {/* connected is the norm and says nothing new; every other state is spelled out */}
     {noticed && <MachineActionNotice machine={machine} onSetup={props.onSetup} />}
     <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role="status" title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
