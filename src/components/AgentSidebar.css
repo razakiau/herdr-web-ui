@@ -52,18 +52,20 @@
   .agent-summary-short { display: inline; }
 }
 
-.agent-summary-part::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: var(--space-1);
-  border-radius: 50%;
-  vertical-align: 1px;
-  background: var(--status-working);
+/* each count behind its rows' own mark (Sidebar.css .sidebar-status): the cell shrunk to the mark */
+.agent-summary-part {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
-
-.agent-summary-part[data-status="blocked"]::before { background: var(--status-blocked); }
+.agent-summary-mark.sidebar-status {
+  flex: none;
+  width: auto;
+  min-width: var(--space-2);
+  height: auto;
+}
+.agent-summary-mark .sidebar-status-mark,
+.agent-summary-mark .sidebar-status-glyph { font-size: var(--fs-2xs); }
 
 /* the fold's caret hangs in the leading cell and shows when it is of use */
 .agent-section-caret {

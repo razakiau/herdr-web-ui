@@ -8,13 +8,28 @@
   padding-top: var(--space-2);
 }
 
-/* "PCs": the section's dim head, the leading cell empty as the Agents head's caret is at rest */
+/* "PCs": the section's dim head and its fold, its caret in the leading cell as the Agents head's */
 .sidebar-pcs-head {
-  padding-left: calc(var(--side-gutter) + var(--side-box));
+  margin: 0;
+  padding-left: var(--side-gutter);
   color: var(--text-dim);
   font-size: var(--fs-sm);
   font-weight: var(--fw-regular);
 }
+.sidebar-pcs-head > .agent-section-toggle { width: 100%; }
+.sidebar-pcs-head .agent-section-caret {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin-inline: calc((var(--side-box) - var(--space-4)) / 2);
+  opacity: 0;
+}
+.sidebar-pcs-head .agent-section-toggle[aria-expanded="false"] .agent-section-caret,
+.sidebar-pcs-head .agent-section-toggle:focus-visible .agent-section-caret { opacity: 1; }
+@media (hover: hover) {
+  .sidebar-pcs-head .agent-section-toggle:hover .agent-section-caret { opacity: 1; }
+}
+.sidebar-pcs-head .agent-section-count { margin-left: auto; width: var(--side-box); font-size: var(--fs-xs); text-align: center; }
 
 .machine-list > .tree-state { padding-left: calc(var(--side-gutter) + var(--side-box)); }
 
@@ -90,6 +105,14 @@
 
 /* the caret in the monitor's place: dim, a notch up on hover and focus, as the Agents head's */
 .machine-caret { color: var(--text-dim); }
+/* the computer's icon beside the name, dim as the places' glyphs */
+.machine-icon {
+  display: inline-flex;
+  flex: none;
+  margin-right: var(--space-2);
+  color: var(--text-dim);
+}
+.machine-icon svg { width: var(--icon-size); height: var(--icon-size); }
 .machine-title:focus-visible { outline-offset: calc(var(--ring-offset) * -1); }
 @media (hover: hover) {
   .machine-title:hover .machine-caret { color: var(--text); }

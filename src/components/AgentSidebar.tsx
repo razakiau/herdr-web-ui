@@ -17,6 +17,8 @@ import { matchesQuery } from "../lib/paletteSearch.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
 import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
+import { alignBreath } from "../lib/breath.ts";
+import { indicatorGlyph, type StatusIndicators } from "../lib/status.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { machineFilter } from "../lib/sidebarFilter.ts";
 import { useSidebarFilter } from "../lib/sidebarFilterContext.ts";
@@ -102,13 +104,37 @@ export function sinceText(since: Since | null, t: Translate): string | null {
   return since.unit === "m" ? t("{n}m", { n: since.n }) : since.unit === "h" ? t("{n}h", { n: since.n }) : t("{n}d", { n: since.n });
 }
 
-export function agentsSummary(statuses: readonly (AgentStatus | undefined)[], t: Translate): { status: "blocked" | "working"; text: string; count: number }[] {
+export type SummaryPart = { status: "blocked" | "working" | "done"; text: string; count: number };
+export function agentsSummary(statuses: readonly (AgentStatus | undefined)[], t: Translate): SummaryPart[] {
   const asking = statuses.filter((status) => status === "blocked").length;
   const working = statuses.filter((status) => status === "working").length;
+  // finished and not looked at: the rows' green dot, counted too (owner, ZAC-233)
+  const done = statuses.filter((status) => status === "done").length;
   return [
     ...(asking > 0 ? [{ status: "blocked" as const, text: t("{n} waiting on you", { n: asking }), count: asking }] : []),
     ...(working > 0 ? [{ status: "working" as const, text: t("{n} working", { n: working }), count: working }] : []),
+    ...(done > 0 ? [{ status: "done" as const, text: t("{n} finished", { n: done }), count: done }] : []),
   ];
+}
+
+/**
+ * The head's counts, each behind the mark its rows show: the same breathing dot, question mark and
+ * green dot, or herdr's glyph under Settings -> Status indicators (owner, ZAC-233: the head's own
+ * small dots matched neither). The mark is drawn as the row's, without the row's live region.
+ */
+export function SummaryMarks({ parts, indicators }: { parts: readonly SummaryPart[]; indicators?: StatusIndicators }) {
+  const { settings } = useSettings();
+  const style = indicators ?? settings.statusIndicators;
+  return <>{parts.map((part) => <span key={part.status} className="agent-summary-part" data-status={part.status} title={part.text}>
+    <span className="badge sidebar-status agent-summary-mark" data-status={part.status} aria-hidden="true">
+      {style !== "classic" && <span className="sidebar-status-glyph" onAnimationStart={part.status === "working" ? alignBreath : undefined}>{indicatorGlyph(part.status, style)}</span>}
+      {style === "classic" && part.status === "blocked" && <span className="sidebar-status-mark" aria-hidden="true">?</span>}
+      {style === "classic" && part.status !== "blocked" && <span className="sidebar-status-dot" aria-hidden="true" onAnimationStart={part.status === "working" ? alignBreath : undefined} />}
+    </span>
+    <span className="agent-summary-long">{part.text}</span>
+    {/* a narrow head keeps the mark and the number; the words stay for a screen reader */}
+    <span className="agent-summary-short" aria-hidden="true">{part.count}</span>
+  </span>)}</>;
 }
 
 /** The host chat a row stands for, and the one the app shows (App.tsx selectedHostChat) */
@@ -380,11 +406,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
         {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
       </button>
       {summary.length > 0 && <span className="agent-section-summary">
-        {summary.map((part) => <span key={part.status} className="agent-summary-part" data-status={part.status} title={part.text}>
-          <span className="agent-summary-long">{part.text}</span>
-          {/* a narrow head keeps the dot and the number; the words stay for a screen reader */}
-          <span className="agent-summary-short" aria-hidden="true">{part.count}</span>
-        </span>)}
+        <SummaryMarks parts={summary} />
       </span>}
       {headAction}
       {allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}

@@ -50,6 +50,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Shell": "Shell",
   "VS Code gave these chats no folder": "VS Code 没有为这些聊天提供文件夹",
   "{n} waiting on you": "{n} 个等待你回复",
+  "{n} finished": "{n} 个已完成",
   "{n} resting": "{n} 个空闲",
   "Show all ({n} more)": "全部显示（还有 {n} 个）",
   "now": "刚刚",

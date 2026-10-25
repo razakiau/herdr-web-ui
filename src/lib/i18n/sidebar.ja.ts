@@ -50,6 +50,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Shell": "シェル",
   "VS Code gave these chats no folder": "VS Code がこれらのチャットにフォルダーを渡しませんでした",
   "{n} waiting on you": "{n} 件が返答待ち",
+  "{n} finished": "{n} 件が完了",
   "{n} resting": "{n} 件が休止中",
   "Show all ({n} more)": "すべて表示（あと {n} 件）",
   "now": "今",

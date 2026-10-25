@@ -2534,9 +2534,20 @@ try {
         assert.equal(await pcC.locator(".machine-header .machine-manage, .machine-header .machine-put-back").count(), 0, "no icon per action on the head");
         assert.equal(await pcC.locator(".machine-header > button").count(), 3, "the name's fold, the ⋯ and the +");
         assert.ok(await pcC.locator(".machine-name").evaluate((name) => name.scrollWidth <= name.clientWidth), "the PC's name is whole at 390 px");
+        // the computer's icon is back beside its name, after the fold's caret (owner, ZAC-233)
+        assert.equal(await pcC.locator(".machine-toggle .machine-icon svg").count(), 1, "the PC's monitor icon shows");
         await pcC.locator(".machine-toggle").click();
         assert.equal(await pcC.locator(".machine-toggle").getAttribute("aria-expanded"), "false", "a tap on the name folds the PC");
         await pcC.locator(".machine-toggle").click();
+        // the PCs heading folds the whole section, as Agents does
+        const pcsHead = six.locator(".sidebar-pcs-head button");
+        assert.equal(await pcsHead.getAttribute("aria-expanded"), "true", "the PCs section starts open");
+        await pcsHead.click();
+        assert.equal(await pcsHead.getAttribute("aria-expanded"), "false", "a tap on PCs folds it");
+        assert.equal(await six.locator(".machine-list .machine-group:visible").count(), 0, "folded, no PC shows");
+        assert.equal(await six.locator(".other-pcs:visible").count(), 0, "nor the Other PCs fold");
+        await pcsHead.click();
+        await pcC.waitFor();
         // put back from its ⋯, it folds into Other PCs again
         const putBack = async (name: string) => {
           await six.getByRole("region", { name: `PC ${name}`, exact: true }).getByRole("button", { name: `More for ${name}`, exact: true }).click();

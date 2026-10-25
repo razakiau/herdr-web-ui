@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, ListTree, MessageSquarePlus, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -150,6 +150,7 @@ export function MachineSidebar(props: Props) {
   const hostChats = props.hostChats ?? NO_HOST_CHATS;
   // the PC whose "All agents on <PC>…" is open
   const [ownAllOn, setOwnAllOn] = useState<AllAgentsOn | null>(null);
+  const [pcsFolded, setPcsFolded] = useState(false);
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
   // the PCs placed by hand on this device (lib/hostPlacement.ts foldPcs): kept open from "Other PCs",
@@ -190,13 +191,18 @@ export function MachineSidebar(props: Props) {
         // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
         allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />
       <div className="machine-list" aria-label={t("PCs and workspaces")}>
-        <h2 className="sidebar-section-label sidebar-pcs-head">{t("PCs")}</h2>
+        {/* the PCs fold as the Agents above them do (owner, ZAC-233), for this page */}
+        <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>
+          {pcsFolded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
+          <span>{t("PCs")}</span>
+          {pcsFolded && <span className="agent-section-count">{props.machines.length}</span>}
+        </button></h2>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-        {openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
+        {!pcsFolded && openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
           searchNote={filter.active ? searchPlace(foldedIds.has(machine.id), t) : null}
           // the PC in use stays open while it is; any other can be folded, even one that asks (Other PCs then says so)
           onPutBack={foldable && machine.id !== props.selectedMachineId && !foldedIds.has(machine.id) ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
-        {folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveLists(openPc(lists, id))} />}
+        {!pcsFolded && folded.length > 0 && <OtherPcsFold machines={folded} activity={(machine) => pcActivity(machine, hostChats.get(machine.id), activity)} stateWord={(machine) => t(STATE_WORD[machine.state])} onPick={(id) => saveLists(openPc(lists, id))} />}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
       </div>
     </div>
@@ -313,6 +319,8 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutB
           the caret takes the monitor's place */}
       <button type="button" className="machine-title machine-toggle" aria-expanded={!folded} title={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>
         <span className="sidebar-mark machine-caret" aria-hidden="true">{folded ? <ChevronRight /> : <ChevronDown />}</span>
+        {/* the computer's icon after the fold's caret: what the row is, at a glance (owner, ZAC-233) */}
+        <span className="machine-icon" aria-hidden="true"><Monitor /></span>
         <span className="machine-name">{machine.name}</span>
         {/* the computer this app's server runs on; on a phone "this PC" read as the phone */}
         {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
