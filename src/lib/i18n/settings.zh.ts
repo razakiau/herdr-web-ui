@@ -281,7 +281,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Increase interface font size": "增大界面字号",
   "This is the demo. Go back to the app's list of PCs to open yours.": "这是演示。回到应用的电脑列表即可打开你自己的电脑。",
   "This app shows {address}. Go back to its list of PCs to open another.": "此应用正在显示 {address}。回到电脑列表可打开其他电脑。",
-  "Alerts": "提醒",
   "Smooth animations": "流畅动画",
   "Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.": "加载图标和工作中的圆点逐帧绘制。代理工作时，旁边播放的视频可能会卡顿。",
   "Draw agent logos and file icons in their colors, or without color": "用原有颜色或无色显示代理标志和文件图标",
@@ -308,4 +307,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "New chat effort": "新聊天的推理强度",
   "Model default": "模型默认",
   "New chat permissions": "新聊天的权限",
+  "Push to this device": "推送到此设备",
+  "Off": "关闭",
+  "On": "开启",
 };

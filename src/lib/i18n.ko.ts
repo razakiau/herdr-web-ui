@@ -250,7 +250,6 @@ const BASE: Record<string, string> = {
   // ---- fork: agent host chats, ntfy, OmniRoute ----
   "Copilot chat": "Copilot 채팅",
   "No folder": "폴더 없음",
-  "Push to this device": "이 기기로 푸시",
   "This chat has no terminal": "이 채팅에는 터미널이 없습니다",
   "Delete “{title}”?": "“{title}”을(를) 삭제할까요?",
   "This removes it from VS Code too.": "VS Code에서도 삭제됩니다.",
@@ -261,12 +260,16 @@ const BASE: Record<string, string> = {
   "This server also posts alerts to the ntfy topic {topic}: {what}.": "이 서버는 알림을 ntfy 주제 {topic}에도 보냅니다: {what}.",
   "Deleted": "삭제됨",
   "Renamed": "이름 변경됨",
-  "Off": "끄기",
   "Push alerts to this device, even with the app closed. Tap to turn them on": "앱이 닫혀 있어도 이 기기로 알림을 푸시합니다. 탭하면 켭니다",
-  "On": "켜기",
-  "Alerts are pushed to this device, even with the app closed. Tap to turn them off": "앱이 닫혀 있어도 이 기기로 알림을 푸시합니다. 탭하면 끕니다",
-  "On while this tab is open": "이 탭이 열려 있는 동안 켜짐",
-  "The push service could not be reached: alerts show while this tab is open. Tap to turn them off": "푸시 서비스에 연결할 수 없어 이 탭이 열려 있는 동안만 알림이 표시됩니다. 탭하면 끕니다",
+  "Off on this device": "이 기기에서 꺼짐",
+  "On in the app": "앱 안에서 켜짐",
+  "On in this tab": "이 탭에서 켜짐",
+  "On, pushed to this device": "켜짐, 이 기기로 푸시",
+  "Alerts are pushed to this device, even with the app closed. Tap to stop pushing them here": "앱을 닫아도 이 기기로 알림을 푸시합니다. 누르면 이 기기로의 푸시를 멈춥니다",
+  "Alerts on in the app. Notifications are blocked in this browser's settings": "앱 안에서 알림이 켜져 있습니다. 이 브라우저 설정에서 알림이 차단되어 있습니다",
+  "Alerts on in the app. Tap to push them to this device when it is closed too": "앱 안에서 알림이 켜져 있습니다. 누르면 앱을 닫아도 이 기기로 푸시합니다",
+  "Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to stop pushing them here": "이 탭이 열려 있는 동안 알림이 옵니다 (앱을 닫은 뒤의 알림은 https가 필요하고, iPhone에서는 홈 화면 앱이 필요합니다). 누르면 이 기기로의 푸시를 멈춥니다",
+  "The push service could not be reached: alerts show while this tab is open. Tap to stop pushing them here": "푸시 서비스에 연결할 수 없어 이 탭이 열려 있는 동안만 알림이 표시됩니다. 누르면 이 기기로의 푸시를 멈춥니다",
   "{what} failed: {reason}": "{what} 실패: {reason}",
   "Rename": "이름 바꾸기",
   "Mark as read": "읽음으로 표시",
@@ -534,6 +537,7 @@ const BASE: Record<string, string> = {
   "Last 7 days": "지난 7일",
   "Last 30 days": "지난 30일",
   "Older": "이전",
+  "Alerts": "알림",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

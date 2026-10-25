@@ -49,7 +49,7 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
     await page.goto(origin);
     await page.locator(".conn-live").waitFor();
     // the More menu's Alerts item says so once this device's push subscription is made
-    for (const deadline = Date.now() + 15_000; (await alertsState(page)) !== "On";) {
+    for (const deadline = Date.now() + 15_000; (await alertsState(page)) !== "On, pushed to this device";) {
       assert.ok(Date.now() < deadline, "alerts are pushed to this device");
       await page.waitForTimeout(100);
     }
@@ -95,7 +95,7 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
     assert.equal(tests.length, beforeMissing);
 
     await page.getByRole("button", { name: "Close settings", exact: true }).click();
-    await runMoreItem(page, "Push to this device");
+    await runMoreItem(page, "Alerts");
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
     await openSettingsPage(page, "Alerts");
     assert.equal(await send.isDisabled(), true, "testing must not turn alerts on implicitly");

@@ -254,7 +254,6 @@ const BASE: Record<string, string> = {
   // ---- fork: agent host chats, ntfy, OmniRoute ----
   "Copilot chat": "Copilot 聊天",
   "No folder": "无文件夹",
-  "Push to this device": "推送到此设备",
   "This chat has no terminal": "此聊天没有终端",
   "Delete “{title}”?": "删除“{title}”？",
   "This removes it from VS Code too.": "这也会将它从 VS Code 中删除。",
@@ -265,12 +264,16 @@ const BASE: Record<string, string> = {
   "This server also posts alerts to the ntfy topic {topic}: {what}.": "此服务器也会把提醒发到 ntfy 主题 {topic}：{what}。",
   "Deleted": "已删除",
   "Renamed": "已重命名",
-  "Off": "关闭",
   "Push alerts to this device, even with the app closed. Tap to turn them on": "即使应用已关闭，也向此设备推送提醒。点按即可开启",
-  "On": "开启",
-  "Alerts are pushed to this device, even with the app closed. Tap to turn them off": "即使应用已关闭，也向此设备推送提醒。点按即可关闭",
-  "On while this tab is open": "此标签页打开时开启",
-  "The push service could not be reached: alerts show while this tab is open. Tap to turn them off": "无法连接推送服务：仅在此标签页打开时显示提醒。点按即可关闭",
+  "Off on this device": "此设备已关闭",
+  "On in the app": "在应用内开启",
+  "On in this tab": "在此标签页开启",
+  "On, pushed to this device": "已开启，推送到此设备",
+  "Alerts are pushed to this device, even with the app closed. Tap to stop pushing them here": "即使关闭应用，提醒也会推送到此设备。点按可停止推送到此设备",
+  "Alerts on in the app. Notifications are blocked in this browser's settings": "应用内提醒已开启。此浏览器的设置阻止了通知",
+  "Alerts on in the app. Tap to push them to this device when it is closed too": "应用内提醒已开启。点按后，关闭应用时也会推送到此设备",
+  "Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to stop pushing them here": "此标签页打开期间会收到提醒（关闭应用后的提醒需要 https，在 iPhone 上还需使用主屏幕应用）。点按可停止推送到此设备",
+  "The push service could not be reached: alerts show while this tab is open. Tap to stop pushing them here": "无法连接推送服务：仅在此标签页打开期间显示提醒。点按可停止推送到此设备",
   "{what} failed: {reason}": "{what}失败：{reason}",
   "Rename": "重命名",
   "Mark as read": "标记为已读",
@@ -538,6 +541,7 @@ const BASE: Record<string, string> = {
   "Last 7 days": "过去 7 天",
   "Last 30 days": "过去 30 天",
   "Older": "更早",
+  "Alerts": "提醒",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

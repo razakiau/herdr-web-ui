@@ -252,7 +252,6 @@ const BASE: Record<string, string> = {
   // ---- fork: agent host chats, ntfy, OmniRoute ----
   "Copilot chat": "Copilot のチャット",
   "No folder": "フォルダーなし",
-  "Push to this device": "このデバイスにプッシュ",
   "This chat has no terminal": "このチャットにはターミナルがありません",
   "Delete “{title}”?": "「{title}」を削除しますか？",
   "This removes it from VS Code too.": "VS Code からも削除されます。",
@@ -263,12 +262,16 @@ const BASE: Record<string, string> = {
   "This server also posts alerts to the ntfy topic {topic}: {what}.": "このサーバーは通知を ntfy のトピック {topic} にも送ります: {what}。",
   "Deleted": "削除",
   "Renamed": "名前変更",
-  "Off": "オフ",
   "Push alerts to this device, even with the app closed. Tap to turn them on": "アプリを閉じていてもこのデバイスに通知をプッシュします。タップでオン",
-  "On": "オン",
-  "Alerts are pushed to this device, even with the app closed. Tap to turn them off": "アプリを閉じていてもこのデバイスに通知をプッシュします。タップでオフ",
-  "On while this tab is open": "このタブを開いている間オン",
-  "The push service could not be reached: alerts show while this tab is open. Tap to turn them off": "プッシュサービスに接続できないため、このタブを開いている間だけ通知を表示します。タップでオフ",
+  "Off on this device": "この端末ではオフ",
+  "On in the app": "アプリ内でオン",
+  "On in this tab": "このタブでオン",
+  "On, pushed to this device": "オン、この端末にプッシュ",
+  "Alerts are pushed to this device, even with the app closed. Tap to stop pushing them here": "アプリを閉じていてもこの端末に通知をプッシュします。タップでこの端末へのプッシュを停止",
+  "Alerts on in the app. Notifications are blocked in this browser's settings": "アプリ内で通知はオンです。このブラウザーの設定で通知がブロックされています",
+  "Alerts on in the app. Tap to push them to this device when it is closed too": "アプリ内で通知はオンです。タップすると、アプリを閉じている間もこの端末にプッシュします",
+  "Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to stop pushing them here": "このタブを開いている間は通知が届きます (アプリを閉じた後の通知には https が必要で、iPhone ではホーム画面のアプリが必要です)。タップでこの端末へのプッシュを停止",
+  "The push service could not be reached: alerts show while this tab is open. Tap to stop pushing them here": "プッシュサービスに接続できないため、このタブを開いている間だけ通知を表示します。タップでこの端末へのプッシュを停止",
   "{what} failed: {reason}": "失敗しました（{what}）: {reason}",
   "Rename": "名前を変更",
   "Mark as read": "既読にする",
@@ -536,6 +539,7 @@ const BASE: Record<string, string> = {
   "Last 7 days": "過去 7 日間",
   "Last 30 days": "過去 30 日間",
   "Older": "それ以前",
+  "Alerts": "通知",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

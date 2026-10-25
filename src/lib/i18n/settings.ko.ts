@@ -281,7 +281,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Increase interface font size": "인터페이스 글자 크기 키우기",
   "This is the demo. Go back to the app's list of PCs to open yours.": "데모 화면입니다. 앱의 PC 목록으로 돌아가 내 PC를 여세요.",
   "This app shows {address}. Go back to its list of PCs to open another.": "이 앱은 {address}를 보여 주고 있습니다. PC 목록으로 돌아가 다른 PC를 열 수 있습니다.",
-  "Alerts": "알림",
   "Smooth animations": "부드러운 애니메이션",
   "Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.": "스피너와 작업 중 점을 매 프레임 그립니다. 에이전트가 작업하는 동안 옆에서 재생 중인 동영상이 끊길 수 있습니다.",
   "Draw agent logos and file icons in their colors, or without color": "에이전트 로고와 파일 아이콘을 원래 색상 또는 색 없이 표시합니다",
@@ -308,4 +307,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "New chat effort": "새 채팅 추론 강도",
   "Model default": "모델 기본값",
   "New chat permissions": "새 채팅 권한",
+  "Push to this device": "이 기기로 푸시",
+  "Off": "끄기",
+  "On": "켜기",
 };

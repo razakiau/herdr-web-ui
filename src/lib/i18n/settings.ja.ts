@@ -281,7 +281,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Increase interface font size": "インターフェースの文字サイズを大きく",
   "This is the demo. Go back to the app's list of PCs to open yours.": "これはデモです。アプリのPC一覧に戻って、ご自分のPCを開いてください。",
   "This app shows {address}. Go back to its list of PCs to open another.": "このアプリは {address} を表示しています。PC一覧に戻ると別のPCを開けます。",
-  "Alerts": "通知",
   "Smooth animations": "滑らかなアニメーション",
   "Spinners and working dots move every frame. A video playing beside the app may stutter while an agent works.": "スピナーや作業中のドットを毎フレーム描画します。エージェントの作業中、横で再生している動画がカクつくことがあります。",
   "Draw agent logos and file icons in their colors, or without color": "エージェントのロゴとファイルアイコンを本来の色、または色なしで表示します",
@@ -308,4 +307,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "New chat effort": "新しいチャットの推論レベル",
   "Model default": "モデルの既定",
   "New chat permissions": "新しいチャットの権限",
+  "Push to this device": "このデバイスにプッシュ",
+  "Off": "オフ",
+  "On": "オン",
 };
