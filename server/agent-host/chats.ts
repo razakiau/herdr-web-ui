@@ -722,12 +722,47 @@ function questionOptions(question: ChatInputQuestion): { options: InteractivePro
   }
 }
 
-function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion): NonNullable<HostChatRead["prompt"]> {
+/**
+ * The option each ask_user field recommends, by field id: its schema's `default`. The host turns a
+ * form's fields into questions and drops the default on the way (agentHostMain rbe, VS Code 1.142),
+ * so the call's own input is read: the ask call whose message is the request's. Models mark their
+ * pick this way far more often than in a label (owner's chats, 2026-10-25: 528 of 594 choice fields
+ * had a default, 39 said "Recommended" in a label).
+ */
+function schemaDefaults(parts: readonly ResponsePart[], request: ChatInputRequest): Map<string, string> {
+  const found = new Map<string, string>();
+  if (!request.message) return found;
+  for (const part of parts) {
+    if (part.kind !== ResponsePartKind.ToolCall || !ASK_TOOLS.has(part.toolCall.toolName)) continue;
+    let input: unknown;
+    try { input = JSON.parse("toolInput" in part.toolCall && typeof part.toolCall.toolInput === "string" ? part.toolCall.toolInput : ""); } catch { continue; }
+    if (!isRecord(input) || input["message"] !== request.message) continue;
+    let schema = input["requestedSchema"];
+    if (typeof schema === "string") { try { schema = JSON.parse(schema); } catch { continue; } }
+    const properties = isRecord(schema) ? schema["properties"] : undefined;
+    if (!isRecord(properties)) continue;
+    for (const [id, field] of Object.entries(properties)) {
+      if (isRecord(field) && typeof field["default"] === "string") found.set(id, field["default"]);
+    }
+  }
+  return found;
+}
+
+/** The question's options with its recommended one marked, as the field's default names it by option id. */
+function questionOptionsWith(question: ChatInputQuestion, defaults: Map<string, string>): ReturnType<typeof questionOptions> {
+  const own = questionOptions(question);
+  const pick = defaults.get(question.id);
+  const at = pick === undefined ? -1 : own.ids.indexOf(pick);
+  if (at < 0 || at === own.custom) return own;
+  return { ...own, options: own.options.map((option, index) => index === at ? { ...option, recommended: true } : option) };
+}
+
+function questionPrompt(request: ChatInputRequest, question: ChatInputQuestion, defaults: Map<string, string> = new Map()): NonNullable<HostChatRead["prompt"]> {
   const questions = request.questions ?? [];
-  const { options, ids, custom } = questionOptions(question);
+  const { options, ids, custom } = questionOptionsWith(question, defaults);
   // several questions: the whole form, paged and answered on the phone (VS Code's carousel)
   const form = questions.length > 1 ? questions.map((each) => {
-    const own = questionOptions(each);
+    const own = questionOptionsWith(each, defaults);
     return {
       read: { title: each.title ?? "", question: each.message, options: own.options, multi_select: each.kind === ChatInputQuestionKind.MultiSelect, custom_option_index: own.custom, required: each.required === true },
       ref: { question_id: each.id, option_ids: own.ids },
@@ -775,7 +810,7 @@ export function promptFrom(chat: ChatState): HostChatRead["prompt"] {
   if (!active) return null;
   for (const request of openRequests(chat)) {
     const question = currentQuestion(request);
-    if (question) return questionPrompt(request, question);
+    if (question) return questionPrompt(request, question, schemaDefaults(active.responseParts, request));
   }
   const tool = pendingToolCalls(chat)[0];
   return tool ? approvalPrompt(active.id, tool) : null;

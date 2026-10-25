@@ -202,6 +202,30 @@ describe("host chat mappers", () => {
     ]);
   });
 
+  it("an ask_user field's default is its recommended option: the host drops the default, the call's own input keeps it", () => {
+    const report = "FICTIONAL pick one";
+    const call = (schema: unknown) => ({ kind: "toolCall", toolCall: {
+      status: "running", toolCallId: "a1", toolName: "ask_user", displayName: "ask_user", invocationMessage: "ask_user",
+      toolInput: JSON.stringify({ message: report, requestedSchema: schema }),
+    } });
+    const ask = (schema: unknown, message = report) => chat({
+      status: 24,
+      activeTurn: { id: "turn-2", startedAt: AT, message: user("FICTIONAL ask me"), usage: undefined, responseParts: [
+        call(schema),
+        { kind: "inputRequest", request: { id: "req-1", message, questions: [{ ...QUESTION, id: "color" }, { ...QUESTION, id: "size", options: [{ id: "s", label: "S" }, { id: "m", label: "M" }] }] } },
+      ] },
+    });
+    const flags = (state: ChatState) => {
+      const prompt = promptFrom(state)!;
+      return (prompt.form ?? [prompt]).map((each) => each.options.map((option) => option.recommended === true));
+    };
+    const schema = { properties: { color: { type: "string", enum: ["red", "blue"], default: "blue" }, size: { type: "string", oneOf: [{ const: "s", title: "S" }, { const: "m", title: "M" }], default: "s" } } };
+    expect(flags(ask(schema))).toEqual([[false, true, false], [true, false, false]]);
+    // no default, a default that names no option, or a call for another request: nothing is marked
+    expect(flags(ask({ properties: { color: { type: "string", enum: ["red", "blue"] }, size: { default: "xl" } } }))).toEqual([[false, false, false], [false, false, false]]);
+    expect(flags(ask(schema, "FICTIONAL another question"))).toEqual([[false, false, false], [false, false, false]]);
+  });
+
   it("freeform_offered_unless_false", () => {
     // VS Code's rule (chatQuestionCarouselPart.ts): the typed answer shows unless the question says false
     const slot = (allowFreeformInput: boolean | undefined) => {
