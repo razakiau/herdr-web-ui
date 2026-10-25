@@ -49,6 +49,10 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Expand": "展开",
   "Shell": "Shell",
   "VS Code gave these chats no folder": "VS Code 没有为这些聊天提供文件夹",
-  "{n} needs you": "{n} 个等待你回复",
+  "{n} waiting on you": "{n} 个等待你回复",
+  "now": "刚刚",
+  "{n}m": "{n}分钟",
+  "{n}h": "{n}小时",
+  "{n}d": "{n}天",
   "For {time}": "已 {time}",
 };

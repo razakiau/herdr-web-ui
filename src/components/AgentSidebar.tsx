@@ -8,7 +8,7 @@ import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { agentNow, type AgentNow } from "../lib/agentNow.ts";
-import { formatSince } from "../lib/since.ts";
+import { sinceOf, type Since } from "../lib/since.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentRoster, byAttention, type AgentRow } from "../lib/agentRoster.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
@@ -95,11 +95,18 @@ export function AgentRowBody({ mark, markKind, title, name, context, tokens, bac
 }
 
 /** The Agents head's summary: how many need you and how many work, leaving out a zero. */
+/** The row's time in the user's language: now, 4m, 2h, 3d. */
+export function sinceText(since: Since | null, t: Translate): string | null {
+  if (since === null) return null;
+  if (since.unit === "now") return t("now");
+  return since.unit === "m" ? t("{n}m", { n: since.n }) : since.unit === "h" ? t("{n}h", { n: since.n }) : t("{n}d", { n: since.n });
+}
+
 export function agentsSummary(statuses: readonly (AgentStatus | undefined)[], t: Translate): { status: "blocked" | "working"; text: string }[] {
   const asking = statuses.filter((status) => status === "blocked").length;
   const working = statuses.filter((status) => status === "working").length;
   return [
-    ...(asking > 0 ? [{ status: "blocked" as const, text: t("{n} needs you", { n: asking }) }] : []),
+    ...(asking > 0 ? [{ status: "blocked" as const, text: t("{n} waiting on you", { n: asking }) }] : []),
     ...(working > 0 ? [{ status: "working" as const, text: t("{n} working", { n: working }) }] : []),
   ];
 }
@@ -294,7 +301,8 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const filterContext = filter.active && machineFilter(filter, machine.id)?.matchedPanes.has(pane.pane_id) !== true;
     const { online, title, name, mark, place, context, markKind, tokens, subtitle } = describe(row);
     const status = online ? activity.status(machine.id, pane) : undefined;
-    const since = online ? formatSince(pane.status_since, now) : null;
+    // the time belongs to herdr's state; a glyph the device reads otherwise (a finish already seen) gets none
+    const since = online && status === pane.agent_status ? sinceText(sinceOf(pane.status_since, now), t) : null;
     // the row cuts a long value: the tooltip, and a phone's menu sheet, say each in full
     const tooltip = [...new Set([pane.pane_id, title, subtitle, since ? t("For {time}", { time: since }) : null, ...tokens, markKind, name, agent?.display_agent, pane.cwd, online ? null : stateWord(machine)].filter(Boolean))].join("\n");
     const pinKey = sidebarPinKey(machine.id, pane.pane_id);

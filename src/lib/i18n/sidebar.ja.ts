@@ -49,6 +49,10 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Expand": "展開",
   "Shell": "シェル",
   "VS Code gave these chats no folder": "VS Code がこれらのチャットにフォルダーを渡しませんでした",
-  "{n} needs you": "{n} 件が返答待ち",
+  "{n} waiting on you": "{n} 件が返答待ち",
+  "now": "今",
+  "{n}m": "{n}分",
+  "{n}h": "{n}時間",
+  "{n}d": "{n}日",
   "For {time}": "{time} 経過",
 };

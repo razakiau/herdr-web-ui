@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SettingsProvider } from "../lib/settings.ts";
-import { agentsSummary, AgentRowBody } from "./AgentSidebar.tsx";
+import { agentsSummary, AgentRowBody, sinceText } from "./AgentSidebar.tsx";
 
 const t = (key: string, vars?: Record<string, string | number>): string => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? ""));
 const base = { mark: "claude", markKind: null, title: "Sidebar focus", name: null, place: "Mac", context: "herdr-web-ui", tokens: [] as string[] };
@@ -35,8 +35,17 @@ describe("AgentRowBody", () => {
 
 describe("agentsSummary", () => {
   it("counts what needs you and what works, leaving out zeros", () => {
-    expect(agentsSummary(["blocked", "working", "working", "idle"], t)).toEqual([{ status: "blocked", text: "1 needs you" }, { status: "working", text: "2 working" }]);
+    expect(agentsSummary(["blocked", "working", "working", "idle"], t)).toEqual([{ status: "blocked", text: "1 waiting on you" }, { status: "working", text: "2 working" }]);
     expect(agentsSummary(["working"], t)).toEqual([{ status: "working", text: "1 working" }]);
     expect(agentsSummary(["idle", undefined], t)).toEqual([]);
+  });
+});
+
+describe("sinceText", () => {
+  const ja = (key: string, vars?: Record<string, string | number>): string => ({ "now": "今", "{n}m": "{n}分", "{n}h": "{n}時間", "{n}d": "{n}日" } as Record<string, string>)[key]!.replace("{n}", String(vars?.["n"] ?? ""));
+  it("goes through the dictionary for every unit", () => {
+    expect([sinceText({ unit: "now" }, ja), sinceText({ unit: "m", n: 4 }, ja), sinceText({ unit: "h", n: 2 }, ja), sinceText({ unit: "d", n: 3 }, ja)]).toEqual(["今", "4分", "2時間", "3日"]);
+    expect(sinceText({ unit: "m", n: 4 }, t)).toBe("4m");
+    expect(sinceText(null, t)).toBeNull();
   });
 });

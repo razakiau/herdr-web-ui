@@ -1024,7 +1024,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   (`.sidebar-pcs-head`), and both scroll as one (`.sidebar-scroll`) above the fixed footer; what the
   agents do is what is looked for first, the places are where it happens. The Agents head shows its
   count only while folded and, on the right, what needs you and what works (`.agent-section-summary`:
-  `1 needs you  2 working`, a dot in `--status-blocked` / `--status-working` beside the words, a zero
+  `1 waiting on you  2 working`, a dot in `--status-blocked` / `--status-working` beside the words, a zero
   left out, nothing when both are). The list starts open on every screen, a phone's drawer too. A
   list that is cut fades out at its lower edge. PC and workspace folds do not hide agent rows. Until
   the PCs are in and every connected PC's panes have come, an empty list says **Loading agents…**,
@@ -1085,7 +1085,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Its background-task count and compact status sit at the right; under the status, how long the
   pane has been in it (`.agent-since`: `now`, `4m`, `2h`, `3d`, tabular `--fs-2xs` dim, in
   `--status-blocked` while it asks) from the bridge's `status_since` (server/status-since.ts:
-  stamped when the status really changes, absent from an older bridge, which then shows no time).
+  stamped when the status really changes, absent from an older bridge, which then shows no time;
+  kept in memory, so a server restart reads every pane as `now`). The units go through the
+  dictionary (`sinceText`: 今 / 4分 in Japanese). A row whose glyph the device reads otherwise than
+  herdr (a finish already seen) shows no time, since the time would be of a state not drawn.
   On One line the time is in the row's tooltip only. The list's order outside the pinned card is by
   attention (lib/agentRoster.ts `byAttention`): what needs you, then what works, then an unread
   finish, then the rest, each group in the chosen Agents order. Pane state is
