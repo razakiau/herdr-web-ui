@@ -1,0 +1,81 @@
+/* "All agents on <PC>…": a search box, folder pills, then the chats by age as agent rows (AgentSidebar.css), Archived folded last */
+/* portalled out of the sidebar: the rows' grid (Sidebar.css .sidebar-shell) is set again here */
+.all-agents {
+  --side-gutter: var(--space-3);
+  --side-box: var(--control-h);
+  --side-row: var(--control-h);
+  --side-row-2: calc(var(--control-h) + var(--space-3));
+  --side-hover: var(--bg-hover);
+  --side-selected: var(--bg-hover);
+}
+.all-agents .modal-body { display: flex; flex-direction: column; gap: var(--space-2); }
+/* a search field of the app's own: a lens inside it, and a phone's thumb-sized height (the app's
+   34 px control reads cramped as the sheet's one field) */
+.all-agents-search {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+.all-agents-search > svg {
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.all-agents-search .input {
+  width: 100%;
+  height: calc(var(--control-h) + var(--space-2));
+  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
+  border-radius: var(--radius-lg);
+}
+.all-agents-group { min-width: 0; }
+.all-agents-age { padding-top: var(--space-2); }
+.all-agents .agent-item { padding-right: 0; }
+/* a row with a chat's ⋯ keeps the state cell's room after it, as an Agents row does */
+.all-agents .agent-item:has(> .agent-actions) { padding-right: var(--side-box); }
+.all-agents .agent-row { gap: var(--space-2); }
+.all-agents-group .agent-list { margin: 0; padding: 0; list-style: none; }
+.all-agents-age,
+.all-agents-archived {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.all-agents-archived { width: 100%; gap: var(--space-1); cursor: pointer; }
+.all-agents-archived svg { flex: none; width: var(--space-4); height: var(--space-4); }
+/* the folder pills: one line that scrolls sideways under a thumb, the picked one tinted in the selection amber */
+.all-agents-pills {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin-inline: calc(var(--space-1) * -1);
+  padding: 2px var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.all-agents-pills::-webkit-scrollbar { display: none; }
+.all-agents-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 16rem;
+  height: calc(var(--control-h) - 2px);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.all-agents-pill:hover { background: var(--bg-hover); color: var(--text-strong); }
+.all-agents-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.all-agents-pill.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--text-strong); }
+.all-agents-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.all-agents-pill-count { font-variant-numeric: tabular-nums; opacity: 0.7; }

@@ -1,0 +1,160 @@
+/* VS Code's checkpoint confirmation, as a sheet: what goes back, then the one action */
+.checkpoint-sheet {
+  width: min(100%, 440px);
+}
+
+.checkpoint-sheet:focus { outline: none; }
+
+.checkpoint-sheet-lede {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-prose);
+}
+
+.checkpoint-files {
+  display: flex;
+  flex-direction: column;
+  max-height: min(40vh, 280px);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-1) 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  list-style: none;
+}
+
+/* VS Code's changes list: icon, name, its folder dimmed, the lines at the end */
+.checkpoint-file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.checkpoint-file-icon {
+  flex: none;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  color: var(--text-dim);
+}
+
+.checkpoint-file-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-file-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: start;
+}
+
+.checkpoint-file-lines {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.checkpoint-sheet-note {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-prose);
+}
+
+.checkpoint-sheet-restore svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+/* restored: a quiet bar on the composer's column, the state in words and Redo at its end */
+.checkpoint-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0 var(--space-4) var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.checkpoint-bar-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.checkpoint-bar-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-bar-files { color: var(--text-dim); }
+
+.checkpoint-bar-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-bar-redo {
+  flex: none;
+  gap: var(--space-1);
+}
+
+.checkpoint-bar-redo svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+@media (max-width: 640px) {
+  .checkpoint-bar { margin-inline: var(--space-3); }
+}
+
+.checkpoint-sheet-busy {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+/* a fork that failed: what happened, then the host's reason on a line of its own, never cut */
+.fork-bar { flex-wrap: wrap; }
+.fork-bar .checkpoint-bar-error {
+  order: 3;
+  flex: 1 0 100%;
+  padding-left: calc(14px + var(--space-2));
+  white-space: normal;
+}

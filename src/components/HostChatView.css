@@ -1,0 +1,775 @@
+/* A host chat in the pane's place (HostChatView.tsx): the chat lens's stack, transcript and the
+   app's composer (ChatView.css, Composer.css), with the settings button, the model chip and their sheets. */
+.host-chat {
+  height: 100%;
+}
+
+/* the model chip, in the composer's row after the settings button (Composer's `pills`): VS Code's
+   input toolbar, a quiet trigger with no fill at rest: the provider's mark, the name, a dim effort */
+.host-chat-pills {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: max-content;
+  max-width: 100%;
+}
+
+/* the model's name is the one that gives: it ends in an ellipsis before the agent, the mode or the
+   permission level is cut (the full name is in its title, its label and its picker) */
+.host-chat-pill.host-chat-model {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* the mark is an inline span that rode the text baseline, 2.5 px above the chip's centre (owner,
+   ZAC-207): as a flex box it centres with the name, as in .composer-status */
+.host-chat-model .agent-mark {
+  display: inline-flex;
+  flex: none;
+}
+
+.host-chat-model .host-chat-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.host-chat-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.host-chat-pill:hover,
+.host-chat-pill[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.host-chat-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* triggers are parted by their own padding and hover fill: hairlines between them read as three
+   unrelated groups beside the bare attach and mic buttons (desktop audit, 2026-10-23) */
+
+.host-chat-pill-label {
+  font-weight: var(--fw-medium);
+}
+
+.host-chat-pill-label.is-none,
+.host-chat-pill-aside {
+  color: var(--text-dim);
+  font-weight: var(--fw-regular);
+}
+
+.host-chat-pill-label.is-id {
+  font-family: var(--font-mono);
+}
+
+/* the settings button (mode, permissions, agent): quiet at rest, the notice colour for a raised
+   permission level, which the mode pill's shield said before (ZAC-207 redesign) */
+.host-chat-settings {
+  flex: none;
+  color: var(--text-dim);
+}
+
+/* the theme's accent, not --notice: a raised level is a choice the user made, not a warning, and an
+   amber icon fought a blue-accented theme (owner, ZAC-207) */
+.host-chat-settings[data-tone="raised"] {
+  color: var(--accent);
+}
+
+/* a custom agent's name by the model: a mouse window only, a phone has it in the settings sheet */
+.host-chat-agent-name {
+  display: none;
+  flex: none;
+  padding: 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+@media (pointer: fine) and (min-width: 600px) {
+  .host-chat-agent-name {
+    display: inline;
+  }
+}
+
+/* the picker: one column of choices, a bottom sheet on a phone (styles.css .modal) */
+.host-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.host-picker-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.host-picker-label {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+/* grouped inset lists (ZAC-207 redesign, Claude's and Notion's sheets): a group is one raised block
+   with hairlines between its rows, the choice wears a checkmark, no row is an outlined card */
+/* a grouped list (iOS settings): its caption stands above the block, on the sheet, and the block's
+   own four corners are round (owner, ZAC-207: a caption inside the block squared its top) */
+.host-picker-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+
+.host-picker-rows {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.host-picker-provider {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+/* a router's vendor follows its name, quieter: "OmniRoute · Anthropic" */
+.host-picker-vendor {
+  opacity: 0.8;
+}
+
+.host-picker-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 50px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.host-picker-option + .host-picker-option::before,
+.host-picker-search + .host-picker-option::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto var(--space-3);
+  height: var(--hairline);
+  background: var(--border);
+}
+
+.host-picker-option:has(.host-picker-option-icon) + .host-picker-option::before {
+  inset-inline-start: calc(var(--space-3) * 2 + 20px);
+}
+
+@media (hover: hover) {
+  .host-picker-option:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.host-picker-option-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--text-dim);
+}
+
+.host-picker-option-icon[data-tone="notice"] {
+  color: var(--accent);
+}
+
+.host-picker-option-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.host-picker-option-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+}
+
+.host-picker-option-id {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+}
+
+.host-picker-check {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--accent);
+}
+
+
+.host-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.host-picker-chip {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+/* the model sheet's source filter (Copilot, OmniRoute, a custom endpoint…), each with its mark: one
+   row under the search that scrolls sideways rather than wrapping over the list */
+.host-picker-sources {
+  display: flex;
+  gap: var(--space-2);
+  margin-inline: calc(var(--space-5) * -1);
+  padding-inline: var(--space-5);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.host-picker-sources::-webkit-scrollbar { display: none; }
+
+.host-picker-source {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.host-picker-source-mark,
+.host-picker-source .agent-mark {
+  display: inline-flex;
+  flex: none;
+}
+
+.host-picker-source-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-dim);
+}
+
+.host-picker-source-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.host-picker-chip.is-picked {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.host-picker-note,
+.host-picker-state {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-picker-error {
+  margin: 0;
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+}
+
+/* the picker's search box, provider tabs and one-line model rows (ModelPicker.tsx) */
+.host-picker-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.host-picker-search > svg {
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.host-picker-search .input {
+  width: 100%;
+  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
+}
+
+/* pinned under the sheet's header: a 30-model list scrolls under the search */
+.host-picker-head {
+  position: sticky;
+  top: calc(var(--space-4) * -1);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: calc(var(--space-4) * -1) calc(var(--space-5) * -1) 0;
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  background: var(--bg-panel);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.host-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  padding-inline-end: var(--space-2);
+}
+
+.host-model-row + .host-model-row {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.host-model-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--row-h);
+  padding: 0 var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.host-model-check {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--accent);
+}
+
+.host-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-model-pin {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--text-dim);
+}
+
+/* a planned deprecation: the host's sentence is the icon's name and tooltip */
+.host-model-warning {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--notice);
+}
+
+/* Copilot's premium-request rate, as its own picker shows it: after the name, monospaced figures */
+.host-model-rate {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.host-model-detail {
+  padding: 0 var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* a row with thinking levels opens them: VS Code's chevron says so, a dotted underline alone did not */
+button.host-model-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 2.25rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+button.host-model-detail:hover,
+button.host-model-detail[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.host-model-detail-caret {
+  width: 0.875rem;
+  height: 0.875rem;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
+  transform: rotate(180deg);
+}
+
+.host-model-row > .host-picker-chips {
+  grid-column: 1 / -1;
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) * 2 + var(--space-4));
+}
+
+.model-mark-sparkle {
+  color: var(--text-dim);
+}
+
+/* a phone's row: only the model is words, so only its dim effort gives way, and the name ellipsizes
+   last (its title, label and sheet still say it) */
+@container pickers (max-width: 170px) {
+  .host-chat-model .host-chat-pill-aside {
+    display: none;
+  }
+}
+
+/* The rows between the transcript and the composer (the pills, the status line, the bars) stand on
+   the chat's column (--chat-w), as the transcript, the question card and the composer do: their
+   start is the text's start. A pane narrower than the column keeps the gutter it had. */
+.host-chat {
+  --host-chat-gutter: max(var(--space-4), (100% - var(--chat-w)) / 2);
+}
+
+/* the chat's status line over its composer (HostChatStatus.tsx): what it waits on, VS Code's words.
+   Its context meter is the composer's, by Send */
+.host-chat-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--host-chat-gutter) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-chat-status-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-chat-meter {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.host-chat-meter:hover,
+.host-chat-meter[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* the composer's ring (Composer.css .composer-context) drawn as used, not as left: VS Code's meter */
+.host-chat-meter {
+  font-size: var(--fs-xs);
+}
+
+.host-chat-meter-ring {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.host-chat-meter-track,
+.host-chat-meter-used {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.host-chat-meter-track {
+  stroke: var(--border-strong);
+}
+
+.host-chat-meter-used {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+.host-chat-meter.is-high {
+  color: var(--notice, var(--status-blocked));
+}
+
+.host-context-sheet {
+  width: min(100%, 24rem);
+}
+
+/* VS Code's context popup (chatContextUsageDetails), in the app's grouped lists: the session's
+   cost, the window's bar with its reserved band, then System, User Context and Uncategorized as
+   share of the window (owner, ZAC-224) */
+.host-context-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.host-context-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.host-context-row + .host-context-row {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.host-context-parts {
+  margin: 0;
+}
+
+.host-context-parts dt {
+  color: var(--text);
+}
+
+.host-context-parts dd {
+  margin: 0;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.host-context-cost {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-semibold);
+}
+
+.host-context-note {
+  margin: var(--space-2) var(--space-3) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-context-window {
+  --context-fill: var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.host-context-window.is-high {
+  --context-fill: var(--notice);
+}
+
+.host-context-window.is-full {
+  --context-fill: var(--status-blocked);
+}
+
+.host-context-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.host-context-count {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+.host-context-percent {
+  color: var(--text-dim);
+}
+
+.host-context-bar {
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+}
+
+.host-context-used {
+  background: var(--context-fill);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+
+/* the answer's share of the window, striped as VS Code draws it */
+.host-context-reserved,
+.host-context-swatch {
+  background: repeating-linear-gradient(-45deg, var(--context-fill) 0 2px, transparent 2px 4px);
+}
+
+.host-context-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.host-context-swatch {
+  flex: none;
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.host-context-compact {
+  align-self: stretch;
+}
+
+@media (max-width: 480px) {
+  .host-chat {
+    --host-chat-gutter: var(--space-3);
+  }
+
+}
+
+/* the meter is the composer's on every width (ZAC-207 redesign): with the agent and mode pills in
+   the settings sheet, a phone's row has room for it. Its percent shows from 600 px */
+@media (max-width: 599px) {
+  .host-chat-meter .host-chat-meter-label {
+    display: none;
+  }
+}
+
+/* a bar over the composer (not open in its workspace, forking, restored) on the same column */
+.host-chat > .checkpoint-bar {
+  margin-inline: var(--host-chat-gutter);
+}
+
+/* the session's pills under the composer's box (Composer `foot`; VS Code's agent-host input pills):
+   PRs and issues in their state's colour, the artifacts sheet, the work still running. Above the
+   box they sandwiched the todo tab (owner, ZAC-228): under it, the todos sit over the box and what
+   the session made under it. One line on the box's column, centred under it; a phone scrolls it,
+   from its start. Air above it so the row does not read as the box's foot (ZAC-207). */
+.session-pills {
+  display: flex;
+  gap: var(--space-1);
+  width: min(100%, var(--chat-w));
+  min-width: 0;
+  margin: var(--space-2) auto 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+/* auto margins centre a row that fits and leave one that scrolls starting at its first pill */
+.session-pills > :first-child { margin-inline-start: auto; }
+.session-pills > :last-child { margin-inline-end: auto; }
+.session-pills::-webkit-scrollbar { display: none; }
+/* a phone: the row is the last thing on the screen, over the system's navigation bar (Android's
+   back / home / recents, iOS's home indicator), whose gesture zone takes the screen's last ~16 px.
+   The composer's bottom space lifts it clear (owner, ZAC-228) */
+@media (pointer: coarse) {
+  .host-chat .composer { padding-bottom: max(var(--space-5), env(safe-area-inset-bottom, 0px)); }
+}
+.session-pill {
+  display: inline-flex; flex: none; align-items: center; gap: var(--space-1);
+  min-height: 1.75rem; padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border); border-radius: 999px;
+  background: var(--bg-elevated, transparent); color: var(--text); font: inherit; font-size: var(--fs-xs);
+  cursor: pointer; white-space: nowrap;
+}
+.session-pill:hover, .session-pill[aria-expanded="true"] { border-color: var(--text-dim); background: var(--bg-hover); }
+.session-pill:focus-visible, .session-sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.session-pill-label { font-variant-numeric: tabular-nums; }
+.session-pill-icon { flex: none; width: 1.05em; height: 1.05em; color: var(--text-dim); }
+.session-pill.is-running .session-pill-icon { color: var(--status-working); }
+/* VS Code's charts.green / purple / red / orange and descriptionForeground, in this theme's tokens */
+/* PR and issue states in GitHub's own colours (tokens in styles.css: --gh-*) */
+.session-pill-icon[data-tone="green"] { color: var(--gh-open); }
+.session-pill-icon[data-tone="purple"] { color: var(--gh-done); }
+.session-pill-icon[data-tone="red"] { color: var(--gh-closed); }
+.session-pill-icon[data-tone="orange"] { color: var(--gh-attention); }
+.session-pill-icon[data-tone="muted"] { color: var(--text-dim); opacity: 0.75; }
+
+.session-sheet { width: min(100%, 28rem); }
+.session-sheet-section + .session-sheet-section { margin-top: var(--space-3); }
+.session-sheet-heading {
+  margin: 0 0 var(--space-1); color: var(--text-dim);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.session-sheet-list { margin: 0; padding: 0; list-style: none; }
+.session-sheet-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; min-height: 2.5rem; padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer;
+}
+.session-sheet-row:not(.is-static):not(:disabled):hover { background: var(--bg-hover); }
+.session-sheet-row:disabled { cursor: default; opacity: 0.7; }
+.session-sheet-row.is-static { cursor: default; }
+.session-sheet-row .session-pill-icon { width: 1.1em; height: 1.1em; }
+.session-sheet-go { flex: none; width: 1em; height: 1em; margin-inline-start: auto; color: var(--text-dim); }
+.session-sheet-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.session-sheet-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-strong); }
+.session-sheet-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: var(--fs-xs); }
+code.session-sheet-detail { font-family: var(--font-mono); }
+.session-sheet-aside { flex: none; width: 1em; height: 1em; color: var(--text-dim); }
+.session-sheet-error { color: var(--danger-text, var(--status-blocked)); font-size: var(--fs-xs); }
+.session-sheet-stop { flex: none; }
+
+@media (max-width: 640px) {
+  .host-chat { --host-chat-gutter: var(--space-3); }
+}
+
+/* ZAC-207: the Changes pill's lines, VS Code's green and red; a single entry's name stays short */
+.session-pill-label { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
+.session-pill-stat { display: inline-flex; gap: 0.35em; flex: none; font-family: var(--font-mono); font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.session-pill-added { color: var(--status-done); }
+.session-pill-removed { color: var(--status-blocked); }
+.session-sheet-summary { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
+.session-sheet-kind { color: var(--text-dim); font-size: var(--fs-xs); }
+.session-sheet-row .session-pill-stat { margin-inline-start: auto; font-size: var(--fs-xs); }
+.session-sheet-row .session-pill-stat + .session-sheet-go { margin-inline-start: var(--space-1); }
+.session-sheet-chevron { transition: transform 120ms ease; }
+.session-sheet-row[aria-expanded="true"] .session-sheet-chevron { transform: rotate(90deg); }
+.session-sheet-item > .edit-diff { margin: 0 0 var(--space-2) var(--space-2); }
+@media (prefers-reduced-motion: reduce) { .session-sheet-chevron { transition: none; } }

@@ -1,0 +1,69 @@
+/* A host chat's waiting messages, at the end of the transcript as VS Code draws them (ZAC-228): a
+   request's own bubble, muted (VS Code's .pending-request opacity 0.7), under a quiet divider. Above
+   the composer they sat as a list wedged between the pills and the box, with no way to send one */
+.pending-requests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.pending-requests-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+}
+.pending-requests-divider::after {
+  content: "";
+  flex: 1;
+  height: var(--hairline);
+  background: var(--border);
+}
+
+.pending-request {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+.pending-request + .pending-request { margin-top: var(--space-2); }
+
+.pending-request-bubble {
+  max-width: 80%;
+  padding: var(--space-3) var(--space-4);
+  border: var(--hairline) dashed var(--bubble-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
+  font-size: var(--chat-fs-body);
+  line-height: var(--lh-prose);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  opacity: 0.7;
+}
+.pending-request[aria-busy] .pending-request-bubble { opacity: 1; }
+
+.pending-request-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.pending-request-send { color: var(--text); }
+
+/* with a mouse they wait for a hover, as a request's own do; touch keeps them shown */
+@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  .pending-request-actions { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+  .pending-request:hover .pending-request-actions,
+  .pending-request:focus-within .pending-request-actions,
+  .pending-request[aria-busy] .pending-request-actions { opacity: 1; }
+}
+
+.pending-request-error {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--fs-xs);
+}

@@ -1,0 +1,18 @@
+/* A file or folder icon (FileGlyph.tsx): an <img> of the theme's SVG, square, never stretched by a
+   flex row. Its rows set width and height as they did for the lucide glyphs it replaced. */
+:where(.file-glyph) {
+  flex: none;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  object-fit: contain;
+  vertical-align: -0.125em;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Settings → Appearance → Agent logos → Mono (data-marks on <html>, lib/settings.ts): the same
+   shapes without their colors, so a list reads as one tone, as AgentMark.css does for the marks. */
+[data-marks="mono"] .file-glyph {
+  filter: grayscale(1);
+}
