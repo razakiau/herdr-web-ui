@@ -158,7 +158,7 @@ export interface AgentSidebarProps {
   allAgents?: RowMenuItem[];
   /** the head's trailing control: the sidebar's search (MachineSidebar.tsx) */
   headAction?: ReactNode;
-  /** drawn as the sidebar's Agents lens (MachineSidebar.tsx): no fold of its own, its rows under Needs you / Working / Finished */
+  /** drawn as the sidebar's Agents lens (MachineSidebar.tsx): no fold of its own, its rows under Needs you / Working / Done */
   lens?: boolean;
 }
 
@@ -176,7 +176,7 @@ const RESTING_KEY = "ovis:agents-resting-open";
 
 /** The Agents lens's headings, by attention rank (lib/agentNow.ts attentionRank); a rank-3 row shows only while selected. */
 function groupLabel(rank: number, t: Translate): string {
-  return rank === 0 ? t("Needs you") : rank === 1 ? t("Working") : rank === 2 ? t("Finished") : t("Selected");
+  return rank === 0 ? t("Needs you") : rank === 1 ? t("Working") : rank === 2 ? t("Done") : t("Selected");
 }
 
 function facetLabel(facet: AgentFacet, t: Translate): string {
@@ -466,7 +466,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
           <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{faceted.pinned.map(listItem)}</ul>
         </>}
-        {fold.shown.length > 0 && (lens
+        {fold.shown.length > 0 && (lens && facet === "all"
           ? attentionGroups(fold.shown, shown).map((group) => <div key={group.rank} className="agent-group" data-rank={group.rank}>
             <p className="agent-group-label" aria-hidden="true">{groupLabel(group.rank, t)}</p>
             <ul className="agent-list" aria-label={groupLabel(group.rank, t)}>{group.rows.map(listItem)}</ul>

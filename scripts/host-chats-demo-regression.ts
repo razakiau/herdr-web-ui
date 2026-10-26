@@ -482,8 +482,8 @@ try {
           rows: node.querySelectorAll(":scope > ul.agent-list > li").length,
         })));
         const lensLabels = lensGroups.map((group) => group.label);
-        const ORDER = ["NEEDS YOU", "WORKING", "FINISHED", "SELECTED"];
-        assert.ok(lensLabels.length > 0 && lensLabels.every((label) => ORDER.includes(label)), `the Agents lens heads its rows Needs you / Working / Finished: ${JSON.stringify(lensGroups)}`);
+        const ORDER = ["NEEDS YOU", "WORKING", "DONE", "SELECTED"];
+        assert.ok(lensLabels.length > 0 && lensLabels.every((label) => ORDER.includes(label)), `the Agents lens heads its rows Needs you / Working / Done: ${JSON.stringify(lensGroups)}`);
         assert.deepEqual(lensLabels, ORDER.filter((label) => lensLabels.includes(label)), `the headings stand in attention order: ${JSON.stringify(lensLabels)}`);
         // the fixture's working rows may have finished by now: Needs you is the one heading it always has
         assert.ok(lensLabels.includes("NEEDS YOU"), `the fixture's asking agents get their heading: ${JSON.stringify(lensLabels)}`);
@@ -491,10 +491,22 @@ try {
         assert.equal(await askingRow.evaluate((row) => row.closest(".agent-group")?.querySelector(".agent-group-label")?.textContent), "Needs you", "the asking chat's row is under Needs you");
         assert.equal(await page.locator('.agents-sidebar .agent-group[data-rank="0"] .agent-item .badge').evaluateAll((badges) => badges.every((badge) => badge.getAttribute("data-status") === "blocked")), true, "only asking rows are under Needs you");
         assert.equal(await page.locator('.agents-sidebar .agent-group[data-rank="1"] .agent-item .badge').evaluateAll((badges) => badges.every((badge) => ["working", "waiting"].includes(badge.getAttribute("data-status") ?? ""))), true, "only working rows are under Working");
-        // the Agents tab counts what asks for you, in the asking colour
-        const needsCount = lensTab("Agents").locator(".sidebar-lens-count");
-        assert.equal(await needsCount.getAttribute("data-status"), "blocked", "the Agents tab's count is the asking one");
-        assert.ok(Number(await needsCount.innerText()) >= 1, "the Agents tab counts the chats that ask");
+        // each heading in its status's colour, the one its facet and marks use (owner, ZAC-233)
+        const headColours = await page.locator(".agents-sidebar .agent-group").evaluateAll((nodes) => nodes.map((node) => {
+          const probe = document.createElement("span");
+          const want = { "0": "--status-blocked", "1": "--status-working", "2": "--status-done" }[(node as HTMLElement).dataset["rank"] ?? ""];
+          probe.style.color = want ? `var(${want})` : "inherit";
+          document.body.append(probe);
+          const expected = getComputedStyle(probe).color;
+          probe.remove();
+          return { rank: (node as HTMLElement).dataset["rank"], want: want ?? null, got: getComputedStyle(node.querySelector(".agent-group-label")!).color, expected };
+        }));
+        assert.ok(headColours.filter((each) => each.want).length >= 2, `at least two coloured headings to compare: ${JSON.stringify(headColours)}`);
+        assert.ok(headColours.every((each) => !each.want || each.got === each.expected), `each heading wears its status colour: ${JSON.stringify(headColours)}`);
+        // the Agents tab counts every row of its list in the tab's own colour, as the PCs tab does
+        const agentsCount = lensTab("Agents").locator(".sidebar-lens-count");
+        assert.equal(await agentsCount.getAttribute("data-status"), null, "the Agents tab's count is not the asking colour");
+        assert.equal(await agentsCount.evaluate((el) => getComputedStyle(el).color), await lensTab("PCs").locator(".sidebar-lens-count").evaluate((el) => getComputedStyle(el).color), "both tabs' counts share a colour");
         assert.equal((await lensTab("PCs").locator(".sidebar-lens-count").innerText()).trim(), "2", "the PCs tab counts the PCs");
         // the facets (owner, ZAC-233): All | Needs you | Working | Done with counts, no marks and no ⋯ at the head
         const facets = page.locator(".agents-sidebar .agent-facets");
@@ -506,14 +518,18 @@ try {
         assert.deepEqual(facetsAtFirst.map((each) => each.on), ["true", "false", "false", "false"], "All is picked at first");
         const rowCount = () => page.locator(".agents-sidebar .agent-item:visible").count();
         assert.ok(facetsAtFirst[1]!.count >= 1, "Needs you counts the asking chats");
+        assert.equal(Number(await agentsCount.innerText()), facetsAtFirst[0]!.count, "the Agents tab's number is All's");
+        assert.ok(facetsAtFirst[0]!.count > facetsAtFirst[1]!.count, "and more than the asking ones alone");
         await facets.locator('.agent-facet[data-status="blocked"]').click();
         assert.equal(await facets.locator('.agent-facet[data-status="blocked"]').getAttribute("aria-checked"), "true", "a tap picks Needs you");
         assert.equal(await facets.locator('.agent-facet[data-status="all"]').getAttribute("aria-checked"), "false", "and unpicks All");
         assert.equal(await rowCount(), facetsAtFirst[1]!.count, "Needs you shows its count of rows");
+        assert.equal(await page.locator(".agents-sidebar .agent-group-label").count(), 0, "a picked facet heads nothing again: the chip already says it");
         assert.equal(await page.locator(".agents-sidebar .agent-item:visible .badge").evaluateAll((badges) => badges.every((badge) => badge.getAttribute("data-status") === "blocked")), true, "and only asking ones");
         if (shots) { await settled(page); await page.screenshot({ path: join(shots, "facet-needs-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         await facets.locator('.agent-facet[data-status="all"]').click();
         assert.equal(await facets.locator('.agent-facet[data-status="all"]').getAttribute("aria-checked"), "true", "All brings every row back");
+        assert.ok(await page.locator(".agents-sidebar .agent-group-label").count() > 0, "and its headings");
         await fits("the Agents lens");
         if (shots) { await settled(page); await page.screenshot({ path: join(shots, "lens-agents-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         // the PCs tab: the PC tree alone, the agents gone, the choice stored on this device
@@ -547,7 +563,7 @@ try {
         assert.equal(await lensTab("PCs").getAttribute("aria-selected"), "true", "closing the search returns to the stored PCs lens");
         assert.equal(await page.locator(".agents-sidebar").count(), 0, "the agents hide again");
         assert.equal(await page.locator(".machine-list").isVisible(), true, "the PC tree stays");
-        console.log("PASS one list, two lenses: Agents by default under Needs you / Working / Finished, PCs shows the tree alone and survives a reload, a search shows both and gives the lens back");
+        console.log("PASS one list, two lenses: Agents by default under Needs you / Working / Done, in their colours, the tab counting every row, PCs shows the tree alone and survives a reload, a search shows both and gives the lens back");
 
         await folderRow.waitFor();
         assert.equal(await page.getByRole("heading", { name: "Copilot", exact: true }).count(), 0, "no Copilot heading");

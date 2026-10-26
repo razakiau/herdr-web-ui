@@ -11,6 +11,7 @@ import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar, type HostChatTarget } from "./AgentSidebar.tsx";
 import { currentSidebarPins, subscribeSidebarPins, pinnedHostFolders, setSidebarPins, toggleHostFolderPin } from "../lib/sidebarPins.ts";
 import { basename, type HostPc } from "../lib/hostChats.ts";
+import { agentListCount } from "../lib/agentRoster.ts";
 import { currentHostWorkspaces, subscribeHostWorkspaces } from "../lib/hostWorkspaces.ts";
 import { foldPc, foldPcs, keptPcs, openPc, pcPlacement, samePath, searchPlace, type PcLists } from "../lib/hostPlacement.ts";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -182,8 +183,9 @@ export function MachineSidebar(props: Props) {
   const foldedIds = new Set(fold.folded.map((machine) => machine.id));
   // foldPcs folds nothing with one or two PCs: there is nowhere to put one back to
   const foldable = props.machines.length > 2;
-  // the Agents lens says how many ask for you, from either lens
-  const needsYou = props.machines.reduce((sum, machine) => sum + pcActivity(machine, hostChats.get(machine.id), activity).asking, 0);
+  // the Agents tab says how many rows its list holds, like the PCs tab (owner, ZAC-233: the asking count is the Needs you facet's)
+  const listPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
+  const agentCount = agentListCount(props.machines, hostChats, listPins);
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
   const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs. The
@@ -198,7 +200,7 @@ export function MachineSidebar(props: Props) {
     {!searching && <div className="sidebar-lens-row">
       <div className="sidebar-lens" role="tablist" aria-label={t("Sidebar view")}>
         <button type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === "agents"} onClick={() => setLens("agents")}>
-          {t("Agents")}{needsYou > 0 && <span className="sidebar-lens-count" data-status="blocked">{needsYou}</span>}
+          {t("Agents")}<span className="sidebar-lens-count">{agentCount}</span>
         </button>
         <button type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === "pcs"} onClick={() => setLens("pcs")}>
           {t("PCs")}<span className="sidebar-lens-count">{props.machines.length}</span>

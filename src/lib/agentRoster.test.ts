@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { Machine, MachineState } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import fixture from "../../site/demo/fixtures/machines.json";
-import { agentRoster, byAttention, restingSplit } from "./agentRoster.ts";
-import { sidebarPinKey } from "./sidebarPins.ts";
+import { agentListCount, agentRoster, byAttention, restingSplit } from "./agentRoster.ts";
+import type { HostChatRow } from "../../shared/host-chats.ts";
+import { hostChatPinKey, sidebarPinKey } from "./sidebarPins.ts";
 
 const template = fixture.machines[0]!.snapshot as SessionSnapshot;
 const templatePane = template.panes.find((pane) => pane.agent) ?? template.panes[0]!;
@@ -71,5 +72,21 @@ describe("restingSplit (the owner, 2026-10-25: many agents)", () => {
     const quiet = split([row("run", "working"), row("idle", "idle")], "idle");
     expect(ids(quiet.shown)).toEqual(["run", "idle"]);
     expect(quiet.resting).toEqual([]);
+  });
+});
+
+describe("agentListCount (the Agents tab's number, owner ZAC-233)", () => {
+  const chat = (session: string, status: HostChatRow["status"], extra: Partial<HostChatRow> = {}): HostChatRow => ({ session, title: session, status, modified_at: "2026-10-26T00:00:00Z", cwd: null, ...extra } as HostChatRow);
+  it("counts every row the list holds: each PC's agents and its listed host chats, whatever their status", () => {
+    const machines = [machine("local", "connected", [["a", "done"], ["b", "blocked"]]), machine("remote", "connected", [["c", "working"]])];
+    const chats = new Map([["local", { host: null, chats: [chat("s1", "asks"), chat("s2", "working"), chat("s3", "idle"), chat("s4", "idle", { unread: true })] }]]);
+    // a, b, c + the asking, working and unread chats; the read idle chat is not in the list
+    expect(agentListCount(machines, chats, [])).toBe(6);
+  });
+  it("a pinned idle chat is in the list, so it counts", () => {
+    const machines = [machine("local", "connected", [])];
+    const chats = new Map([["local", { host: null, chats: [chat("s3", "idle")] }]]);
+    expect(agentListCount(machines, chats, [])).toBe(0);
+    expect(agentListCount(machines, chats, [hostChatPinKey("local", "s3")])).toBe(1);
   });
 });

@@ -379,6 +379,8 @@
   text-transform: uppercase;
 }
 .agent-group[data-rank="0"] .agent-group-label { color: var(--status-blocked); }
+.agent-group[data-rank="1"] .agent-group-label { color: var(--status-working); }
+.agent-group[data-rank="2"] .agent-group-label { color: var(--status-done); }
 
 /* the Agents lens's facets (owner, ZAC-233): All | Needs you | Working | Done, one at a time, each in its
    status colour. Sized so all four fit a 390px phone's drawer; a narrower sidebar scrolls them sideways. */

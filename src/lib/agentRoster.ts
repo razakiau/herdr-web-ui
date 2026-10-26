@@ -8,7 +8,9 @@ import type { AgentStatus } from "../../shared/protocol.ts";
 import { sidebarAgents, type SidebarAgent } from "./sidebarAgents.ts";
 import { attentionRank } from "./agentNow.ts";
 import { activityOrder } from "./sidebarOrder.ts";
-import { sidebarPinKey, splitPinnedRows } from "./sidebarPins.ts";
+import { hostChatPinKey, sidebarPinKey, splitPinnedRows } from "./sidebarPins.ts";
+import { agentsListHostChats } from "./hostPlacement.ts";
+import type { HostPc } from "./hostChats.ts";
 
 export interface AgentRow { machine: Machine; entry: SidebarAgent }
 
@@ -19,6 +21,15 @@ export interface AgentRosterOptions {
   seqs(machineId: string): ReadonlyMap<string, number>;
   /** the pinned rows' keys (lib/sidebarPins.ts), in pin order */
   pinned: readonly string[];
+}
+
+/**
+ * How many rows the Agents list holds (the Agents tab's number, owner ZAC-233): every PC's herdr agents
+ * and the host chats the list shows (AgentSidebar: working, asking, unread or pinned), whatever their status.
+ */
+export function agentListCount(machines: readonly Machine[], hostChats: ReadonlyMap<string, Pick<HostPc, "chats">>, pinned: readonly string[]): number {
+  return machines.reduce((sum, machine) => sum + sidebarAgents(machine.snapshot).length
+    + agentsListHostChats(hostChats.get(machine.id)?.chats ?? [], (session) => pinned.includes(hostChatPinKey(machine.id, session))).length, 0);
 }
 
 /** Every PC's agent rows as the list draws them: the pinned ones first, then the rest in source order. */
