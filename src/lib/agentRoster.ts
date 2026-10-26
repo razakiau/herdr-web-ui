@@ -52,6 +52,18 @@ export function byAttention<T>(rows: readonly T[], status: (row: T) => AgentStat
     .map((each) => each.row);
 }
 
+/**
+ * The Agents lens's order (Settings → Agents order, owner ZAC-233): the status groups first (byAttention),
+ * then inside each group either the latest change on top (`latest`; a row with no time goes last) or the PCs
+ * in their listed order, each PC's rows as given. Herdr agents and host chats sort alike, so the setting
+ * moves every row, not only herdr's.
+ */
+export function lensOrder<T>(rows: readonly T[], how: { status(row: T): AgentStatus | undefined; pc(row: T): number; at(row: T): number | undefined; latest: boolean }): T[] {
+  return rows.map((row, index) => ({ row, index, rank: attentionRank(how.status(row)), pc: how.pc(row), at: how.at(row) ?? -Infinity }))
+    .sort((a, b) => a.rank - b.rank || (how.latest ? b.at - a.at : a.pc - b.pc) || a.index - b.index)
+    .map((each) => each.row);
+}
+
 /** How many rows that need you or work the list shows before "Show all" (the owner's pick, 2026-10-25). */
 export const ACTIVE_CAP = 8;
 

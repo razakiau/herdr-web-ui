@@ -10,7 +10,7 @@ import { useT, type Translate } from "../lib/i18n.ts";
 import { agentNow, attentionRank, hostChatNow, type AgentNow } from "../lib/agentNow.ts";
 import { sinceOf, type Since } from "../lib/since.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { agentRoster, byAttention, restingSplit, type AgentRow } from "../lib/agentRoster.ts";
+import { agentRoster, byAttention, lensOrder, restingSplit, type AgentRow } from "../lib/agentRoster.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { folderName } from "../lib/paneName.ts";
 import { matchesQuery } from "../lib/paletteSearch.ts";
@@ -244,14 +244,21 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const shown = (row: ListRow): AgentStatus | undefined => row.chat
     ? row.chat.status === "asks" ? "blocked" : row.chat.status === "working" ? "working" : row.chat.unread ? "done" : "idle"
     : row.machine.state === "connected" ? activity.status(row.machine.id, row.entry.pane) : undefined;
+  // the lens orders every row alike inside its status group (lib/agentRoster.ts lensOrder): Latest first by
+  // the row's last change (a pane's status_since, a chat's modified_at), or By PC in the PCs' listed order
+  const pcIndex = useMemo(() => new Map(machines.map((machine, index) => [machine.id, index])), [machines]);
+  const ordered = (rows: ListRow[]): ListRow[] => lens
+    ? lensOrder(rows, { status: shown, pc: (row) => pcIndex.get(row.machine.id) ?? 0, latest: byActivity,
+      at: (row) => row.chat ? (Date.parse(row.chat.modified_at) || undefined) : row.entry.pane.status_since })
+    : byAttention<ListRow>(rows, shown);
   const roster = useMemo((): { pinned: ListRow[]; rest: ListRow[] } => {
-    if (chatRows.length === 0) return { pinned: herdrRoster.pinned, rest: byAttention<ListRow>(herdrRoster.rest, shown) };
+    if (chatRows.length === 0) return { pinned: herdrRoster.pinned, rest: ordered(herdrRoster.rest) };
     // the pinned rows of both kinds stand first, in the order they were pinned
     const chats = splitPinnedRows(chatRows, pinned, rowPinKey);
     const order = new Map(pinned.map((key, index) => [key, index]));
     const pinnedRows: ListRow[] = [...herdrRoster.pinned, ...chats.pinned].sort((a, b) => (order.get(rowPinKey(a)) ?? 0) - (order.get(rowPinKey(b)) ?? 0));
-    return { pinned: pinnedRows, rest: byAttention<ListRow>([...herdrRoster.rest, ...chats.rest], shown) };
-  }, [herdrRoster, chatRows, pinned, activity]);
+    return { pinned: pinnedRows, rest: ordered([...herdrRoster.rest, ...chats.rest]) };
+  }, [herdrRoster, chatRows, pinned, activity, lens, byActivity, pcIndex]);
   const allRows = useMemo(() => [...roster.pinned, ...roster.rest], [roster]);
   // the sidebar's filter (lib/sidebarFilter.ts) keeps the matched rows and the selected one, in the same
   // order and cards; the pins and their pruning go on reading every row

@@ -508,6 +508,30 @@ try {
         assert.equal(await agentsCount.getAttribute("data-status"), null, "the Agents tab's count is not the asking colour");
         assert.equal(await agentsCount.evaluate((el) => getComputedStyle(el).color), await lensTab("PCs").locator(".sidebar-lens-count").evaluate((el) => getComputedStyle(el).color), "both tabs' counts share a colour");
         assert.equal((await lensTab("PCs").locator(".sidebar-lens-count").innerText()).trim(), "2", "the PCs tab counts the PCs");
+        // Settings → Agents order (owner, ZAC-233): Latest first sorts each status group by its last change, chats
+        // and herdr rows alike; By PC keeps each PC's rows together in the PCs' order. Read the rows' own data
+        const groupOrder = () => page.locator(".agents-sidebar .agent-group").evaluateAll((nodes) => nodes.map((node) => [...node.querySelectorAll<HTMLElement>(":scope > ul.agent-list > li")].map((li) => li.dataset["pinKey"] ?? "")));
+        // through Settings → Appearance, as the owner would; the drawer is open on a phone, so it closes for it and opens again
+        const setOrder = async (label: string) => {
+          await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+          const dialog = page.getByRole("dialog");
+          await page.locator('[data-settings-page="appearance"]').click();
+          await dialog.getByRole("group", { name: "Agents order", exact: true }).getByRole("button", { name: label, exact: true }).click();
+          await page.keyboard.press("Escape");
+          await dialog.waitFor({ state: "detached" });
+          if (await page.locator("#workspace-drawer.is-open").count() === 0) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await page.locator(".agents-sidebar .agent-item").first().waitFor();
+        };
+        const machinesOrder = await page.evaluate(() => [...new Set([...document.querySelectorAll<HTMLElement>(".agents-sidebar .agent-item")].map((li) => li.dataset["machine"] ?? ""))]);
+        await setOrder("By PC");
+        const byPc = await groupOrder();
+        await setOrder("Latest first");
+        const latest = await groupOrder();
+        assert.ok(byPc.some((group) => group.length > 1), `a group with several rows to order: ${JSON.stringify(byPc)}`);
+        assert.ok(JSON.stringify(byPc) !== JSON.stringify(latest), `the Agents order setting moves rows in the lens: ${JSON.stringify({ byPc, latest })}`);
+        const machineOf = (key: string) => key.split(":")[0]!;
+        assert.ok(byPc.every((group) => group.map(machineOf).every((id, i, all) => i === 0 || machinesOrder.indexOf(all[i - 1]!) <= machinesOrder.indexOf(id))), `By PC keeps each group's rows in PC order: ${JSON.stringify(byPc)}`);
+        assert.deepEqual(byPc.map((group) => [...group].sort()), latest.map((group) => [...group].sort()), "both orders hold the same rows in the same groups");
         // the facets (owner, ZAC-233): All | Needs you | Working | Done with counts, no marks and no ⋯ at the head
         const facets = page.locator(".agents-sidebar .agent-facets");
         assert.equal(await facets.getAttribute("role"), "radiogroup", "the facets are one choice");

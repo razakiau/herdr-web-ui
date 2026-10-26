@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { Machine, MachineState } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import fixture from "../../site/demo/fixtures/machines.json";
-import { agentListCount, agentRoster, byAttention, restingSplit } from "./agentRoster.ts";
+import { agentListCount, agentRoster, byAttention, lensOrder, restingSplit } from "./agentRoster.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
 import { hostChatPinKey, sidebarPinKey } from "./sidebarPins.ts";
 
@@ -88,5 +88,18 @@ describe("agentListCount (the Agents tab's number, owner ZAC-233)", () => {
     const chats = new Map([["local", { host: null, chats: [chat("s3", "idle")] }]]);
     expect(agentListCount(machines, chats, [])).toBe(0);
     expect(agentListCount(machines, chats, [hostChatPinKey("local", "s3")])).toBe(1);
+  });
+});
+
+describe("lensOrder (Settings → Agents order in the Agents lens, owner ZAC-233)", () => {
+  type Row = { id: string; status: AgentStatus | undefined; pc: number; at: number | undefined };
+  const row = (id: string, status: AgentStatus | undefined, pc: number, at?: number): Row => ({ id, status, pc, at });
+  const order = (rows: Row[], latest: boolean) => lensOrder(rows, { status: (r) => r.status, pc: (r) => r.pc, at: (r) => r.at, latest }).map((r) => r.id);
+  const rows = [row("a", "working", 0, 100), row("b", "blocked", 1, 50), row("c", "working", 1, 300), row("d", "blocked", 0, 10), row("e", "working", 0, undefined)];
+  it("Latest first: each status group by its latest change, newest on top, a row with no time last", () => {
+    expect(order(rows, true)).toEqual(["b", "d", "c", "a", "e"]);
+  });
+  it("By PC: each status group in PC order, a PC's rows in the order given", () => {
+    expect(order(rows, false)).toEqual(["d", "b", "a", "e", "c"]);
   });
 });
