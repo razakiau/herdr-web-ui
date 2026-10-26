@@ -15,6 +15,19 @@ it("rejects a diagram that does not parse, so the chat keeps the code block", as
   await expect(renderMermaid("flowchart LR\n  A[FICTIONAL start --> ", true)).rejects.toThrow();
 });
 
+it("draws a sequence diagram whose message or note text has a semicolon (owner, ZAC-233)", async () => {
+  // mermaid ends a sequence statement at ";": an agent's "synced; the app gets OK" left the whole card as code
+  const svg = await renderMermaid('sequenceDiagram\n  participant T1 as FICTIONAL txn (commits)\n  T1->>W: COMMIT (synced; the app gets "OK" now)\n  Note over W: one; two\n  W-->>T1: done', false);
+  expect(svg).toStartWith("<svg");
+  expect(svg).toContain("synced; the app gets");
+  expect(svg).toContain("one; two");
+});
+
+it("still splits sequence statements an author wrote on one line with semicolons", async () => {
+  const svg = await renderMermaid("sequenceDiagram\n  Alice->>Bob: FICTIONAL hi; Bob->>Alice: FICTIONAL back", false);
+  expect(svg).toContain("FICTIONAL back");
+});
+
 it("escapes what a diagram says and drops its scripts and remote images", async () => {
   const svg = await renderMermaid('flowchart LR\n  A["<img src=x onerror=alert(1)>"] --> B\n  click A call alert(1)\n  C@{ img: "https://example.invalid/x.png" }', true);
   expect(svg).not.toContain("<img");
