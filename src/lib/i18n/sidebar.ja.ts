@@ -58,4 +58,6 @@ export const SIDEBAR_JA: Record<string, string> = {
   "{n}d": "{n}日",
   "For {time}": "{time} 経過",
   "Working": "作業中",
+  "Show agents": "表示するエージェント",
+  "No agents in this view": "この表示にエージェントはありません",
 };

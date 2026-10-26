@@ -28,6 +28,7 @@ import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { AGENT_FACETS, facetCounts, inFacet, type AgentFacet } from "../lib/agentFacets.ts";
 import { hostChatItems, useHostChatActions, type HostChatRef } from "./HostChatActions.tsx";
 import { BackgroundBadge, displayPaneTitle, onRowContextMenu, PlanBadge, StatusBadge } from "./Sidebar.tsx";
 import "./AgentSidebar.css";
@@ -178,6 +179,21 @@ function groupLabel(rank: number, t: Translate): string {
   return rank === 0 ? t("Needs you") : rank === 1 ? t("Working") : rank === 2 ? t("Finished") : t("Selected");
 }
 
+function facetLabel(facet: AgentFacet, t: Translate): string {
+  return facet === "all" ? t("All") : facet === "blocked" ? t("Needs you") : facet === "working" ? t("Working") : t("Done");
+}
+
+/** A facet's mark, the one its rows show (Settings -> Status indicators). */
+function FacetMark({ status }: { status: "blocked" | "working" | "done" }) {
+  const { settings } = useSettings();
+  const style = settings.statusIndicators;
+  return <span className={`badge badge-${status} sidebar-status agent-facet-mark`} data-status={status} aria-hidden="true">
+    {style !== "classic" && <span className="sidebar-status-glyph">{indicatorGlyph(status, style)}</span>}
+    {style === "classic" && status === "blocked" && <span className="sidebar-status-mark">?</span>}
+    {style === "classic" && status !== "blocked" && <span className="sidebar-status-dot" />}
+  </span>;
+}
+
 /** Rows in byAttention order cut into runs of one rank, each under its heading. */
 function attentionGroups<T>(rows: readonly T[], status: (row: T) => AgentStatus | undefined): { rank: number; rows: T[] }[] {
   const groups: { rank: number; rows: T[] }[] = [];
@@ -248,7 +264,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       : machineFilter(filter, row.machine.id)?.panes.has(row.entry.pane.pane_id) === true;
     return { pinned: roster.pinned.filter(kept), rest: roster.rest.filter(kept) };
   }, [roster, filter, selectedHostChat]);
-  const rows = useMemo(() => [...split.pinned, ...split.rest], [split]);
+  // the lens's facet (lib/agentFacets.ts): one status at a time, pinned rows too; for the page only
+  const [facet, setFacet] = useState<AgentFacet>("all");
+  const faceted = useMemo(() => !lens || facet === "all" ? split
+    : { pinned: split.pinned.filter((row) => inFacet(facet, shown(row))), rest: split.rest.filter((row) => inFacet(facet, shown(row))) },
+  [split, lens, facet, activity]);
+  const rows = useMemo(() => [...faceted.pinned, ...faceted.rest], [faceted]);
   // many agents (the owner, 2026-10-25): idle and read rows fold into "N resting", and past 8 asking or working
   // ones the rest wait behind "Show all" (lib/agentRoster.ts restingSplit); a search shows every row it keeps
   const [showAll, setShowAll] = useState(false);
@@ -258,12 +279,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     try { localStorage.setItem(RESTING_KEY, open ? "1" : "0"); } catch { /* storage denied: for the page */ }
   };
   const restingId = useId();
-  const fold = useMemo(() => filter.active
-    ? { shown: split.rest, resting: [] as ListRow[], hidden: 0 }
-    : restingSplit(split.rest, shown, (row) => row.chat
+  const fold = useMemo(() => filter.active || facet !== "all"
+    ? { shown: faceted.rest, resting: [] as ListRow[], hidden: 0 }
+    : restingSplit(faceted.rest, shown, (row) => row.chat
       ? selectedHostChat?.machineId === row.machine.id && selectedHostChat.session === row.chat.session
       : row.machine.id === selectedMachineId && row.entry.pane.pane_id === selectedPaneId, showAll),
-  [split, filter.active, showAll, selectedHostChat, selectedMachineId, selectedPaneId, activity]);
+  [faceted, facet, filter.active, showAll, selectedHostChat, selectedMachineId, selectedPaneId, activity]);
   // a folded list (a phone's starts so) opens while the filter keeps rows in it, so a match or the selection is
   // seen, not only kept; its caret then folds and opens it for the filter's time, the list's own fold untouched
   const [filterFold, setFilterFold] = useState<boolean | null>(null);
@@ -398,7 +419,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // the empty list's line is a live region that is in the list from its first render, clipped while empty (never
   // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
   // under the filter an empty list is the filter's doing, which the list above says once (MachineSidebar.tsx)
-  const shownEmpty = useAnnouncedText(rows.length === 0 && !filter.active ? (loading ? t("Loading agents…") : t("No agents running")) : null);
+  const shownEmpty = useAnnouncedText(rows.length === 0 && !filter.active ? (loading ? t("Loading agents…") : allRows.length > 0 ? t("No agents in this view") : t("No agents running")) : null);
   const menuPinned = menu !== null && pinned.includes(menu.key);
   const menuShown = menuRow === undefined ? null : menuRow.chat ? describeChat(menuRow) : describe(menuRow);
   // a herdr row's pane; a host chat has its own alert switches in its menu (HostChatActions.tsx)
@@ -413,6 +434,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   };
   // what needs you and what works, said at the head whether the list is open or folded
   const summary = agentsSummary(allRows.map(shown), t);
+  const counts = facetCounts(allRows.map(shown));
   // Settings -> Sidebar rows -> One line: an agent row is one line too, its place dim after its title
   const oneLine = settings.sidebarRows === "one";
   return <section ref={sectionRef} className={`agents-sidebar${lens ? " is-lens" : ""}${folded ? " is-collapsed" : ""}${rows.length === 0 ? " is-empty" : ""}${oneLine ? " is-one-line" : ""}`} aria-label={t("Agents")}>
@@ -423,19 +445,26 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
         {/* the count is of the agents running, filter or not */}
         {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
       </button>}
-      {summary.length > 0 && <span className="agent-section-summary">
+      {!lens && summary.length > 0 && <span className="agent-section-summary">
         <SummaryMarks parts={summary} />
       </span>}
       {headAction}
-      {allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
+      {!lens && allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
     </div>
     {allMenu && <RowMenu anchor={allMenu} title={t("Agents")} items={allAgents} onClose={() => setAllMenu(null)} />}
+    {lens && allRows.length > 0 && <div className="agent-facets" role="radiogroup" aria-label={t("Show agents")}>
+      {AGENT_FACETS.map((each) => <button key={each} type="button" role="radio" className="agent-facet" data-status={each} aria-checked={facet === each} onClick={() => setFacet(each)}>
+        {each !== "all" && <FacetMark status={each} />}
+        <span>{facetLabel(each, t)}</span>
+        <span className="agent-facet-count">{counts[each]}</span>
+      </button>)}
+    </div>}
     <div className="agent-list-contents" id={listId} hidden={folded}>
       <p className={shownEmpty === null ? "visually-hidden" : "agent-empty"} role="status">{shownEmpty}</p>
       {rows.length > 0 && <>
-        {split.pinned.length > 0 && <>
+        {faceted.pinned.length > 0 && <>
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
-          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(listItem)}</ul>
+          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{faceted.pinned.map(listItem)}</ul>
         </>}
         {fold.shown.length > 0 && (lens
           ? attentionGroups(fold.shown, shown).map((group) => <div key={group.rank} className="agent-group" data-rank={group.rank}>

@@ -891,10 +891,12 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
         const boxes = await page.evaluate(() => {
           const box = (el: Element | null | undefined) => { const r = el?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width } : null; };
           const tabs = [...document.querySelectorAll<HTMLElement>(".sidebar-lens-tab")].map((el) => ({ ...box(el)!, text: el.innerText.trim(), cut: el.scrollWidth > el.clientWidth + 0.5 }));
-          const parts = [...document.querySelectorAll(".agent-summary-part")].map((el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, text: (el as HTMLElement).innerText.trim() }; });
-          return { tabs, row: box(document.querySelector(".sidebar-lens-row")), summary: box(document.querySelector(".agent-section-summary")), section: box(document.querySelector(".agents-sidebar")), parts, search: box(document.querySelector(".sidebar-search-toggle")) };
+          // the facets scroll sideways in a narrow sidebar: only the ones in sight are measured
+          const strip = box(document.querySelector(".agent-facets"));
+          const parts = [...document.querySelectorAll(".agent-facet")].map((el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, text: (el as HTMLElement).innerText.trim() }; }).filter((part) => strip !== null && part.left < strip.right && part.right > strip.left);
+          return { tabs, row: box(document.querySelector(".sidebar-lens-row")), strip, section: box(document.querySelector(".agents-sidebar")), parts, search: box(document.querySelector(".sidebar-search-toggle")) };
         });
-        assert.ok(boxes.tabs.length === 2 && boxes.search && boxes.parts.length > 0, `${name} ${width}px: the lens row has its two tabs and the magnifier, the head its counts: ${JSON.stringify(boxes)}`);
+        assert.ok(boxes.tabs.length === 2 && boxes.search && boxes.parts.length > 0, `${name} ${width}px: the lens row has its two tabs and the magnifier, the facets under it: ${JSON.stringify(boxes)}`);
         assert.match(boxes.tabs[0]!.text, /^Agents/, `${name} ${width}px: the first tab is Agents`);
         assert.match(boxes.tabs[1]!.text, /^PCs/, `${name} ${width}px: the second tab is PCs`);
         assert.ok(boxes.tabs[0]!.right <= boxes.tabs[1]!.left + 0.5, `${name} ${width}px: "Agents" ends before "PCs": ${JSON.stringify(boxes)}`);
@@ -902,7 +904,7 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
         for (const tab of boxes.tabs) assert.ok(!tab.cut, `${name} ${width}px: "${tab.text}" is not cut: ${JSON.stringify(boxes)}`);
         for (const [i, part] of boxes.parts.entries()) {
           assert.ok(part.top >= boxes.row!.bottom - 0.5, `${name} ${width}px: "${part.text}" sits under the lens row: ${JSON.stringify(boxes)}`);
-          assert.ok(part.left >= boxes.section!.left - 0.5 && part.right <= boxes.section!.right + 0.5, `${name} ${width}px: "${part.text}" stays inside the Agents section: ${JSON.stringify(boxes)}`);
+          assert.ok(part.left >= boxes.section!.left - 0.5 && Math.min(part.right, boxes.strip!.right) <= boxes.section!.right + 0.5, `${name} ${width}px: "${part.text}" stays inside the Agents section: ${JSON.stringify(boxes)}`);
           const next = boxes.parts[i + 1];
           if (next && Math.abs(next.top - part.top) < 2) assert.ok(part.right <= next.left + 0.5, `${name} ${width}px: "${part.text}" ends before "${next.text}": ${JSON.stringify(boxes)}`);
         }

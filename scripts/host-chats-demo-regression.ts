@@ -494,6 +494,24 @@ try {
         assert.equal(await needsCount.getAttribute("data-status"), "blocked", "the Agents tab's count is the asking one");
         assert.ok(Number(await needsCount.innerText()) >= 1, "the Agents tab counts the chats that ask");
         assert.equal((await lensTab("PCs").locator(".sidebar-lens-count").innerText()).trim(), "2", "the PCs tab counts the PCs");
+        // the facets (owner, ZAC-233): All | Needs you | Working | Done with counts, no marks and no ⋯ at the head
+        const facets = page.locator(".agents-sidebar .agent-facets");
+        assert.equal(await facets.getAttribute("role"), "radiogroup", "the facets are one choice");
+        assert.equal(await page.locator(".agents-sidebar .agent-section-summary, .agents-sidebar .agent-section-more").count(), 0, "the head's marks and ⋯ are gone");
+        const facetView = async () => facets.locator(".agent-facet").evaluateAll((nodes) => nodes.map((node) => ({ status: (node as HTMLElement).dataset["status"], on: node.getAttribute("aria-checked"), count: Number(node.querySelector(".agent-facet-count")?.textContent) })));
+        const facetsAtFirst = await facetView();
+        assert.deepEqual(facetsAtFirst.map((each) => each.status), ["all", "blocked", "working", "done"], `the four facets in order: ${JSON.stringify(facetsAtFirst)}`);
+        assert.deepEqual(facetsAtFirst.map((each) => each.on), ["true", "false", "false", "false"], "All is picked at first");
+        const rowCount = () => page.locator(".agents-sidebar .agent-item:visible").count();
+        assert.ok(facetsAtFirst[1]!.count >= 1, "Needs you counts the asking chats");
+        await facets.locator('.agent-facet[data-status="blocked"]').click();
+        assert.equal(await facets.locator('.agent-facet[data-status="blocked"]').getAttribute("aria-checked"), "true", "a tap picks Needs you");
+        assert.equal(await facets.locator('.agent-facet[data-status="all"]').getAttribute("aria-checked"), "false", "and unpicks All");
+        assert.equal(await rowCount(), facetsAtFirst[1]!.count, "Needs you shows its count of rows");
+        assert.equal(await page.locator(".agents-sidebar .agent-item:visible .badge").evaluateAll((badges) => badges.every((badge) => badge.getAttribute("data-status") === "blocked")), true, "and only asking ones");
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "facet-needs-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        await facets.locator('.agent-facet[data-status="all"]').click();
+        assert.equal(await facets.locator('.agent-facet[data-status="all"]').getAttribute("aria-checked"), "true", "All brings every row back");
         await fits("the Agents lens");
         if (shots) { await settled(page); await page.screenshot({ path: join(shots, "lens-agents-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
         // the PCs tab: the PC tree alone, the agents gone, the choice stored on this device
@@ -1898,17 +1916,16 @@ try {
         await page.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
         console.log("PASS a Copilot folder pins from its row's ⋯ into Pinned, and unpins from the header's");
 
-        // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row's ⋯ is the PC's own): search finds the
-        // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
-        // the drawer open on the PC tree (its lens); the Agents head's ⋯ picks the Agents lens itself
+        // 6c. "All agents on Build PC…", from the PC's own ⋯ (the Agents head's ⋯ gave way to its facets, ZAC-233):
+        // search finds the month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
+        // the drawer open on the PC tree (its lens)
         const drawerOpen = async () => {
           if (await page.locator("#workspace-drawer.is-open").count() === 0) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
           await lens(page, "pcs");
         };
         const agentsMenu = async () => {
           await drawerOpen();
-          await lens(page, "agents");
-          await page.locator(".agents-sidebar").getByRole("button", { name: "More for Agents", exact: true }).click();
+          await page.getByRole("region", { name: "PC Build PC", exact: true }).getByRole("button", { name: "More for Build PC", exact: true }).click();
         };
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
         await lens(page, "pcs");
@@ -2134,9 +2151,9 @@ try {
         await docsRow.waitFor({ state: "detached", timeout: 3000 }).catch(() => assert.fail("Close workspace leaves its row"));
         assert.equal(await page.evaluate(() => (window as unknown as { hostEdits: { archived: Record<string, boolean> } }).hostEdits.archived["fictional-session-0"]), undefined, "Close workspace archives nothing");
         await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
-        // the PC's whole list is still on the Agents menu
+        // the PC's whole list is still on its menu
         await agentsMenu();
-        assert.equal(await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).count(), 1, "All agents stays on the Agents menu");
+        assert.equal(await page.getByRole("button", { name: "All agents on Build PC…", exact: true }).count(), 1, "All agents stays on the PC's menu");
         await page.keyboard.press("Escape");
         await page.getByRole("button", { name: "Close workspace list", exact: true }).click().catch(() => undefined);
         // New workspace → agent host: the folders, newest first, each with its count; the open one says so

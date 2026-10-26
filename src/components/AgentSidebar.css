@@ -379,3 +379,44 @@
   text-transform: uppercase;
 }
 .agent-group[data-rank="0"] .agent-group-label { color: var(--status-blocked); }
+
+/* the Agents lens's facets (owner, ZAC-233): All | Needs you | Working | Done, one at a time, each in its
+   status colour. Sized so all four fit a 390px phone's drawer; a narrower sidebar scrolls them sideways. */
+.agent-facets {
+  display: flex;
+  gap: 4px;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.agent-facets::-webkit-scrollbar { display: none; }
+.agent-facet {
+  --facet: var(--border-strong);
+  --facet-tint: var(--bg-hover);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.agent-facet[data-status="blocked"] { --facet: var(--status-blocked); --facet-tint: var(--status-blocked-tint); }
+.agent-facet[data-status="working"] { --facet: var(--status-working); --facet-tint: var(--status-working-tint); }
+.agent-facet[data-status="done"] { --facet: var(--status-done); --facet-tint: var(--status-done-tint); }
+.agent-facet-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.agent-facet[aria-checked="true"] { border-color: var(--facet); background: var(--facet-tint); color: var(--text-strong); }
+.agent-facet[aria-checked="true"] .agent-facet-count { color: var(--text-strong); }
+.agent-facet:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* the row's mark, tight to its word: not the row's status column, no pill of its own */
+.agent-facet .agent-facet-mark { flex: 0 0 auto; width: auto; height: auto; background: none; padding: 0; }
+/* a facet is a filter, not a live agent: its working mark holds still (only rows breathe) */
+.agent-facet .agent-facet-mark .sidebar-status-dot,
+.agent-facet .agent-facet-mark .sidebar-status-glyph { animation: none; }

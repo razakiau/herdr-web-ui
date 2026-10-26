@@ -58,4 +58,6 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "{n}d": "{n}天",
   "For {time}": "已 {time}",
   "Working": "进行中",
+  "Show agents": "显示的代理",
+  "No agents in this view": "此视图中没有代理",
 };

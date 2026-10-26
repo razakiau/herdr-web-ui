@@ -209,9 +209,7 @@ export function MachineSidebar(props: Props) {
     {/* one scroll: the lens's list, or both under a search */}
     <div className="sidebar-scroll">
       {showAgents && <AgentSidebar lens machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
-        hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
-        // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
-        allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />}
+        hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat} />}
       <div className="machine-list" aria-label={t("PCs and workspaces")} hidden={!showPcs}>
         {/* the PCs fold as the Agents above them do (owner, ZAC-233), for this page */}
         {searching && <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>
@@ -221,6 +219,8 @@ export function MachineSidebar(props: Props) {
         </button></h2>}
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
         {!pcsFolded && openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
+          // "All agents on <PC>…" is the PC's own (owner, ZAC-233: the Agents head's ⋯ gave way to its facets)
+          onAllAgents={hostChats.has(machine.id) ? () => setAllOn({ machineId: machine.id }) : undefined}
           searchNote={filter.active ? searchPlace(foldedIds.has(machine.id), t) : null}
           // the PC in use stays open while it is; any other can be folded, even one that asks (Other PCs then says so)
           onPutBack={foldable && machine.id !== props.selectedMachineId && !foldedIds.has(machine.id) ? () => saveLists(foldPc(lists, machine.id)) : undefined} />)}
@@ -264,7 +264,7 @@ function storedLists(): PcLists {
 }
 
 /** `onPutBack`: folds the PC into "Other PCs" again; absent where it would stay open anyway */
-function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutBack, searchNote = null, ...props }: Omit<Props, "hostChats"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void; onPutBack?: (() => void) | undefined; searchNote?: string | null }) {
+function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onAllAgents, onPutBack, searchNote = null, ...props }: Omit<Props, "hostChats" | "onAllAgents"> & { machine: Machine; hostChats: HostPc | undefined; onNewHostChat(cwd: string | null): void; onFolderChats(cwd: string): void; onAllAgents?: (() => void) | undefined; onPutBack?: (() => void) | undefined; searchNote?: string | null }) {
   const t = useT();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const hostWorkspaces = useSyncExternalStore(subscribeHostWorkspaces, currentHostWorkspaces, currentHostWorkspaces);
@@ -336,6 +336,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onPutB
   };
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const headItems: RowMenuItem[] = [
+    ...(onAllAgents ? [{ id: "all-agents", label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: onAllAgents }] : []),
     ...(onPutBack ? [{ id: "put-back", label: t("Move to Other PCs"), icon: FoldVertical, run: onPutBack }] : []),
     ...(machine.kind === "ssh" ? [{ id: "manage", label: t("Manage PC"), icon: SlidersHorizontal, checked: editing, run: () => { setEditing(!editing); setConfirmDelete(false); } }] : []),
   ];

@@ -58,4 +58,6 @@ export const SIDEBAR_KO: Record<string, string> = {
   "{n}d": "{n}일",
   "For {time}": "{time} 경과",
   "Working": "작업 중",
+  "Show agents": "표시할 에이전트",
+  "No agents in this view": "이 보기에 에이전트가 없습니다",
 };
