@@ -468,7 +468,7 @@ function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): R
   const windows = new Map(models.map((model) => [model.id, model.context]));
   const outputs = new Map(modelOutputs(host.mirror().root));
   return {
-    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelWindow: (id) => windows.get(id) ?? null, modelOutput: (id) => outputs.get(id) ?? null,
+    chat: (uri) => host.chatAt?.(uri), modelName: (id) => names.get(id) ?? id, modelIds: () => [...names.keys()], modelWindow: (id) => windows.get(id) ?? null, modelOutput: (id) => outputs.get(id) ?? null,
     ...(session ? { session: () => host.mirror().getSession(ownerOf(host, session)) } : {}),
     ...(skills ? { skills: () => skills } : {}),
     ...(session ? { todos: () => readSessionTodos(session) } : {}),

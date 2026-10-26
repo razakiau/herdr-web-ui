@@ -892,6 +892,21 @@ describe("host chat turns, whole", () => {
     ]);
     const viaMeta = turnsFrom(parent("fictional/model-a"), { chat: (uri) => uri === subagent.resource ? metaSub : undefined, modelName: names })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
     expect(viaMeta.model).toBe("FICTIONAL Model B · medium");
+    // live (2026-10-26): a worker chat's turn names no model in its message, only in its usage (the served
+    // one, with its provider's prefix); the effort beside it
+    const usageOnly = reducedChat([
+      { type: "chat/turnStarted", turnId: "s-1", startedAt: AT, message: user("FICTIONAL find it") } as StateAction,
+      { type: "chat/usage", turnId: "s-1", usage: { inputTokens: 1, outputTokens: 1, model: "fictional-route/fictional/model-b", _meta: { "vscode.modelConfiguration": { reasoningEffort: "low" } } } } as unknown as StateAction,
+    ]);
+    const viaUsage = turnsFrom(parent("fictional/model-a"), { chat: (uri) => uri === subagent.resource ? usageOnly : undefined, modelName: names })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
+    expect(viaUsage.model).toBe("FICTIONAL Model B · low");
+    // the served route's prefix is not the picker's: the one picker model with that last part names it
+    const otherRoute = reducedChat([
+      { type: "chat/turnStarted", turnId: "s-1", startedAt: AT, message: user("FICTIONAL find it") } as StateAction,
+      { type: "chat/usage", turnId: "s-1", usage: { inputTokens: 1, outputTokens: 1, model: "fictional-cc/model-b" } } as unknown as StateAction,
+    ]);
+    const viaRoute = turnsFrom(parent("fictional/model-a"), { chat: (uri) => uri === subagent.resource ? otherRoute : undefined, modelName: names, modelIds: () => ["fictional/model-a", "fictional/model-b"] })[1]!.parts[0] as Extract<ConversationPart, { kind: "subagent" }>;
+    expect(viaRoute.model).toBe("FICTIONAL Model B");
     // under Auto, the concrete model always shows; an Auto subagent never does
     expect(read("auto", "fictional/model-a").model).toBe("fictional/model-a");
     expect(read("fictional/model-a", "auto").model).toBeNull();

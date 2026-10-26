@@ -2566,6 +2566,13 @@ try {
         assert.equal(await pcsHead.getAttribute("aria-expanded"), "false", "a tap on PCs folds it");
         assert.equal(await six.locator(".machine-list .machine-group:visible").count(), 0, "folded, no PC shows");
         assert.equal(await six.locator(".other-pcs:visible").count(), 0, "nor the Other PCs fold");
+        // its count stands beside the word, as the folded Agents head's does, not at the far edge (owner, ZAC-233)
+        const gap = await pcsHead.evaluate((button) => {
+          const word = button.querySelector(":scope > span:not(.agent-section-count)")!.getBoundingClientRect();
+          const count = button.querySelector(".agent-section-count")!.getBoundingClientRect();
+          return count.left - word.right;
+        });
+        assert.ok(gap < 40, `the PCs count sits beside the word (gap ${Math.round(gap)}px)`);
         await pcsHead.click();
         await pcC.waitFor();
         // put back from its ⋯, it folds into Other PCs again

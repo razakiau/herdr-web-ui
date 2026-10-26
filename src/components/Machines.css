@@ -29,7 +29,8 @@
 @media (hover: hover) {
   .sidebar-pcs-head .agent-section-toggle:hover .agent-section-caret { opacity: 1; }
 }
-.sidebar-pcs-head .agent-section-count { margin-left: auto; width: var(--side-box); font-size: var(--fs-xs); text-align: center; }
+/* the count beside the word, as the folded Agents head has it, not at the row's far edge (owner, ZAC-233) */
+.sidebar-pcs-head .agent-section-count { margin-left: 0; }
 
 .machine-list > .tree-state { padding-left: calc(var(--side-gutter) + var(--side-box)); }
 

@@ -235,6 +235,8 @@ interface TurnTimes { started: string | null; ended: string | null }
 export interface ReadContext {
   chat(uri: string): ChatState | undefined;
   modelName(id: string): string;
+  /** the picker's model ids: a served model's route prefix ("cc/") differs from the picker's ("omniroute/") */
+  modelIds?(): readonly string[];
   /** the chat's session state, for its "/" commands (absent: none) */
   session?(): SessionState | undefined;
   /** the skills the host completes for "/" on the session (a plugin's skills are only there) */
@@ -260,6 +262,23 @@ const AUTO_MODEL = "auto";
 function shownModel(subagent: string | undefined): boolean {
   const own = subagent?.trim().toLowerCase();
   return !!own && own !== AUTO_MODEL;
+}
+
+/**
+ * A served model's name: usage names it with its route's prefix ("cc/claude-opus-5-5", live
+ * 2026-10-26), the picker by its own ("omniroute/claude-opus-5-5"). The longest tail the picker
+ * knows, else the one picker model whose last part is the same, else the id as it came.
+ */
+function servedName(id: string, context: ReadContext): string {
+  const parts = id.split("/");
+  for (let at = 0; at < parts.length; at++) {
+    const tail = parts.slice(at).join("/");
+    const name = context.modelName(tail);
+    if (name !== tail) return name;
+  }
+  const bare = parts.at(-1)!;
+  const same = (context.modelIds?.() ?? []).filter((each) => each.split("/").at(-1) === bare);
+  return same.length === 1 ? context.modelName(same[0]!) : id;
 }
 
 /** A model selection's effort: thinkingLevel, else its config's one string value (as modelOf reads it). */
@@ -316,10 +335,12 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
   // a background task's call settles as soon as it is launched: its own chat still running says it runs on
   const status = !settled(tool) || (!failed && own?.activeTurn !== undefined) ? "running" : failed || tool.status === ToolCallStatus.Cancelled ? "failed" : "done";
   const timing = own ? chatTiming(own) : null;
-  const ownSelection = own ? (own.activeTurn ?? own.turns.at(-1))?.message.model : undefined;
-  const ownModel = ownSelection?.id;
-  // the host files a subagent's effort on its turn's usage (subagent.configured), else it is in the model's config
   const ownTurn = own ? own.activeTurn ?? own.turns.at(-1) : undefined;
+  const ownSelection = ownTurn?.message.model;
+  // a worker chat's turn may name no model in its message (live, 2026-10-26): its usage names the served one
+  const servedModel = (ownTurn?.usage as { model?: unknown } | undefined)?.model;
+  const ownModel = ownSelection?.id ?? (typeof servedModel === "string" && servedModel.trim() !== "" ? servedModel : undefined);
+  // the host files a subagent's effort on its turn's usage (subagent.configured), else it is in the model's config
   const configured = (ownTurn?.usage as { _meta?: Record<string, unknown> } | undefined)?._meta?.["vscode.modelConfiguration"];
   const metaEffort = isRecord(configured) && typeof configured["reasoningEffort"] === "string" && configured["reasoningEffort"].trim() !== "" ? configured["reasoningEffort"] : null;
   const ownEffort = metaEffort ?? effortOfSelection(ownSelection as { config?: Record<string, unknown> } | undefined);
@@ -333,7 +354,7 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
     description: intent ?? subagent.description ?? "",
     ...(intent !== null && subagent.description && subagent.description.trim() !== intent ? { about: subagent.description } : {}),
     ...(background || (status === "running" && settled(tool)) ? { background: true as const } : {}),
-    model: ownModel !== undefined && shownModel(ownModel) ? `${turn.context!.modelName(ownModel)}${ownEffort !== null ? ` · ${ownEffort}` : ""}` : null,
+    model: ownModel !== undefined && shownModel(ownModel) ? `${servedName(ownModel, turn.context!)}${ownEffort !== null ? ` · ${ownEffort}` : ""}` : null,
     started,
     ended: status === "running" ? null : timing?.started ? timing.ended ?? turn.times.ended : turn.times.ended,
     status,
