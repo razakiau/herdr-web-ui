@@ -33,6 +33,8 @@ const BASE: Record<string, string> = {
   "No matches": "一致なし",
   "{current} of {total}": "{total}件中{current}件目",
   "Recent folders": "最近のフォルダー",
+  "No reply yet: the agent may not have received it": "まだ返信がありません。エージェントに届いていない可能性があります",
+  "Stop and resend": "停止して再送信",
   "Dismiss": "閉じる",
   "Input line": "入力欄",
   // ---- settings ----

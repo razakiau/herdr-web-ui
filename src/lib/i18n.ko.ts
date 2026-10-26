@@ -31,6 +31,8 @@ const BASE: Record<string, string> = {
   "No matches": "검색 결과 없음",
   "{current} of {total}": "{total}개 중 {current}",
   "Recent folders": "최근 폴더",
+  "No reply yet: the agent may not have received it": "아직 응답이 없습니다. 에이전트가 받지 못했을 수 있습니다",
+  "Stop and resend": "중지 후 다시 보내기",
   "Dismiss": "닫기",
   "Input line": "입력창",
   // ---- settings ----

@@ -115,6 +115,8 @@ const patch = `(() => {
     ];
     for (const text of state.pushed) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: "FICTIONAL from the PC" }] }, { role: "assistant", ts: at(1), parts: [{ kind: "text", text }] });
     for (const text of state.sent) turns.push({ role: "user", ts: at(0), parts: [{ kind: "text", text }] }, { role: "assistant", ts: at(0), parts: [] });
+    // a message the agent never started on, a minute old, the chat still working (lib/hostStall.ts)
+    if (state.stalled) turns.push({ role: "user", ts: at(1), parts: [{ kind: "text", text: state.stalled }] }, { role: "assistant", ts: at(1), parts: [] });
     const ids = [...(state.older ? ["h0"] : []), "h1", "h1b", "h2", ...state.pushed.map((_, index) => "p" + index), ...state.sent.map((_, index) => "s" + index)];
     const prompt = state.answered ? null : {
       id: "req-1:q-1", agent: "copilot", kind: "question", title: "FICTIONAL direction", question: "FICTIONAL pick **one** direction",
@@ -1771,6 +1773,21 @@ try {
         assert.equal(await view.locator(".chat-new-messages").count(), 0, "no New messages jump after the user's own send");
         assert.equal((await posts("/api/machines/remote/host-chats/chat/send")).at(-1)?.body["mode"], "stop_and_send", "Stop and Send posts its mode");
         console.log("PASS Stop and Send cancels, then sends");
+
+        // 5c2. a message the agent never started on (owner, ZAC-233): after STALL_MS with nothing shown,
+        // the chat says so and sends it again as Stop and Send; before that, and once it answers, no bar
+        const stallBar = view.locator(".stall-bar");
+        assert.equal(await stallBar.count(), 0, "no stall bar on a chat whose turns answered");
+        await page.evaluate(() => { const host = window as unknown as { hostState: { stalled: string | null }; setHostBusy(busy: boolean): void }; host.hostState.stalled = "FICTIONAL did it start?"; host.setHostBusy(true); });
+        await stallBar.waitFor({ timeout: 5000 }).catch(() => assert.fail("a busy turn silent for a minute shows the stall bar"));
+        const resendsBefore = (await posts("/api/machines/remote/host-chats/chat/send")).length;
+        await stallBar.getByRole("button", { name: "Stop and resend", exact: true }).click();
+        await page.waitForFunction((count) => (window as unknown as { hostCalls: { posts: { path: string }[] } }).hostCalls.posts.filter((post) => post.path.endsWith("/chat/send")).length > count, resendsBefore);
+        const resent = (await posts("/api/machines/remote/host-chats/chat/send")).at(-1)!;
+        assert.deepEqual([resent.body["mode"], resent.body["text"]], ["stop_and_send", "FICTIONAL did it start?"], "Resend is Stop and Send with the same words");
+        await page.evaluate(() => { const host = window as unknown as { hostState: { stalled: string | null }; rereadHost(): void }; host.hostState.stalled = null; host.rereadHost(); });
+        await stallBar.waitFor({ state: "detached", timeout: 5000 }).catch(() => assert.fail("the stall bar leaves once the turn is gone"));
+        console.log("PASS a message the agent never started on offers Stop and resend, which sends the same words again");
 
         // 5d. "/" and "@": VS Code's config commands, then the host's; /plan sets Plan and sends the rest
         // back to Interactive (as if set in VS Code), so /plan has something to change; the turn ends

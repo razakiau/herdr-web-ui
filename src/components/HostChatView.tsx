@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chatCost } from "../lib/chatCost.ts";
 import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
-import { Eye, GitFork, SlidersHorizontal } from "lucide-react";
+import { Eye, GitFork, RotateCw, SlidersHorizontal } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
@@ -43,6 +43,7 @@ import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
 import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
 import { hostSlashItems, resolveHostSlash } from "../lib/hostSlash.ts";
+import { STALL_MS, stalledMessage } from "../lib/hostStall.ts";
 
 export interface HostChatViewProps {
   machineId: string; session: string;
@@ -141,6 +142,19 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   // Fork Conversation: the request being forked at, and why the last one failed
   const [forking, setForking] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
+  // a message the agent never started on (lib/hostStall.ts): looked at again when it could turn
+  // stalled, and offered again as Stop and Send, what the owner did by hand
+  const [stallTick, setStallTick] = useState(0);
+  const [resending, setResending] = useState<string | null>(null);
+  const stalled = chat ? stalledMessage(chat, Date.now()) : null;
+  const askedAt = chat?.busy ? Date.parse(chat.turns.at(-2)?.ts ?? "") : NaN;
+  useEffect(() => {
+    if (!Number.isFinite(askedAt)) return;
+    const wait = askedAt + STALL_MS - Date.now();
+    if (wait <= 0) return;
+    const timer = setTimeout(() => setStallTick((tick) => tick + 1), wait + 50);
+    return () => clearTimeout(timer);
+  }, [askedAt, stallTick]);
   const [putBack, setPutBack] = useState<string | null>(null);
   const mounted = useRef(true);
   // the transcript's handle: the "N running" sheet takes the reader to a subagent's row
@@ -349,6 +363,15 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       <Eye className="checkpoint-bar-icon" aria-hidden="true" />
       <span className="checkpoint-bar-text">{t("Not open in its workspace")}</span>
       <button type="button" className="btn btn-ghost checkpoint-bar-redo" onClick={look}>{t("Keep open")}</button>
+    </div>}
+    {stalled && <div className="checkpoint-bar stall-bar" role="status">
+      <RotateCw className="checkpoint-bar-icon" aria-hidden="true" />
+      <span className="checkpoint-bar-text">{t("No reply yet: the agent may not have received it")}</span>
+      {resending !== null && resending !== "" && <span className="checkpoint-bar-error" role="alert">{resending}</span>}
+      <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={resending === ""} onClick={() => {
+        setResending("");
+        void sendAs("stop_and_send", stalled.text).then((answer) => { if (mounted.current) setResending(answer === true ? null : answer || null); });
+      }}>{t("Stop and resend")}</button>
     </div>}
     {(forking !== null || forkError !== null) && <div className="checkpoint-bar fork-bar" role="status">
       <GitFork className="checkpoint-bar-icon" aria-hidden="true" />

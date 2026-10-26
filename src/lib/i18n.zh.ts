@@ -35,6 +35,8 @@ const BASE: Record<string, string> = {
   "No matches": "无匹配",
   "{current} of {total}": "第 {current} 个，共 {total} 个",
   "Recent folders": "最近的文件夹",
+  "No reply yet: the agent may not have received it": "尚无回复：代理可能没有收到",
+  "Stop and resend": "停止并重新发送",
   "Dismiss": "关闭",
   "Input line": "输入框",
   // ---- settings ----
