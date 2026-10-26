@@ -95,7 +95,7 @@ const patch = `(() => {
       ] },
       { role: "user", ts: at(6), parts: [{ kind: "text", text: "FICTIONAL find the config" }] },
       { role: "assistant", ts: at(6), end_ts: at(5), parts: [
-        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", about: "FICTIONAL a read-only agent that searches the code and answers one question about it, cited", model: "FICTIONAL Model B", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
+        { kind: "subagent", id: "c-sub", agent: "explore", description: "FICTIONAL find the build config", about: "FICTIONAL a read-only agent that searches the code and answers one question about it, cited", model: "FICTIONAL Claude Model (Anthropic) · medium", modelId: "fictional/claude-model", modelName: "FICTIONAL Claude Model (Anthropic)", effort: "medium", started: at(6), ended: new Date(Date.parse(at(6)) + 343_000).toISOString(), status: "done", chat: SUB },
         { kind: "notice", text: "Subagent \`FICTIONAL explore\` has completed.", source: "system" },
         { kind: "question", text: "FICTIONAL which config?", options: ["FICTIONAL debug", "FICTIONAL release"], chosen: ["FICTIONAL release"], custom: null, skipped: false },
         { kind: "text", text: "FICTIONAL release it is." },
@@ -801,7 +801,12 @@ try {
         assert.equal(await subTurn.locator(".work-block .subagent-row").count(), 0, "a subagent is never inside a work block");
         assert.equal((await sub.locator(".subagent-row-name").innerText()).trim(), "explore", "the agent's name");
         assert.equal((await sub.locator(".subagent-row-description").innerText()).trim(), "FICTIONAL find the build config", "its task");
-        assert.equal(await sub.locator(".subagent-row-model").count(), 0, "closed, the card leaves the model to its body (ZAC-228)");
+        // closed, the line under its head names the model as the composer's pill: the mark, the short name, the effort (owner, ZAC-233)
+        const subModel = sub.locator(":scope > .subagent-row-model");
+        assert.equal((await sub.locator(".subagent-row-name").evaluate((node) => node.scrollWidth <= node.clientWidth + 1)), true, "the agent's name is whole beside it");
+        assert.equal(await subModel.locator('[data-mark="claude"] svg').count(), 1, "the model's mark on the row");
+        assert.equal((await subModel.locator(".subagent-row-model-name").innerText()).trim(), "FICTIONAL Claude Model", "the model's short name");
+        assert.equal((await subModel.locator(".subagent-row-effort").innerText()).trim(), "medium", "its effort");
         assert.match(await sub.getAttribute("class") ?? "", /subagent-card/, "a subagent is a card (ZAC-228)");
         assert.equal(await sub.evaluate((node) => getComputedStyle(node).borderTopStyle), "solid", "the card has its edge (ZAC-228)");
         assert.equal((await sub.locator(".subagent-row-time").innerText()).trim(), "Worked for 5m 43s", "VS Code's elapsed time");
@@ -811,9 +816,9 @@ try {
         if (shots) await page.screenshot({ path: join(shots, "task-5-subagent-collapsed-390.png") });
         await sub.locator(":scope > .subagent-row-head").click();
         await sub.locator(":scope > .subagent-row-body .subagent-answer", { hasText: "FICTIONAL the config is release.toml" }).waitFor();
-        // opened (ZAC-228): the agent's blurb and model, then Asked / Work / Answer
+        // opened (ZAC-228): the agent's blurb, then Asked / Work / Answer
         assert.match(await sub.locator(":scope > .subagent-row-body .subagent-row-blurb").innerText(), /cited$/, "the agent's description, whole to its last word");
-        assert.equal((await sub.locator(":scope > .subagent-row-body > .subagent-row-about .subagent-row-model").innerText()).trim(), "FICTIONAL Model B", "a model not the chat's, in the body");
+        assert.equal(await sub.locator(":scope > .subagent-row-body .subagent-row-model").count(), 0, "opened, the model stays on the head, not again in the body");
         const body = sub.locator(":scope > .subagent-row-body");
         assert.deepEqual(await body.locator(":scope > .subagent-section > .subagent-caption").allInnerTexts(), ["ASKED", "WORK", "ANSWER"], "the three sections in order");
         assert.equal((await body.locator(":scope > .subagent-section .subagent-asked").innerText()).trim(), "FICTIONAL find the build config", "what it was asked, whole");

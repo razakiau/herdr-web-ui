@@ -425,6 +425,10 @@ export type ConversationPart =
   | {
     kind: "subagent"; id: string; agent: string; description: string; model: string | null;
     started: string | null; ended: string | null; status: "running" | "done" | "failed"; chat: string | null;
+    /** the model's parts, for the row's mark and pill: its id, its name as the picker has it, its effort (newer bridges) */
+    modelId?: string;
+    modelName?: string;
+    effort?: string;
     /** while it runs: what its own chat is doing now (its newest tool call's words), when the bridge reads it */
     activity?: string;
     /** the agent's own description (its definition's blurb) when `description` is the call's intent */

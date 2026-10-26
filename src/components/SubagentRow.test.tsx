@@ -80,14 +80,18 @@ describe("SubagentRow", () => {
     expect(render(createElement(SubagentRow, { part: part({ status: "running", ended: null }), live: false, now: Date.parse(AT) + 63_000 }))).not.toContain("subagent-row-dot");
   });
 
-  it("subagent_model_only_when_different, and only once opened (ZAC-228)", () => {
-    // the bridge leaves `model` null when it is the chat's own: the card shows what it is given
+  it("names its model on the row, with the model's mark and its effort, as the composer's pill (owner, ZAC-233)", () => {
     const read = async () => [];
-    expect(render(withToggles({ "subagent:c3": true }, createElement(SubagentRow, { part: part(), live: false, readChat: read })))).not.toContain("subagent-row-model");
-    expect(render(createElement(SubagentRow, { part: part({ model: "FICTIONAL Model B" }), live: false, readChat: read }))).not.toContain("subagent-row-model");
-    const other = render(withToggles({ "subagent:c3": true }, createElement(SubagentRow, { part: part({ model: "FICTIONAL Model B" }), live: false, readChat: read })));
-    expect(other).toContain("subagent-row-model");
-    expect(text(other)).toContain("FICTIONAL Model B");
+    expect(render(createElement(SubagentRow, { part: part(), live: false, readChat: read }))).not.toContain("subagent-row-model");
+    const closed = render(createElement(SubagentRow, { part: part({ model: "FICTIONAL Claude Model (Anthropic) · low", modelName: "FICTIONAL Claude Model (Anthropic)", modelId: "fictional/claude-model", effort: "low" }), live: false, readChat: read }));
+    // closed, the head holds it: the mark (Claude's), the short name, the effort
+    expect(closed).toContain("subagent-row-model");
+    expect(closed).toContain('data-mark="claude"');
+    expect(text(closed)).toContain("FICTIONAL Claude Model");
+    expect(text(closed)).not.toContain("(Anthropic)");
+    expect(closed).toMatch(/class="subagent-row-effort"[^>]*>low</);
+    // an older bridge sends the words only: they still show
+    expect(text(render(createElement(SubagentRow, { part: part({ model: "FICTIONAL Model B" }), live: false, readChat: read })))).toContain("FICTIONAL Model B");
   });
 
   it("is a card, open on its own while it runs, closed once done, the reader's choice first (ZAC-228)", () => {

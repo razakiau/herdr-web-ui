@@ -473,7 +473,7 @@ describe("host chat read and write routes", () => {
     expect((await call(r, path(worker))).json.error.code).toBe("host_chat_missing");
     const read = (await call(r, path(sessionUri(1)))).json as HostChatRead;
     expect(read.turns[1]!.parts[0]).toEqual({
-      kind: "subagent", id: "c3", agent: "explore", description: "FICTIONAL find the config", model: "fictional/model-b",
+      kind: "subagent", id: "c3", agent: "explore", description: "FICTIONAL find the config", model: "fictional/model-b", modelId: "fictional/model-b", modelName: "fictional/model-b",
       started: "2026-01-01T00:00:01.000Z", ended: "2026-01-01T00:05:44.000Z", status: "done", chat: worker,
     });
     const own = await call(r, path(worker));

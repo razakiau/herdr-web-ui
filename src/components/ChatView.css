@@ -2131,7 +2131,21 @@ button.subagent-row-head:focus-visible { outline: 2px solid var(--accent); outli
   text-overflow: ellipsis;
   color: var(--text-dim);
 }
-.subagent-row-model { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); }
+/* the model under the head, in line with the name: mark, short name, effort, as the composer's pill */
+.subagent-row-model {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: calc(-1 * var(--space-1)) 0 0;
+  padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + var(--fs-md) + var(--space-2));
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.subagent-row-model-mark { flex: none; display: inline-flex; }
+.subagent-row-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.subagent-row-effort { flex: none; color: var(--text-dim); }
 /* opened: the task's words whole, then the agent's own description, quieter */
 .subagent-row-about { display: grid; gap: var(--space-1); margin-bottom: var(--space-2); }
 .subagent-row-intent, .subagent-row-blurb { margin: 0; overflow-wrap: anywhere; }

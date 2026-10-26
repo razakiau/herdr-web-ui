@@ -346,6 +346,7 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
   const ownEffort = metaEffort ?? effortOfSelection(ownSelection as { config?: Record<string, unknown> } | undefined);
   const activity = own && status === "running" ? activityOf(own) : undefined;
   const started = timing?.started ?? turn.times.started;
+  const shownName = ownModel !== undefined && shownModel(ownModel) ? servedName(ownModel, turn.context!) : null;
   return {
     kind: "subagent",
     id: tool.toolCallId,
@@ -354,7 +355,8 @@ function subagentPart(tool: ToolCallState, subagent: ToolResultSubagentContent, 
     description: intent ?? subagent.description ?? "",
     ...(intent !== null && subagent.description && subagent.description.trim() !== intent ? { about: subagent.description } : {}),
     ...(background || (status === "running" && settled(tool)) ? { background: true as const } : {}),
-    model: ownModel !== undefined && shownModel(ownModel) ? `${servedName(ownModel, turn.context!)}${ownEffort !== null ? ` · ${ownEffort}` : ""}` : null,
+    model: shownName !== null ? `${shownName}${ownEffort !== null ? ` · ${ownEffort}` : ""}` : null,
+    ...(shownName !== null ? { modelId: ownModel!, modelName: shownName, ...(ownEffort !== null ? { effort: ownEffort } : {}) } : {}),
     started,
     ended: status === "running" ? null : timing?.started ? timing.ended ?? turn.times.ended : turn.times.ended,
     status,

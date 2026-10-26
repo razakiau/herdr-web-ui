@@ -13,7 +13,9 @@ import { alignBreath } from "../lib/breath.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { splitTurn } from "../lib/workBlocks.ts";
+import { providerMark, shortModelName } from "../lib/modelProvider.ts";
 import { Markdown } from "./Markdown.tsx";
+import { ModelMarkIcon } from "./ModelPicker.tsx";
 import { RowText } from "./RowText.tsx";
 
 export type SubagentPart = Extract<ConversationPart, { kind: "subagent" }>;
@@ -91,6 +93,22 @@ export function subagentSections(turns: ConversationTurn[]): { asked: string | n
 const ASKED_FOLD_LINES = 6;
 const ASKED_FOLD_CHARS = 480;
 
+
+/**
+ * The subagent's model under its head (a phone's head has no room beside the task), as the composer's pill draws one: the model's mark, its short
+ * name, its effort beside it (owner, ZAC-233: "not just text"). An older bridge's words alone stay words.
+ */
+function SubagentModel({ part }: { part: SubagentPart }) {
+  if (part.modelName === undefined || part.modelId === undefined) return <p className="subagent-row-model" title={part.model ?? undefined}>{part.model}</p>;
+  const model = { id: part.modelId, name: part.modelName, provider: "" };
+  const mark = providerMark(model);
+  return <p className="subagent-row-model" title={part.model ?? undefined}>
+    <span className="subagent-row-model-mark" data-mark={mark} aria-hidden="true"><ModelMarkIcon mark={mark} size={12} /></span>
+    <span className="subagent-row-model-name">{shortModelName(model)}</span>
+    {part.effort !== undefined && <span className="subagent-row-effort">{part.effort}</span>}
+  </p>;
+}
+
 /**
  * What a subagent was asked. A long brief (a worktree, a context section, a report spec) took a
  * phone's whole screen before its work (owner, ZAC-228): past a few lines it folds to four, the
@@ -158,12 +176,12 @@ export function SubagentRow({ part, live, readChat, renderTurn, now: fixedNow }:
     {canOpen
       ? <button type="button" className="subagent-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>{head}</button>
       : <div className="subagent-row-head">{head}</div>}
+    {part.model !== null && <SubagentModel part={part} />}
     {running && part.activity !== undefined && <p className="subagent-row-activity"><RowText text={part.activity} /></p>}
     {open && canOpen && <div className="subagent-row-body">
       {/* the row's head cuts its words to one line: opened, they stand whole, the agent's own blurb under them */}
-      {(part.about !== undefined || part.model !== null) && <div className="subagent-row-about">
-        {part.about !== undefined && <p className="subagent-row-blurb">{part.about}</p>}
-        {part.model !== null && <p className="subagent-row-model">{part.model}</p>}
+      {part.about !== undefined && <div className="subagent-row-about">
+        <p className="subagent-row-blurb">{part.about}</p>
       </div>}
       {failed ? <p className="subagent-row-note">{t("Couldn't load the subagent's chat.")} <button type="button" className="btn btn-ghost" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>
         : sections === null ? <p className="subagent-row-note">{t("Loading…")}</p>
