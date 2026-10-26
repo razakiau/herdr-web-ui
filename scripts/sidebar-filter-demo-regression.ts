@@ -137,6 +137,14 @@ async function openSearch(page: Page): Promise<Locator> {
   return filterInput(page);
 }
 const clearButton = (page: Page): Locator => page.locator(".sidebar-filter-clear");
+/** A tab of the sidebar's lens (MachineSidebar.tsx: Agents | PCs over the one scroll, hidden while the search is open). */
+const lensTab = (page: Page, name: "Agents" | "PCs"): Locator => page.locator(".sidebar-lens").getByRole("tab", { name: new RegExp(`^${name}`) });
+/** Picks a lens; a no-op when it is already picked or the search is open (both lists show then). */
+async function lens(page: Page, name: "agents" | "pcs"): Promise<void> {
+  if (await filterInput(page).count() > 0) return;
+  const tab = lensTab(page, name === "agents" ? "Agents" : "PCs");
+  if (await tab.getAttribute("aria-selected") !== "true") await tab.click();
+}
 
 /** Every row the lists draw, in document order: the roster as the user sees it, to compare before, during and after a filter. */
 async function rosterView(page: Page) {
@@ -147,7 +155,9 @@ async function rosterView(page: Page) {
       offline: group.classList.contains("is-offline"),
       context: group.classList.contains("is-filter-context"),
       folded: group.querySelector<HTMLElement>(".machine-toggle")?.getAttribute("aria-expanded") === "false",
-      workspaces: [...group.querySelectorAll<HTMLElement>(".workspace-group")].filter((row) => !row.closest("[hidden]")).map((row) => ({
+      // a row hidden by a fold is not drawn; the PCs list hidden whole by the Agents lens (MachineSidebar.tsx) is the
+      // same roster under the other lens, so its rows still count, and the lens itself is checked on its own
+      workspaces: [...group.querySelectorAll<HTMLElement>(".workspace-group")].filter((row) => !row.closest("[hidden]:not(.machine-list)")).map((row) => ({
         id: row.dataset["workspace"] ?? "",
         name: row.querySelector(".workspace-name")?.textContent ?? "",
         pinned: row.closest(".workspace-list-pinned") !== null,
@@ -173,7 +183,8 @@ async function rosterView(page: Page) {
       // drawn, not only in the document: a folded Agents list keeps its rows hidden
       visible: row.getClientRects().length > 0,
     }));
-    const agentsExpanded = document.querySelector(".agent-section-toggle")?.getAttribute("aria-expanded") === "true";
+    // the Agents lens has no fold of its own: its list is open whenever it is drawn
+    const agentsExpanded = document.querySelector(".agents-sidebar .agent-list-contents:not([hidden])") !== null;
     return { groups, agents, agentsExpanded, empty: document.querySelector(".sidebar-filter-empty")?.textContent ?? null, selectedPane: document.querySelector<HTMLElement>('.workspace-select[aria-current="true"]')?.dataset["pane"] ?? null, activeIsFilter: document.activeElement?.classList.contains("sidebar-filter-input") ?? false };
   });
 }
@@ -210,14 +221,14 @@ async function closeDrawer(page: Page, language: Language = "en"): Promise<void>
 }
 
 const shownIds = (page: Page) => page.evaluate(() => ({
-  ids: [...document.querySelectorAll<HTMLElement>(".machine-list .workspace-group")].filter((row) => !row.closest("[hidden]")).map((row) => row.dataset["workspace"]),
+  ids: [...document.querySelectorAll<HTMLElement>(".machine-list .workspace-group")].filter((row) => !row.closest("[hidden]:not(.machine-list)")).map((row) => row.dataset["workspace"]),
   agents: [...document.querySelectorAll<HTMLElement>(".agents-sidebar .agent-item")].map((row) => `${row.dataset["machine"]}:${row.dataset["pane"]}`),
 }));
 
 async function waitWorkspaceIds(page: Page, predicate: string): Promise<void> {
   try {
     await page.waitForFunction((body) => {
-      const ids = [...document.querySelectorAll<HTMLElement>(".machine-list .workspace-group")].filter((row) => !row.closest("[hidden]")).map((row) => row.dataset["workspace"]);
+      const ids = [...document.querySelectorAll<HTMLElement>(".machine-list .workspace-group")].filter((row) => !row.closest("[hidden]:not(.machine-list)")).map((row) => row.dataset["workspace"]);
       const agents = [...document.querySelectorAll<HTMLElement>(".agents-sidebar .agent-item")].map((row) => `${row.dataset["machine"]}:${row.dataset["pane"]}`);
       return new Function("ids", "agents", `return ${body};`)(ids, agents);
     }, predicate, { timeout: 10_000 });
@@ -458,6 +469,9 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
     assert.equal(before.selectedPane, WEB, `${name}: the web pane is selected`);
     await capture(page, scene, "rest");
     assert.equal(await filterInput(page).count(), 0, `${name}: at rest there is no field, only the magnifier`);
+    // at rest one lens shows: Agents by default, the PCs' tree hidden
+    assert.equal(await lensTab(page, "Agents").getAttribute("aria-selected"), "true", `${name}: the sidebar opens on the Agents lens`);
+    assert.equal(await page.locator(".machine-list").isHidden(), true, `${name}: the Agents lens hides the PCs`);
     report(`measurements-rest-${scene.phone ? 390 : 1440}-${scene.theme}`, await measure(page));
     if (!scene.phone) {
       await workspaceRows(page).first().hover();
@@ -465,6 +479,11 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
     }
     const input = await openSearch(page);
     assert.equal(await input.inputValue(), "", `${name}: the filter starts empty`);
+    // a search looks through both lists: the lens row leaves, the PCs show under the agents with their own head
+    assert.equal(await page.locator(".sidebar-lens-row").count(), 0, `${name}: the search hides the lens row`);
+    assert.equal(await page.locator(".machine-list").isVisible(), true, `${name}: the search shows the PCs`);
+    assert.equal(await page.locator(".agents-sidebar").isVisible(), true, `${name}: the search shows the agents`);
+    assert.equal(await page.locator(".sidebar-pcs-head").count(), 1, `${name}: the PCs have their head while searching`);
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("sidebar-filter-input") ?? false), true, `${name}: the magnifier puts the caret in the field`);
     await input.click();
     await capture(page, scene, "focus-visible");
@@ -517,6 +536,9 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
     await filterInput(page).waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("sidebar-search-toggle")), true, `${name}: closing the search hands the focus to the magnifier`);
     if (scene.phone) assert.equal(await page.locator(".sidebar.is-open").count(), 1, `${name}: closing the search leaves the drawer open`);
+    // closed, the stored lens is back: the agents alone
+    assert.equal(await lensTab(page, "Agents").getAttribute("aria-selected"), "true", `${name}: closing the search returns to the Agents lens`);
+    assert.equal(await page.locator(".machine-list").isHidden(), true, `${name}: closing the search hides the PCs again`);
     const storageAfter = await storageView(page);
     assert.deepEqual(storageAfter, storageBefore, `${name}: a filter writes nothing to storage`);
     const transport = await transportText(page);
@@ -639,6 +661,9 @@ async function liveOfflineRoster(browser: Browser, scene: Scene): Promise<void> 
   const pins = JSON.stringify([`local:workspace:w1K`, `build:${panes.omp}`]);
   const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}&long=1&loading=1&error=1`, { "ovis:sidebar-agent-pins": pins });
   try {
+    // the long labels and the pending PCs are of the PCs' tree: its lens first (picked before the storage is read)
+    await lens(page, "pcs");
+    await page.locator(".machine-list").waitFor();
     const before = await rosterView(page);
     const storageBefore = await storageView(page);
     assert.deepEqual(before.groups.map((group) => group.name), ["Laptop", "Build PC", "Old PC", "Rack PC"], `${name}: two connected PCs, one loading, one in error`);
@@ -712,10 +737,9 @@ async function liveOfflineRoster(browser: Browser, scene: Scene): Promise<void> 
     // the pointer leaves the sidebar, so the scrolled ends show no hover
     if (!scene.phone) await page.mouse.move(1400, 880);
     await capture(page, scene, "list-end");
-    // the drawer's Agents list starts folded: open it for the eye, then scroll both lists to their ends
-    if (await page.locator(".agent-section-toggle[aria-expanded=\"false\"]").count() > 0) await page.locator(".agent-section-toggle").click();
+    // the Agents lens has no fold: its rows are drawn under the search; the agents' end, for the eye
     await page.locator(".agent-list-contents:not([hidden]) .agent-item").first().waitFor();
-    await page.evaluate(() => { const list = document.querySelector<HTMLElement>(".agent-list-contents"); if (list) list.scrollTop = list.scrollHeight; });
+    await page.locator(".agents-sidebar .agent-item").last().scrollIntoViewIfNeeded();
     await capture(page, scene, "agents-end");
     // a long unbroken query scrolls inside the field, which never grows
     const fieldBox = await input.boundingBox();
@@ -809,11 +833,14 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
       const caretFolded = await waitRoster(page, "the laptop folded by its caret", (view) => view.groups[0]!.folded && view.groups[0]!.workspaces.length === 0);
       await machineGroup(page, "Laptop").locator(".machine-toggle").click();
       const caretOpened = await waitRoster(page, "the laptop opened by its caret", (view) => !view.groups[0]!.folded && (groupRows(view, "Laptop") ?? []).includes("w1H"));
-      // the Agents list's caret folds it for the filter's time as well
-      await page.locator(".agent-section-toggle").click();
-      const agentsFolded = await waitRoster(page, "the Agents list folded", (view) => !view.agentsExpanded && view.agents.every((row) => !row.visible));
-      await page.locator(".agent-section-toggle").click();
-      await waitRoster(page, "the Agents list open", (view) => view.agentsExpanded && view.agents.every((row) => row.visible));
+      // the Agents lens has no fold of its own; under the search the PCs' head folds the PC tree, writing nothing
+      assert.equal(await page.locator(".agents-sidebar .agent-section-toggle").count(), 0, `${name}: the Agents list has no fold caret`);
+      const pcsHead = page.locator(".sidebar-pcs-head .agent-section-toggle");
+      await pcsHead.click();
+      assert.equal(await pcsHead.getAttribute("aria-expanded"), "false", `${name}: the PCs head folds under the search`);
+      const agentsFolded = await waitRoster(page, "the PCs folded by their head", (view) => view.groups.length === 0 && view.agentsExpanded && view.agents.every((row) => row.visible));
+      await pcsHead.click();
+      await waitRoster(page, "the PCs open again", (view) => (groupRows(view, "Laptop") ?? []).includes("w1H"));
       assert.deepEqual(await folds(), foldsBefore, `${name}: no caret under the filter wrote a fold`);
       await clearButton(page).click();
       const cleared = await waitRoster(page, "the saved PC fold back", (view) => view.groups.length === 2 && view.groups[0]!.folded);
@@ -860,15 +887,24 @@ async function foldTransitions(browser: Browser, scene: Scene): Promise<void> {
     for (const width of [240, 320]) {
       const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}`, { "ovis:sidebar-width": String(width) });
       try {
+        // the "Agents" label is the lens's tab now, beside the PCs tab and the magnifier; the counts sit on the Agents head below
         const boxes = await page.evaluate(() => {
-          const box = (selector: string) => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, width: r.width } : null; };
-          const parts = [...document.querySelectorAll(".agent-summary-part")].map((el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, text: (el as HTMLElement).innerText.trim() }; });
-          return { label: box(".agent-section-toggle span"), summary: box(".agent-section-summary"), parts, search: box(".sidebar-search-toggle") };
+          const box = (el: Element | null | undefined) => { const r = el?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width } : null; };
+          const tabs = [...document.querySelectorAll<HTMLElement>(".sidebar-lens-tab")].map((el) => ({ ...box(el)!, text: el.innerText.trim(), cut: el.scrollWidth > el.clientWidth + 0.5 }));
+          const parts = [...document.querySelectorAll(".agent-summary-part")].map((el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, text: (el as HTMLElement).innerText.trim() }; });
+          return { tabs, row: box(document.querySelector(".sidebar-lens-row")), summary: box(document.querySelector(".agent-section-summary")), section: box(document.querySelector(".agents-sidebar")), parts, search: box(document.querySelector(".sidebar-search-toggle")) };
         });
-        assert.ok(boxes.label && boxes.parts.length > 0, `${name} ${width}px: the head has its label and counts: ${JSON.stringify(boxes)}`);
-        for (const part of boxes.parts) {
-          assert.ok(part.left >= boxes.label!.right, `${name} ${width}px: "${part.text}" starts after "Agents": ${JSON.stringify(boxes)}`);
-          assert.ok(!boxes.search || part.right <= boxes.search.left + 0.5, `${name} ${width}px: "${part.text}" ends before the magnifier: ${JSON.stringify(boxes)}`);
+        assert.ok(boxes.tabs.length === 2 && boxes.search && boxes.parts.length > 0, `${name} ${width}px: the lens row has its two tabs and the magnifier, the head its counts: ${JSON.stringify(boxes)}`);
+        assert.match(boxes.tabs[0]!.text, /^Agents/, `${name} ${width}px: the first tab is Agents`);
+        assert.match(boxes.tabs[1]!.text, /^PCs/, `${name} ${width}px: the second tab is PCs`);
+        assert.ok(boxes.tabs[0]!.right <= boxes.tabs[1]!.left + 0.5, `${name} ${width}px: "Agents" ends before "PCs": ${JSON.stringify(boxes)}`);
+        assert.ok(boxes.tabs[1]!.right <= boxes.search!.left + 0.5, `${name} ${width}px: "PCs" ends before the magnifier: ${JSON.stringify(boxes)}`);
+        for (const tab of boxes.tabs) assert.ok(!tab.cut, `${name} ${width}px: "${tab.text}" is not cut: ${JSON.stringify(boxes)}`);
+        for (const [i, part] of boxes.parts.entries()) {
+          assert.ok(part.top >= boxes.row!.bottom - 0.5, `${name} ${width}px: "${part.text}" sits under the lens row: ${JSON.stringify(boxes)}`);
+          assert.ok(part.left >= boxes.section!.left - 0.5 && part.right <= boxes.section!.right + 0.5, `${name} ${width}px: "${part.text}" stays inside the Agents section: ${JSON.stringify(boxes)}`);
+          const next = boxes.parts[i + 1];
+          if (next && Math.abs(next.top - part.top) < 2) assert.ok(part.right <= next.left + 0.5, `${name} ${width}px: "${part.text}" ends before "${next.text}": ${JSON.stringify(boxes)}`);
         }
         results[`narrowHead${width}`] = boxes;
         await capture(page, scene, `head-${width}`);

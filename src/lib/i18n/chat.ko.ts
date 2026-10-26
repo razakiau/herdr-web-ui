@@ -57,7 +57,6 @@ export const CHAT_KO: Record<string, string> = {
   "Ran": "실행함",
   "Conversation": "대화",
   "Image {n} from {tool}": "{tool}에서 가져온 이미지 {n}",
-  "Needs you": "내 응답 필요",
   "failed": "실패",
   "succeeded": "성공",
   "pending": "대기 중",

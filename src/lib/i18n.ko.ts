@@ -210,6 +210,8 @@ const BASE: Record<string, string> = {
   "Sending…": "보내는 중…",
   "Needs input": "입력 필요",
   "Finished": "작업 완료",
+  "Agents": "에이전트",
+  "Needs you": "내 응답 필요",
   "Open pane": "패널 열기",
   "Quick replies": "빠른 답장",
   "Skills": "스킬",

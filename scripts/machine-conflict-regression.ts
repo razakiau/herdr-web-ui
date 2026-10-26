@@ -52,7 +52,8 @@ const shots = resolve("evidence/machine-conflict"); mkdirSync(shots, { recursive
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
-  await page.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
+  // the conflict is said on the PC's row in the tree: the sidebar's PCs lens (MachineSidebar.tsx)
+  await page.addInitScript(() => { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })); localStorage.setItem("ovis:sidebar-lens", "pcs"); });
   await page.goto(server.url.href);
   const notice = page.locator(".machine-action");
   await notice.getByText("Bridge connection conflict", { exact: true }).waitFor({ timeout: 10_000 });
@@ -82,7 +83,9 @@ try {
   await page.reload();
   const group = page.locator(`section.machine-group.is-current[aria-label="PC ${pc.name}"]`);
   await group.waitFor({ timeout: 10_000 });
-  await group.getByRole("button", { name: `Manage ${pc.name}`, exact: true }).click();
+  // a PC's Manage panel is behind its head's ⋯ (the owner, 2026-10-25): open the menu, pick Manage
+  await group.locator(".machine-menu").click();
+  await page.locator('[data-item="manage"]').click();
   await group.getByRole("button", { name: "Remove PC", exact: true }).click();
   await group.getByRole("button", { name: "Confirm remove PC", exact: true }).click();
   await page.locator(`section.machine-group.is-current[aria-label="PC ${local.name}"]`).waitFor();

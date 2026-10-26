@@ -78,16 +78,20 @@ try {
           ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US", colorScheme: theme }
           : { viewport: { width: 1280, height: 900 }, locale: "en-US", colorScheme: theme });
         try {
-          await context.addInitScript(([value, sidebarRows]) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: value, sidebarRows })), [theme, rows] as const);
+          // the resting rows open too (the OMP agent's idle row rests under "N resting"), and the Agents lens is the default
+          await context.addInitScript(([value, sidebarRows]) => { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: value, sidebarRows })); localStorage.setItem("ovis:agents-resting-open", "1"); }, [theme, rows] as const);
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
           await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(panes.shell)}`);
           if (phone) {
             await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-            // the phone's drawer starts with Agents folded
-            const toggle = page.locator(".agent-section-toggle");
-            if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
+          }
+          {
+            // the sidebar opens on its Agents lens (MachineSidebar.tsx), the PCs' tree hidden
+            const agentsTab = page.locator(".sidebar-lens").getByRole("tab", { name: /^Agents/ });
+            await agentsTab.waitFor();
+            assert.equal(await agentsTab.getAttribute("aria-selected"), "true", "the Agents lens is the default");
           }
           const label = `${phone ? "phone" : "desktop"} ${rows === "one" ? "One line" : "Two lines"}`;
 

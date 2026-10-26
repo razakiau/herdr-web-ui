@@ -212,6 +212,8 @@ const BASE: Record<string, string> = {
   "Sending…": "送信中…",
   "Needs input": "入力が必要",
   "Finished": "完了",
+  "Agents": "エージェント",
+  "Needs you": "応答が必要",
   "Open pane": "ペインを開く",
   "Quick replies": "クイック返信",
   "Skills": "スキル",

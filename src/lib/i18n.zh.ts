@@ -214,6 +214,8 @@ const BASE: Record<string, string> = {
   "Sending…": "正在发送…",
   "Needs input": "需要输入",
   "Finished": "已完成",
+  "Agents": "代理",
+  "Needs you": "需要你回应",
   "Open pane": "打开窗格",
   "Quick replies": "快捷回复",
   "Skills": "Skill",

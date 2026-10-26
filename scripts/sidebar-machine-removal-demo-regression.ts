@@ -222,6 +222,8 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme, density: "comfortable", defaultView: "chat" }));
       // the fixture PCs kept open, so none folds under the fork's "Other PCs" row (MachineSidebar foldPcs)
       localStorage.setItem("ovis:pcs-kept-open", JSON.stringify(["sidebar-fixture", "sidebar-managed-fixture", "local"]));
+      // the scenario is the PCs' tree: the sidebar's PCs lens (MachineSidebar.tsx), kept per device
+      localStorage.setItem("ovis:sidebar-lens", "pcs");
       localStorage.setItem("ovis:sidebar-width", "520");
     }, scenario.theme);
     const page = await context.newPage();

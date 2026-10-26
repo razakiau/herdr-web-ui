@@ -7,7 +7,7 @@ import { paneTokenValues } from "../../shared/pane-tokens.ts";
 import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
-import { agentNow, hostChatNow, type AgentNow } from "../lib/agentNow.ts";
+import { agentNow, attentionRank, hostChatNow, type AgentNow } from "../lib/agentNow.ts";
 import { sinceOf, type Since } from "../lib/since.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentRoster, byAttention, restingSplit, type AgentRow } from "../lib/agentRoster.ts";
@@ -157,6 +157,8 @@ export interface AgentSidebarProps {
   allAgents?: RowMenuItem[];
   /** the head's trailing control: the sidebar's search (MachineSidebar.tsx) */
   headAction?: ReactNode;
+  /** drawn as the sidebar's Agents lens (MachineSidebar.tsx): no fold of its own, its rows under Needs you / Working / Finished */
+  lens?: boolean;
 }
 
 /**
@@ -170,6 +172,22 @@ interface ChatRow { machine: Machine; chat: HostChatRow; entry?: undefined }
 type ListRow = (AgentRow & { chat?: undefined }) | ChatRow;
 /** this device's choice to show the resting rows (AgentSidebar restingSplit) */
 const RESTING_KEY = "ovis:agents-resting-open";
+
+/** The Agents lens's headings, by attention rank (lib/agentNow.ts attentionRank); a rank-3 row shows only while selected. */
+function groupLabel(rank: number, t: Translate): string {
+  return rank === 0 ? t("Needs you") : rank === 1 ? t("Working") : rank === 2 ? t("Finished") : t("Selected");
+}
+
+/** Rows in byAttention order cut into runs of one rank, each under its heading. */
+function attentionGroups<T>(rows: readonly T[], status: (row: T) => AgentStatus | undefined): { rank: number; rows: T[] }[] {
+  const groups: { rank: number; rows: T[] }[] = [];
+  for (const row of rows) {
+    const rank = attentionRank(status(row));
+    const last = groups.at(-1);
+    if (last?.rank === rank) last.rows.push(row); else groups.push({ rank, rows: [row] });
+  }
+  return groups;
+}
 const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machine.id, row.chat.session) : sidebarPinKey(row.machine.id, row.entry.pane.pane_id);
 
 /**
@@ -179,7 +197,7 @@ const rowPinKey = (row: ListRow): string => row.chat ? hostChatPinKey(row.machin
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it, and mutes or unmutes its alerts for every browser and device.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect, hostChats, selectedHostChat = null, onSelectHostChat, allAgents = [], headAction = null }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect, hostChats, selectedHostChat = null, onSelectHostChat, allAgents = [], headAction = null, lens = false }: AgentSidebarProps) {
   const [allMenu, setAllMenu] = useState<HTMLElement | null>(null);
   const t = useT();
   const listId = useId();
@@ -397,14 +415,14 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const summary = agentsSummary(allRows.map(shown), t);
   // Settings -> Sidebar rows -> One line: an agent row is one line too, its place dim after its title
   const oneLine = settings.sidebarRows === "one";
-  return <section ref={sectionRef} className={`agents-sidebar${folded ? " is-collapsed" : ""}${rows.length === 0 ? " is-empty" : ""}${oneLine ? " is-one-line" : ""}`} aria-label={t("Agents")}>
+  return <section ref={sectionRef} className={`agents-sidebar${lens ? " is-lens" : ""}${folded ? " is-collapsed" : ""}${rows.length === 0 ? " is-empty" : ""}${oneLine ? " is-one-line" : ""}`} aria-label={t("Agents")}>
     <div className="agent-section-head">
-      <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!folded} aria-controls={listId} onClick={() => { if (filter.active) setFilterFold(!folded); else setCollapsed(!collapsed); }}>
+      {lens ? <h2 className="visually-hidden">{t("Agents")}</h2> : <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!folded} aria-controls={listId} onClick={() => { if (filter.active) setFilterFold(!folded); else setCollapsed(!collapsed); }}>
         {folded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
         <span>{t("Agents")}</span>
         {/* the count is of the agents running, filter or not */}
         {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
-      </button>
+      </button>}
       {summary.length > 0 && <span className="agent-section-summary">
         <SummaryMarks parts={summary} />
       </span>}
@@ -419,7 +437,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
           <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(listItem)}</ul>
         </>}
-        {fold.shown.length > 0 && <ul className="agent-list">{fold.shown.map(listItem)}</ul>}
+        {fold.shown.length > 0 && (lens
+          ? attentionGroups(fold.shown, shown).map((group) => <div key={group.rank} className="agent-group" data-rank={group.rank}>
+            <p className="agent-group-label" aria-hidden="true">{groupLabel(group.rank, t)}</p>
+            <ul className="agent-list" aria-label={groupLabel(group.rank, t)}>{group.rows.map(listItem)}</ul>
+          </div>)
+          : <ul className="agent-list">{fold.shown.map(listItem)}</ul>)}
         {fold.hidden > 0 && <button type="button" className="agent-more" onClick={() => setShowAll(true)}>{t("Show all ({n} more)", { n: fold.hidden })}</button>}
         {fold.resting.length > 0 && <>
           <button type="button" className="agent-more agent-resting-toggle" aria-expanded={restingOpen} aria-controls={restingId} onClick={() => setResting(!restingOpen)}>

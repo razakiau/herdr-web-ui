@@ -151,6 +151,15 @@ export function MachineSidebar(props: Props) {
   // the PC whose "All agents on <PC>…" is open
   const [ownAllOn, setOwnAllOn] = useState<AllAgentsOn | null>(null);
   const [pcsFolded, setPcsFolded] = useState(false);
+  // one list, two lenses (owner, ZAC-233 option B): what the agents do, or the PCs' places; kept per device.
+  // A search looks through both, and the lens is back once it closes
+  const [lens, setLensState] = useState<SidebarLens>(storedLens);
+  const setLens = (next: SidebarLens): void => {
+    setLensState(next);
+    try { localStorage.setItem(LENS_KEY, next); } catch { /* storage denied: for the page */ }
+  };
+  const showAgents = searching || lens === "agents";
+  const showPcs = searching || lens === "pcs";
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
   // the PCs placed by hand on this device (lib/hostPlacement.ts foldPcs): kept open from "Other PCs",
@@ -173,6 +182,8 @@ export function MachineSidebar(props: Props) {
   const foldedIds = new Set(fold.folded.map((machine) => machine.id));
   // foldPcs folds nothing with one or two PCs: there is nowhere to put one back to
   const foldable = props.machines.length > 2;
+  // the Agents lens says how many ask for you, from either lens
+  const needsYou = props.machines.reduce((sum, machine) => sum + pcActivity(machine, hostChats.get(machine.id), activity).asking, 0);
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
   const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs. The
@@ -184,19 +195,30 @@ export function MachineSidebar(props: Props) {
       <datalist id={suggestionsId}>{suggestions.map((label) => <option key={label} value={label} />)}</datalist>
       <button type="button" className="sidebar-filter-clear" aria-label={query === "" ? t("Close search") : t("Clear filter")} title={query === "" ? t("Close search") : t("Clear filter")} onClick={clearOrClose}><X aria-hidden="true" /></button>
     </div>}
-    {/* one scroll: what the agents do first, then the places (owner, 2026-10-25) */}
+    {!searching && <div className="sidebar-lens-row">
+      <div className="sidebar-lens" role="tablist" aria-label={t("Sidebar view")}>
+        <button type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === "agents"} onClick={() => setLens("agents")}>
+          {t("Agents")}{needsYou > 0 && <span className="sidebar-lens-count" data-status="blocked">{needsYou}</span>}
+        </button>
+        <button type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === "pcs"} onClick={() => setLens("pcs")}>
+          {t("PCs")}<span className="sidebar-lens-count">{props.machines.length}</span>
+        </button>
+      </div>
+      <button ref={searchToggle} type="button" className="sidebar-row-action sidebar-search-toggle" aria-label={t("Search workspaces and agents")} title={t("Search workspaces and agents")} onClick={openSearch}><Search aria-hidden="true" /></button>
+    </div>}
+    {/* one scroll: the lens's list, or both under a search */}
     <div className="sidebar-scroll">
-      <AgentSidebar headAction={searching ? null : <button ref={searchToggle} type="button" className="sidebar-row-action sidebar-search-toggle" aria-label={t("Search workspaces and agents")} title={t("Search workspaces and agents")} onClick={openSearch}><Search aria-hidden="true" /></button>} machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
+      {showAgents && <AgentSidebar lens machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
         hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat}
         // every PC with host chats: "All agents on <PC>…" from the section's own ⋯ (the PC rows keep only their +)
-        allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />
-      <div className="machine-list" aria-label={t("PCs and workspaces")}>
+        allAgents={props.machines.filter((machine) => hostChats.has(machine.id)).map((machine) => ({ id: `all-agents-${machine.id}`, label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: () => setAllOn({ machineId: machine.id }) }))} />}
+      <div className="machine-list" aria-label={t("PCs and workspaces")} hidden={!showPcs}>
         {/* the PCs fold as the Agents above them do (owner, ZAC-233), for this page */}
-        <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>
+        {searching && <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>
           {pcsFolded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
           <span>{t("PCs")}</span>
           {pcsFolded && <span className="agent-section-count">{props.machines.length}</span>}
-        </button></h2>
+        </button></h2>}
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
         {!pcsFolded && openPcs.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} hostChats={hostChats.get(machine.id)} onNewHostChat={(cwd) => props.onNewHostChat?.(machine.id, cwd)} onFolderChats={(cwd) => setAllOn({ machineId: machine.id, folder: cwd })}
           searchNote={filter.active ? searchPlace(foldedIds.has(machine.id), t) : null}
@@ -223,6 +245,11 @@ export function MachineSidebar(props: Props) {
 }
 
 const KEPT_KEY = "ovis:pcs-kept-open";
+const LENS_KEY = "ovis:sidebar-lens";
+export type SidebarLens = "agents" | "pcs";
+function storedLens(): SidebarLens {
+  try { return localStorage.getItem(LENS_KEY) === "pcs" ? "pcs" : "agents"; } catch { return "agents"; }
+}
 const FOLDED_KEY = "ovis:pcs-kept-folded";
 
 function storedIds(key: string): string[] {

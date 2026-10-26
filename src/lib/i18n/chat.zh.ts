@@ -57,7 +57,6 @@ export const CHAT_ZH: Record<string, string> = {
   "Ran": "已运行",
   "Conversation": "对话",
   "Image {n} from {tool}": "{tool} 读取的图片 {n}",
-  "Needs you": "需要你回应",
   "failed": "失败",
   "succeeded": "成功",
   "pending": "等待中",

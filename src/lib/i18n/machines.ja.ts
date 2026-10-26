@@ -94,4 +94,5 @@ export const MACHINES_JA: Record<string, string> = {
   "PCs": "PC",
   "Search workspaces and agents": "ワークスペースとエージェントを検索",
   "Clear filter": "絞り込みを消去",
+  "Sidebar view": "サイドバーの表示",
 };

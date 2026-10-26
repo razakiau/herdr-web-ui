@@ -11,6 +11,8 @@ export async function checkHeldDraftPaneSwitch(browser: Browser, origin: string,
     await context.addInitScript((ids) => {
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertsOn: false, terminalInputMode: "direct" }));
       for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "terminal");
+      // the panes are picked from the PCs' tree: the sidebar's PCs lens (MachineSidebar.tsx)
+      localStorage.setItem("ovis:sidebar-lens", "pcs");
     }, [paneA, paneB]);
     await context.routeWebSocket(/\/ws(?:\?|$)/, (socket) => socket.close({ code: 1000, reason: "offline for the held-input check" }));
     const page = await context.newPage();
@@ -36,6 +38,8 @@ export async function checkHeldDraftPaneSwitch(browser: Browser, origin: string,
     await notReady.addInitScript((ids) => {
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertsOn: false, terminalInputMode: "direct" }));
       for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "terminal");
+      // the panes are picked from the PCs' tree: the sidebar's PCs lens (MachineSidebar.tsx)
+      localStorage.setItem("ovis:sidebar-lens", "pcs");
     }, [paneA, paneB]);
     await notReady.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
       const server = socket.connectToServer();

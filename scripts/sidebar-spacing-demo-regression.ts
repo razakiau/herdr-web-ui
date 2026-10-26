@@ -62,13 +62,20 @@ try {
       // before the drawer opens: the selection leaves with its workspace, and a new one closes the drawer
       if (empty) assert.ok(await closeAgentWorkspaces(page) > 0, `${label} closed the demo's agent workspaces`);
       if (mobile) await page.locator(".drawer-toggle").tap();
-      const machineToggle = page.locator(".machine-toggle").first();
-      const agentToggle = page.locator(".agents-sidebar .agent-section-toggle");
-      await machineToggle.waitFor();
+      const lensTab = (name: "Agents" | "PCs") => page.locator(".sidebar-lens").getByRole("tab", { name: new RegExp(`^${name}`) });
+      // the sidebar opens on its Agents lens (MachineSidebar.tsx): the agents' rows, the PCs' tree hidden
+      await lensTab("Agents").waitFor();
+      assert.equal(await lensTab("Agents").getAttribute("aria-selected"), "true", `${label} opens on the Agents lens`);
+      assert.equal(await page.locator(".machine-list").isHidden(), true, `${label} the Agents lens hides the PCs`);
       if (empty) await page.locator(".agents-sidebar.is-empty .agent-empty").waitFor({ state: "attached" });
-      if (await agentToggle.getAttribute("aria-expanded") !== "true") await agentToggle.click();
       const before = await page.locator(".agents-sidebar .agent-title").allTextContents();
       assert.equal(before.length > 0, !empty, `${label} ${empty ? "has no agent rows" : "has agent rows"} before folding`);
+
+      // the PCs lens: the tree alone in the one scroll
+      await lensTab("PCs").click();
+      await page.locator(".agents-sidebar").waitFor({ state: "detached" });
+      const machineToggle = page.locator(".machine-toggle").first();
+      await machineToggle.waitFor();
       assert.equal(await machineToggle.getAttribute("aria-expanded"), "true");
 
       await machineToggle.click();
@@ -78,31 +85,28 @@ try {
         const shell = box(".sidebar-shell")!;
         const machine = box(".machine-group")!;
         const list = box(".machine-list")!;
-        const agents = box(".agents-sidebar")!;
-        const contents = document.querySelector<HTMLElement>(".agent-list-contents")!;
+        const scroll = document.querySelector<HTMLElement>(".sidebar-scroll")!;
         const footer = box(".sidebar-footer")!;
         return {
-          shellHeight: shell.height,
           machineBottom: machine.bottom,
           listBottom: list.bottom,
-          agentsTop: agents.top,
-          agentsHeight: agents.height,
-          contentsOverflow: getComputedStyle(contents).overflowY,
+          scrollOverflow: getComputedStyle(scroll).overflowY,
           footerBottom: footer.bottom,
           shellBottom: shell.bottom,
         };
       });
-      assert.ok(metrics.agentsTop - metrics.machineBottom <= spacing, `${label} folded PC gap is ${metrics.agentsTop - metrics.machineBottom}px`);
       assert.ok(metrics.listBottom - metrics.machineBottom <= spacing, `${label} folded list padding is ${metrics.listBottom - metrics.machineBottom}px`);
-      assert.ok(metrics.agentsHeight <= metrics.shellHeight / 2 + 1, `${label} Agents keeps its half-sidebar cap`);
-      assert.equal(metrics.contentsOverflow, "auto", `${label} Agents keeps scroll ownership`);
+      assert.equal(metrics.scrollOverflow, "auto", `${label} the sidebar's one scroll owns the scrolling`);
       assert.equal(Math.round(metrics.footerBottom), Math.round(metrics.shellBottom), `${label} footer stays at the bottom`);
-      assert.deepEqual(await page.locator(".agents-sidebar .agent-title").allTextContents(), before, `${label} agent order is unchanged`);
 
-      await agentToggle.click();
-      assert.equal(await agentToggle.getAttribute("aria-expanded"), "false");
-      assert.equal(await page.locator(".agent-list-contents").getAttribute("hidden"), "");
-      console.log(`PASS ${label} sidebar spacing after folding the PC section`);
+      // back to Agents: the same rows in the same order, the PCs hidden again
+      await lensTab("Agents").click();
+      await page.locator(".agents-sidebar").waitFor();
+      assert.equal(await page.locator(".machine-list").isHidden(), true, `${label} the Agents lens hides the PCs again`);
+      assert.deepEqual(await page.locator(".agents-sidebar .agent-title").allTextContents(), before, `${label} agent order is unchanged`);
+      const agentsFooter = await page.evaluate(() => ({ footer: document.querySelector(".sidebar-footer")!.getBoundingClientRect().bottom, shell: document.querySelector(".sidebar-shell")!.getBoundingClientRect().bottom }));
+      assert.equal(Math.round(agentsFooter.footer), Math.round(agentsFooter.shell), `${label} footer stays at the bottom on the Agents lens`);
+      console.log(`PASS ${label} sidebar spacing after folding the PC section in the PCs lens`);
       await context.close();
     } finally {
       await browser.close();

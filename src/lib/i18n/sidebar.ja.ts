@@ -14,7 +14,6 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Agent {status}": "エージェント {status}",
   "Loading agents…": "エージェントを読み込み中…",
   "Herdr workspaces": "herdr ワークスペース",
-  "Agents": "エージェント",
   "No agents running": "実行中のエージェントはありません",
   "Expand worktrees of {name}": "{name} のワークツリーを展開",
   "Collapse worktrees of {name}": "{name} のワークツリーを折りたたむ",
@@ -58,4 +57,5 @@ export const SIDEBAR_JA: Record<string, string> = {
   "{n}h": "{n}時間",
   "{n}d": "{n}日",
   "For {time}": "{time} 経過",
+  "Working": "作業中",
 };

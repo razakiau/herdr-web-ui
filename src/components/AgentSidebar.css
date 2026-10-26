@@ -363,3 +363,19 @@
 @media (hover: hover) {
   .agent-more:hover { color: var(--text); }
 }
+
+/* the Agents lens: no fold of its own (the lens is it), the counts and ⋯ on one quiet line, the rows under
+   Needs you / Working / Finished headings in the sidebar's quiet caption voice */
+.agents-sidebar.is-lens .agent-section-head { justify-content: flex-end; min-height: 0; }
+.agents-sidebar.is-lens .agent-section-head:not(:has(.agent-section-summary, .agent-section-more)) { display: none; }
+.agent-group + .agent-group { margin-top: var(--space-2); }
+.agent-group-label {
+  margin: var(--space-2) 0 var(--space-1);
+  padding-inline-start: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.agent-group[data-rank="0"] .agent-group-label { color: var(--status-blocked); }

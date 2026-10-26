@@ -65,6 +65,18 @@ const IME_ENTER = { key: "Enter", code: "Enter", keyCode: 229, which: 229, bubbl
 /** how long a send that should not happen gets to show up */
 const NO_SEND_WAIT_MS = 400;
 
+/**
+ * Picks a lens of the sidebar (MachineSidebar.tsx: Agents | PCs over its one scroll): a no-op when it is
+ * picked already or the search is open, where both lists show.
+ */
+async function sidebarLens(target: Page, name: "agents" | "pcs"): Promise<void> {
+  if (await target.locator(".sidebar-filter-input").count() > 0) return;
+  const tab = target.locator(".sidebar-lens").getByRole("tab", { name: name === "agents" ? /^Agents/ : /^PCs/ });
+  if (await tab.getAttribute("aria-selected") === "true") return;
+  await tab.click();
+  await target.locator(name === "agents" ? ".agents-sidebar" : ".machine-list:not([hidden])").waitFor();
+}
+
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 15_000;
   while (!(await check())) {
@@ -95,6 +107,11 @@ try {
   await context.addInitScript((ids) => {
     // only the first load: a reload must keep what Settings stored, such as the language
     if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+    // most of this suite drives the PCs' tree: the sidebar's PCs lens on the first load (MachineSidebar.tsx);
+    // the checks of the Agents list pick its lens (`sidebarLens` below), and a reload keeps what was picked
+    if (!localStorage.getItem("ovis:sidebar-lens")) localStorage.setItem("ovis:sidebar-lens", "pcs");
+    // every agent row in the Agents list, the resting (idle) ones too (AgentSidebar restingSplit): these checks read idle rows
+    if (!localStorage.getItem("ovis:agents-resting-open")) localStorage.setItem("ovis:agents-resting-open", "1");
     for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
   }, panes);
   // A hook for a check that changes the roster on a page already loaded: a route cannot reach the
@@ -184,8 +201,10 @@ try {
   assert.equal(await workspaceGroup(workspaces[0]!).locator(".pane-select").count(), 1, "a workspace has one representative selector");
   assert.equal(await page.locator(".workspace-contents, .sidebar-tab-heading, .sidebar-pane-item").count(), 0,
     "Spaces has no tab or pane tree");
+  await sidebarLens(page, "agents");
   assert.equal(await agentRow(paneA).count(), 0, "a plain shell is absent from Agents");
   assert.equal(await agentRow(paneB).count(), 0, "another plain shell is absent from Agents");
+  await sidebarLens(page, "pcs");
 
   // The search owns arrow/Enter navigation. Tab still reaches real buttons: Enter on Close
   // must close without selecting the highlighted result, and Enter on a row runs that row.
@@ -324,6 +343,8 @@ try {
   const badge = page.locator(".pane-item.is-selected .badge");
   await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "blocked" });
   await until(async () => await badge.getAttribute("data-status") === "blocked", "blocked baseline");
+  // the tree's badge (hidden under the Agents lens, still in the page) and the Agents row say the same status
+  await sidebarLens(page, "agents");
   await agentRow(paneA).locator('.badge[data-status="blocked"]').waitFor();
   assert.equal(await agentRow(paneA).locator('.agent-select[aria-current="true"]').count(), 1,
     "Agents independently marks its selected pane");
@@ -394,11 +415,16 @@ try {
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
   await agentRow(paneB).waitFor();
   const machineToggle = page.locator(".machine-group .machine-toggle");
-  // the PC's fold is its name row, the + at the head's end (the owner, 2026-10-25)
+  // the PCs lens: the PC's fold is its name row, the + at the head's end (the owner, 2026-10-25)
+  await sidebarLens(page, "pcs");
+  assert.equal(await page.locator(".agents-sidebar").count(), 0, "the PCs lens hides the Agents list");
   assert.equal(await page.locator(".machine-group .machine-header > .machine-toggle .machine-name").count(), 1);
   assert.equal(await page.locator(".machine-group .machine-header > .machine-new:last-child").count(), 1);
   await machineToggle.click();
   await workspaceGroup(workspaces[0]!).waitFor({ state: "detached" });
+  // back on the Agents lens, the folded PC's agents are all there
+  await sidebarLens(page, "agents");
+  assert.equal(await page.locator(".machine-list").isHidden(), true, "the Agents lens hides the PCs");
   assert.equal(await agentRow(paneA).isVisible(), true, "PC folding leaves Agents visible");
   await agentRow(paneB).locator(".agent-select").click();
   await agentRow(paneB).locator('.agent-select[aria-current="true"]').waitFor();
@@ -409,6 +435,7 @@ try {
   await agentRow(paneA).locator(".agent-select").click();
   await agentRow(paneA).locator('.agent-select[aria-current="true"]').waitFor();
   await until(() => painted.has(paneA), "returning from Agents paints the current pane");
+  await sidebarLens(page, "pcs");
   await machineToggle.click();
   await workspaceHeader(workspaces[0]!).locator('.workspace-select[aria-current="true"]').waitFor();
 
@@ -424,7 +451,8 @@ try {
   const offlineContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   let offlineEvidence: BrowserEvidenceSession | undefined;
   try {
-    await offlineContext.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertsOn: false })));
+    // the idle agent rests under "N resting" (AgentSidebar restingSplit): shown, so its disabled row can be read
+    await offlineContext.addInitScript(() => { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertsOn: false })); localStorage.setItem("ovis:agents-resting-open", "1"); });
     await offlineContext.route("**/api/machines", (route) => route.fulfill({ json: { machines: offlineMachines } }));
     await offlineContext.route("**/api/machines/events", (route) => route.fulfill({
       contentType: "text/event-stream", body: `retry: 60000\ndata: ${JSON.stringify({ type: "machines", machines: offlineMachines })}\n\n`,
@@ -479,6 +507,7 @@ try {
     await route.fulfill({ response, json: body });
   });
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await sidebarLens(page, "agents");
   const waitingBadge = agentRow(paneA).locator(".badge[data-status=waiting]");
   await waitingBadge.waitFor();
   assert.equal((await waitingBadge.textContent())?.trim(), "BG");
@@ -571,7 +600,9 @@ try {
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   const planChip = page.getByRole("button", { name: /^Plan: 1 of 4 done/ });
   await planChip.waitFor();
-  assert.equal((await agentRow(paneA).locator("[data-testid=plan-progress]").textContent())?.trim(), "1/4");
+  // the Agents row says the plan's step and count in its "now" words (AgentSidebar.tsx agentNow), not a second badge
+  assert.equal((await agentRow(paneA).locator(".agent-now").textContent())?.trim(), "Writing the parser · 1/4", "the Agents row carries the plan's step and count");
+  assert.equal(await agentRow(paneA).locator("[data-testid=plan-progress]").count(), 0, "the row draws no second plan count beside its now words");
   assert.equal(await page.locator(".plan-button").count(), 0, "the header carries no plan button");
   await planChip.click();
   const planList = page.getByRole("dialog", { name: /^Plan/ });
@@ -594,6 +625,8 @@ try {
   await planList.waitFor({ state: "detached" });
   await planChip.waitFor({ state: "detached" });
   console.log("PASS a pane's plan opens from the composer's chip as a list of its steps");
+  // the next checks pick panes from the PCs' tree
+  await sidebarLens(page, "pcs");
 
   // Use a real browser paste: keydown must not send Ctrl+V (0x16) to the agent,
   // where it can trigger image paste against the server's unrelated clipboard.
@@ -779,18 +812,25 @@ try {
 
   // Sidebar rows: a workspace row is its name until Settings → Sidebar rows → Two lines says
   // what its pane is doing over its place, on a taller row
+  // each list measured under its own lens
+  await sidebarLens(page, "pcs");
   const oneLineHeight = await page.locator(".workspace-header").first().evaluate((row) => row.getBoundingClientRect().height);
+  await sidebarLens(page, "agents");
   const oneLineAgentHeight = await page.locator(".agents-sidebar .agent-row").first().evaluate((row) => row.getBoundingClientRect().height);
   assert.equal(await page.locator(".workspace-copy.is-two-line").count(), 0, "rows are one line until two are chosen");
   assert.equal(await page.locator(".agents-sidebar.is-one-line").count(), 1, "agent rows follow the one-line choice");
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   const rowsSetting = page.locator('.settings-dialog .segmented[aria-label="Sidebar rows"]');
   await rowsSetting.getByRole("button", { name: "Two lines", exact: true }).click();
-  await page.locator(".workspace-copy.is-two-line").first().waitFor();
+  // the PCs' rows turn two-line under their hidden lens too (attached, not drawn)
+  await page.locator(".workspace-copy.is-two-line").first().waitFor({ state: "attached" });
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}").sidebarRows), "two");
-  assert.ok(await page.locator(".workspace-header").first().evaluate((row) => row.getBoundingClientRect().height) > oneLineHeight, "a two-line row is taller");
   await page.locator(".agents-sidebar.is-one-line").waitFor({ state: "detached" });
   assert.ok(await page.locator(".agents-sidebar .agent-row").first().evaluate((row) => row.getBoundingClientRect().height) > oneLineAgentHeight, "a two-line agent row is taller");
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
+  await sidebarLens(page, "pcs");
+  assert.ok(await page.locator(".workspace-header").first().evaluate((row) => row.getBoundingClientRect().height) > oneLineHeight, "a two-line row is taller");
+  await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await rowsSetting.getByRole("button", { name: "One line", exact: true }).click();
   await page.locator(".workspace-copy.is-two-line").first().waitFor({ state: "detached" });
   await page.getByRole("button", { name: "Close settings", exact: true }).click();
@@ -1649,7 +1689,9 @@ try {
   await childRow.waitFor();
   assert.equal(await page.locator(".worktree-children").count(), 1, "one group of worktrees, under the repository's row");
   await herdrRpc("pane.report_agent", { pane_id: worktree.pane_id, source: "manual", agent: "codex", state: "idle" });
+  await sidebarLens(page, "agents");
   await agentRow(worktree.pane_id).waitFor();
+  await sidebarLens(page, "pcs");
   await repoHeader.locator(".workspace-select").click();
   await repoHeader.locator('.workspace-select[aria-current="true"]').waitFor();
   assert.equal(await page.evaluate(() => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id),
@@ -1660,8 +1702,10 @@ try {
   // the folder that leads the row is the fold, and a closed one says how many checkouts it holds
   assert.equal(await repoHeader.evaluate((header) => header.firstElementChild?.classList.contains("workspace-toggle") ?? false), true, "the fold leads the row");
   assert.equal(await repoHeader.locator(".workspace-fold-count").textContent(), "+1");
+  await sidebarLens(page, "agents");
   assert.equal(await agentRow(worktree.pane_id).isVisible(), true, "folding a worktree group preserves its independent agent");
   await agentRow(worktree.pane_id).locator(".agent-select").click();
+  await sidebarLens(page, "pcs");
   await childHeader.locator('.workspace-select[aria-current="true"]').waitFor();
   assert.equal(await repoToggle.getAttribute("aria-expanded"), "false", "an explicitly selected child remains visible within a folded group");
   await repoToggle.click();
@@ -2237,6 +2281,12 @@ try {
   const typing = (target: typeof mobilePage) => target.evaluate(() => document.activeElement?.matches("textarea, input, [contenteditable]") ?? false);
   await mobilePage.getByRole("textbox", { name: "Message", exact: true }).blur();
   await mobilePage.locator('button[aria-controls="workspace-drawer"]').click();
+  // storage refused (this context's getItem throws): the drawer opens on the default Agents lens, its rows open
+  // (no fold of their own), the PCs hidden; the PCs tab still switches for the page
+  assert.equal(await mobilePage.locator(".sidebar-lens").getByRole("tab", { name: /^Agents/ }).getAttribute("aria-selected"), "true", "a phone's drawer opens on the Agents lens");
+  assert.equal(await mobilePage.locator(".agents-sidebar .agent-section-toggle").count(), 0, "the Agents lens has no fold of its own");
+  assert.equal(await mobilePage.locator(".machine-list").isHidden(), true, "the Agents lens hides the PCs");
+  await sidebarLens(mobilePage, "pcs");
   await mobilePage.locator(`.pane-select[title^="${paneA} —"]`).click();
   await mobilePage.getByRole("textbox", { name: "Message", exact: true }).waitFor();
   await mobilePage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -2250,7 +2300,7 @@ try {
   await until(() => typing(mobilePage), "a tap on the message box takes the keyboard");
   await mobilePage.getByRole("textbox", { name: "Message", exact: true }).blur();
   await mobilePage.locator('button[aria-controls="workspace-drawer"]').click();
-  assert.equal(await mobilePage.locator(".agents-sidebar .agent-section-toggle").getAttribute("aria-expanded"), "false", "a phone's drawer opens with Agents folded");
+  await sidebarLens(mobilePage, "pcs");
   await mobilePage.locator(`.pane-select[title^="${paneB} —"]`).click();
   await mobilePage.getByRole("textbox", { name: "Message", exact: true }).waitFor();
   console.log("PASS a pane picked on a phone waits for a tap before raising the keyboard");

@@ -351,6 +351,24 @@ const patch = `(() => {
 })();`;
 
 const shots = process.env["HOST_CHATS_SHOTS"];
+/**
+ * Picks a lens of the sidebar (MachineSidebar.tsx: Agents | PCs over its one scroll, kept per device). A no-op when it
+ * is picked already or the search is open (both lists show then). A phone's closed drawer is opened for the tap and
+ * closed again, so the step after it finds the page as it was.
+ */
+async function lens(target: Page, name: "agents" | "pcs"): Promise<void> {
+  if (await target.locator(".sidebar-filter-input").count() > 0) return;
+  const tab = target.locator(".sidebar-lens").getByRole("tab", { name: name === "agents" ? /^Agents/ : /^PCs/ });
+  if (await tab.getAttribute("aria-selected") === "true") return;
+  const closed = !(await tab.isVisible());
+  if (closed) await target.getByRole("button", { name: "Open workspace list", exact: true }).click();
+  await tab.click();
+  await target.locator(name === "agents" ? ".agents-sidebar" : ".machine-list:not([hidden])").waitFor({ state: "attached" });
+  if (closed) {
+    await target.getByRole("button", { name: "Close workspace list", exact: true }).click();
+    await target.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
+  }
+}
 // a sheet slides up: let its animations finish before a screenshot
 const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().map((each) => each.finished.catch(() => undefined))));
 try {
@@ -438,6 +456,79 @@ try {
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
         const remoteGroup = page.getByRole("region", { name: "PC Build PC", exact: true });
         const folderRow = remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]');
+
+        // 0. one list, two lenses (MachineSidebar.tsx): Agents by default, its rows under Needs you / Working /
+        // Finished; the PCs tab shows the PC tree alone, a reload keeps it, and a search shows both lists
+        const lensTab = (name: "Agents" | "PCs") => page.locator(".sidebar-lens").getByRole("tab", { name: new RegExp(`^${name}`) });
+        await lensTab("Agents").waitFor();
+        assert.equal(await page.locator(".sidebar-lens").getAttribute("role"), "tablist", "the lens is a tablist");
+        assert.equal(await page.locator(".sidebar-lens").getAttribute("aria-label"), "Sidebar view", "the lens is named");
+        assert.equal(await lensTab("Agents").getAttribute("aria-selected"), "true", "the sidebar opens on the Agents lens");
+        assert.equal(await lensTab("PCs").getAttribute("aria-selected"), "false", "the PCs tab is not picked");
+        assert.equal(await page.locator(".machine-list").isHidden(), true, "the Agents lens hides the PC tree");
+        assert.equal(await page.locator(".agents-sidebar.is-lens").isVisible(), true, "the Agents list is the lens");
+        assert.equal(await page.locator(".agents-sidebar .agent-section-toggle").count(), 0, "the Agents lens has no fold of its own");
+        assert.equal(await page.locator(".sidebar-pcs-head").count(), 0, "no PCs head outside a search");
+        assert.equal(await page.locator(".sidebar-lens-row .sidebar-search-toggle").count(), 1, "the search sits in the lens row");
+        const askingRow = page.locator(`.agents-sidebar .host-chat-item[data-machine="remote"][data-host-session="${SESSION}"]`);
+        await askingRow.waitFor();
+        // the headings in the attention order, each over the rows of its rank; CSS draws them in capitals
+        const lensGroups = await page.locator(".agents-sidebar .agent-group").evaluateAll((nodes) => nodes.map((node) => ({
+          rank: (node as HTMLElement).dataset["rank"],
+          label: (node.querySelector(".agent-group-label") as HTMLElement).innerText.trim(),
+          list: node.querySelector("ul.agent-list")?.getAttribute("aria-label") ?? null,
+          rows: node.querySelectorAll(":scope > ul.agent-list > li").length,
+        })));
+        const lensLabels = lensGroups.map((group) => group.label);
+        const ORDER = ["NEEDS YOU", "WORKING", "FINISHED", "SELECTED"];
+        assert.ok(lensLabels.length > 0 && lensLabels.every((label) => ORDER.includes(label)), `the Agents lens heads its rows Needs you / Working / Finished: ${JSON.stringify(lensGroups)}`);
+        assert.deepEqual(lensLabels, ORDER.filter((label) => lensLabels.includes(label)), `the headings stand in attention order: ${JSON.stringify(lensLabels)}`);
+        // the fixture's working rows may have finished by now: Needs you is the one heading it always has
+        assert.ok(lensLabels.includes("NEEDS YOU"), `the fixture's asking agents get their heading: ${JSON.stringify(lensLabels)}`);
+        assert.ok(lensGroups.every((group) => group.rows > 0 && group.list !== null && group.list.toUpperCase() === group.label), `each heading has rows, its list named by it: ${JSON.stringify(lensGroups)}`);
+        assert.equal(await askingRow.evaluate((row) => row.closest(".agent-group")?.querySelector(".agent-group-label")?.textContent), "Needs you", "the asking chat's row is under Needs you");
+        assert.equal(await page.locator('.agents-sidebar .agent-group[data-rank="0"] .agent-item .badge').evaluateAll((badges) => badges.every((badge) => badge.getAttribute("data-status") === "blocked")), true, "only asking rows are under Needs you");
+        assert.equal(await page.locator('.agents-sidebar .agent-group[data-rank="1"] .agent-item .badge').evaluateAll((badges) => badges.every((badge) => ["working", "waiting"].includes(badge.getAttribute("data-status") ?? ""))), true, "only working rows are under Working");
+        // the Agents tab counts what asks for you, in the asking colour
+        const needsCount = lensTab("Agents").locator(".sidebar-lens-count");
+        assert.equal(await needsCount.getAttribute("data-status"), "blocked", "the Agents tab's count is the asking one");
+        assert.ok(Number(await needsCount.innerText()) >= 1, "the Agents tab counts the chats that ask");
+        assert.equal((await lensTab("PCs").locator(".sidebar-lens-count").innerText()).trim(), "2", "the PCs tab counts the PCs");
+        await fits("the Agents lens");
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "lens-agents-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        // the PCs tab: the PC tree alone, the agents gone, the choice stored on this device
+        await lensTab("PCs").click();
+        assert.equal(await lensTab("PCs").getAttribute("aria-selected"), "true", "the PCs tab is picked");
+        assert.equal(await lensTab("Agents").getAttribute("aria-selected"), "false", "the Agents tab is not");
+        await folderRow.waitFor();
+        assert.equal(await page.locator(".machine-list").isVisible(), true, "the PCs lens shows the PC tree");
+        assert.equal(await page.locator(".agents-sidebar").count(), 0, "the PCs lens hides the agents");
+        assert.equal(await page.locator(".sidebar-pcs-head").count(), 0, "the PCs lens has no PCs head of its own");
+        assert.equal(await page.evaluate(() => localStorage.getItem("ovis:sidebar-lens")), "pcs", "the lens is kept on this device");
+        await fits("the PCs lens");
+        if (shots) { await settled(page); await page.screenshot({ path: join(shots, "lens-pcs-390.png"), style: ".droplet, .droplet-stack { display: none !important; }" }); }
+        // a reload keeps the PCs lens
+        await page.reload();
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lensTab("PCs").waitFor();
+        assert.equal(await lensTab("PCs").getAttribute("aria-selected"), "true", "a reload keeps the PCs lens");
+        await folderRow.waitFor();
+        assert.equal(await page.locator(".agents-sidebar").count(), 0, "and the agents stay hidden after it");
+        // a search looks through both lists; closed, the stored lens is back
+        await page.locator(".sidebar-search-toggle").click();
+        await page.locator(".sidebar-filter-input").waitFor();
+        assert.equal(await page.locator(".sidebar-lens-row").count(), 0, "the search hides the lens row");
+        assert.equal(await page.locator(".agents-sidebar").isVisible(), true, "the search shows the agents");
+        assert.equal(await page.locator(".machine-list").isVisible(), true, "and the PC tree");
+        assert.equal(await page.locator(".sidebar-pcs-head").count(), 1, "the PCs have their head under a search");
+        await page.locator(".sidebar-filter-input").press("Escape");
+        await page.locator(".sidebar-filter-input").waitFor({ state: "detached" });
+        assert.equal(await lensTab("PCs").getAttribute("aria-selected"), "true", "closing the search returns to the stored PCs lens");
+        assert.equal(await page.locator(".agents-sidebar").count(), 0, "the agents hide again");
+        assert.equal(await page.locator(".machine-list").isVisible(), true, "the PC tree stays");
+        console.log("PASS one list, two lenses: Agents by default under Needs you / Working / Finished, PCs shows the tree alone and survives a reload, a search shows both and gives the lens back");
+
         await folderRow.waitFor();
         assert.equal(await page.getByRole("heading", { name: "Copilot", exact: true }).count(), 0, "no Copilot heading");
         assert.equal(await page.locator(".host-chats").count(), 0, "no Copilot section");
@@ -450,13 +541,13 @@ try {
         await noVsCode("the sidebar");
         // the build chat asks: the Agents list shows it, with Copilot's mark
         const agentsRow = page.locator(`.agents-sidebar .host-chat-item[data-machine="remote"][data-host-session="${SESSION}"]`);
-        // the Agents list starts open on every screen (ZAC-233); a fold left from a run before opens it
-        const agentsToggle = page.locator(".agents-sidebar .agent-section-toggle");
-        if (await agentsToggle.getAttribute("aria-expanded") === "false") await agentsToggle.click();
+        // the Agents lens has no fold: its rows are there once it is picked
+        await lens(page, "agents");
         await agentsRow.waitFor();
         assert.equal(await agentsRow.locator('svg[aria-label="copilot"]').count(), 1, "an Agents row wears Copilot's mark");
         assert.equal(await page.locator('.agents-sidebar [data-host-session="fictional-session-0"]').count(), 0, "an idle, read chat is not in the Agents list");
         // the workspace's row counts its asking chat: a "?" in its state
+        await lens(page, "pcs");
         const workspaceRow = remoteGroup.locator(".workspace-group").first();
         assert.equal(await workspaceRow.locator('.sidebar-status[data-status="blocked"]').count(), 1, "the workspace's roll-up counts its asking host chat");
         await fits("the sidebar");
@@ -466,6 +557,7 @@ try {
 
         // 2. the chat: the app's ChatView, with a user turn, an assistant's text and a folded tool row,
         // opened from the Agents list, as a tab of its workspace after the panes' tabs
+        await lens(page, "agents");
         await agentsRow.locator(".agent-select").click();
         const view = page.locator(`.host-chat[data-host-session="${SESSION}"]`);
         await view.waitFor();
@@ -1741,6 +1833,8 @@ try {
         await page.evaluate(() => { (window as unknown as { hostEdits: { unread: Record<string, boolean> } }).hostEdits.unread["fictional-session-0"] = true; (window as unknown as { pushHostList(): void }).pushHostList(); });
         await page.locator('.agents-sidebar [data-host-session="fictional-session-0"]').waitFor({ state: "attached" });
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        // the folder row is of the PC tree: its lens, kept from here on until the Agents head's ⋯ is wanted
+        await lens(page, "pcs");
         await folderRow.locator(".workspace-select").click();
         await page.waitForFunction(() => (window as unknown as { hostCalls: { posts: { path: string; body: { session?: string; read?: boolean } }[] } }).hostCalls.posts
           .some((post) => post.path.endsWith("/chat/read") && post.body.session === "fictional-session-0" && post.body.read === true));
@@ -1806,14 +1900,18 @@ try {
 
         // 6c. "All agents on Build PC…", from the Agents head's ⋯ (a PC row's ⋯ is the PC's own): search finds the
         // month-old chat, Archived waits folded, and opening one makes it a tab of its workspace
+        // the drawer open on the PC tree (its lens); the Agents head's ⋯ picks the Agents lens itself
         const drawerOpen = async () => {
           if (await page.locator("#workspace-drawer.is-open").count() === 0) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await lens(page, "pcs");
         };
         const agentsMenu = async () => {
           await drawerOpen();
+          await lens(page, "agents");
           await page.locator(".agents-sidebar").getByRole("button", { name: "More for Agents", exact: true }).click();
         };
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lens(page, "pcs");
         // a PC's head: its name is the fold, its ⋯ holds Manage and the put-back, its + stays (the owner, 2026-10-25)
         assert.deepEqual(await remoteGroup.locator(".machine-header > button").evaluateAll((buttons) => buttons.map((button) => button.className.split(" ").find((name) => ["machine-toggle", "machine-menu", "machine-new"].includes(name)))), ["machine-toggle", "machine-menu", "machine-new"], "a PC row is its name's fold, a ⋯ and a +");
         await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
@@ -1955,6 +2053,7 @@ try {
         assert.equal(await page.evaluate(() => (window as unknown as { hostEdits: { archived: Record<string, boolean> } }).hostEdits.archived["fictional-session-old"]), undefined, "Close tab archives nothing");
         // the docs workspace's only tab: closing it closes the workspace, and its row leaves the sidebar
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lens(page, "pcs");
         await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"] .workspace-select').click();
         const docsTab = page.locator('.tab-strip .host-chat-tab[data-host-session="fictional-session-0"]');
         await docsTab.getByRole("button", { name: /^Actions for / }).click();
@@ -1962,6 +2061,7 @@ try {
         await docsTab.waitFor({ state: "detached", timeout: 3000 });
         assert.ok(!(await savedTabs()).remote!.open.some((each) => each.cwd === "/tmp/fictional-docs"), "the last tab closes its workspace");
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lens(page, "pcs");
         assert.equal(await remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]').count(), 0, "a closed workspace has no row");
         await page.getByRole("button", { name: "Close workspace list", exact: true }).click();
         // the docs folder open again, for what follows: Keep open on a look reopens its workspace
@@ -1975,6 +2075,7 @@ try {
         assert.ok((await savedTabs()).remote!.open.some((each) => each.cwd === "/tmp/fictional-docs"), "Keep open opens its workspace");
         await page.locator(`.tab-strip .host-chat-tab[data-host-session="${SESSION}"]`).waitFor({ state: "attached" }).catch(() => undefined);
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lens(page, "pcs");
         await remoteGroup.locator(".workspace-group").first().locator(".workspace-select").click();
         console.log("PASS a listed chat opens as a look (saved nowhere, gone on leaving), Keep open makes it a tab, Close tab hides it and the last closes its workspace");
 
@@ -2092,6 +2193,7 @@ try {
         });
         await page.reload();
         await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lens(page, "pcs");
         const repoRow = remoteGroup.locator('.host-folder[data-host-folder="/tmp/fictional-docs"]');
         const childRow = remoteGroup.locator('.worktree-children .host-folder[data-host-folder="/tmp/fictional-docs.wt/feat-a"]');
         await childRow.waitFor({ timeout: 20000 }).catch(() => assert.fail("the worktree's folder sits under its repository's row"));
@@ -2160,6 +2262,7 @@ try {
         const newChats = () => posts("/api/machines/remote/host-chats/chat/new");
         const openNewSheet = async () => {
           await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await lens(page, "pcs");
           await remoteGroup.getByRole("button", { name: "New workspace on Build PC", exact: true }).click();
           const form = page.getByRole("dialog", { name: "New workspace · Build PC" });
           await form.waitFor();
@@ -2500,7 +2603,12 @@ try {
       // a fresh device: the PC in use is the first, and the fold has never been opened
       const sixContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await sixContext.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
+        // the scenario is the PC tree: the sidebar's PCs lens (MachineSidebar.tsx), only on the first load, so a lens
+        // picked during it is kept across its reloads as a device keeps it
+        await sixContext.addInitScript(() => {
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+          if (localStorage.getItem("ovis:sidebar-lens") === null) localStorage.setItem("ovis:sidebar-lens", "pcs");
+        });
         const errors: string[] = [];
         const fits = async (what: string) => {
           const width = await six.evaluate(() => document.documentElement.scrollWidth);
@@ -2564,21 +2672,25 @@ try {
         await pcC.locator(".machine-toggle").click();
         assert.equal(await pcC.locator(".machine-toggle").getAttribute("aria-expanded"), "false", "a tap on the name folds the PC");
         await pcC.locator(".machine-toggle").click();
-        // the PCs heading folds the whole section, as Agents does
-        const pcsHead = six.locator(".sidebar-pcs-head button");
-        assert.equal(await pcsHead.getAttribute("aria-expanded"), "true", "the PCs section starts open");
-        await pcsHead.click();
-        assert.equal(await pcsHead.getAttribute("aria-expanded"), "false", "a tap on PCs folds it");
-        assert.equal(await six.locator(".machine-list .machine-group:visible").count(), 0, "folded, no PC shows");
-        assert.equal(await six.locator(".other-pcs:visible").count(), 0, "nor the Other PCs fold");
-        // its count stands beside the word, as the folded Agents head's does, not at the far edge (owner, ZAC-233)
-        const gap = await pcsHead.evaluate((button) => {
-          const word = button.querySelector(":scope > span:not(.agent-section-count)")!.getBoundingClientRect();
-          const count = button.querySelector(".agent-section-count")!.getBoundingClientRect();
-          return count.left - word.right;
+        // the PCs lens tab hides the whole tree for the Agents one, and gives it back; its count stands beside the word
+        // (owner, ZAC-233), and outside a search there is no PCs head to fold
+        assert.equal(await six.locator(".sidebar-pcs-head").count(), 0, "no PCs head outside a search: the lens is the fold");
+        const pcsTab = six.locator(".sidebar-lens").getByRole("tab", { name: /^PCs/ });
+        const agentsTab = six.locator(".sidebar-lens").getByRole("tab", { name: /^Agents/ });
+        assert.equal(await pcsTab.getAttribute("aria-selected"), "true", "the PCs lens is picked");
+        assert.equal((await pcsTab.locator(".sidebar-lens-count").innerText()).trim(), "6", "the PCs tab counts the six PCs");
+        const gap = await pcsTab.evaluate((button) => {
+          const range = document.createRange();
+          range.selectNodeContents(button.firstChild!);
+          return button.querySelector(".sidebar-lens-count")!.getBoundingClientRect().left - range.getBoundingClientRect().right;
         });
         assert.ok(gap < 40, `the PCs count sits beside the word (gap ${Math.round(gap)}px)`);
-        await pcsHead.click();
+        await agentsTab.click();
+        assert.equal(await six.locator(".machine-list").isHidden(), true, "the Agents lens hides the PC tree");
+        assert.equal(await six.locator(".machine-list .machine-group:visible").count(), 0, "no PC shows under the Agents lens");
+        assert.equal(await six.locator(".other-pcs:visible").count(), 0, "nor the Other PCs fold");
+        assert.equal(await six.locator(".agents-sidebar").isVisible(), true, "the agents show instead");
+        await pcsTab.click();
         await pcC.waitFor();
         // put back from its ⋯, it folds into Other PCs again
         const putBack = async (name: string) => {

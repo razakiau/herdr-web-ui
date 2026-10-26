@@ -94,4 +94,5 @@ export const MACHINES_ZH: Record<string, string> = {
   "PCs": "电脑",
   "Search workspaces and agents": "搜索工作区和代理",
   "Clear filter": "清除筛选",
+  "Sidebar view": "侧边栏视图",
 };
