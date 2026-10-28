@@ -619,7 +619,7 @@ export class MachineManager {
     let stalePid: number | null = null;
     if (descriptor) {
       if (!Number.isInteger(descriptor.pid) || descriptor.pid < 1) throw new Error("Invalid bridge process identity");
-      if (!(await host.alive(ssh, descriptor.pid))) { stalePid = descriptor.pid; descriptor = undefined; }
+      if (!(await host.alive(ssh, descriptor))) { stalePid = descriptor.pid; descriptor = undefined; }
     }
     // Update is idempotent: another app may have finished it while this dialog was open.
     // Prove the live endpoint is compatible; a descriptor or installed directory alone is not enough.
@@ -698,7 +698,7 @@ export class MachineManager {
       await host.stop(ssh, descriptor.pid);
       // Wait for this verified process to leave; its descriptor may remain after a crash.
       const deadline = Date.now() + 10_000;
-      while (await host.alive(ssh, descriptor.pid)) {
+      while (await host.alive(ssh, descriptor)) {
         if (job.abort.signal.aborted || this.stopped) throw new Error("Setup cancelled");
         if (Date.now() >= deadline) throw new Error("The old bridge did not stop; retry the update after checking it on the PC");
         await Bun.sleep(100);

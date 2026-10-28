@@ -15,6 +15,7 @@
 import { win32 } from "node:path";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
+import { parseBirth } from "./process-owner.ts";
 import { shellQuote } from "./machine-security.ts";
 import { bundleFile, type InstallStage } from "./remote-bundle.ts";
 import type { SshConnection } from "./ssh.ts";
@@ -75,7 +76,13 @@ export interface RemoteHost {
   readonly logHint: string;
   inspect(ssh: SshConnection, session?: string): Promise<HostInspection>;
   herdrVersion(ssh: SshConnection, herdrPath: string): Promise<string>;
-  alive(ssh: SshConnection, pid: number): Promise<boolean>;
+  /**
+   * Whether the bridge a descriptor names still runs. A recorded birth (process-owner.ts) must
+   * match too: a rebuilt container or a rebooted PC hands the old PID to another process, and
+   * a PID-only check then takes a dead bridge for live and never starts a new one. A descriptor
+   * without a usable birth (an older bridge) falls back to the PID alone.
+   */
+  alive(ssh: SshConnection, descriptor: Pick<BridgeDescriptor, "pid" | "birth">): Promise<boolean>;
   authorizeKey(ssh: SshConnection, keyLine: string): Promise<void>;
   installBundle(ssh: SshConnection, platform: string, signal: AbortSignal, options?: InstallOptions): Promise<void>;
   /** Windows only: herdr's own installer, when the host has none (a bundle carries none there) */
@@ -95,6 +102,33 @@ async function fetchBundle(platform: string, signal: AbortSignal, options: Insta
   const asset = await bundleFile(platform, signal, { cacheDir: options.cacheDir, onProgress: (done, total) => report("download", done, total) });
   report("upload", 0, asset.size);
   return { asset, input: { path: asset.path, onProgress: (done: number) => report("upload", done, asset.size), onUploaded: () => report("install", 0, null) } };
+}
+
+/**
+ * `live` when the PID runs and, if the descriptor recorded a birth of this platform, the process
+ * there has that birth, read the way process-owner.ts reads it (Linux: boot id and start ticks;
+ * macOS: lstart under LC_ALL=C TZ=UTC). An unreadable birth proves nothing and stays live.
+ */
+export function posixAliveScript(descriptor: Pick<BridgeDescriptor, "pid" | "birth">): string {
+  const pid = descriptor.pid;
+  const birth = parseBirth(descriptor.birth);
+  const probe = `kill -0 ${pid} 2>/dev/null || exit 0;`;
+  if (birth?.platform === "linux") {
+    return `${probe} want=${shellQuote(birth.value)}; b=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); t=$(sed 's/.*) //' /proc/${pid}/stat 2>/dev/null | cut -d ' ' -f 20); if test -n "$b" && test -n "$t" && test "$b:$t" != "$want"; then exit 0; fi; printf live`;
+  }
+  if (birth?.platform === "darwin") {
+    return `${probe} want=${shellQuote(birth.value)}; l=$(LC_ALL=C TZ=UTC /bin/ps -o lstart= -p ${pid} 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//'); if test -n "$l" && test "$l" != "$want"; then exit 0; fi; printf live`;
+  }
+  return `${probe} printf live`;
+}
+
+/** The same on Windows: the creation time CIM records, in Unix milliseconds. */
+export function windowsAliveScript(descriptor: Pick<BridgeDescriptor, "pid" | "birth">): string {
+  const pid = descriptor.pid;
+  const birth = parseBirth(descriptor.birth);
+  const running = `Get-Process -Id ${pid} -ErrorAction SilentlyContinue`;
+  if (birth?.platform !== "win32") return `if (${running}) { Write-Output 'live' }`;
+  return `if (${running}) { $p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' -ErrorAction SilentlyContinue; if (-not ($p -and $p.CreationDate) -or [string]([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() -eq ${psQuote(birth.value)}) { Write-Output 'live' } }`;
 }
 
 export const posixHost: RemoteHost = {
@@ -119,7 +153,7 @@ export const posixHost: RemoteHost = {
     };
   },
   herdrVersion: (ssh, herdrPath) => ssh.run(`${shellQuote(herdrPath)} --version`),
-  alive: async (ssh, pid) => await ssh.run(`kill -0 ${pid} 2>/dev/null && printf live || true`) === "live",
+  alive: async (ssh, descriptor) => await ssh.run(posixAliveScript(descriptor)) === "live",
   async authorizeKey(ssh, keyLine) {
     await ssh.run(`set -eu; umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; key=${shellQuote(keyLine)}; grep -qxF "$key" "$HOME/.ssh/authorized_keys" || printf '\\n%s\\n' "$key" >> "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"`);
   },
@@ -197,7 +231,7 @@ export const windowsHost: RemoteHost = {
     };
   },
   herdrVersion: (ssh, herdrPath) => ssh.runPowerShell(`& ${psQuote(herdrPath)} --version`),
-  alive: async (ssh, pid) => (await ssh.runPowerShell(`if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Write-Output 'live' }`)).trim() === "live",
+  alive: async (ssh, descriptor) => (await ssh.runPowerShell(windowsAliveScript(descriptor))).trim() === "live",
   async authorizeKey(ssh, keyLine) {
     await ssh.runPowerShell([
       "$ErrorActionPreference = 'Stop'",
