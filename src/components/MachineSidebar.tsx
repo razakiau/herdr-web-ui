@@ -21,6 +21,7 @@ import { SidebarActivityProvider, type SidebarActivity } from "../lib/sidebarAct
 import { filterSuggestions, machineFilter, sidebarFilter, type SidebarBranchLabels } from "../lib/sidebarFilter.ts";
 import { SidebarFilterProvider, useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { UsageMeters } from "./UsageMeters.tsx";
+import { CostsChip } from "./CostsChip.tsx";
 import "./Machines.css";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
@@ -60,8 +61,8 @@ interface Props {
 
 const NO_HOST_CHATS: ReadonlyMap<string, HostPc> = new Map();
 
-/** Which list of a PC's host chats is open: the whole PC's, or with `folder`, that folder's. */
-export interface AllAgentsOn { machineId: string; folder?: string }
+/** Which list of a PC's host chats is open: the whole PC's, or with `folder`, that folder's; `sort` the order it opens in (the Costs sheet's: Cost). */
+export interface AllAgentsOn { machineId: string; folder?: string; sort?: "recent" | "cost" }
 
 /** What works and what asks on a PC: its agents' panes and its host chats. */
 function pcActivity(machine: Machine, pc: HostPc | undefined, activity: SidebarActivity): PcActivity {
@@ -188,6 +189,11 @@ export function MachineSidebar(props: Props) {
   const agentCount = agentListCount(props.machines, hostChats, listPins);
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
   const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
+  // the PCs the costs chip asks: those with host chats, the only ones whose bridge can have a Copilot log
+  const costPcs = useMemo(() => props.machines.flatMap((machine) => {
+    const pc = hostChats.get(machine.id);
+    return pc ? [{ id: machine.id, name: machine.name, chats: pc.chats }] : [];
+  }), [props.machines, hostChats]);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs. The
   // filter above the lists is a row of the same grid, one field and its clear, never taller than a row.
   return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div className="sidebar-shell">
@@ -237,9 +243,11 @@ export function MachineSidebar(props: Props) {
       <div className="sidebar-footer-row">
         <button className="btn btn-ghost sidebar-footer-action sidebar-footer-settings" aria-label={t("Settings")} title={t("Settings (⌘⇧,)")} onClick={props.actions.openSettings}><Settings aria-hidden="true" /></button>
         <UsageMeters />
+        {/* every PC's chat costs (ZAC-260): absent unless tracked and a PC has answered */}
+        <CostsChip pcs={costPcs} onAllAgents={setAllOn} />
       </div>
     </footer>
-    {allOn !== null && allPc && allMachine && <AllAgentsSheet key={allOn.folder ?? ""} machineId={allOn.machineId} machineName={allMachine.name} pc={allPc} folder={allOn.folder}
+    {allOn !== null && allPc && allMachine && <AllAgentsSheet key={`${allOn.folder ?? ""}\n${allOn.sort ?? ""}`} machineId={allOn.machineId} machineName={allMachine.name} pc={allPc} folder={allOn.folder} initialSort={allOn.sort}
       selected={props.selectedHostChat?.machineId === allOn.machineId ? props.selectedHostChat.session : null} onClose={() => setAllOn(null)}
       // the chat opens as a look (App.tsx); on a phone the drawer goes as a pick's does
       onOpen={(session) => { setAllOn(null); props.onSelectHostChat?.({ machineId: allOn.machineId, session }); }} />}

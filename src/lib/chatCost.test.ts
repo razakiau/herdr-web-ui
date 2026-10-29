@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { chatCost, formatUsd, priceOf, priceWithFallback } from "./chatCost.ts";
+import { chatCost, formatUsd, listUsd, priceOf, priceWithFallback, wholeUsd } from "./chatCost.ts";
 
 const PRICES = {
   cc: { "claude-opus-5-5": { input: 4, output: 20, cached: 0.2 } },
@@ -60,5 +60,20 @@ describe("chatCost", () => {
 describe("formatUsd", () => {
   it("cents, a crumb, whole dollars past a hundred", () => {
     expect([formatUsd(0), formatUsd(0.004), formatUsd(0.0759), formatUsd(12.345), formatUsd(1234.5)]).toEqual(["$0.00", "<$0.01", "$0.08", "$12.35", "$1,235"]);
+  });
+});
+
+describe("listUsd", () => {
+  it("prints an estimate with ~, whole dollars from $10 to $100, cents below", () => {
+    expect([listUsd(38.4, false), listUsd(3.1, false), listUsd(149.6, false)]).toEqual(["~$38", "~$3.10", "~$150"]);
+  });
+  it("rounds a floor down, so it never claims more than was counted", () => {
+    expect([listUsd(149.6, true), listUsd(38.9, true), listUsd(1.629, true), listUsd(1234.9, true)]).toEqual(["≥ $149", "≥ $38", "≥ $1.62", "≥ $1,234"]);
+  });
+});
+
+describe("wholeUsd", () => {
+  it("whole dollars without a ~, a floor rounded down with ≥", () => {
+    expect([wholeUsd(211.6, false), wholeUsd(211.6, true), wholeUsd(0.4, false), wholeUsd(1234.5, false)]).toEqual(["$212", "≥ $211", "$0", "$1,235"]);
   });
 });

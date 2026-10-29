@@ -1,0 +1,118 @@
+/* The sidebar's costs chip (ZAC-260): a plan chip's strip (UsageMeters.css .usage-strip, no outline)
+   holding one figure, after the plan meters, which take the rest of the row */
+.costs-chip {
+  flex: none;
+  padding-inline: var(--space-2);
+}
+
+/* The Costs sheet: periods, the total over the Session sheet's stack (SessionSheet.css), By PC */
+.costs-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.costs-periods {
+  display: flex;
+  align-self: stretch;
+}
+
+.costs-periods > button { flex: 1; }
+
+.costs-total {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.costs-total strong {
+  color: var(--text-strong);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.costs-total strong.is-floor { color: var(--text); }
+
+.costs-old-bridge { margin: 0; }
+
+.costs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.costs-legend .session-swatch { margin-right: var(--space-1); }
+
+.costs-group { min-width: 0; }
+
+.costs-group-head { padding-top: var(--space-3); }
+
+.costs-pcs {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* a PC: its name and sum on one line, its chats and the costliest under them; the whole row is the tap */
+.costs-pc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .costs-pc:hover { background: var(--bg-hover); }
+}
+
+.costs-pc-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.costs-pc-name {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.costs-pc-usd {
+  flex: none;
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.costs-pc-usd.is-floor { color: var(--text); font-weight: var(--fw-regular); }
+
+.costs-pc-meta {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

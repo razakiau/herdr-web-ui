@@ -89,8 +89,6 @@ export const WORKSPACE_KO: Record<string, string> = {
   "New chat": "새 채팅",
   "Folders with chats": "채팅이 있는 폴더",
   "Search folders": "폴더 검색",
-  "1 chat": "채팅 1개",
-  "{n} chats": "채팅 {n}개",
   "No folder matches": "일치하는 폴더 없음",
   "Pick one to open it as a workspace or start a new chat there.": "하나를 골라 워크스페이스로 열거나 그곳에서 새 채팅을 시작하세요.",
   "Open workspace": "워크스페이스 열기",

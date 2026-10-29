@@ -21,7 +21,7 @@ import "./AllAgentsSheet.css";
 
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
 import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
-import { formatUsd } from "../lib/chatCost.ts";
+import { listUsd } from "../lib/chatCost.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } from "../lib/hostChatGroups.ts";
 import { basename, chatAge, fetchHostCosts, hostLine, tokens, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
@@ -73,15 +73,6 @@ const AGE_LABEL: Record<ChatAge, string> = {
 /** "all": every folder; else one folder's key (null: chats without one) */
 type Pick = "all" | string | null;
 type Sort = "recent" | "cost";
-
-/**
- * A cost as the list prints it: whole dollars from $10 ("~$38"), cents below ("~$3.10"); a floor
- * ("≥ $6") rounds down, so it never claims more than was counted.
- */
-const listUsd = (value: number, floor: boolean): string => {
-  const shown = value >= 10 && value < 100 ? `$${floor ? Math.floor(value + 1e-9) : Math.round(value)}` : formatUsd(value);
-  return `${floor ? "≥ " : "~"}${shown}`;
-};
 
 /** A chat's cost on its row: its split, and its log for the cache dot and the Cost sort's meta line. */
 interface RowCost extends CostSplit { chat: HostChatCost }

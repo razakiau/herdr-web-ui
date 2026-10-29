@@ -1,4 +1,4 @@
-import type { HostChatCost, HostCostModel, HostTokenTotal } from "../../shared/host-chats.ts";
+import type { HostChatCost, HostCostModel, HostCostsAnswer, HostTokenTotal } from "../../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { priceWithFallback } from "./chatCost.ts";
 
@@ -122,4 +122,61 @@ export function mergeLive(log: HostChatCost, live: HostTokenTotal[] | undefined)
     known.output += Math.max(0, total.output - known.output);
   }
   return { ...log, models };
+}
+
+export type CostPeriod = "today" | "7d" | "30d";
+const PERIOD_DAYS: Record<CostPeriod, number> = { today: 1, "7d": 7, "30d": 30 };
+
+/** A PC's spend in a period: its sum, how many of its chats made calls then, and the costliest of them. */
+export interface PcPeriod { machineId: string; split: CostSplit; chats: number; biggest: { session: string; split: CostSplit } | null }
+/** Every PC's spend in a period (the Costs sheet and its chip): the PCs costliest first, and the PCs whose bridge predates costs. */
+export interface PeriodTotals { total: CostSplit; pcs: PcPeriod[]; oldBridge: string[] }
+
+const emptySplit = (): CostSplit => ({ usd: 0, reads: 0, writes: 0, output: 0, fresh: 0, floor: false, missing: [] });
+function addSplit(into: CostSplit, part: CostSplit): void {
+  into.usd += part.usd;
+  into.reads += part.reads;
+  into.writes += part.writes;
+  into.output += part.output;
+  into.fresh += part.fresh;
+  into.floor ||= part.floor;
+  for (const model of part.missing) if (!into.missing.includes(model)) into.missing.push(model);
+}
+
+/**
+ * What every PC spent in a period, by the day each call was made (builder's call, ZAC-260): a
+ * chat that spans two days counts in each day for that day's calls. The periods are whole UTC days,
+ * the bridge's `days` keys: today is the UTC date of `now`, 7 days that date and the 6 before, 30
+ * days likewise, so in Paris (UTC+1) a day turns at 01:00 local, and an hour's calls can land in
+ * the day next to the one the owner would say. A log no listed chat runs on still counts: it is a
+ * Copilot chat of that PC that spent. A PC whose answer is null (a bridge before costs) is left
+ * out of the sums and named in `oldBridge`; a chat partly read, or any while its PC's first scan
+ * runs, makes the sums floors, as does a model with no price.
+ */
+export function periodTotals(
+  answers: ReadonlyMap<string, HostCostsAnswer | null>, period: CostPeriod, now: number,
+  prices: ModelPrices, fallback: Record<string, ModelPrice> | null,
+): PeriodTotals {
+  const days = new Set(Array.from({ length: PERIOD_DAYS[period] }, (_, back) => new Date(now - back * 86_400_000).toISOString().slice(0, 10)));
+  const total = emptySplit();
+  const pcs: PcPeriod[] = [];
+  const oldBridge: string[] = [];
+  for (const [machineId, answer] of answers) {
+    if (answer === null) { oldBridge.push(machineId); continue; }
+    const pc: PcPeriod = { machineId, split: emptySplit(), chats: 0, biggest: null };
+    pc.split.floor = !answer.complete;
+    for (const chat of answer.chats) {
+      const models = Object.entries(chat.days).flatMap(([key, each]) => days.has(key) ? each : []);
+      if (models.length === 0) continue;
+      const split = costSplit(models, prices, fallback);
+      split.floor ||= chat.partial || !answer.complete;
+      addSplit(pc.split, split);
+      pc.chats += 1;
+      if (!pc.biggest || split.usd > pc.biggest.split.usd) pc.biggest = { session: chat.session, split };
+    }
+    addSplit(total, pc.split);
+    pcs.push(pc);
+  }
+  pcs.sort((a, b) => b.split.usd - a.split.usd);
+  return { total, pcs, oldBridge };
 }

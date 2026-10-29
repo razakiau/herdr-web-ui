@@ -84,3 +84,22 @@ export function formatUsd(usd: number): string {
   if (usd > 0 && usd < 0.01) return "<$0.01";
   return usd >= 100 ? `$${Math.round(usd).toLocaleString("en-US")}` : `$${usd.toFixed(2)}`;
 }
+
+/** A floor's dollars rounded down, so it never claims more than was counted: whole from $10, cents below. */
+const floorUsd = (usd: number): string => usd >= 10
+  ? `$${Math.floor(usd + 1e-9).toLocaleString("en-US")}`
+  : `$${(Math.floor(usd * 100 + 1e-9) / 100).toFixed(2)}`;
+
+/**
+ * A cost as a list prints it (ZAC-260): an estimate "~$38", whole dollars from $10 up, cents below
+ * ("~$3.10"); a floor "≥ $6", rounded down.
+ */
+export function listUsd(usd: number, floor: boolean): string {
+  if (floor) return `≥ ${floorUsd(usd)}`;
+  return `~${usd >= 10 && usd < 100 ? `$${Math.round(usd)}` : formatUsd(usd)}`;
+}
+
+/** Whole dollars without the estimate's "~" (the sidebar's costs chip); a floor "≥ $211", rounded down. */
+export function wholeUsd(usd: number, floor: boolean): string {
+  return floor ? `≥ $${Math.floor(usd + 1e-9).toLocaleString("en-US")}` : `$${Math.round(usd).toLocaleString("en-US")}`;
+}

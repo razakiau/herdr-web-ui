@@ -89,8 +89,6 @@ export const WORKSPACE_JA: Record<string, string> = {
   "New chat": "新しいチャット",
   "Folders with chats": "チャットのあるフォルダー",
   "Search folders": "フォルダーを検索",
-  "1 chat": "チャット 1 件",
-  "{n} chats": "チャット {n} 件",
   "No folder matches": "一致するフォルダーはありません",
   "Pick one to open it as a workspace or start a new chat there.": "選んでワークスペースとして開くか、そこで新しいチャットを始めます。",
   "Open workspace": "ワークスペースを開く",

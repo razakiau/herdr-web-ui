@@ -89,8 +89,6 @@ export const WORKSPACE_ZH: Record<string, string> = {
   "New chat": "新建聊天",
   "Folders with chats": "有聊天的文件夹",
   "Search folders": "搜索文件夹",
-  "1 chat": "1 个聊天",
-  "{n} chats": "{n} 个聊天",
   "No folder matches": "没有匹配的文件夹",
   "Pick one to open it as a workspace or start a new chat there.": "选择一个以工作区打开，或在那里开始新聊天。",
   "Open workspace": "打开工作区",

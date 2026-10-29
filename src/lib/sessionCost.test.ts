@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { HostChatCost, HostCostModel } from "../../shared/host-chats.ts";
-import { advice, cacheState, costSplit, mergeLive, nextCall, writePrice } from "./sessionCost.ts";
+import type { HostChatCost, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
+import { advice, cacheState, costSplit, mergeLive, nextCall, periodTotals, writePrice } from "./sessionCost.ts";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -95,5 +95,63 @@ describe("mergeLive", () => {
   it("adds a live model the log lacks whole, and never subtracts", () => {
     const merged = mergeLive(log, [{ model: "cc/claude-opus-5-5", input: 10, cached: 0, output: 0 }, { model: "gpt-5", input: 300, cached: 100, output: 20 }]);
     expect(merged.models).toEqual([log.models[0]!, model({ model: "gpt-5", input: 300, cacheRead: 100, output: 20 })]);
+  });
+});
+
+describe("periodTotals", () => {
+  // 2026-10-29 12:00 UTC: today is the 29th, 7 days reach back to the 23rd, 30 days to the 30th of September
+  const opus = (output: number): HostCostModel[] => [model({ model: "cc/claude-opus-5-5", input: 0, output, calls: 1 })];
+  const chat = (session: string, days: Record<string, HostCostModel[]>, over: Partial<HostChatCost> = {}): HostChatCost =>
+    ({ session, models: [], lastCallAt: null, context: null, peak: 0, rewrites: 0, days, partial: false, ...over });
+  const answers = new Map<string, HostCostsAnswer | null>([
+    // $25 per million output: 1M today ($25) and 2M on the 24th ($50), and 4M on the 10th ($100)
+    ["desk", { complete: true, chats: [
+      chat("a", { "2026-10-29": opus(1_000_000), "2026-10-24": opus(2_000_000) }),
+      chat("b", { "2026-10-10": opus(4_000_000) }),
+    ] }],
+    ["cde", { complete: true, chats: [chat("c", { "2026-10-23": opus(400_000) }), chat("d", { "2026-10-22": opus(400_000) })] }],
+    ["old", null],
+  ]);
+
+  it("sums each PC's calls by the UTC day they were made, and names a bridge before costs", () => {
+    const week = periodTotals(answers, "7d", NOW, PRICES, null);
+    expect(week.total.usd).toBeCloseTo(85, 9);
+    expect(week.total.floor).toBe(false);
+    expect(week.oldBridge).toEqual(["old"]);
+    expect(week.pcs.map((pc) => [pc.machineId, Math.round(pc.split.usd), pc.chats, pc.biggest?.session])).toEqual([["desk", 75, 1, "a"], ["cde", 10, 1, "c"]]);
+    const today = periodTotals(answers, "today", NOW, PRICES, null);
+    expect(today.total.usd).toBeCloseTo(25, 9);
+    expect(today.pcs.map((pc) => [pc.machineId, pc.chats])).toEqual([["desk", 1], ["cde", 0]]);
+    expect(today.pcs[1]!.biggest).toBeNull();
+    const month = periodTotals(answers, "30d", NOW, PRICES, null);
+    expect(month.total.usd).toBeCloseTo(195, 9);
+    expect(month.pcs[0]!.chats).toBe(2);
+    expect(month.pcs[0]!.biggest?.session).toBe("b");
+    expect(month.pcs[0]!.biggest?.split.usd).toBeCloseTo(100, 9);
+  });
+
+  it("splits a chat that spans two days across them, and keeps the parts", () => {
+    const split = periodTotals(new Map([["desk", { complete: true, chats: [chat("a", {
+      "2026-10-29": [model({ model: "cc/claude-opus-5-5", input: 1_000_000, cacheRead: 1_000_000 })],
+      "2026-10-28": [model({ model: "cc/claude-opus-5-5", input: 100_000, cacheWrite: 100_000 })],
+    })] }]]), "today", NOW, PRICES, null);
+    expect(split.total.reads).toBeCloseTo(0.5, 9);
+    expect(split.total.writes).toBe(0);
+  });
+
+  it("is a floor when a chat is partly read, the first scan runs, or a model has no price", () => {
+    const partly = periodTotals(new Map([["desk", { complete: true, chats: [chat("a", { "2026-10-29": opus(1_000_000) }, { partial: true })] }]]), "today", NOW, PRICES, null);
+    expect([partly.total.floor, partly.pcs[0]!.split.floor, partly.pcs[0]!.biggest?.split.floor]).toEqual([true, true, true]);
+    const scanning = periodTotals(new Map([["desk", { complete: false, chats: [chat("a", { "2026-10-29": opus(1_000_000) })] }]]), "today", NOW, PRICES, null);
+    expect(scanning.total.floor).toBe(true);
+    const unpriced = periodTotals(new Map([["desk", { complete: true, chats: [chat("a", { "2026-10-29": [model({ model: "mystery-1", output: 5 }), ...opus(1_000_000)] })] }]]), "today", NOW, PRICES, null);
+    expect(unpriced.total.floor).toBe(true);
+    expect(unpriced.total.missing).toEqual(["mystery-1"]);
+    expect(unpriced.total.usd).toBeCloseTo(25, 9);
+  });
+
+  it("is empty with no answer yet", () => {
+    const none = periodTotals(new Map(), "7d", NOW, PRICES, null);
+    expect([none.total.usd, none.pcs, none.oldBridge]).toEqual([0, [], []]);
   });
 });
