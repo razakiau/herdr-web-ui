@@ -53,7 +53,8 @@ describe("CostIndex", () => {
     ]);
     const cost = index().costOf(`copilotcli:/${UUID}`);
     expect(cost?.session).toBe(`copilotcli:/${UUID}`);
-    expect(cost?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 53_000, cacheRead: 2700, cacheWrite: 50_000, output: 60, calls: 3 }]);
+    // the sub-agent's 50K logged, the main agent's first call's 1100 inferred from its next read (1900 − 800)
+    expect(cost?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 53_000, cacheRead: 2700, cacheWrite: 51_100, output: 60, calls: 3 }]);
     expect(cost?.lastCallAt).toBe("2026-10-29T13:01:00.000Z");
     expect(cost?.context).toBe(2000);
     expect(cost?.peak).toBe(2000);
@@ -148,10 +149,114 @@ describe("CostIndex", () => {
       usage("2026-10-29T12:10:01.000Z", { input: 300, cacheRead: 200, output: 7 }),
     ]);
     expect(index().calls(`copilotcli:/${UUID}`)).toEqual([
-      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 100, output: 10, main: true, context: 200, lastCacheRead: 100 },
+      // 100 logged, 100 inferred: the second call read 100, the next message's 200
+      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 200, output: 10, main: true, context: 200, lastCacheRead: 100 },
       { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, output: 1, main: false, context: 70, lastCacheRead: 0 },
       { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, output: 7, main: true, context: 300, lastCacheRead: 200 },
     ]);
+  });
+
+  test("costOf reads a big log over several requests, a floor until it is through", () => {
+    const lines = [userMessage("2026-10-29T08:00:00.000Z"), ...Array.from({ length: 40 }, (_, i) => usage(`2026-10-29T08:00:${String(i).padStart(2, "0")}.000Z`, { input: 1000 + i * 100, cacheRead: i * 100, output: 3 }))];
+    log(UUID, lines);
+    const whole = index().costOf(`copilotcli:/${UUID}`);
+    expect(whole?.partial).toBe(false);
+    // about 5 lines a request
+    const costs = new CostIndex(home, [], () => NOW, 2000);
+    const first = costs.costOf(`copilotcli:/${UUID}`);
+    expect(first?.partial).toBe(true);
+    expect(first?.models[0]?.calls).toBeLessThan(40);
+    let cost = first;
+    for (let n = 0; n < 100 && cost?.partial; n++) cost = costs.costOf(`copilotcli:/${UUID}`);
+    expect(cost).toEqual(whole);
+    expect(costs.calls(`copilotcli:/${UUID}`)).toEqual(index().calls(`copilotcli:/${UUID}`));
+  });
+
+  test("calls reads a log costOf has not opened, within the same budget", () => {
+    log(UUID, [userMessage("2026-10-29T08:00:00.000Z"), ...Array.from({ length: 40 }, (_, i) => usage(`2026-10-29T08:00:${String(i).padStart(2, "0")}.000Z`, { input: 1000, output: 3 }))]);
+    const [message] = new CostIndex(home, [], () => NOW, 2000).calls(`copilotcli:/${UUID}`);
+    expect(message?.input).toBeGreaterThan(0);
+    expect(message?.input).toBeLessThan(40_000);
+  });
+
+  describe("cache writes Copilot logs as 0", () => {
+    test("infers each call's write from its chain's next read, onto its own call, day and message", () => {
+      log(UUID, [
+        userMessage("2026-10-28T23:00:00.000Z"),
+        usage("2026-10-28T23:59:00.000Z", { input: 10_000, cacheRead: 0, output: 5 }),
+        userMessage("2026-10-29T08:00:00.000Z"),
+        usage("2026-10-29T08:00:01.000Z", { input: 12_000, cacheRead: 9_000, output: 5 }),
+        usage("2026-10-29T08:00:02.000Z", { input: 15_000, cacheRead: 11_500, output: 5 }),
+      ]);
+      const costs = index();
+      const cost = costs.costOf(`copilotcli:/${UUID}`);
+      // 9000 written by the first call, 2500 by the second; the newest waits for its next call
+      expect(cost?.models[0]?.cacheWrite).toBe(11_500);
+      expect(cost?.days["2026-10-28"]?.[0]?.cacheWrite).toBe(9_000);
+      expect(cost?.days["2026-10-29"]?.[0]?.cacheWrite).toBe(2_500);
+      // 9000 of a 10K prompt is a cold cache's rewrite; 2500 of 12K is not
+      expect(cost?.rewrites).toBe(1);
+      expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.cacheWrite)).toEqual([9_000, 2_500]);
+    });
+
+    test("a logged write is used as is, never added to an inferred one", () => {
+      log(UUID, [
+        usage("2026-10-29T08:00:01.000Z", { input: 10_000, cacheRead: 0, cacheWrite: 8_000 }),
+        usage("2026-10-29T08:00:02.000Z", { input: 12_000, cacheRead: 9_000 }),
+        usage("2026-10-29T08:00:03.000Z", { input: 13_000, cacheRead: 12_000 }),
+      ]);
+      const cost = index().costOf(`copilotcli:/${UUID}`);
+      expect(cost?.models[0]?.cacheWrite).toBe(8_000 + 3_000);
+    });
+
+    test("a sub-agent's chain and the main agent's don't mix, nor two models'", () => {
+      log(UUID, [
+        userMessage("2026-10-29T08:00:00.000Z"),
+        usage("2026-10-29T08:00:01.000Z", { input: 100_000, cacheRead: 90_000 }),
+        usage("2026-10-29T08:00:02.000Z", { input: 5_000, cacheRead: 0 }, { agentId: "sub-1" }),
+        usage("2026-10-29T08:00:03.000Z", { input: 6_000, cacheRead: 0 }, { agentId: "sub-2", model: "gpt-fictional" }),
+        usage("2026-10-29T08:00:04.000Z", { input: 7_000, cacheRead: 4_800 }, { agentId: "sub-1" }),
+        usage("2026-10-29T08:00:05.000Z", { input: 9_000, cacheRead: 5_500 }, { agentId: "sub-2", model: "gpt-fictional" }),
+        usage("2026-10-29T08:00:06.000Z", { input: 101_000, cacheRead: 99_000 }),
+      ]);
+      const costs = index();
+      const cost = costs.costOf(`copilotcli:/${UUID}`);
+      const write = (model: string) => cost?.models.find((each) => each.model === model)?.cacheWrite;
+      // main 99000 − 90000, sub-1 4800 − 0; never 4800 − 90000 or 99000 − 7000
+      expect(write("cc/claude-opus-5-5")).toBe(9_000 + 4_800);
+      expect(write("gpt-fictional")).toBe(5_500);
+      const [main, sub] = costs.calls(`copilotcli:/${UUID}`);
+      expect(main?.cacheWrite).toBe(9_000);
+      expect(sub?.cacheWrite).toBe(4_800 + 5_500);
+      expect(cost?.rewrites).toBe(0);
+    });
+
+    test("the newest call gets its write when its next call is read, in a later read", () => {
+      const path = log(UUID, [
+        userMessage("2026-10-29T08:00:00.000Z"),
+        usage("2026-10-29T08:00:01.000Z", { input: 20_000, cacheRead: 0 }),
+      ]);
+      const costs = index();
+      expect(costs.costOf(`copilotcli:/${UUID}`)?.models[0]?.cacheWrite).toBe(0);
+      appendFileSync(path, userMessage("2026-10-29T08:30:00.000Z") + usage("2026-10-29T08:30:01.000Z", { input: 21_000, cacheRead: 19_000 }));
+      const cost = costs.costOf(`copilotcli:/${UUID}`);
+      expect(cost?.models[0]?.cacheWrite).toBe(19_000);
+      expect(cost?.days["2026-10-29"]?.[0]?.cacheWrite).toBe(19_000);
+      expect(cost?.rewrites).toBe(1);
+      // onto the first message's call, not the one just read
+      expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.cacheWrite)).toEqual([19_000, 0]);
+    });
+
+    test("a read that drops (a compaction, a new context) infers no write, never a negative one", () => {
+      log(UUID, [
+        usage("2026-10-29T08:00:01.000Z", { input: 150_000, cacheRead: 149_000 }),
+        usage("2026-10-29T08:00:02.000Z", { input: 30_000, cacheRead: 0 }),
+        usage("2026-10-29T08:00:03.000Z", { input: 31_000, cacheRead: 29_500 }),
+      ]);
+      const cost = index().costOf(`copilotcli:/${UUID}`);
+      expect(cost?.models[0]?.cacheWrite).toBe(29_500);
+      expect(cost?.rewrites).toBe(1);
+    });
   });
 
   test("calls: a message's context is its last main call's prompt, not the sum of its tool loop", () => {

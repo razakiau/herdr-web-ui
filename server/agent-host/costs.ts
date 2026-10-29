@@ -5,6 +5,15 @@
  * The index sums them per file by byte offset: a request reads only what was written since the
  * last one, a line still being written is left for the next read, and a call seen twice (same
  * `apiCallId`) counts once. Tokens only: the client prices them.
+ *
+ * Copilot logs `cacheWriteTokens: 0` on every BYOK (OmniRoute) call, so a write is inferred: what
+ * the next call of the same chain (the main agent or one sub-agent, on one model) reads from the
+ * cache beyond what this one read, `max(0, next.cacheRead − this.cacheRead)`; a drop (a compaction,
+ * a new context) is 0, a write the log does give is taken as is. Measured on 2026-10-28's
+ * `cc/claude-opus*` calls (ZAC-260): 4194 of 4283 matched OmniRoute's call_logs by (tokens_in,
+ * tokens_out), cache reads equal to the token (567,265,821 both); inferred writes 8.97M against
+ * OmniRoute's 9.32M (96%), cold-cache rewrites 21 against 22. A chain's newest call gets its write
+ * when its next call is read, in this read or a later one.
  */
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +27,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCAN_DAYS = 30;
 /** new logs read per `all()`, so a request never waits on the whole store */
 const FILES_PER_SCAN = 50;
-/** bytes read per `all()`: a marathon's log (400 MB seen) is read over several requests */
+/**
+ * bytes read per request (`all()`, `costOf()`): a marathon's log (400 MB seen) is read over several
+ * requests, a floor (`partial`) meanwhile, rather than blocking the bridge's terminals for seconds
+ */
 const BYTES_PER_SCAN = 128 * 1024 * 1024;
 const CHUNK = 8 * 1024 * 1024;
 const USAGE_MARK = '"session.usage_record"';
@@ -28,6 +40,11 @@ type Row = Record<string, unknown>;
 type Tokens = Omit<HostCostModel, "model" | "calls">;
 /** one message's calls: the main agent's and its sub-agents', apart */
 interface Message { main: HostCostCall | null; sub: HostCostCall | null }
+/** a chain's last call, its write still to infer from the chain's next read: the sums it went into */
+interface Pending {
+  cacheRead: number; input: number; main: boolean;
+  model: HostCostModel; day: HostCostModel | null; call: HostCostCall;
+}
 
 interface LogState {
   path: string; offset: number; size: number; mtime: number;
@@ -37,6 +54,8 @@ interface LogState {
     lastCallAt: string | null; context: number | null; peak: number; rewrites: number;
     messages: Message[];
   };
+  /** per chain (agent and model): its last call whose write the log gave as 0 */
+  chains: Map<string, Pending | null>;
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
 }
@@ -49,15 +68,19 @@ function add(into: Tokens, tokens: Tokens): void {
   into.input += tokens.input; into.cacheRead += tokens.cacheRead; into.cacheWrite += tokens.cacheWrite; into.output += tokens.output;
 }
 
-function addModel(models: Map<string, HostCostModel>, model: string, tokens: Tokens): void {
+function addModel(models: Map<string, HostCostModel>, model: string, tokens: Tokens): HostCostModel {
   let sum = models.get(model);
   if (!sum) { sum = { model, ...zero(), calls: 0 }; models.set(model, sum); }
   add(sum, tokens);
   sum.calls += 1;
+  return sum;
 }
 
+/** a cold cache's rewrite: the call wrote more than half its prompt */
+const rewrote = (write: number, input: number): boolean => write > 0.5 * input;
+
 const fresh = (path: string): LogState => ({
-  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false,
+  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(),
   sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, messages: [] },
 });
 
@@ -83,19 +106,32 @@ function take(state: LogState, line: string): void {
   const at = typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp)) ? entry.timestamp : null;
   const model = typeof usage.model === "string" && usage.model ? usage.model : "unknown";
   const tokens: Tokens = { input: count(usage.inputTokens), cacheRead: count(usage.cacheReadTokens), cacheWrite: count(usage.cacheWriteTokens), output: count(usage.outputTokens) };
-  addModel(sums.models, model, tokens);
+  // the previous call of this chain wrote what this one reads beyond it
+  const chain = `${main ? "" : String(entry.agentId)}\n${model}`;
+  const before = state.chains.get(chain);
+  if (before) {
+    const write = Math.max(0, tokens.cacheRead - before.cacheRead);
+    if (write > 0) {
+      before.model.cacheWrite += write;
+      if (before.day) before.day.cacheWrite += write;
+      before.call.cacheWrite += write;
+      if (before.main && rewrote(write, before.input)) sums.rewrites += 1;
+    }
+  }
+  const modelSum = addModel(sums.models, model, tokens);
+  let daySum: HostCostModel | null = null;
   if (at !== null) {
     const day = new Date(at).toISOString().slice(0, 10);
     let models = sums.days.get(day);
     if (!models) { models = new Map(); sums.days.set(day, models); }
-    addModel(models, model, tokens);
+    daySum = addModel(models, model, tokens);
   }
   if (main) {
     // the cache's age, the context and a cold cache's rewrite are the main agent's: a sub-agent's first call always writes
     if (at !== null) sums.lastCallAt = at;
     sums.context = tokens.input;
     sums.peak = Math.max(sums.peak, tokens.input);
-    if (tokens.cacheWrite > 0.5 * tokens.input) sums.rewrites += 1;
+    if (rewrote(tokens.cacheWrite, tokens.input)) sums.rewrites += 1;
   }
   if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
   const message = sums.messages[sums.messages.length - 1]!;
@@ -106,6 +142,8 @@ function take(state: LogState, line: string): void {
   // the sums would read a 10-call tool loop at 200K as 2M: the last call's own prompt is the context
   call.context = tokens.input;
   call.lastCacheRead = tokens.cacheRead;
+  // a write the log gives is used as is, never added to an inferred one
+  state.chains.set(chain, tokens.cacheWrite > 0 ? null : { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call });
 }
 
 /**
@@ -122,7 +160,8 @@ function readLog(state: LogState, budget: number): number {
   try { fd = openSync(state.path, "r"); } catch { return 0; }
   let read = 0;
   try {
-    let buffer = Buffer.allocUnsafe(Math.min(CHUNK, stat.size - state.offset));
+    // the budget caps the chunk too, else a log under 8 MB is read whole whatever the budget
+    let buffer = Buffer.allocUnsafe(Math.max(1, Math.min(CHUNK, stat.size - state.offset, budget)));
     while (state.offset < stat.size && read < budget) {
       const want = Math.min(buffer.length, stat.size - state.offset);
       const got = readSync(fd, buffer, 0, want, state.offset);
@@ -161,7 +200,11 @@ export class CostIndex {
   /** logs found but not read yet, newest first; null before the first scan listed the store */
   private queue: string[] | null = null;
 
-  constructor(private readonly home: string, private readonly agentDirs: readonly string[], private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly home: string, private readonly agentDirs: readonly string[], private readonly now: () => number = Date.now,
+    /** bytes a request reads (BYTES_PER_SCAN), smaller in tests */
+    private readonly bytesPerRequest = BYTES_PER_SCAN,
+  ) {}
 
   /** The SDK session a chat id names: a CLI chat's own folder, a VS Code chat's through its store. */
   private sdkOf(session: string): string | null {
@@ -179,8 +222,8 @@ export class CostIndex {
     return found !== null && "path" in found ? found.path : null;
   }
 
-  /** The log's state, read up to now (or up to `budget`); null when the session has no log. */
-  private read(uuid: string, budget = Number.POSITIVE_INFINITY): LogState | null {
+  /** The log's state, read up to now or up to `budget`; null when the session has no log. */
+  private read(uuid: string, budget: number): LogState | null {
     let state = this.logs.get(uuid);
     if (!state) {
       const path = this.pathOf(uuid);
@@ -194,14 +237,17 @@ export class CostIndex {
 
   costOf(session: string): HostChatCost | null {
     const uuid = this.sdkOf(session);
-    const state = uuid === null ? null : this.read(uuid);
+    const state = uuid === null ? null : this.read(uuid, this.bytesPerRequest);
     return state === null ? null : answer(session, state);
   }
 
-  /** Per message, the main agent's calls and its sub-agents', in the log's order. */
+  /**
+   * Per message, the main agent's calls and its sub-agents', in the log's order: as far as `costOf`
+   * read (the route asks both, the chart matching the sums), a log not opened yet up to the budget.
+   */
   calls(session: string): HostCostCall[] {
     const uuid = this.sdkOf(session);
-    const state = uuid === null ? null : this.read(uuid);
+    const state = uuid === null ? null : this.logs.get(uuid) ?? this.read(uuid, this.bytesPerRequest);
     if (state === null) return [];
     return state.sums.messages.flatMap((message) => [message.main, message.sub].filter((call) => call !== null).map((call) => ({ ...call })));
   }
@@ -212,7 +258,7 @@ export class CostIndex {
    * none is left and none stopped part way.
    */
   all(): HostCostsAnswer {
-    let budget = BYTES_PER_SCAN;
+    let budget = this.bytesPerRequest;
     for (const state of this.logs.values()) {
       if (budget <= 0) { state.partial = state.partial || this.stale(state); continue; }
       budget -= readLog(state, budget);
