@@ -25,7 +25,7 @@ import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
   agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
-  fetchChatCost, sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
+  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
 import { settingsTone, type HostSendPick } from "../lib/compose.ts";
 import { Composer, type AttachApi, type SentAttachment } from "./Composer.tsx";
@@ -35,6 +35,7 @@ import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
 import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
+import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
@@ -146,23 +147,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       if (value.prices || value.fallback) setPrices(value);
     });
   }, [contextOpen]);
-  // the bridge's log of the chat (ZAC-260) while costs are tracked, for the meter's cache timer,
-  // the handoff banner and the Session sheet: asked when the chat opens, when a turn ends and on
-  // each open of the sheet; never on a timer (the minute clock moves the cache's state).
-  // undefined while asked, null from a bridge before costs
+  // the bridge's log of the chat (ZAC-260), for the meter's cache timer, the handoff banner and the Session sheet
   const { settings: { trackCosts, costHandoffAt, cacheLifetimeMin } } = useSettings();
-  const [chatCostLog, setChatCostLog] = useState<Awaited<ReturnType<typeof fetchChatCost>> | undefined>(undefined);
-  const turnRunning = chat?.busy ?? false;
-  const costAsked = useRef(false);
-  useEffect(() => {
-    if (!trackCosts) { costAsked.current = false; return; }
-    // a turn starting changes nothing the log says yet: asked again when it ends
-    if (costAsked.current && turnRunning && !contextOpen) return;
-    costAsked.current = true;
-    let live = true;
-    void fetchChatCost(machineId, session).then((value) => { if (live) setChatCostLog(value); }, () => { /* kept: the last answer, or still asking */ });
-    return () => { live = false; };
-  }, [contextOpen, trackCosts, machineId, session, turnRunning]);
+  const chatCostLog = useChatCostLog({ machineId, session, trackCosts, busy: chat?.busy ?? false, sheetOpen: contextOpen });
   const cost = useMemo(() => {
     const tokens = chat?.tokens;
     if (!prices || !tokens || tokens.totals.length === 0) return null;
