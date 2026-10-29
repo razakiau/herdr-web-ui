@@ -77,15 +77,18 @@ export interface HostTokenTotal { model: string; input: number; cached: number; 
 
 /**
  * A model's calls in a chat's Copilot log (`session.usage_record`), sub-agents included. `input`
- * is the whole prompt, so it holds `cacheRead` and `cacheWrite`; tokens only, the client prices them.
+ * holds `cacheRead` and the part sent without the cache; what the calls stored in the cache
+ * (`cacheWrite`) is not inside it (checked against OmniRoute's call_logs, ZAC-260). `coldWrite` is
+ * the part of `cacheWrite` the main agent's cold restarts stored (the cache had expired); absent
+ * from a bridge before bundle 1069, read as 0. Tokens only, the client prices them.
  */
-export interface HostCostModel { model: string; input: number; cacheRead: number; cacheWrite: number; output: number; calls: number }
+export interface HostCostModel { model: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; calls: number }
 /**
  * One message's calls (those between two user messages), the main agent's or its sub-agents', for the chart.
  * The token counts are the calls' sums; `context` and `lastCacheRead` are the last call's own prompt
  * (`inputTokens`) and cache read: the context size the message ended at, and the last call's cache hit.
  */
-export interface HostCostCall { at: string; input: number; cacheRead: number; cacheWrite: number; output: number; main: boolean; context: number; lastCacheRead: number }
+export interface HostCostCall { at: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; main: boolean; context: number; lastCacheRead: number }
 /** GET /api/host-chats/costs: what a chat's log says it spent. */
 export interface HostChatCost {
   session: string; models: HostCostModel[];
@@ -93,7 +96,7 @@ export interface HostChatCost {
   lastCallAt: string | null;
   /** the main agent's last prompt (`inputTokens`), the context the next call sends */
   context: number | null;
-  /** the main agent's largest prompt, and its calls that wrote more than half their prompt to the cache (a cold cache) */
+  /** the main agent's largest prompt, and its cold restarts: calls whose write is over half of what the cache holds after them */
   peak: number; rewrites: number;
   /** the same sums by the call's UTC day ("YYYY-MM-DD"), for Today / 7 days / 30 days */
   days: Record<string, HostCostModel[]>;

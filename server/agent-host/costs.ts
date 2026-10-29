@@ -1,7 +1,10 @@
 /**
  * What a chat spent, from its Copilot log: every model call leaves a `session.usage_record` in
  * `$COPILOT_HOME/session-state/<uuid>/events.jsonl` (the main agent's without an `agentId`, a
- * sub-agent's with one), its `inputTokens` the whole prompt, cache reads and writes included.
+ * sub-agent's with one), its `inputTokens` the prompt read from the cache plus the part sent
+ * without it; what the call stores in the cache is not inside it. Checked record by record against
+ * OmniRoute's call_logs (ZAC-260): read 99,607, OmniRoute's cache creation 2,454, Copilot's input
+ * 99,947 (not 102,061), and the next call read 102,061 = 99,607 + 2,454.
  * The index sums them per file by byte offset: a request reads only what was written since the
  * last one, a line still being written is left for the next read, and a call seen twice (same
  * `apiCallId`) counts once. Tokens only: the client prices them.
@@ -10,7 +13,9 @@
  * the next call of the same chain (the main agent or one sub-agent, on one model) reads from the
  * cache beyond what this one read, `max(0, next.cacheRead − this.cacheRead)`; a drop (a compaction,
  * a new context) is 0, a write the log does give is taken as is. A side call (`SIDE_CALL`) is
- * left out of the chain. Measured with this rule on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
+ * left out of the chain. A main-agent call whose write is over half of what the cache holds after
+ * it (`rewrote`) is a cold restart: the cache had expired, the whole conversation is stored again;
+ * its write is also summed as `coldWrite`. Measured with this rule on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
  * cache reads equal to OmniRoute's (569,791,156 in the Copilot log), inferred writes 9,195,819
  * against OmniRoute's 9,320,792 (98.7%); rewrites counted by the index 9 (main agent; 29 with
  * sub-agents, which is what OmniRoute's 22 compares to, as it counts every call). A chain's newest
@@ -49,13 +54,15 @@ const USAGE_MARK = '"session.usage_record"';
 const MESSAGE_MARK = '"user.message"';
 
 type Row = Record<string, unknown>;
-type Tokens = Omit<HostCostModel, "model" | "calls">;
+type Tokens = { input: number; cacheRead: number; cacheWrite: number; coldWrite: number; output: number };
+type Model = HostCostModel & Tokens;
+type Call = HostCostCall & Tokens;
 /** one message's calls: the main agent's and its sub-agents', apart */
-interface Message { main: HostCostCall | null; sub: HostCostCall | null }
+interface Message { main: Call | null; sub: Call | null }
 /** a chain's last call that is not a side call, and the sums its inferred write goes into */
 interface Last {
   cacheRead: number; input: number; main: boolean;
-  model: HostCostModel; day: HostCostModel | null; call: HostCostCall;
+  model: Model; day: Model | null; call: Call;
   /** the log gave its write: none is inferred */
   logged: boolean;
 }
@@ -64,25 +71,26 @@ interface LogState {
   path: string; offset: number; size: number; mtime: number;
   seenIds: Set<string>;
   sums: {
-    models: Map<string, HostCostModel>; days: Map<string, Map<string, HostCostModel>>;
+    models: Map<string, Model>; days: Map<string, Map<string, Model>>;
     lastCallAt: string | null; context: number | null; peak: number; rewrites: number;
     messages: Message[];
   };
   /** per chain (agent and model): its last call that is not a side call */
   chains: Map<string, Last>;
+
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
 }
 
 const record = (value: unknown): Row => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const count = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-const zero = (): Tokens => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0 });
+const zero = (): Tokens => ({ input: 0, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 0 });
 
 function add(into: Tokens, tokens: Tokens): void {
-  into.input += tokens.input; into.cacheRead += tokens.cacheRead; into.cacheWrite += tokens.cacheWrite; into.output += tokens.output;
+  into.input += tokens.input; into.cacheRead += tokens.cacheRead; into.cacheWrite += tokens.cacheWrite; into.coldWrite += tokens.coldWrite; into.output += tokens.output;
 }
 
-function addModel(models: Map<string, HostCostModel>, model: string, tokens: Tokens): HostCostModel {
+function addModel(models: Map<string, Model>, model: string, tokens: Tokens): Model {
   let sum = models.get(model);
   if (!sum) { sum = { model, ...zero(), calls: 0 }; models.set(model, sum); }
   add(sum, tokens);
@@ -90,8 +98,12 @@ function addModel(models: Map<string, HostCostModel>, model: string, tokens: Tok
   return sum;
 }
 
-/** a cold cache's rewrite: the call wrote more than half its prompt */
-const rewrote = (write: number, input: number): boolean => write > 0.5 * input;
+/**
+ * A cold restart: the call wrote more than half of what the cache holds after it (its own read plus
+ * its write), its read ~0 as the cache had expired. Not "half its prompt": the prompt does not hold
+ * the write (see the header), so a warm call storing a long tool result would have passed for one.
+ */
+const rewrote = (write: number, cacheRead: number): boolean => write > 0.5 * (cacheRead + write);
 
 const fresh = (path: string): LogState => ({
   path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(),
@@ -119,7 +131,7 @@ function take(state: LogState, line: string): void {
   }
   const at = typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp)) ? entry.timestamp : null;
   const model = typeof usage.model === "string" && usage.model ? usage.model : "unknown";
-  const tokens: Tokens = { input: count(usage.inputTokens), cacheRead: count(usage.cacheReadTokens), cacheWrite: count(usage.cacheWriteTokens), output: count(usage.outputTokens) };
+  const tokens: Tokens = { input: count(usage.inputTokens), cacheRead: count(usage.cacheReadTokens), cacheWrite: count(usage.cacheWriteTokens), coldWrite: 0, output: count(usage.outputTokens) };
   // the previous call of this chain wrote what this one reads beyond it
   const chain = `${main ? "" : String(entry.agentId)}\n${model}`;
   const before = state.chains.get(chain);
@@ -127,14 +139,22 @@ function take(state: LogState, line: string): void {
   if (before && !before.logged && !sideCall) {
     const write = Math.max(0, tokens.cacheRead - before.cacheRead);
     if (write > 0) {
-      before.model.cacheWrite += write;
-      if (before.day) before.day.cacheWrite += write;
-      before.call.cacheWrite += write;
-      if (before.main && rewrote(write, before.input)) sums.rewrites += 1;
+      const cold = before.main && rewrote(write, before.cacheRead) ? write : 0;
+      for (const sum of [before.model, before.day, before.call]) {
+        if (!sum) continue;
+        sum.cacheWrite += write;
+        sum.coldWrite += cold;
+      }
+      if (cold > 0) sums.rewrites += 1;
     }
   }
+  // the cache's age, the context and a cold restart are the main agent's: a sub-agent's first call always writes
+  if (main && !sideCall && rewrote(tokens.cacheWrite, tokens.cacheRead)) {
+    tokens.coldWrite = tokens.cacheWrite;
+    sums.rewrites += 1;
+  }
   const modelSum = addModel(sums.models, model, tokens);
-  let daySum: HostCostModel | null = null;
+  let daySum: Model | null = null;
   if (at !== null) {
     const day = new Date(at).toISOString().slice(0, 10);
     let models = sums.days.get(day);
@@ -142,11 +162,9 @@ function take(state: LogState, line: string): void {
     daySum = addModel(models, model, tokens);
   }
   if (main) {
-    // the cache's age, the context and a cold cache's rewrite are the main agent's: a sub-agent's first call always writes
     if (at !== null) sums.lastCallAt = at;
     sums.context = tokens.input;
     sums.peak = Math.max(sums.peak, tokens.input);
-    if (!sideCall && rewrote(tokens.cacheWrite, tokens.input)) sums.rewrites += 1;
   }
   if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
   const message = sums.messages[sums.messages.length - 1]!;
@@ -198,7 +216,7 @@ function readLog(state: LogState, budget: number): number {
   return read;
 }
 
-const models = (map: Map<string, HostCostModel>): HostCostModel[] => [...map.values()].map((sum) => ({ ...sum }));
+const models = (map: Map<string, Model>): HostCostModel[] => [...map.values()].map((sum) => ({ ...sum }));
 
 function answer(session: string, state: LogState): HostChatCost {
   const sums = state.sums;
