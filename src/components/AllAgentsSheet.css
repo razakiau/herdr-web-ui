@@ -79,3 +79,60 @@
 .all-agents-pill.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--text-strong); }
 .all-agents-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .all-agents-pill-count { font-variant-numeric: tabular-nums; opacity: 0.7; }
+/* costs tracked (ZAC-260): Recent · Cost on the left, the list's total on the right */
+.all-agents-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.all-agents-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.all-agents-total strong { color: var(--text-strong); font-size: var(--fs-md); font-weight: var(--fw-semibold); }
+.all-agents-total strong.is-floor { color: var(--text); }
+/* an age with its subtotal at the right, in figures rather than the label's capitals */
+.all-agents-age.is-costed { display: flex; justify-content: space-between; gap: var(--space-2); }
+.all-agents-age.is-costed > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.all-agents-subtotal {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* a row's cost: the figure over a tiny split bar, kept clear of the state cell after it */
+.all-agents-cost {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  margin-inline: var(--space-1) var(--space-2);
+}
+.all-agents-usd-line { display: inline-flex; align-items: center; gap: var(--space-1); }
+.all-agents-usd {
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.all-agents-usd.is-floor { color: var(--text-dim); font-weight: var(--fw-regular); }
+/* its colours are the Session sheet's Cost tab's, set there (SessionSheet.css .session-stack) */
+.all-agents-split {
+  display: flex;
+  gap: 1px;
+  width: 56px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--bg-hover);
+}

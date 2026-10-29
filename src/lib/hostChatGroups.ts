@@ -1,9 +1,11 @@
 /**
  * How "All agents on <PC>…" sorts a PC's host chats: a pill per folder to narrow them, and the
  * chats under VS Code's session-list ages (Today, Yesterday, Last 7 days, Last 30 days, Older),
- * counted by calendar day in the phone's own time zone.
+ * counted by calendar day in the phone's own time zone; with costs tracked, each age's subtotal and
+ * the Cost sort.
  */
 import type { HostChatRow } from "../../shared/host-chats.ts";
+import type { CostSplit } from "./sessionCost.ts";
 
 export type ChatAge = "today" | "yesterday" | "week" | "month" | "older";
 const AGES: readonly ChatAge[] = ["today", "yesterday", "week", "month", "older"];
@@ -49,4 +51,30 @@ export function folderPills(rows: readonly HostChatRow[]): { cwd: string | null;
   return [...folders.values()]
     .sort((a, b) => (a.cwd === null ? 1 : 0) - (b.cwd === null ? 1 : 0) || b.newest - a.newest)
     .map(({ cwd, count }) => ({ cwd, count }));
+}
+
+/**
+ * What a list of chats cost, part by part (ZAC-260): the sum of the splits `costs` holds for them,
+ * by session; a chat with none (its log not read, a bridge before costs) adds nothing. A floor when
+ * any of them is, the unpriced models named once each.
+ */
+export function groupSubtotal(chats: readonly HostChatRow[], costs: ReadonlyMap<string, CostSplit>): CostSplit {
+  const total: CostSplit = { usd: 0, reads: 0, writes: 0, output: 0, fresh: 0, floor: false, missing: [] };
+  for (const row of chats) {
+    const split = costs.get(row.session);
+    if (!split) continue;
+    total.usd += split.usd;
+    total.reads += split.reads;
+    total.writes += split.writes;
+    total.output += split.output;
+    total.fresh += split.fresh;
+    total.floor ||= split.floor;
+    for (const model of split.missing) if (!total.missing.includes(model)) total.missing.push(model);
+  }
+  return total;
+}
+
+/** The Cost sort: one flat list, the costliest first; a chat without a cost is left out. */
+export function byCost(rows: readonly HostChatRow[], costs: ReadonlyMap<string, CostSplit>): HostChatRow[] {
+  return rows.filter((row) => costs.has(row.session)).sort((a, b) => costs.get(b.session)!.usd - costs.get(a.session)!.usd || modified(b) - modified(a));
 }

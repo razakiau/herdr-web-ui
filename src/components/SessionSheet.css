@@ -182,9 +182,9 @@
   vertical-align: -1px;
 }
 
-.session-stack > .is-reads, .session-swatch.is-reads { background: var(--status-working); }
-.session-stack > .is-writes, .session-swatch.is-writes { background: var(--status-blocked); }
-.session-stack > .is-output, .session-swatch.is-output { background: var(--accent); }
+.session-stack > .is-reads, .session-swatch.is-reads, .all-agents-split > .is-reads { background: var(--status-working); }
+.session-stack > .is-writes, .session-swatch.is-writes, .all-agents-split > .is-writes { background: var(--status-blocked); }
+.session-stack > .is-output, .session-swatch.is-output, .all-agents-split > .is-output { background: var(--accent); }
 
 .session-chart {
   padding: var(--space-3) var(--space-3) var(--space-2);
