@@ -89,6 +89,8 @@ interface LogState {
   chains: Map<string, Last>;
   /** `ask_user` / `askUser` calls not answered yet, by toolCallId */
   asks: Set<string>;
+  /** per sub-agent, the reply it started in: a background one's calls land after later replies began */
+  agents: Map<string, number>;
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
 }
@@ -117,7 +119,7 @@ function addModel(models: Map<string, Model>, model: string, tokens: Tokens): Mo
 const rewrote = (write: number, cacheRead: number): boolean => write > 0.5 * (cacheRead + write);
 
 const fresh = (path: string): LogState => ({
-  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(), asks: new Set(),
+  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(), asks: new Set(), agents: new Map(),
   sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, messages: [] },
 });
 
@@ -197,7 +199,14 @@ function take(state: LogState, line: string): void {
     sums.peak = Math.max(sums.peak, tokens.input);
   }
   if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
-  const message = sums.messages[sums.messages.length - 1]!;
+  let reply = sums.messages.length - 1;
+  if (!main) {
+    const agent = String(entry.agentId);
+    const started = state.agents.get(agent);
+    if (started === undefined) state.agents.set(agent, reply);
+    else reply = started;
+  }
+  const message = sums.messages[reply]!;
   const side = main ? "main" : "sub";
   const call = message[side] ?? (message[side] = { at: at ?? "", ...zero(), main, context: 0, lastCacheRead: 0 });
   if (call.at === "" && at !== null) call.at = at;

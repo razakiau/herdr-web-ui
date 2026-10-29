@@ -129,6 +129,36 @@ describe("CostIndex", () => {
     ]);
   });
 
+  test("calls: a background sub-agent's calls stay in the reply that started it, across an ask_user answer and a message", () => {
+    const start = (at: string, id: string): string => `${JSON.stringify({ type: "tool.execution_start", id: `s-${id}`, timestamp: at, parentId: "p", data: { toolCallId: id, toolName: "ask_user", arguments: {} } })}\n`;
+    const done = (at: string, id: string): string => `${JSON.stringify({ type: "tool.execution_complete", id: `c-${id}`, timestamp: at, parentId: `s-${id}`, data: { toolCallId: id, success: true } })}\n`;
+    const path = log(UUID, [
+      userMessage("2026-10-29T12:00:00.000Z"),
+      usage("2026-10-29T12:00:01.000Z", { input: 100, output: 1 }),
+      usage("2026-10-29T12:00:02.000Z", { input: 10, output: 1 }, { agentId: "bg-1" }),
+      start("2026-10-29T12:00:03.000Z", "toolu_ask"),
+      done("2026-10-29T12:01:00.000Z", "toolu_ask"),
+      usage("2026-10-29T12:01:01.000Z", { input: 200, output: 2 }),
+      // still running from the first reply, and a sub-agent the second reply starts
+      usage("2026-10-29T12:01:02.000Z", { input: 20, output: 1 }, { agentId: "bg-1" }),
+      usage("2026-10-29T12:01:03.000Z", { input: 5, output: 1 }, { agentId: "sub-2" }),
+    ]);
+    const costs = index();
+    const replies = (): unknown => costs.calls(`copilotcli:/${UUID}`).map((call) => [call.at, call.main, call.input]);
+    expect(replies()).toEqual([
+      ["2026-10-29T12:00:01.000Z", true, 100], ["2026-10-29T12:00:02.000Z", false, 30],
+      ["2026-10-29T12:01:01.000Z", true, 200], ["2026-10-29T12:01:03.000Z", false, 5],
+    ]);
+    // in a later read too, after a message of the owner's
+    appendFileSync(path, userMessage("2026-10-29T12:02:00.000Z") + usage("2026-10-29T12:02:01.000Z", { input: 300, output: 3 }) + usage("2026-10-29T12:02:02.000Z", { input: 40, output: 1 }, { agentId: "bg-1" }));
+    costs.costOf(`copilotcli:/${UUID}`);
+    expect(replies()).toEqual([
+      ["2026-10-29T12:00:01.000Z", true, 100], ["2026-10-29T12:00:02.000Z", false, 70],
+      ["2026-10-29T12:01:01.000Z", true, 200], ["2026-10-29T12:01:03.000Z", false, 5],
+      ["2026-10-29T12:02:01.000Z", true, 300],
+    ]);
+  });
+
   test("reads only new bytes", () => {
     const path = log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 100 })]);
     const costs = index();
