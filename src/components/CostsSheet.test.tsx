@@ -133,6 +133,9 @@ describe("the costs chip", () => {
       const chip = chipOf(root)[0]!;
       expect(textOf(classed(chip, "costs-chip-usd")[0]!)).toBe("$212");
       expect(classed(chip, "costs-chip-body")[0]!.props["className"]).toContain("is-floor");
+      // a screen reader hears the floor in words, never the "≥" the chip does not show
+      expect(chip.props["aria-label"]).toBe("Chat costs: at least $212 7d");
+      expect(chip.props["aria-label"]).not.toContain("≥");
       await act(async () => { chip.props["onClick"](); });
       await flush();
       expect(textOf(classed(root.root, "costs-total")[0]!)).toContain("≥ $212");

@@ -595,6 +595,7 @@ const BASE: Record<string, string> = {
   "Tap a PC to see its chats by cost.": "PC をタップすると、そのチャットをコスト順に表示します。",
   "Some logs are not fully read yet: at least this much.": "まだすべて読んでいないログがあります：少なくともこの金額です。",
   "Chat costs: {usd}": "チャットのコスト：{usd}",
+  "Chat costs: at least {usd}": "チャットのコスト：少なくとも {usd}",
   "today": "今日",
   "7d": "7日",
   "30d": "30日",

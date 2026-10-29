@@ -81,9 +81,11 @@ export function CostsChip({ pcs, onAllAgents }: CostsChipProps) {
   const short: Record<CostPeriod, string> = { today: t("today"), "7d": t("7d"), "30d": t("30d") };
   const usd = totals ? wholeUsd(totals.total.usd, false) : "—";
   const floor = totals?.total.floor ?? false;
-  const words = `${floor ? "≥ " : ""}${usd} ${short[period]}`;
+  const words = `${usd} ${short[period]}`;
+  // the chip draws a floor dimmed, with no "≥": its label says it in words, which a screen reader speaks
+  const label = t(floor ? "Chat costs: at least {usd}" : "Chat costs: {usd}", { usd: words });
   return <>
-    <button type="button" className="usage-strip costs-chip" aria-haspopup="dialog" aria-label={t("Chat costs: {usd}", { usd: words })} title={t("Chat costs: {usd}", { usd: words })}
+    <button type="button" className="usage-strip costs-chip" aria-haspopup="dialog" aria-label={label} title={label}
       onClick={() => { ask(); setOpen(true); }}>
       <span className={`costs-chip-body${floor ? " is-floor" : ""}`}>
         <span className="costs-chip-top"><span className="costs-chip-usd">{usd}</span><span className="costs-chip-period">{short[period]}</span></span>

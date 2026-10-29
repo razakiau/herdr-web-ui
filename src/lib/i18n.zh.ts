@@ -597,6 +597,7 @@ const BASE: Record<string, string> = {
   "Tap a PC to see its chats by cost.": "点按一台电脑，按费用查看它的聊天。",
   "Some logs are not fully read yet: at least this much.": "部分日志尚未读完：至少这么多。",
   "Chat costs: {usd}": "聊天费用：{usd}",
+  "Chat costs: at least {usd}": "聊天费用：至少 {usd}",
   "today": "今天",
   "7d": "7天",
   "30d": "30天",

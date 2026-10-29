@@ -593,6 +593,7 @@ const BASE: Record<string, string> = {
   "Tap a PC to see its chats by cost.": "PC를 탭하면 채팅을 비용순으로 볼 수 있습니다.",
   "Some logs are not fully read yet: at least this much.": "아직 다 읽지 못한 로그가 있습니다: 최소 이 금액입니다.",
   "Chat costs: {usd}": "채팅 비용: {usd}",
+  "Chat costs: at least {usd}": "채팅 비용: 최소 {usd}",
   "today": "오늘",
   "7d": "7일",
   "30d": "30일",
