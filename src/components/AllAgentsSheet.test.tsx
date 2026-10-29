@@ -39,6 +39,7 @@ const descriptors = new Map<string, PropertyDescriptor | undefined>();
 let records: Map<string, string>;
 let urls: string[];
 let costsReply: { status: number; body: unknown };
+let pricesReply: unknown;
 let renderer: ReactTestRenderer | undefined;
 const realFetch = globalThis.fetch;
 
@@ -49,6 +50,7 @@ beforeEach(() => {
   records = new Map();
   urls = [];
   costsReply = { status: 200, body: ANSWER };
+  pricesReply = { prices: PRICES, fallback: null };
   const events = new EventTarget();
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
@@ -66,7 +68,7 @@ beforeEach(() => {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
-    const reply = url.endsWith("/pricing") ? { status: 200, body: { prices: PRICES, fallback: null } } : costsReply;
+    const reply = url.endsWith("/pricing") ? { status: 200, body: pricesReply } : costsReply;
     return new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
 });
@@ -158,9 +160,11 @@ describe("All agents with costs tracked", () => {
     expect(cost.props["aria-pressed"]).toBe(true);
     expect(rows(sheet)).toEqual(["copilotcli:/big", "copilotcli:/small"]);
     expect(classed(sheet.root, "all-agents-age")).toEqual([]);
-    expect(textOf(rowOf(sheet, "copilotcli:/big"))).toContain("329K peak · 3 rewrites");
-    expect(textOf(rowOf(sheet, "copilotcli:/small"))).toContain("40K peak");
-    expect(textOf(rowOf(sheet, "copilotcli:/small"))).not.toContain("rewrite");
+    // its own line under the place, so a phone's narrow row never cuts it off after the folder and age
+    const peak = (session: string) => classed(rowOf(sheet, session), "agent-tokens").map(textOf);
+    expect(peak("copilotcli:/big")).toEqual(["329K peak · 3 rewrites"]);
+    expect(peak("copilotcli:/small")).toEqual(["40K peak"]);
+    expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "agent-context")[0]!)).not.toContain("peak");
   });
 
   it("opens sorted by cost when asked to", async () => {
@@ -176,6 +180,27 @@ describe("All agents with costs tracked", () => {
     expect(classed(sheet.root, "all-agents-subtotal")).toEqual([]);
     expect(textOf(sheet.root)).toContain("Update the bridge on this PC to show costs.");
     expect(textOf(sheet.root)).not.toContain("Error");
+  });
+});
+
+describe("All agents without prices", () => {
+  it("names a model with no price on its row and under the total, the cost a floor", async () => {
+    const STRANGE = [{ model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
+    costsReply = { status: 200, body: { chats: [cost("copilotcli:/big", [...BIG, ...STRANGE]), cost("copilotcli:/small", SMALL)], complete: true } };
+    const sheet = await open(true);
+    const big = rowOf(sheet, "copilotcli:/big");
+    expect(textOf(classed(big, "all-agents-usd")[0]!)).toBe("≥ $38");
+    expect(big.find((each) => each.type === "button" && typeof each.props["title"] === "string" && each.props["className"]?.includes("agent-row")).props["title"]).toContain("No price for fictional-unpriced.");
+    expect(classed(sheet.root, "all-agents-missing").map(textOf)).toEqual(["No price for fictional-unpriced."]);
+    expect(classed(rowOf(sheet, "copilotcli:/small"), "all-agents-usd").map(textOf)).toEqual(["~$3.00"]);
+  });
+
+  it("shows no figure at all, and says why, when the price table could not be had", async () => {
+    pricesReply = { prices: null, fallback: null };
+    const sheet = await open(true);
+    for (const name of ["all-agents-cost", "all-agents-toolbar", "all-agents-subtotal", "all-agents-total"]) expect(classed(sheet.root, name)).toEqual([]);
+    expect(textOf(sheet.root)).not.toContain("$0");
+    expect(textOf(sheet.root)).toContain("Prices are unavailable: costs not shown.");
   });
 });
 

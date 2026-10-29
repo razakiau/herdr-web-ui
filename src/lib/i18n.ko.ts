@@ -549,6 +549,7 @@ const BASE: Record<string, string> = {
   "One bar per message you sent. Red: the cache was written again, as after a pause past its lifetime. Dashed: the context size.": "보낸 메시지마다 막대 하나. 빨강: 수명이 지난 뒤처럼 캐시를 다시 썼습니다. 점선: 컨텍스트 크기.",
   "Update the bridge on this PC to show costs.": "비용을 보려면 이 PC의 브리지를 업데이트하세요.",
   "No calls in this chat's log yet.": "이 채팅의 로그에 아직 호출이 없습니다.",
+  "Prices are unavailable: costs not shown.": "가격을 가져올 수 없어 비용을 표시하지 않습니다.",
   "Sort by": "정렬",
   "Copilot chats": "Copilot 채팅",
   "{size} peak": "최대 {size}",

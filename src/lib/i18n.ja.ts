@@ -551,6 +551,7 @@ const BASE: Record<string, string> = {
   "One bar per message you sent. Red: the cache was written again, as after a pause past its lifetime. Dashed: the context size.": "送信したメッセージごとに 1 本の棒。赤：有効期間を過ぎた後のようにキャッシュを書き直しました。破線：コンテキストのサイズ。",
   "Update the bridge on this PC to show costs.": "コストを表示するには、この PC のブリッジを更新してください。",
   "No calls in this chat's log yet.": "このチャットのログにはまだ呼び出しがありません。",
+  "Prices are unavailable: costs not shown.": "価格を取得できません：コストは表示していません。",
   "Sort by": "並べ替え",
   "Copilot chats": "Copilot のチャット",
   "{size} peak": "最大 {size}",

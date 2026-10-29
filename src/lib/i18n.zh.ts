@@ -553,6 +553,7 @@ const BASE: Record<string, string> = {
   "One bar per message you sent. Red: the cache was written again, as after a pause past its lifetime. Dashed: the context size.": "每条发送的消息一根柱。红色：缓存被重新写入，如同超过有效期后。虚线：上下文大小。",
   "Update the bridge on this PC to show costs.": "要显示费用，请更新此电脑上的桥接程序。",
   "No calls in this chat's log yet.": "此聊天的日志中还没有调用。",
+  "Prices are unavailable: costs not shown.": "无法获取价格：未显示费用。",
   "Sort by": "排序方式",
   "Copilot chats": "Copilot 聊天",
   "{size} peak": "峰值 {size}",

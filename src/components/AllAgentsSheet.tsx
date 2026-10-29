@@ -161,7 +161,9 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   // archived chats only while Settings shows them (Agent host); a search then finds none either
   const archived = settings.hostShowArchived ? found.filter((row) => row.archived).sort((a, b) => modified(b) - modified(a)) : [];
   const line = pc.host ? hostLine(pc.host, t) : null;
-  const costs = useMemo(() => (track && answer && prices ? rowCosts(pc.chats, answer, prices) : new Map<string, RowCost>()), [track, answer, prices, pc.chats]);
+  // a price answer with neither table (no gateway, a failed read) prices nothing: no figures then, rather than $0 floors
+  const unpriced = prices !== null && prices.prices === null && prices.fallback === null;
+  const costs = useMemo(() => (track && answer && prices && !unpriced ? rowCosts(pc.chats, answer, prices) : new Map<string, RowCost>()), [track, answer, prices, unpriced, pc.chats]);
   const costed = costs.size > 0;
   const byCostOn = costed && sort === "cost";
   // a search looks in the archived ones too: what it finds there is shown
@@ -173,8 +175,10 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     const title = hostChatTitle(row, t);
     // under All the row says its folder; a folder's pill already names it
     const cost = costs.get(row.session);
-    const context = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
-      byCostOn && cost ? peakLine(cost.chat, t) || null : null].filter(Boolean).join(" · ");
+    const context = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t)].filter(Boolean).join(" · ");
+    // the Cost sort's peak and rewrites take a line of their own, so a phone's row never cuts them off
+    const peak = byCostOn && cost ? peakLine(cost.chat, t) : "";
+    const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
     const cache = cost ? cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working") : null;
     // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing
     const dot = cache && cache.state !== "cold" ? cache.state : null;
@@ -185,8 +189,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}`} data-host-session={row.session}
       onMouseDownCapture={actions ? (event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); } : undefined}
       onContextMenu={actions ? (event) => onRowContextMenu(event, toggleMenu) : undefined}>
-      <button type="button" className="agent-select agent-row" aria-current={row.session === selected ? "true" : undefined} title={[title, row.cwd].filter(Boolean).join("\n")} onClick={() => onOpen(row.session)}>
-        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} />
+      <button type="button" className="agent-select agent-row" aria-current={row.session === selected ? "true" : undefined} title={[title, row.cwd, noPrice].filter(Boolean).join("\n")} onClick={() => onOpen(row.session)}>
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={peak ? [peak] : []} status={hostChatStatus(row)} />
         {cost && <span className="all-agents-cost">
           <span className="all-agents-usd-line">
             {dot && <span className={`session-dot is-${dot}`} title={t(dot === "warm" ? "Cache warm" : "Cache cooling")}>
@@ -233,12 +237,14 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
             })}
           </div>}
           {track && answer === null && <p className="field-hint" role="status">{t("Update the bridge on this PC to show costs.")}</p>}
+          {track && answer && unpriced && <p className="field-hint" role="status">{t("Prices are unavailable: costs not shown.")}</p>}
           {costed && <div className="all-agents-toolbar">
             <div className="segmented all-agents-sort" role="group" aria-label={t("Sort by")}>
               {(["recent", "cost"] as const).map((each) => <button key={each} type="button" aria-pressed={sort === each} onClick={() => setSort(each)}>{t(each === "recent" ? "Recent" : "Cost")}</button>)}
             </div>
             <p className="all-agents-total"><strong className={total.floor ? "is-floor" : undefined}>{listUsd(total.usd, total.floor)}</strong><span>{t("Copilot chats")}</span></p>
           </div>}
+          {costed && total.missing.length > 0 && <p className="field-hint all-agents-missing">{t("No price for {models}.", { models: total.missing.join(", ") })}</p>}
           {current.length === 0 && archived.length === 0 && <p className="agent-empty" role="status">{t(words === "" ? "No agents yet" : "No agents match")}</p>}
           {byCostOn ? <section className="all-agents-group" aria-label={t("Cost")}>
             <ul className="agent-list">{byCost(current.flatMap((group) => group.chats), costs).map(item)}</ul>
