@@ -35,7 +35,8 @@ export function messageCosts(calls: readonly HostCostCall[], model: string, pric
       last.rest += rest;
       continue;
     }
-    groups.push({ at: call.at, rewrite, rest, context: call.main ? call.input : 0 });
+    // the message's last main call's own prompt: `input` sums its whole tool loop
+    groups.push({ at: call.at, rewrite, rest, context: call.main ? call.context : 0 });
   }
   return groups;
 }

@@ -100,9 +100,12 @@ function take(state: LogState, line: string): void {
   if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
   const message = sums.messages[sums.messages.length - 1]!;
   const side = main ? "main" : "sub";
-  const call = message[side] ?? (message[side] = { at: at ?? "", ...zero(), main });
+  const call = message[side] ?? (message[side] = { at: at ?? "", ...zero(), main, context: 0, lastCacheRead: 0 });
   if (call.at === "" && at !== null) call.at = at;
   add(call, tokens);
+  // the sums would read a 10-call tool loop at 200K as 2M: the last call's own prompt is the context
+  call.context = tokens.input;
+  call.lastCacheRead = tokens.cacheRead;
 }
 
 /**

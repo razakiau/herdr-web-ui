@@ -109,6 +109,9 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
 
+/** a price request that answered with neither table */
+const NO_PRICES: ChatPrices = { prices: null, fallback: null };
+
 export function HostChatView({ machineId, session, onTitle, onOpenChat, look, onOpenFile }: HostChatViewProps) {
   const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
@@ -131,9 +134,16 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   // OmniRoute's prices, once the context sheet is first opened: the cost is only shown there
   // asked on every open until both tables are in (fetchModelPrices keeps them for the page then)
   const [prices, setPrices] = useState<ChatPrices | null>(null);
+  // the price request answered, if with nothing: the Session sheet then prices nothing (a floor,
+  // every model named) instead of waiting; `prices` itself stays unset, as the estimate reads it
+  const [pricesAnswered, setPricesAnswered] = useState(false);
   useEffect(() => {
     if (!contextOpen) return;
-    void fetchModelPrices().then((value) => { if (mounted.current && (value.prices || value.fallback)) setPrices(value); });
+    void fetchModelPrices().then((value) => {
+      if (!mounted.current) return;
+      setPricesAnswered(true);
+      if (value.prices || value.fallback) setPrices(value);
+    });
   }, [contextOpen]);
   // the Session sheet's sums from the bridge's log (ZAC-260), asked on each open while costs are
   // tracked and again when a turn ends: undefined while asked, null from a bridge before costs
@@ -403,7 +413,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-        sheet={trackCosts && chat ? <SessionSheet read={chat} estimate={cost} cost={chatCostLog} prices={prices}
+        sheet={trackCosts && chat ? <SessionSheet read={chat} estimate={cost} cost={chatCostLog} prices={prices ?? (pricesAnswered ? NO_PRICES : null)}
           settings={{ trackCosts, costHandoffAt, cacheLifetimeMin }} onClose={() => setContextOpen(false)}
           onCompact={!chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
           onHandoff={!chat.busy && handoffCommandText(chat.commands) ? () => { void sendAs("send", "/handoff"); } : undefined} /> : undefined} />}

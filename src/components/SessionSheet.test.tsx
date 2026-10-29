@@ -39,11 +39,13 @@ const chat = (over: Partial<HostChatCost> = {}): HostChatCost => ({
   ...over,
 });
 
+// each message sums its tool loop's calls (the bridge's HostCostCall): the last one is 8 calls of about 210K,
+// its last call reading 105K from the cache. Summed, it would plot 1.68M and read 99%.
 const CALLS: HostCostCall[] = [
-  { at: ago(120), input: 50_000, cacheRead: 0, cacheWrite: 50_000, output: 2000, main: true },
-  { at: ago(119), input: 10_000, cacheRead: 0, cacheWrite: 10_000, output: 500, main: false },
-  { at: ago(60), input: 150_000, cacheRead: 148_000, cacheWrite: 2000, output: 3000, main: true },
-  { at: ago(48), input: 210_400, cacheRead: 209_000, cacheWrite: 1400, output: 2000, main: true },
+  { at: ago(120), input: 50_000, cacheRead: 0, cacheWrite: 50_000, output: 2000, main: true, context: 50_000, lastCacheRead: 0 },
+  { at: ago(119), input: 10_000, cacheRead: 0, cacheWrite: 10_000, output: 500, main: false, context: 10_000, lastCacheRead: 0 },
+  { at: ago(60), input: 450_000, cacheRead: 444_000, cacheWrite: 6000, output: 3000, main: true, context: 150_000, lastCacheRead: 148_000 },
+  { at: ago(55), input: 1_680_000, cacheRead: 1_660_000, cacheWrite: 20_000, output: 2000, main: true, context: 210_400, lastCacheRead: 105_200 },
 ];
 
 const props = (over: Partial<SessionSheetProps> = {}): SessionSheetProps => ({
@@ -107,6 +109,8 @@ describe("SessionSheet", () => {
     expect(words).toMatch(/Next call now ~\$\d/);
     expect(words).toMatch(/Next call after expiry ~\$\d/);
     expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
+    // the last call's own hit, not its message's sum
+    expect(words).toContain("Last call read from cache 50%");
   });
 
   it("Cache: a chat working now is warm, never 0 min left", () => {
@@ -140,12 +144,41 @@ describe("SessionSheet", () => {
     expect(html).toContain("stroke-dasharray");
   });
 
+  it("Cost: the dashed line is each message's context, its largest message at the top", () => {
+    stored.set("ovis:session-tab", "cost");
+    const html = sheet({ cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
+    const points = [...(/<path d="([^"]+)"[^>]*stroke-dasharray/.exec(html)?.[1] ?? "").matchAll(/[ML][\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
+    // context 50K, 150K, 210.4K against the 210.4K peak (106 px tall, from y=110): summed input would put 150K near the floor
+    expect(points.length).toBe(3);
+    expect(points[2]).toBeCloseTo(4, 0);
+    expect(points[1]).toBeCloseTo(110 - (150_000 / 210_400) * 106, 0);
+  });
+
   it("Cost: a model with no price makes the total a floor and is named", () => {
     stored.set("ovis:session-tab", "cost");
     const models = [...chat().models, { model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
     const words = text(sheet({ cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
     expect(words).toMatch(/Cost at list price ≥ \$\d/);
     expect(words).toContain("No price for fictional-unpriced.");
+  });
+
+  it("prices that answered with nothing: a floor with every model named, not Loading", () => {
+    const empty = { prices: null, fallback: null };
+    stored.set("ovis:session-tab", "cost");
+    const small = { chat: chat({ context: 40_000 }), calls: CALLS };
+    const cost = text(sheet({ prices: empty, cost: small }));
+    expect(cost).not.toContain("Loading");
+    expect(cost).toContain("Cost at list price ≥ $0.00");
+    expect(cost).toContain(`No price for ${MODEL}.`);
+    const cache = text(sheet({ prices: empty }));
+    expect(cache).toContain("Cooling");
+    expect(cache).toContain(`No price for ${MODEL}.`);
+    expect(cache).not.toContain("Next call now");
+  });
+
+  it("prices not answered yet: the Cost tab waits", () => {
+    stored.set("ovis:session-tab", "cost");
+    expect(text(sheet({ prices: null, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }))).toContain("Loading…");
   });
 
   it("an old bridge: Cache and Cost say to update it, Context is unchanged", () => {

@@ -30,6 +30,7 @@ export interface SessionSheetProps {
   estimate: { usd: number; partial: boolean; missing: string[]; estimated: string[] } | null;
   /** the bridge's answer for the chat (fetchChatCost): undefined while asked, null from a bridge that predates costs */
   cost: { chat: HostChatCost | null; calls: HostCostCall[] } | null | undefined;
+  /** null until the price request answers; an answer with neither table (`{ prices: null, fallback: null }`) prices nothing */
   prices: { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null } | null;
   settings: Pick<Settings, "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">;
   /** the minute clock (useMinuteClock), given by a test */
@@ -68,6 +69,7 @@ function figures(props: SessionSheetProps, now: number) {
   const model = read.model?.id ?? [...chat.models].sort((a, b) => b.input - a.input)[0]?.model ?? "";
   const calls = chat.models.reduce((sum, each) => sum + each.calls, 0);
   const output = chat.models.reduce((sum, each) => sum + each.output, 0);
+  // `prices` null: not answered yet; an answer without tables prices nothing, so every model is missing
   const table = prices?.prices ?? {};
   const fallback = prices?.fallback ?? null;
   const next = prices ? nextCall(context, model, calls > 0 ? output / calls : 0, table, fallback) : null;
@@ -115,7 +117,8 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   const t = useT();
   const { cache, advised, next, context } = session;
   const lastMain = [...session.calls].reverse().find((call) => call.main);
-  const hit = lastMain && lastMain.input > 0 ? Math.round((lastMain.cacheRead / lastMain.input) * 100) : null;
+  // the last call's own hit: the message's sums mix in every call of its tool loop
+  const hit = lastMain && lastMain.context > 0 ? Math.round((lastMain.lastCacheRead / lastMain.context) * 100) : null;
   const size = formatTokenCount(context);
   const ratio = next && next.warm > 0 ? Math.round(next.cold / next.warm) : null;
   const why = advised === "handoff-cold" ? t("The next call rewrites {size} whatever you do, so a fresh chat costs nothing extra.", { size })

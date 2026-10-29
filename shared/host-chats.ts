@@ -80,8 +80,12 @@ export interface HostTokenTotal { model: string; input: number; cached: number; 
  * is the whole prompt, so it holds `cacheRead` and `cacheWrite`; tokens only, the client prices them.
  */
 export interface HostCostModel { model: string; input: number; cacheRead: number; cacheWrite: number; output: number; calls: number }
-/** One message's calls (those between two user messages), the main agent's or its sub-agents', for the chart. */
-export interface HostCostCall { at: string; input: number; cacheRead: number; cacheWrite: number; output: number; main: boolean }
+/**
+ * One message's calls (those between two user messages), the main agent's or its sub-agents', for the chart.
+ * The token counts are the calls' sums; `context` and `lastCacheRead` are the last call's own prompt
+ * (`inputTokens`) and cache read: the context size the message ended at, and the last call's cache hit.
+ */
+export interface HostCostCall { at: string; input: number; cacheRead: number; cacheWrite: number; output: number; main: boolean; context: number; lastCacheRead: number }
 /** GET /api/host-chats/costs: what a chat's log says it spent. */
 export interface HostChatCost {
   session: string; models: HostCostModel[];

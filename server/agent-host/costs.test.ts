@@ -148,9 +148,22 @@ describe("CostIndex", () => {
       usage("2026-10-29T12:10:01.000Z", { input: 300, cacheRead: 200, output: 7 }),
     ]);
     expect(index().calls(`copilotcli:/${UUID}`)).toEqual([
-      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 100, output: 10, main: true },
-      { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, output: 1, main: false },
-      { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, output: 7, main: true },
+      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 100, output: 10, main: true, context: 200, lastCacheRead: 100 },
+      { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, output: 1, main: false, context: 70, lastCacheRead: 0 },
+      { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, output: 7, main: true, context: 300, lastCacheRead: 200 },
     ]);
+  });
+
+  test("calls: a message's context is its last main call's prompt, not the sum of its tool loop", () => {
+    log(UUID, [
+      userMessage("2026-10-29T12:00:00.000Z"),
+      ...Array.from({ length: 10 }, (_, i) => usage(`2026-10-29T12:00:${String(i + 1).padStart(2, "0")}.000Z`, { input: 200_000 + i * 1000, cacheRead: i === 9 ? 150_000 : 199_000 + i * 1000, output: 50 })),
+      usage("2026-10-29T12:00:30.000Z", { input: 9000, cacheRead: 8000, output: 5 }, { agentId: "sub-1" }),
+    ]);
+    const [main, sub] = index().calls(`copilotcli:/${UUID}`);
+    expect(main?.input).toBe(2_045_000);
+    expect(main?.context).toBe(209_000);
+    expect(main?.lastCacheRead).toBe(150_000);
+    expect(sub).toMatchObject({ main: false, context: 9000, lastCacheRead: 8000 });
   });
 });
