@@ -25,13 +25,16 @@ import { useT } from "../lib/i18n.ts";
 import { hostSource } from "../lib/chatSource.ts";
 import {
   agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
-  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
+  fetchChatCost, sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
 import { settingsTone, type HostSendPick } from "../lib/compose.ts";
 import { Composer, type AttachApi, type SentAttachment } from "./Composer.tsx";
 import { AttachSheet, rememberAttached } from "./AttachSheet.tsx";
 import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
+import { SessionSheet } from "./SessionSheet.tsx";
+import { useSettings } from "../lib/settings.ts";
+import { handoffCommandText } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
 import { HostPendingRequests } from "./HostPendingRequests.tsx";
@@ -132,6 +135,17 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     if (!contextOpen) return;
     void fetchModelPrices().then((value) => { if (mounted.current && (value.prices || value.fallback)) setPrices(value); });
   }, [contextOpen]);
+  // the Session sheet's sums from the bridge's log (ZAC-260), asked on each open while costs are
+  // tracked and again when a turn ends: undefined while asked, null from a bridge before costs
+  const { settings: { trackCosts, costHandoffAt, cacheLifetimeMin } } = useSettings();
+  const [chatCostLog, setChatCostLog] = useState<Awaited<ReturnType<typeof fetchChatCost>> | undefined>(undefined);
+  const turnRunning = chat?.busy ?? false;
+  useEffect(() => {
+    if (!contextOpen || !trackCosts) return;
+    let live = true;
+    void fetchChatCost(machineId, session).then((value) => { if (live) setChatCostLog(value); }, () => { /* kept: the last answer, or still asking */ });
+    return () => { live = false; };
+  }, [contextOpen, trackCosts, machineId, session, turnRunning]);
   const cost = useMemo(() => {
     const tokens = chat?.tokens;
     if (!prices || !tokens || tokens.totals.length === 0) return null;
@@ -388,7 +402,11 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
-        onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined} />}
+        onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
+        sheet={trackCosts && chat ? <SessionSheet read={chat} estimate={cost} cost={chatCostLog} prices={prices}
+          settings={{ trackCosts, costHandoffAt, cacheLifetimeMin }} onClose={() => setContextOpen(false)}
+          onCompact={!chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
+          onHandoff={!chat.busy && handoffCommandText(chat.commands) ? () => { void sendAs("send", "/handoff"); } : undefined} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}

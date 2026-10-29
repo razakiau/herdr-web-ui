@@ -4,7 +4,7 @@
  * Copilot reports it. It is the composer's on every width, by the round button, as VS Code's input
  * toolbar has it (HostChatView passes it as the composer's toolbarEnd).
  */
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -74,6 +74,8 @@ interface MeterProps {
   cost?: { usd: number; partial: boolean; missing: string[]; estimated: string[] } | null;
   /** VS Code's Compact Conversation: sends /compact; absent while the chat works */
   onCompact?: () => void;
+  /** the sheet the meter opens instead of the context window's (the Session sheet while costs are tracked, ZAC-260) */
+  sheet?: ReactNode;
 }
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
@@ -88,7 +90,7 @@ export function HostChatStatus({ read, workShown = false }: { read: HostChatRead
 }
 
 /** The context meter: a ring and the percent; the counts are in its title and its sheet. */
-export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact }: MeterProps) {
+export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet }: MeterProps) {
   const t = useT();
   const meter = contextMeter(read?.context ?? null);
   if (read === null || meter === null) return null;
@@ -105,11 +107,23 @@ export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact 
       </svg>
       <span className="host-chat-meter-label" aria-hidden="true">{percent}</span>
     </button>
-    {open && read.context && <ContextSheet usage={read.context} cost={cost ?? null} onClose={onClose} onCompact={onCompact} />}
+    {open && (sheet ?? (read.context && <ContextSheet usage={read.context} cost={cost ?? null} onClose={onClose} onCompact={onCompact} />))}
   </>;
 }
 
-function ContextSheet({ usage, cost, onClose, onCompact }: { usage: HostContextUsage; cost: MeterProps["cost"] | null; onClose(): void; onCompact?: (() => void) | undefined }) {
+export function ContextSheet({ usage, cost, onClose, onCompact }: { usage: HostContextUsage; cost: MeterProps["cost"] | null; onClose(): void; onCompact?: (() => void) | undefined }) {
+  const t = useT();
+  return <SheetFrame label={t("Context window")} title={t("Context window")} onClose={onClose}>
+    <ContextPanel usage={usage} cost={cost} onClose={onClose} onCompact={onCompact} />
+  </SheetFrame>;
+}
+
+/**
+ * The context sheet's frame, for it and the Session sheet: the dialog over its scrim, its title and
+ * close button, a swipe or Escape or Back closing it; `head` under the header (the Session tabs).
+ * Drawn in place where there is no document (a test's server render), in a portal otherwise.
+ */
+export function SheetFrame({ label, title, className = "", head, onClose, children }: { label: string; title: string; className?: string; head?: ReactNode; onClose(): void; children: ReactNode }) {
   const t = useT();
   const surface = useFocusTrap<HTMLDivElement>(true);
   useSheetSwipe(surface, onClose);
@@ -124,56 +138,61 @@ function ContextSheet({ usage, cost, onClose, onCompact }: { usage: HostContextU
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
+  const sheet = <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div ref={surface} className={`modal host-context-sheet${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
+      <header className="modal-header">
+        <h2 className="modal-title">{title}</h2>
+        <button type="button" className="icon-button" aria-label={t("Close")} title={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
+      </header>
+      {head}
+      <div className="modal-body host-context-body">{children}</div>
+    </div>
+  </div>;
+  return typeof document === "undefined" ? sheet : createPortal(sheet, document.body);
+}
+
+/** The context sheet's content (VS Code's popup): the cost estimate when given, the window's bar, its breakdown, Compact. */
+export function ContextPanel({ usage, cost, onClose, onCompact }: { usage: HostContextUsage; cost: MeterProps["cost"] | null; onClose(): void; onCompact?: (() => void) | undefined }) {
+  const t = useT();
   const used = Math.min(100, (usage.currentTokens / usage.tokenLimit) * 100);
   const reserved = usage.reservedTokens === undefined ? 0 : Math.max(0, Math.min(100 - used, (usage.reservedTokens / usage.tokenLimit) * 100));
   const rows = contextRows(usage);
   const groups = (["system", "user", "other"] as const).map((category) => ({ category, rows: rows.filter((row) => row.category === category) })).filter((group) => group.rows.length > 0);
   const level = used >= 90 ? " is-full" : used >= 75 ? " is-high" : "";
-  return createPortal(
-    <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={surface} className="modal host-context-sheet" role="dialog" aria-modal="true" aria-label={t("Context window")} tabIndex={-1}>
-        <header className="modal-header">
-          <h2 className="modal-title">{t("Context window")}</h2>
-          <button type="button" className="icon-button" aria-label={t("Close")} title={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
-        </header>
-        <div className="modal-body host-context-body">
-          {cost && <section className="host-picker-group" aria-labelledby="host-context-cost">
-            <h3 className="host-picker-provider" id="host-context-cost">{t("Session")}</h3>
-            <div className="host-picker-rows">
-              <div className="host-context-row">
-                <span>{t("Cost at list price")}</span>
-                <strong className="host-context-cost">{cost.partial || cost.missing.length > 0 ? "≥ " : "~"}{formatUsd(cost.usd)}</strong>
-              </div>
-            </div>
-            <p className="host-context-note">{[
-              cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null,
-              cost.estimated.length > 0 ? t("{models} priced as its base model.", { models: cost.estimated.join(", ") }) : null,
-              cost.partial ? t("Older turns are not loaded, or reported no usage: at least this much.") : null,
-            ].filter(Boolean).join(" ") || t("Tokens at list prices (OmniRoute, then LiteLLM), subscriptions included.")}</p>
-          </section>}
-          <section className={`host-context-window${level}`} aria-label={t("Context window")}>
-            <div className="host-context-head">
-              <span className="host-context-count">{t("{used} / {limit} tokens", { used: formatTokenCount(usage.currentTokens), limit: formatTokenCount(usage.tokenLimit) })}</span>
-              <span className="host-context-percent">{Math.round(used)}%</span>
-            </div>
-            <div className="host-context-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)} aria-label={t("Context window used")}>
-              <span className="host-context-used" style={{ width: `${used}%` }} />
-              {reserved > 0 && <span className="host-context-reserved" style={{ width: `${reserved}%` }} />}
-            </div>
-            {reserved > 0 && <p className="host-context-legend"><span className="host-context-swatch" aria-hidden="true" />{t("Reserved for response")}</p>}
-          </section>
-          {groups.map((group) => (
-            <section key={group.category} className="host-picker-group" aria-labelledby={`host-context-${group.category}`}>
-              <h3 className="host-picker-provider" id={`host-context-${group.category}`}>{t(CATEGORY_TITLE[group.category])}</h3>
-              <dl className="host-picker-rows host-context-parts">
-                {group.rows.map((row) => <div key={row.label} className="host-context-row"><dt>{t(row.label)}</dt><dd>{row.percent.toFixed(1)}%</dd></div>)}
-              </dl>
-            </section>
-          ))}
-          {onCompact && <button type="button" className="btn host-context-compact" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
+  return <>
+    {cost && <section className="host-picker-group" aria-labelledby="host-context-cost">
+      <h3 className="host-picker-provider" id="host-context-cost">{t("Session")}</h3>
+      <div className="host-picker-rows">
+        <div className="host-context-row">
+          <span>{t("Cost at list price")}</span>
+          <strong className="host-context-cost">{cost.partial || cost.missing.length > 0 ? "≥ " : "~"}{formatUsd(cost.usd)}</strong>
         </div>
       </div>
-    </div>,
-    document.body,
-  );
+      <p className="host-context-note">{[
+        cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null,
+        cost.estimated.length > 0 ? t("{models} priced as its base model.", { models: cost.estimated.join(", ") }) : null,
+        cost.partial ? t("Older turns are not loaded, or reported no usage: at least this much.") : null,
+      ].filter(Boolean).join(" ") || t("Tokens at list prices (OmniRoute, then LiteLLM), subscriptions included.")}</p>
+    </section>}
+    <section className={`host-context-window${level}`} aria-label={t("Context window")}>
+      <div className="host-context-head">
+        <span className="host-context-count">{t("{used} / {limit} tokens", { used: formatTokenCount(usage.currentTokens), limit: formatTokenCount(usage.tokenLimit) })}</span>
+        <span className="host-context-percent">{Math.round(used)}%</span>
+      </div>
+      <div className="host-context-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)} aria-label={t("Context window used")}>
+        <span className="host-context-used" style={{ width: `${used}%` }} />
+        {reserved > 0 && <span className="host-context-reserved" style={{ width: `${reserved}%` }} />}
+      </div>
+      {reserved > 0 && <p className="host-context-legend"><span className="host-context-swatch" aria-hidden="true" />{t("Reserved for response")}</p>}
+    </section>
+    {groups.map((group) => (
+      <section key={group.category} className="host-picker-group" aria-labelledby={`host-context-${group.category}`}>
+        <h3 className="host-picker-provider" id={`host-context-${group.category}`}>{t(CATEGORY_TITLE[group.category])}</h3>
+        <dl className="host-picker-rows host-context-parts">
+          {group.rows.map((row) => <div key={row.label} className="host-context-row"><dt>{t(row.label)}</dt><dd>{row.percent.toFixed(1)}%</dd></div>)}
+        </dl>
+      </section>
+    ))}
+    {onCompact && <button type="button" className="btn host-context-compact" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
+  </>;
 }
