@@ -71,11 +71,14 @@ const SHEET_ITEMS = '.row-sheet-item, .row-sheet-cancel';
 
 export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, detail, header, items, align = "end", onClose, variant, popover = false }: Props) {
   const t = useT();
-  const sheet = useMediaQuery(SHEET_QUERY) && !popover;
+  const phone = useMediaQuery(SHEET_QUERY);
+  const sheet = phone && !popover;
   const surface = useRef<HTMLDivElement>(null);
   useSheetSwipe(surface, sheet ? onClose : null);
-  // Back closes the sheet, not the pane under it
-  useSheetHistory(sheet, onClose);
+  // Back closes the sheet, not the pane under it. A popover on a phone takes the entry too: it
+  // opens over a sheet that hands its entry over (usePhoneSheetBack's `open`), so Back closes the
+  // popover and gives the entry back, rather than leaving the sheet with none
+  useSheetHistory(phone, onClose);
   const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   // where the button was when the menu was placed: a scroll that leaves it there is not a reason to close
   const placedAt = useRef<{ top: number; left: number } | null>(null);

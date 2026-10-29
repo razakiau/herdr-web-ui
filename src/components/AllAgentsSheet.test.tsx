@@ -5,6 +5,38 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from "rea
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
 import { SETTINGS_STORAGE_KEY } from "../lib/themeBoot.ts";
 
+/**
+ * A browser history the sheets' Back entries (lib/sheetHistory.ts) live in: one object for the
+ * whole file, as that module wraps its pushState and listens for popstate once, when it is loaded.
+ * `backs` counts every history.back(), the user's and a sheet's own step off its entry.
+ */
+const nav = { entries: [{ state: null as unknown }], index: 0, backs: 0 };
+const popListeners: Array<(event: { state: unknown }) => void> = [];
+const traverse = (by: number): void => {
+  const next = Math.max(0, Math.min(nav.entries.length - 1, nav.index + by));
+  if (next === nav.index) return;
+  nav.index = next;
+  queueMicrotask(() => { for (const listener of popListeners) listener({ state: nav.entries[nav.index]!.state }); });
+};
+const fakeHistory = {
+  get state() { return nav.entries[nav.index]!.state; },
+  pushState(state: unknown) { nav.entries.splice(nav.index + 1); nav.entries.push({ state }); nav.index += 1; },
+  replaceState(state: unknown) { nav.entries[nav.index] = { state }; },
+  back() { nav.backs += 1; traverse(-1); },
+  forward() { traverse(1); },
+  go(by: number) { traverse(by); },
+};
+const historyWindow = {
+  history: fakeHistory,
+  location: { href: "/" },
+  addEventListener: (type: string, listener: (event: { state: unknown }) => void) => { if (type === "popstate") popListeners.push(listener); },
+  removeEventListener: () => {},
+};
+Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: historyWindow });
+/** whether the media queries say phone: the sheet's Back entry and RowMenu's bottom sheet follow it */
+let phone = false;
+const sheetMarked = (): boolean => typeof (fakeHistory.state as Record<string, unknown> | null)?.["ovis:sheet"] === "string";
+
 // the sheet is portalled to document.body, which neither renderer has: drawn in place instead
 const realDom = await import("react-dom");
 mock.module("react-dom", () => ({ ...realDom, createPortal: (node: ReactNode) => node }));
@@ -53,19 +85,24 @@ beforeEach(() => {
   costsReply = { status: 200, body: ANSWER };
   pricesReply = { prices: PRICES, fallback: null };
   const events = new EventTarget();
+  phone = false;
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
   Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
     localStorage: { getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => records.set(key, value) },
-    addEventListener: events.addEventListener.bind(events),
+    addEventListener: (type: string, listener: EventListener, options?: boolean | AddEventListenerOptions) => type === "popstate" ? popListeners.push(listener as never) : events.addEventListener(type, listener, options),
     removeEventListener: events.removeEventListener.bind(events),
     requestAnimationFrame: () => 0,
+    history: fakeHistory,
+    location: historyWindow.location,
+    matchMedia: () => ({ matches: phone, addEventListener() {}, removeEventListener() {} }),
     innerWidth: 390, innerHeight: 844,
   } });
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
     documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } },
     activeElement: null, body: {}, querySelector: () => null, querySelectorAll: () => [],
+    addEventListener() {}, removeEventListener() {},
   } });
   Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "#12100e" }) });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -216,6 +253,51 @@ describe("All agents with costs tracked", () => {
     expect(classed(sheet.root, "all-agents-subtotal")).toEqual([]);
     expect(textOf(sheet.root)).toContain("Update the bridge on this PC to show costs.");
     expect(textOf(sheet.root)).not.toContain("Error");
+  });
+});
+
+describe("All agents on a phone", () => {
+  // a sheet's step off its entry runs after a 0 ms timer, its popstate in a microtask
+  const settle = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); }); };
+
+  it("Back with the sort menu open closes the menu only: the sheet stays, and no history entry is stepped off for it", async () => {
+    phone = true;
+    let closed = 0;
+    records.set(SETTINGS_STORAGE_KEY, JSON.stringify({ trackCosts: true }));
+    const sheet = createElement(AllAgentsSheet, { machineId: "desk", machineName: "Desk", pc: { host: null, chats: CHATS }, selected: null, onOpen: () => {}, onClose: () => { closed += 1; } });
+    await act(async () => { renderer = create(createElement(SettingsProvider, { children: sheet }), { createNodeMock: nodeMock }); });
+    for (let turn = 0; turn < 10; turn++) await act(async () => { await Promise.resolve(); });
+    await settle();
+    const backs = nav.backs;
+    expect(sheetMarked()).toBe(true);
+    const chip = () => classed(renderer!.root, "all-agents-sort")[0]!;
+    await act(async () => { chip().props["onClick"]({ currentTarget: nodeMock() }); });
+    await settle();
+    // the menu took the sheet's entry over: nothing stepped back, one entry still marked
+    expect(chip().props["aria-expanded"]).toBe(true);
+    expect(nav.backs).toBe(backs);
+    expect(sheetMarked()).toBe(true);
+    // the system Back
+    fakeHistory.back();
+    await settle();
+    expect(chip().props["aria-expanded"]).toBe(false);
+    expect(closed).toBe(0);
+    expect(nav.backs).toBe(backs + 1);
+    // the sheet has its Back entry again, so the next Back closes it
+    expect(sheetMarked()).toBe(true);
+    // a pick closes the menu without a Back: the entry goes back to the sheet, no step off either way
+    await act(async () => { chip().props["onClick"]({ currentTarget: nodeMock() }); });
+    await settle();
+    const pick = renderer!.root.findAll((each) => each.type === "button" && each.props["role"] === "menuitemcheckbox")[1]!;
+    await act(async () => { pick.props["onClick"](); });
+    await settle();
+    expect(chip().props["aria-expanded"]).toBe(false);
+    expect(nav.backs).toBe(backs + 1);
+    expect(sheetMarked()).toBe(true);
+    expect(closed).toBe(0);
+    fakeHistory.back();
+    await settle();
+    expect(closed).toBe(1);
   });
 });
 
