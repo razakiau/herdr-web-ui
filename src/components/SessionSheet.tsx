@@ -14,8 +14,8 @@ import type { HostChatCost, HostChatRead, HostCostCall } from "../../shared/host
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
-import { formatUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { advice, cacheState, costSplit, mergeLive, nextCall, type Advice } from "../lib/sessionCost.ts";
+import { formatUsd, listUsd, priceWithFallback } from "../lib/chatCost.ts";
+import { cacheMeter, costSplit, mergeLive, nextCall } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
@@ -55,17 +55,16 @@ const storeTab = (tab: Tab): void => {
 /** "48 min ago", "2 h ago" */
 const agoText = (minutes: number, t: Translate): string => minutes >= 60 ? t("{n} h ago", { n: Math.floor(minutes / 60) }) : t("{n} min ago", { n: minutes });
 
-/** a price as an estimate ("~$0.11") or, when something is not counted, a floor ("≥ $6.80") */
-const usd = (value: number, floor: boolean): string => `${floor ? "≥ " : "~"}${formatUsd(value)}`;
+/** a price as an estimate ("~$0.11") or, when something is not counted, a floor rounded down like the lists print it ("≥ $149") */
+const usd = (value: number, floor: boolean): string => floor ? listUsd(value, true) : `~${formatUsd(value)}`;
 
 /** what the chat's sums say, the live turn folded in, for both cost tabs */
 function figures(props: SessionSheetProps, now: number) {
   const { read, cost, prices, settings } = props;
   if (!cost?.chat) return null;
   const chat = mergeLive(cost.chat, read.tokens?.totals);
-  const context = chat.context ?? read.context?.currentTokens ?? 0;
-  const cache = cacheState(chat.lastCallAt, now, settings.cacheLifetimeMin, read.busy);
-  const advised: Advice = cache ? advice(cache.state, context, settings.costHandoffAt) : "keep";
+  // the meter's and the banner's rule, so the three never disagree near the threshold
+  const { context, cache, advised } = cacheMeter(read, chat, settings, now);
   const model = read.model?.id ?? [...chat.models].sort((a, b) => b.input - a.input)[0]?.model ?? "";
   const calls = chat.models.reduce((sum, each) => sum + each.calls, 0);
   const output = chat.models.reduce((sum, each) => sum + each.output, 0);
@@ -153,7 +152,7 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
       </div>
       {!next && props.prices && <p className="host-context-note">{t("No price for {models}.", { models: session.model || "?" })}</p>}
     </section>
-    {(onHandoff || onCompact) && <div className="session-actions">
+    {(onHandoff || onCompact) && <div className="session-sheet-actions">
       {onHandoff && <button type="button" className={`btn${advised !== "keep" ? " btn-primary" : ""}`} onClick={() => { onHandoff(); onClose(); }}>{t("Hand off")}</button>}
       {onCompact && <button type="button" className="btn" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
     </div>}

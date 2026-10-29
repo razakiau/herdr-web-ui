@@ -48,6 +48,9 @@ const CALLS: HostCostCall[] = [
   { at: ago(55), input: 1_680_000, cacheRead: 1_660_000, cacheWrite: 20_000, output: 2000, main: true, context: 210_400, lastCacheRead: 105_200 },
 ];
 
+// a context under the 150K threshold, live and in the log: no handoff, the sheet opens on the tab used last
+const quiet = read({ context: { currentTokens: 40_000, tokenLimit: 400_000 } });
+
 const props = (over: Partial<SessionSheetProps> = {}): SessionSheetProps => ({
   read: read(), estimate: null, cost: { chat: chat(), calls: CALLS }, prices: PRICES,
   settings: { trackCosts: true, costHandoffAt: 150_000, cacheLifetimeMin: 60 },
@@ -95,9 +98,9 @@ describe("SessionSheet", () => {
   it("otherwise opens on the tab used last", () => {
     stored.set("ovis:session-tab", "cost");
     const small = { chat: chat({ context: 40_000 }), calls: CALLS };
-    expect(pressed(sheet({ cost: small }))).toBe("Cost");
+    expect(pressed(sheet({ read: quiet, cost: small }))).toBe("Cost");
     stored.set("ovis:session-tab", "context");
-    expect(pressed(sheet({ cost: small }))).toBe("Context");
+    expect(pressed(sheet({ read: quiet, cost: small }))).toBe("Context");
   });
 
   it("Cache: a cooling chat over the threshold says how long is left and advises a handoff", () => {
@@ -135,7 +138,7 @@ describe("SessionSheet", () => {
 
   it("Cost: splits the cost into what the money went on, with a per-message chart", () => {
     stored.set("ovis:session-tab", "cost");
-    const html = sheet({ cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
+    const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
     const words = text(html);
     for (const row of ["Re-reading the context", "Cache rewrites", "Answers", "Your messages, tool results"]) expect(words).toContain(row);
     expect(words).toMatch(/Cost at list price ~\$\d/);
@@ -146,7 +149,7 @@ describe("SessionSheet", () => {
 
   it("Cost: the dashed line is each message's context, its largest message at the top", () => {
     stored.set("ovis:session-tab", "cost");
-    const html = sheet({ cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
+    const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
     const points = [...(/<path d="([^"]+)"[^>]*stroke-dasharray/.exec(html)?.[1] ?? "").matchAll(/[ML][\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
     // context 50K, 150K, 210.4K against the 210.4K peak (106 px tall, from y=110): summed input would put 150K near the floor
     expect(points.length).toBe(3);
@@ -157,7 +160,7 @@ describe("SessionSheet", () => {
   it("Cost: a model with no price makes the total a floor and is named", () => {
     stored.set("ovis:session-tab", "cost");
     const models = [...chat().models, { model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
-    const words = text(sheet({ cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
+    const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
     expect(words).toMatch(/Cost at list price ≥ \$\d/);
     expect(words).toContain("No price for fictional-unpriced.");
   });
@@ -166,7 +169,7 @@ describe("SessionSheet", () => {
     const empty = { prices: null, fallback: null };
     stored.set("ovis:session-tab", "cost");
     const small = { chat: chat({ context: 40_000 }), calls: CALLS };
-    const cost = text(sheet({ prices: empty, cost: small }));
+    const cost = text(sheet({ read: quiet, prices: empty, cost: small }));
     expect(cost).not.toContain("Loading");
     expect(cost).toContain("Cost at list price ≥ $0.00");
     expect(cost).toContain(`No price for ${MODEL}.`);
@@ -178,7 +181,31 @@ describe("SessionSheet", () => {
 
   it("prices not answered yet: the Cost tab waits", () => {
     stored.set("ovis:session-tab", "cost");
-    expect(text(sheet({ prices: null, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }))).toContain("Loading…");
+    expect(text(sheet({ read: quiet, prices: null, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }))).toContain("Loading…");
+  });
+
+  it("takes the context, cache and advice from the meter's rule: the live read before the log's", () => {
+    stored.set("ovis:session-tab", "context");
+    // live 155K over the 150K threshold, the log's last call 145K under it: the meter advises a handoff
+    const html = sheet({ read: read({ context: { currentTokens: 155_000, tokenLimit: 400_000 } }), cost: { chat: chat({ context: 145_000, lastCallAt: ago(10) }), calls: CALLS } });
+    expect(pressed(html)).toBe("Cache");
+    expect(text(html)).toContain("Hand off if work remains");
+    expect(text(html)).toContain("155.0K is re-read on every call.");
+    expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
+  });
+
+  it("Cost: a floor is rounded down like All agents and Costs print it", () => {
+    stored.set("ovis:session-tab", "cost");
+    // $149.60 of output at $25 per million, and a model with no price: a floor
+    const models = [{ model: MODEL, input: 0, cacheRead: 0, cacheWrite: 0, output: 5_984_000, calls: 1 }, { model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
+    const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
+    expect(words).toContain("Cost at list price ≥ $149");
+  });
+
+  it("names its actions apart from the history list's session-actions", () => {
+    const html = sheet();
+    expect(html).toContain('class="session-sheet-actions"');
+    expect(html).not.toContain('class="session-actions"');
   });
 
   it("an old bridge: Cache and Cost say to update it, Context is unchanged", () => {
