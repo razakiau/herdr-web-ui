@@ -196,3 +196,26 @@ export function hostSource(machineId: string, session: string): HostChatSource {
     last: () => lastRead,
   };
 }
+
+/** a chat's last context breakdown and when it came */
+export interface KeptContext { usage: NonNullable<HostChatRead["context"]>; at: number }
+// at module scope: App keys a chat view per session, so a ref would be gone on every chat switch (ZAC-260)
+const keptContexts = new Map<string, KeptContext>();
+
+/**
+ * The last context breakdown a chat gave, kept: the bridge reads none while the chat works, and the
+ * Session sheet's Context tab shows this one then. `usage` is what the read has now, null while busy.
+ */
+export function keepContext(machineId: string, session: string, usage: HostChatRead["context"] | null | undefined, now: number): KeptContext | null {
+  const key = `${machineId}\n${session}`;
+  const kept = keptContexts.get(key);
+  if (usage && kept?.usage !== usage) {
+    const next = { usage, at: now };
+    keptContexts.set(key, next);
+    return next;
+  }
+  return kept ?? null;
+}
+
+/** for tests */
+export function forgetKeptContexts(): void { keptContexts.clear(); }

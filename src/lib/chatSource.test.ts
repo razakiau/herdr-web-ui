@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
 import type { HostChatRead } from "../../shared/host-chats.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError } from "./api.ts";
-import { hostSource, paneSource, HOST_WATCH_MS } from "./chatSource.ts";
+import { forgetKeptContexts, hostSource, keepContext, paneSource, HOST_WATCH_MS } from "./chatSource.ts";
 import { ConversationRefresh } from "./conversationRefresh.ts";
 import { noteHostChatMessage, noteHostChatStreamOpen } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
@@ -325,5 +325,23 @@ describe("paneSource", () => {
     expect(asked).toEqual([{ url: "/api/machines/desk/pane/conversation/tool-output?pane_id=w1%3Ap1&ref=ref+1", signal: controller.signal }]);
     globalThis.fetch = (async () => new Response("no", { status: 404 })) as unknown as typeof fetch;
     expect(await paneSource("local", "w1:p1", api).toolOutput("x").catch(() => "failed")).toBe("failed");
+  });
+});
+
+describe("keptContext", () => {
+  const usage = (n: number) => ({ currentTokens: n }) as unknown as NonNullable<HostChatRead["context"]>;
+  it("keeps a chat's last breakdown at module scope, so a chat view keyed per session finds it again after a remount", () => {
+    forgetKeptContexts();
+    const first = usage(100);
+    expect(keepContext("mac", "s1", first, 1000)).toEqual({ usage: first, at: 1000 });
+    // the bridge reads none while the chat works: what was kept stands
+    expect(keepContext("mac", "s1", null, 2000)).toEqual({ usage: first, at: 1000 });
+    // the same breakdown again keeps its first time; a new one replaces it
+    expect(keepContext("mac", "s1", first, 3000)?.at).toBe(1000);
+    const next = usage(200);
+    expect(keepContext("mac", "s1", next, 4000)).toEqual({ usage: next, at: 4000 });
+    // another chat, or the same session on another PC, is kept apart
+    expect(keepContext("mac", "s2", null, 5000)).toBeNull();
+    expect(keepContext("pc", "s1", null, 5000)).toBeNull();
   });
 });

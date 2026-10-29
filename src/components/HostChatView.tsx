@@ -22,7 +22,7 @@ import "./HostChatView.css";
 
 import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { hostSource } from "../lib/chatSource.ts";
+import { hostSource, keepContext } from "../lib/chatSource.ts";
 import {
   agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
@@ -150,15 +150,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   // the bridge's log of the chat (ZAC-260), for the meter's cache timer, the handoff banner and the Session sheet
   const { settings: { trackCosts, costHandoffAt, cacheLifetimeMin } } = useSettings();
   const chatCostLog = useChatCostLog({ machineId, session, trackCosts, busy: chat?.busy ?? false, sheetOpen: contextOpen });
-  // the last context breakdown each chat gave: the bridge reads none while the chat works, and the
-  // Session sheet's Context tab shows this one then (ZAC-260)
-  const lastContexts = useRef(new Map<string, { usage: NonNullable<HostChatRead["context"]>; at: number }>());
-  const contextKey = `${machineId}\n${session}`;
-  if (chat?.context && chat.session === session) {
-    const kept = lastContexts.current.get(contextKey);
-    if (kept?.usage !== chat.context) lastContexts.current.set(contextKey, { usage: chat.context, at: Date.now() });
-  }
-  const lastContext = lastContexts.current.get(contextKey) ?? null;
+  // the last context breakdown the chat gave, shown while it works (the bridge reads none then)
+  const lastContext = keepContext(machineId, session, chat?.session === session ? chat.context : null, Date.now());
   const cost = useMemo(() => {
     const tokens = chat?.tokens;
     if (!prices || !tokens || tokens.totals.length === 0) return null;
