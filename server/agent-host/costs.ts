@@ -9,12 +9,12 @@
  * Copilot logs `cacheWriteTokens: 0` on every BYOK (OmniRoute) call, so a write is inferred: what
  * the next call of the same chain (the main agent or one sub-agent, on one model) reads from the
  * cache beyond what this one read, `max(0, next.cacheRead − this.cacheRead)`; a drop (a compaction,
- * a new context) is 0, a write the log does give is taken as is. Measured on 2026-10-28's
- * `cc/claude-opus*` calls (ZAC-260): 4194 of 4283 matched OmniRoute's call_logs by (tokens_in,
- * tokens_out), cache reads equal to the token (567,265,821 both); inferred writes 8.97M against
- * OmniRoute's 9.32M (96%), cold-cache rewrites 21 against 22. A chain's newest call gets its write
- * when its next call is read, in this read or a later one. A side call (`SIDE_CALL`) is left out of
- * the chain.
+ * a new context) is 0, a write the log does give is taken as is. A side call (`SIDE_CALL`) is
+ * left out of the chain. Measured with this rule on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
+ * cache reads equal to OmniRoute's (569,791,156 in the Copilot log), inferred writes 9,195,819
+ * against OmniRoute's 9,320,792 (98.7%); rewrites counted by the index 9 (main agent; 29 with
+ * sub-agents, which is what OmniRoute's 22 compares to, as it counts every call). A chain's newest
+ * call gets its write when its next call is read, in this read or a later one.
  */
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -40,9 +40,9 @@ const CHUNK = 8 * 1024 * 1024;
  * inferred write, counts no rewrite and does not advance the chain: the next call's read is set
  * against the last call that is not one. Measured on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
  * the raw delta gave 12.25M overall, 5.43M of it credited to 40 side calls (19 main, 18 sub-agent,
- * 3 user; none in OmniRoute's opus rows), each given the next main call's write. Leaving them out:
- * matched calls 8.90M against OmniRoute's 9.32M (95.5%), rewrites 21 against 22. Rejected: a 25%
- * threshold (86.7%), capping a write at the call's prompt (83%).
+ * 3 user; none in OmniRoute's opus rows), each given the next main call's write. Leaving them out
+ * at 10%: 9,195,819 against OmniRoute's 9,320,792 (98.7%). Rejected: a 25% threshold (86.7%),
+ * capping a write at the call's prompt (83%).
  */
 const SIDE_CALL = 0.1;
 const USAGE_MARK = '"session.usage_record"';
