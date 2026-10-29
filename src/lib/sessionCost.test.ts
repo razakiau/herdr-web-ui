@@ -45,7 +45,8 @@ describe("writePrice", () => {
 
 describe("costSplit", () => {
   it("reproduces the marathon's shares: reads two thirds, writes a quarter", () => {
-    const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 50_810_000, cacheRead: 49_800_000, cacheWrite: 970_000, output: 120_000, calls: 400 })], PRICES, null);
+    // the prompt holds the cache read and 40K sent without it; the 970K written is on top
+    const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 49_840_000, cacheRead: 49_800_000, cacheWrite: 970_000, output: 120_000, calls: 400 })], PRICES, null);
     expect(split.floor).toBe(false);
     expect(split.missing).toEqual([]);
     expect(Math.abs(split.reads / split.usd - 0.66)).toBeLessThan(0.02);
@@ -58,6 +59,35 @@ describe("costSplit", () => {
     expect(split.floor).toBe(true);
     expect(split.missing).toEqual(["mystery-1"]);
     expect(split.usd).toBeCloseTo(5, 6);
+  });
+});
+
+describe("costSplit: what the money went on (ZAC-260 fix wave)", () => {
+  it("fresh input is the prompt less the cache read: the writes are not inside the prompt", () => {
+    // Copilot's input 99,947 = read 99,607 + 340 sent without the cache; 2,454 stored on top
+    const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 99_947, cacheRead: 99_607, cacheWrite: 2_454, output: 0 })], PRICES, null);
+    expect(split.fresh).toBeCloseTo(340 * 5 / 1e6, 12);
+    expect(split.writes).toBeCloseTo(2_454 * 10 / 1e6, 12);
+  });
+  it("splits the writes into storing new text and cold restarts", () => {
+    const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 300_000, cacheRead: 200_000, cacheWrite: 110_000, coldWrite: 100_000, output: 1_000 })], PRICES, null);
+    expect(split.writes).toBeCloseTo(10_000 * 10 / 1e6, 12);
+    expect(split.restarts).toBeCloseTo(100_000 * 10 / 1e6, 12);
+    expect(split.usd).toBeCloseTo(split.fresh + split.reads + split.writes + split.restarts + split.output, 12);
+  });
+  it("reads a bridge without coldWrite as no restart", () => {
+    const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 100, cacheRead: 0, cacheWrite: 100 })], PRICES, null);
+    expect(split.restarts).toBe(0);
+    expect(split.writes).toBeCloseTo(100 * 10 / 1e6, 12);
+  });
+  it("a local model costs $0, is named in local, never missing; an effort suffix is priced", () => {
+    const split = costSplit([
+      model({ model: "desktop-coder-heretic", input: 1_000_000, output: 1_000_000 }),
+      model({ model: "cc/claude-opus-5-5-high", input: 1_000_000, cacheRead: 0, output: 0 }),
+    ], PRICES, null);
+    expect(split).toMatchObject({ floor: false, missing: [], local: ["desktop-coder-heretic"] });
+    expect(split.usd).toBeCloseTo(5, 9);
+    expect(nextCall(100_000, "llama-swap/qwen", 2_000, PRICES, null)).toEqual({ warm: 0, cold: 0 });
   });
 });
 

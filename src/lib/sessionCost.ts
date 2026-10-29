@@ -63,25 +63,34 @@ export function writePrice(model: string, input: number): number {
 }
 
 /**
- * A chat's cost in dollars by what the money went on: `fresh` (prompt neither read from nor written
- * to the cache) at the input price, `reads` at the cache price (the input price when it has none),
- * `writes` at `writePrice`, `output` at the output price; `usd` their sum. A model with no price
- * adds nothing and is named in `missing`, which makes the sum a `floor`.
+ * A chat's cost in dollars by what the money went on (ZAC-260): `fresh` (the prompt less what it
+ * read from the cache: Copilot's `inputTokens` holds the read, not the write, checked against
+ * OmniRoute's call_logs) at the input price, `reads` at the cache price (the input price when it has
+ * none), `writes` (storing each call's new text: the writes less the cold restarts') and `restarts`
+ * (`coldWrite`, the whole conversation stored again after the cache expired; 0 from a bridge before
+ * 1069) at `writePrice`, `output` at the output price; `usd` their sum. A model with no price adds
+ * nothing and is named in `missing`, which makes the sum a `floor`; a local model adds $0 and is
+ * named in `local`.
  */
-export interface CostSplit { usd: number; reads: number; writes: number; output: number; fresh: number; floor: boolean; missing: string[] }
+export interface CostSplit { usd: number; reads: number; writes: number; restarts: number; output: number; fresh: number; floor: boolean; missing: string[]; local: string[] }
+
+export const emptySplit = (): CostSplit => ({ usd: 0, reads: 0, writes: 0, restarts: 0, output: 0, fresh: 0, floor: false, missing: [], local: [] });
 
 export function costSplit(models: readonly HostCostModel[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null): CostSplit {
-  const split: CostSplit = { usd: 0, reads: 0, writes: 0, output: 0, fresh: 0, floor: false, missing: [] };
+  const split = emptySplit();
   for (const each of models) {
     const found = priceWithFallback(each.model, prices, fallback);
     if (!found) { split.missing.push(each.model); continue; }
+    if (found.via === "local") { if (!split.local.includes(each.model)) split.local.push(each.model); continue; }
     const { price } = found;
-    split.fresh += Math.max(0, each.input - each.cacheRead - each.cacheWrite) * price.input / 1e6;
+    const cold = Math.min(each.coldWrite ?? 0, each.cacheWrite);
+    split.fresh += Math.max(0, each.input - each.cacheRead) * price.input / 1e6;
     split.reads += each.cacheRead * (price.cached ?? price.input) / 1e6;
-    split.writes += each.cacheWrite * writePrice(each.model, price.input) / 1e6;
+    split.writes += (each.cacheWrite - cold) * writePrice(each.model, price.input) / 1e6;
+    split.restarts += cold * writePrice(each.model, price.input) / 1e6;
     split.output += each.output * price.output / 1e6;
   }
-  split.usd = split.fresh + split.reads + split.writes + split.output;
+  split.usd = split.fresh + split.reads + split.writes + split.restarts + split.output;
   split.floor = split.missing.length > 0;
   return split;
 }
@@ -132,15 +141,17 @@ export interface PcPeriod { machineId: string; split: CostSplit; chats: number; 
 /** Every PC's spend in a period (the Costs sheet and its chip): the PCs costliest first, and the PCs whose bridge predates costs. */
 export interface PeriodTotals { total: CostSplit; pcs: PcPeriod[]; oldBridge: string[] }
 
-const emptySplit = (): CostSplit => ({ usd: 0, reads: 0, writes: 0, output: 0, fresh: 0, floor: false, missing: [] });
-function addSplit(into: CostSplit, part: CostSplit): void {
+/** `part` into `into`: the sums, a floor when either is, each model named once */
+export function addSplit(into: CostSplit, part: CostSplit): void {
   into.usd += part.usd;
   into.reads += part.reads;
   into.writes += part.writes;
+  into.restarts += part.restarts;
   into.output += part.output;
   into.fresh += part.fresh;
   into.floor ||= part.floor;
   for (const model of part.missing) if (!into.missing.includes(model)) into.missing.push(model);
+  for (const model of part.local) if (!into.local.includes(model)) into.local.push(model);
 }
 
 /**

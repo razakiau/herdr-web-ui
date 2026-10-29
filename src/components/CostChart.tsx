@@ -26,7 +26,8 @@ export function messageCosts(calls: readonly HostCostCall[], model: string, pric
   for (const call of calls) {
     const joins = !call.main && previousMain && groups.length > 0;
     previousMain = call.main;
-    const fresh = Math.max(0, call.input - call.cacheRead - call.cacheWrite);
+    // the prompt holds the cache read, not the write (checked against OmniRoute's call_logs, ZAC-260)
+    const fresh = Math.max(0, call.input - call.cacheRead);
     const rewrite = call.cacheWrite * write / 1e6;
     const rest = (fresh * each.input + call.cacheRead * (each.cached ?? each.input) + call.output * each.output) / 1e6;
     if (joins) {

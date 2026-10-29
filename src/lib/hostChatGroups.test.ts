@@ -38,7 +38,7 @@ describe("folderPills", () => {
   });
 });
 
-const split = (usd: number, floor = false, missing: string[] = []): CostSplit => ({ usd, reads: usd * 0.6, writes: usd * 0.3, output: usd * 0.1, fresh: 0, floor, missing });
+const split = (usd: number, floor = false, missing: string[] = []): CostSplit => ({ usd, reads: usd * 0.6, writes: usd * 0.2, restarts: usd * 0.1, output: usd * 0.1, fresh: 0, floor, missing, local: [] });
 
 describe("groupSubtotal", () => {
   it("sums the chats that have a cost, part by part, and is a floor when any of them is", () => {
@@ -47,14 +47,15 @@ describe("groupSubtotal", () => {
     const total = groupSubtotal(rows, costs);
     expect(total.usd).toBeCloseTo(15);
     expect(total.reads).toBeCloseTo(9);
-    expect(total.writes).toBeCloseTo(4.5);
+    expect(total.writes).toBeCloseTo(3);
+    expect(total.restarts).toBeCloseTo(1.5);
     expect(total.output).toBeCloseTo(1.5);
     expect(total.floor).toBe(true);
     expect(total.missing).toEqual(["m-x"]);
   });
 
   it("is zero and no floor without any cost", () => {
-    expect(groupSubtotal([row("claude", at(10, 3))], new Map())).toEqual({ usd: 0, reads: 0, writes: 0, output: 0, fresh: 0, floor: false, missing: [] });
+    expect(groupSubtotal([row("claude", at(10, 3))], new Map())).toEqual({ usd: 0, reads: 0, writes: 0, restarts: 0, output: 0, fresh: 0, floor: false, missing: [], local: [] });
   });
 });
 

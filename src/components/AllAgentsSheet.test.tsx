@@ -20,8 +20,8 @@ const row = (session: string, minutes: number, over: Partial<HostChatRow> = {}):
   ({ session, title: `FICTIONAL ${session}`, status: "idle", modified_at: ago(minutes), cwd: "/w/fictional", unread: false, archived: false, ...over });
 const cost = (session: string, models: HostChatCost["models"], over: Partial<HostChatCost> = {}): HostChatCost =>
   ({ session, models, lastCallAt: ago(5), context: 120_000, peak: 329_000, rewrites: 3, days: {}, partial: false, ...over });
-// fresh 0.4M × $5 = $2, reads 5M × $0.5 = $2.5, writes 0.85M × $10 = $8.5, output 1M × $25 = $25: $38
-const BIG = [{ model: MODEL, input: 6_250_000, cacheRead: 5_000_000, cacheWrite: 850_000, output: 1_000_000, calls: 200 }];
+// the prompt holds the read, not the write: fresh 0.4M × $5 = $2, reads 5M × $0.5 = $2.5, writes 0.85M × $10 = $8.5, output 1M × $25 = $25: $38
+const BIG = [{ model: MODEL, input: 5_400_000, cacheRead: 5_000_000, cacheWrite: 850_000, output: 1_000_000, calls: 200 }];
 // reads 1M × $0.5 = $0.5, output 0.1M × $25 = $2.5: $3
 const SMALL = [{ model: MODEL, input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, output: 100_000, calls: 20 }];
 

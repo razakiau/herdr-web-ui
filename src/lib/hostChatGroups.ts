@@ -5,7 +5,7 @@
  * the Cost sort.
  */
 import type { HostChatRow } from "../../shared/host-chats.ts";
-import type { CostSplit } from "./sessionCost.ts";
+import { addSplit, emptySplit, type CostSplit } from "./sessionCost.ts";
 
 export type ChatAge = "today" | "yesterday" | "week" | "month" | "older";
 const AGES: readonly ChatAge[] = ["today", "yesterday", "week", "month", "older"];
@@ -59,17 +59,10 @@ export function folderPills(rows: readonly HostChatRow[]): { cwd: string | null;
  * any of them is, the unpriced models named once each.
  */
 export function groupSubtotal(chats: readonly HostChatRow[], costs: ReadonlyMap<string, CostSplit>): CostSplit {
-  const total: CostSplit = { usd: 0, reads: 0, writes: 0, output: 0, fresh: 0, floor: false, missing: [] };
+  const total = emptySplit();
   for (const row of chats) {
     const split = costs.get(row.session);
-    if (!split) continue;
-    total.usd += split.usd;
-    total.reads += split.reads;
-    total.writes += split.writes;
-    total.output += split.output;
-    total.fresh += split.fresh;
-    total.floor ||= split.floor;
-    for (const model of split.missing) if (!total.missing.includes(model)) total.missing.push(model);
+    if (split) addSplit(total, split);
   }
   return total;
 }
