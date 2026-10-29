@@ -84,7 +84,7 @@ export interface HostTokenTotal { model: string; input: number; cached: number; 
  */
 export interface HostCostModel { model: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; calls: number }
 /**
- * One message's calls (those between two user messages), the main agent's or its sub-agents', for the chart.
+ * One reply's calls (from a user message, or the owner's answer to `ask_user` / `askUser`, to the next), the main agent's or its sub-agents', for the chart.
  * The token counts are the calls' sums; `context` and `lastCacheRead` are the last call's own prompt
  * (`inputTokens`) and cache read: the context size the message ended at, and the last call's cache hit.
  */

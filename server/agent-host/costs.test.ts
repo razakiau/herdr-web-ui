@@ -102,6 +102,33 @@ describe("CostIndex", () => {
     expect(cost?.rewrites).toBe(0);
   });
 
+  test("calls: an answer to ask_user or askUser starts a reply of its own, a sub-agent's call stays in its reply", () => {
+    const start = (at: string, id: string, tool: string, agentId?: string): string => `${JSON.stringify({ type: "tool.execution_start", id: `s-${id}`, timestamp: at, parentId: "p", ...(agentId ? { agentId } : {}), data: { toolCallId: id, toolName: tool, arguments: { question: "FICTIONAL question" } } })}\n`;
+    const done = (at: string, id: string): string => `${JSON.stringify({ type: "tool.execution_complete", id: `c-${id}`, timestamp: at, parentId: `s-${id}`, data: { toolCallId: id, success: true, result: { content: "{\"response\": \"FICTIONAL answer\"}" } } })}\n`;
+    const path = log(UUID, [
+      userMessage("2026-10-29T12:00:00.000Z"),
+      usage("2026-10-29T12:00:01.000Z", { input: 100, output: 1 }),
+      start("2026-10-29T12:00:02.000Z", "toolu_ask1", "ask_user"),
+      // a tool that only names ask_user in its arguments, and another tool's answer, start nothing
+      `${JSON.stringify({ type: "tool.execution_start", id: "s-bash", timestamp: "2026-10-29T12:00:02.500Z", data: { toolCallId: "toolu_bash", toolName: "bash", arguments: { command: "grep ask_user x" } } })}\n`,
+      done("2026-10-29T12:00:02.600Z", "toolu_bash"),
+      done("2026-10-29T12:05:00.000Z", "toolu_ask1"),
+      usage("2026-10-29T12:05:01.000Z", { input: 200, output: 2 }),
+      usage("2026-10-29T12:05:02.000Z", { input: 70, output: 1 }, { agentId: "sub-1" }),
+      start("2026-10-29T12:05:03.000Z", "toolu_ask2", "askUser"),
+    ]);
+    const costs = index();
+    expect(costs.calls(`copilotcli:/${UUID}`).map((call) => [call.at, call.main])).toEqual([
+      ["2026-10-29T12:00:01.000Z", true], ["2026-10-29T12:05:01.000Z", true], ["2026-10-29T12:05:02.000Z", false],
+    ]);
+    // the question asked in one read, answered in the next
+    appendFileSync(path, done("2026-10-29T12:09:00.000Z", "toolu_ask2") + usage("2026-10-29T12:09:01.000Z", { input: 300, output: 3 }));
+    costs.costOf(`copilotcli:/${UUID}`);
+    expect(costs.calls(`copilotcli:/${UUID}`).filter((call) => call.main).map((call) => call.at)).toEqual([
+      "2026-10-29T12:00:01.000Z", "2026-10-29T12:05:01.000Z", "2026-10-29T12:09:01.000Z",
+    ]);
+  });
+
   test("reads only new bytes", () => {
     const path = log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 100 })]);
     const costs = index();

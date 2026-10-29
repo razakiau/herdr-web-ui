@@ -52,6 +52,16 @@ const CHUNK = 8 * 1024 * 1024;
 const SIDE_CALL = 0.1;
 const USAGE_MARK = '"session.usage_record"';
 const MESSAGE_MARK = '"user.message"';
+/**
+ * The owner's answers in an agent-driven chat come back as these tools' results, not as user
+ * messages (ZAC-260: 2,640 `ask_user` and 386 `askUser` calls in the Mac's logs, d97ba3a6's 514
+ * against its 207 user messages): a main-agent answer starts a reply of its own in the chart.
+ */
+const ASK_TOOLS = new Set(["ask_user", "askUser"]);
+const ASK_MARKS = ['"toolName":"ask_user"', '"toolName":"askUser"'];
+const START_MARK = '"tool.execution_start"';
+const COMPLETE_MARK = '"tool.execution_complete"';
+const CALL_ID = /"toolCallId":"([^"]+)"/;
 
 type Row = Record<string, unknown>;
 type Tokens = { input: number; cacheRead: number; cacheWrite: number; coldWrite: number; output: number };
@@ -77,7 +87,8 @@ interface LogState {
   };
   /** per chain (agent and model): its last call that is not a side call */
   chains: Map<string, Last>;
-
+  /** `ask_user` / `askUser` calls not answered yet, by toolCallId */
+  asks: Set<string>;
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
 }
@@ -106,19 +117,38 @@ function addModel(models: Map<string, Model>, model: string, tokens: Tokens): Mo
 const rewrote = (write: number, cacheRead: number): boolean => write > 0.5 * (cacheRead + write);
 
 const fresh = (path: string): LogState => ({
-  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(),
+  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(), asks: new Set(),
   sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, messages: [] },
 });
 
+/** a line worth parsing: a call, a user message, an ask tool's start, or an answer to one being waited for */
+function wanted(state: LogState, line: string): boolean {
+  if (line.includes(USAGE_MARK) || line.includes(MESSAGE_MARK)) return true;
+  if (line.includes(START_MARK)) return ASK_MARKS.some((mark) => line.includes(mark));
+  if (state.asks.size === 0 || !line.includes(COMPLETE_MARK)) return false;
+  const id = CALL_ID.exec(line)?.[1];
+  return id !== undefined && state.asks.has(id);
+}
+
 /** One complete line of the log into the sums. */
 function take(state: LogState, line: string): void {
-  if (!line.includes(USAGE_MARK) && !line.includes(MESSAGE_MARK)) return;
+  if (!wanted(state, line)) return;
   let entry: Row;
   try { entry = record(JSON.parse(line)); } catch { return; }
   const sums = state.sums;
   const main = !fromSubagent(entry);
   if (entry.type === "user.message") {
     // a sub-agent's prompt is part of the message that started it
+    if (main) sums.messages.push({ main: null, sub: null });
+    return;
+  }
+  if (entry.type === "tool.execution_start" || entry.type === "tool.execution_complete") {
+    const data = record(entry.data);
+    const id = typeof data.toolCallId === "string" ? data.toolCallId : null;
+    if (id === null) return;
+    if (entry.type === "tool.execution_start") { if (typeof data.toolName === "string" && ASK_TOOLS.has(data.toolName)) state.asks.add(id); return; }
+    if (!state.asks.delete(id)) return;
+    // the owner's answer: a reply of its own, as a user message is
     if (main) sums.messages.push({ main: null, sub: null });
     return;
   }
