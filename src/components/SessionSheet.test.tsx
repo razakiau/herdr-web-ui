@@ -174,6 +174,16 @@ describe("SessionSheet", () => {
     expect(words).not.toContain("≥");
   });
 
+  it("Cost: a chat on a local model draws no per-reply chart, as every bar would be $0", () => {
+    stored.set("ovis:session-tab", "cost");
+    const LOCAL = "litellm/desktop-coder-heretic";
+    const models = [{ model: LOCAL, input: 9_000_000, cacheRead: 0, cacheWrite: 0, output: 90_000, calls: 40 }];
+    const words = text(sheet({ read: read({ model: { id: LOCAL, effort: null }, context: { currentTokens: 40_000, tokenLimit: 400_000 } }), cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
+    expect(words).toContain("local models $0");
+    expect(words).not.toContain("Per reply");
+    expect(words).not.toContain("avg");
+  });
+
   it("Cost: the per-reply chart has its legend, average and time axis, the context a solid line", () => {
     stored.set("ovis:session-tab", "cost");
     const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });

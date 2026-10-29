@@ -15,7 +15,7 @@ import type { HostChatCost, HostChatRead, HostContextUsage, HostCostCall } from 
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
-import { formatUsd, listUsd, priceWithFallback } from "../lib/chatCost.ts";
+import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
 import { cacheMeter, costSplit, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
@@ -270,7 +270,8 @@ function CostTab({ session, prices }: { session: Session; prices: { prices: Mode
       {problems && <p className="host-context-note session-card-note">{problems}</p>}
     </section>
     {rates && <Rates split={split} models={models} prices={prices} t={t} />}
-    {messages.length > 0 && <section className="session-card" aria-label={t("Per reply")}>
+    {/* a local model's replies cost $0 each: a row of empty bars and "avg $0.00" say nothing */}
+    {messages.length > 0 && !isLocalModel(session.model) && <section className="session-card" aria-label={t("Per reply")}>
       <CostChart messages={messages} priced={session.price !== null} />
     </section>}
   </>;
