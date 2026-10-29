@@ -52,7 +52,6 @@ export const SIDEBAR_JA: Record<string, string> = {
   "{n} finished": "{n} 件が完了",
   "{n} resting": "{n} 件が休止中",
   "Show all ({n} more)": "すべて表示（あと {n} 件）",
-  "now": "今",
   "{n}h": "{n}時間",
   "{n}d": "{n}日",
   "For {time}": "{time} 経過",

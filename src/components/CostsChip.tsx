@@ -1,18 +1,21 @@
 /**
- * The sidebar footer's costs chip (ZAC-260, owner's option 2): every PC's Copilot chats at list
- * price for a period, "$212 · 7d", in whole dollars and without the "~", as clean as the plan
- * chips beside it (their `.usage-strip` button, no outline). It opens the Costs sheet. It asks each
+ * The sidebar footer's costs chip (ZAC-260, owner's pick D2): every PC's Copilot chats at list
+ * price for a period, built like the plan chips beside it (their `.usage-strip` button, no
+ * outline): "$5,849" with the period in small caps ("30D") over the same thin bar, split in the
+ * cost colours. No "≥" here: a floor only dims the amount, the Costs sheet says how. It opens the Costs sheet. It asks each
  * PC with host chats for its costs as the sidebar mounts, every 5 minutes while it stays, and on
  * opening the sheet. Absent while costs are not tracked, and until a PC has answered with costs.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import "./UsageMeters.css";
+import "./SessionSheet.css";
 import "./CostsSheet.css";
 
 import type { HostCostsAnswer } from "../../shared/host-chats.ts";
 import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
 import { wholeUsd } from "../lib/chatCost.ts";
+import { CostStack } from "./CostParts.tsx";
 import { fetchHostCosts } from "../lib/hostChats.ts";
 import { useT } from "../lib/i18n.ts";
 import { periodTotals, type CostPeriod } from "../lib/sessionCost.ts";
@@ -76,12 +79,16 @@ export function CostsChip({ pcs, onAllAgents }: CostsChipProps) {
 
   if (!track || prices === null || !counted) return null;
   const short: Record<CostPeriod, string> = { today: t("today"), "7d": t("7d"), "30d": t("30d") };
-  const usd = totals ? wholeUsd(totals.total.usd, totals.total.floor) : "—";
-  const words = `${usd} · ${short[period]}`;
+  const usd = totals ? wholeUsd(totals.total.usd, false) : "—";
+  const floor = totals?.total.floor ?? false;
+  const words = `${floor ? "≥ " : ""}${usd} ${short[period]}`;
   return <>
     <button type="button" className="usage-strip costs-chip" aria-haspopup="dialog" aria-label={t("Chat costs: {usd}", { usd: words })} title={t("Chat costs: {usd}", { usd: words })}
       onClick={() => { ask(); setOpen(true); }}>
-      <span className="usage-chip-value">{words}</span>
+      <span className={`costs-chip-body${floor ? " is-floor" : ""}`}>
+        <span className="costs-chip-top"><span className="costs-chip-usd">{usd}</span><span className="costs-chip-period">{short[period]}</span></span>
+        {totals && <CostStack split={totals.total} className="costs-chip-bar" />}
+      </span>
     </button>
     {open && <CostsSheet period={period} onPeriod={setPeriod} totals={totals} oldBridge={oldBridge} pcs={pcs}
       onPick={(machineId) => { setOpen(false); onAllAgents({ machineId, sort: "cost" }); }} onClose={() => setOpen(false)} />}

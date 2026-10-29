@@ -54,17 +54,30 @@
   flex: none;
 }
 
-.session-tabs-bar {
+/* The sheet's own rules are scoped under .session-sheet (and .costs-sheet / .all-agents where they
+   share them): HostChatView.css's .host-context-row (display flex, align-items center) loads after
+   this file at the same weight and collapsed the split bar, centred the total line and emptied the
+   countdown row (ZAC-260 fix wave). */
+
+/* the header as in the mockup: no rule between the title and the tabs, more room under the title;
+   the tab bar keeps the one hairline under it */
+.session-sheet > .modal-header {
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-bottom: 0;
+}
+
+.session-sheet .session-tabs-bar {
   padding: 0 var(--space-5) var(--space-3);
   border-bottom: var(--hairline) solid var(--border);
 }
 
-.session-tabs {
+.session-sheet .session-tabs {
   display: flex;
 }
 
-.session-tabs > button {
+.session-sheet .session-tabs > button {
   flex: 1;
+  gap: 6px;
 }
 
 .session-dot {
@@ -80,7 +93,7 @@
 .session-dot.is-cooling { background: var(--notice); }
 .session-dot.is-cold { background: var(--status-working); }
 
-.session-state {
+.session-sheet .session-state {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -88,13 +101,13 @@
   font-weight: var(--fw-medium);
 }
 
-.session-value {
+.session-sheet .session-value {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.session-advice {
+.session-sheet .session-advice {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -105,95 +118,310 @@
   font-size: var(--fs-sm);
 }
 
-.session-advice strong {
+.session-sheet .session-advice strong {
   color: var(--text-strong);
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
 }
 
-.session-countdown {
+.session-sheet .host-context-row.session-countdown {
   display: block;
   min-height: 0;
   padding-block: var(--space-3);
 }
 
-.session-cache-bar {
+.session-sheet .session-cache-bar {
   height: 4px;
   border-radius: var(--radius-pill);
   background: var(--bg-hover);
   overflow: hidden;
 }
 
-.session-cache-bar > span {
+.session-sheet .session-cache-bar > span {
   display: block;
   height: 100%;
   background: var(--cache);
 }
 
-.session-sheet-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.session-sheet-actions > .btn {
-  flex: 1;
-}
-
-.session-group-head {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.session-total {
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-}
-
-.session-total-line {
+.session-sheet .session-countdown-captions {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
+  margin-top: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
 }
 
-/* what the money went on: reads, rewrites (red, as in the chart), answers, the rest */
-.session-stack {
+.session-sheet .session-sheet-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.session-sheet .session-sheet-actions > .btn {
+  flex: 1;
+}
+
+.session-sheet .session-context-note {
+  margin-top: calc(-1 * var(--space-2));
+}
+
+/* the cost parts' colours, one set for every cost view: re-reading, storing new text (a lighter
+   blocked), cold restarts, answers, new input */
+.cost-part { background: var(--text-dim); }
+.cost-part.is-reads { background: var(--status-working); }
+.cost-part.is-writes { background: color-mix(in srgb, var(--status-blocked) 55%, var(--bg-elevated)); }
+.cost-part.is-restarts { background: var(--status-blocked); }
+.cost-part.is-output { background: var(--accent); }
+.cost-part.is-fresh { background: var(--text-dim); }
+
+.cost-stack {
   display: flex;
   gap: 2px;
-  height: 10px;
-  border-radius: var(--radius-pill);
   overflow: hidden;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
 }
 
-.session-stack > span,
-.session-swatch {
-  background: var(--text-dim);
+.cost-stack > span {
+  flex: 1 1 0;
+  min-width: 2px;
 }
 
-.session-swatch {
+.cost-dot {
   display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: var(--space-2);
-  border-radius: 3px;
-  vertical-align: -1px;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 
-.session-stack > .is-reads, .session-swatch.is-reads, .all-agents-split > .is-reads { background: var(--status-working); }
-.session-stack > .is-writes, .session-swatch.is-writes, .all-agents-split > .is-writes { background: var(--status-blocked); }
-.session-stack > .is-output, .session-swatch.is-output, .all-agents-split > .is-output { background: var(--accent); }
-
-.session-chart {
-  padding: var(--space-3) var(--space-3) var(--space-2);
+/* the Cost tab's cards: the total (B) and the chart (C) */
+.session-sheet .session-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-3) var(--space-3);
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
 }
 
-.session-chart-svg {
+.session-sheet .session-kicker {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.session-sheet .session-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+.session-sheet .session-hero-whole {
+  font-size: calc(40px * var(--ui-scale));
+  line-height: 1;
+}
+
+.session-sheet .session-hero-dollar,
+.session-sheet .session-hero-cents,
+.session-sheet .session-hero-floor {
+  color: var(--text-dim);
+  font-size: var(--fs-display);
+}
+
+.session-sheet .session-hero-dollar,
+.session-sheet .session-hero-floor {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.session-sheet .session-hero-floor { margin-right: var(--space-1); }
+
+.session-sheet .session-stack {
+  height: 8px;
+}
+
+.session-sheet .session-parts {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-sheet .session-part {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 40px;
+}
+
+.session-sheet .session-part + .session-part {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.session-sheet .session-part-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.session-sheet .session-part-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-sheet .session-part-usd { color: var(--text-strong); }
+
+.session-sheet .session-part-share {
+  display: inline-block;
+  width: 3em;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-align: right;
+}
+
+.session-sheet .session-cost-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.session-sheet .session-cost-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-1) 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-sheet .session-cost-pill.is-restart {
+  background: color-mix(in srgb, var(--status-blocked) 16%, transparent);
+  color: color-mix(in srgb, var(--status-blocked) 55%, var(--text-strong));
+}
+
+.session-sheet .session-cost-pill.is-button {
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.session-sheet .session-cost-pill.is-button[aria-expanded="true"] { color: var(--text-strong); }
+
+.session-sheet .session-card-note { margin: var(--space-2) 0 0; }
+
+/* the ⓘ explainer, under the card */
+.session-sheet .session-rates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: calc(-1 * var(--space-2));
+  padding: var(--space-3);
+  border: var(--hairline) dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.session-sheet .session-rates-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-sheet .session-rates-table {
+  display: grid;
+  grid-template-columns: auto repeat(4, 1fr);
+  gap: 2px 10px;
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-sheet .session-rates-table > [role="row"] { display: contents; }
+.session-sheet .session-rates-table .is-head > span { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.session-sheet .session-rates-table b { overflow: hidden; color: var(--text); font-weight: var(--fw-medium); text-overflow: ellipsis; white-space: nowrap; }
+.session-sheet .session-rates-table .is-wide { grid-column: span 4; }
+.session-sheet .session-rates-foot { margin: 0; font-size: 10px; }
+
+/* the chart (C): kicker and average, legend, plot with the average tagged, time axis */
+.session-sheet .session-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.session-sheet .session-chart-avg {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-sheet .session-chart-avg strong { color: var(--text); font-weight: var(--fw-medium); }
+
+.session-sheet .session-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: var(--space-2) 0 10px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.session-sheet .session-chart-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.session-sheet .session-chart-legend i.is-cost { background: var(--status-working); }
+.session-sheet .session-chart-legend i.is-restart { background: var(--status-blocked); }
+.session-sheet .session-chart-legend i.is-context { width: 12px; height: 2px; border-radius: 0; background: var(--accent); vertical-align: 3px; }
+
+.session-sheet .session-chart-plot { position: relative; }
+
+.session-sheet .session-chart-svg {
   display: block;
   width: 100%;
-  height: 110px;
+  height: 120px;
+}
+
+.session-sheet .session-chart-tag {
+  position: absolute;
+  right: 0;
+  padding: 0 var(--space-1);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: 10px;
+  transform: translateY(-50%);
+}
+
+.session-sheet .session-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-1);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }

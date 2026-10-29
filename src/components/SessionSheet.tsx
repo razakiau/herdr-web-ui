@@ -1,32 +1,39 @@
 /**
  * The Session sheet (ZAC-260): what the context meter opens while costs are tracked. Ovis's
- * segmented control over three tabs: Cache (how warm the prompt cache is, the advice, what the next
- * call costs, Hand off and Compact), Cost (the chat's cost at list price by what the money went on,
- * and per message) and Context (the context window sheet's content, unchanged). It opens on Cache
- * when the advice is a handoff, otherwise on the tab last used on this device. With tracking off
- * it is the context window sheet, as before.
+ * segmented control over three tabs, in the owner's order: Context (the context window sheet's
+ * content; while the chat works, the last finished turn's breakdown with the live size), Cost (the
+ * chat's cost at list price by what the money went on, the rates behind ⓘ, and per reply) and Cache
+ * (how warm the prompt cache is, the advice, what the next call costs, Hand off and Compact). It
+ * opens on Cache when the advice is a handoff, otherwise on the tab last used on this device,
+ * otherwise on Context. With tracking off it is the context window sheet, as before.
  */
 import { useState } from "react";
 
 import "./SessionSheet.css";
 
-import type { HostChatCost, HostChatRead, HostCostCall } from "../../shared/host-chats.ts";
+import type { HostChatCost, HostChatRead, HostContextUsage, HostCostCall } from "../../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, listUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { cacheMeter, costSplit, mergeLive, nextCall } from "../lib/sessionCost.ts";
+import { cacheMeter, costSplit, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
+import { COST_PARTS, CostStack, partLabel } from "./CostParts.tsx";
 
-type Tab = "cache" | "cost" | "context";
-const TABS: Tab[] = ["cache", "cost", "context"];
+type Tab = "context" | "cost" | "cache";
+const TABS: Tab[] = ["context", "cost", "cache"];
 const TAB_KEY = "ovis:session-tab";
 
 export interface SessionSheetProps {
   read: HostChatRead;
-  /** today's estimate from the loaded turns, for the Context tab (and the sheet with tracking off) */
+  /**
+   * the last context breakdown the chat gave (HostChatView keeps it per chat), for the Context tab
+   * while the chat works: the bridge reads none then. `at`: when it was kept (ms)
+   */
+  lastContext?: { usage: HostContextUsage; at: number } | null;
+  /** today's estimate from the loaded turns, for the sheet with tracking off (the Cost tab has the log's) */
   estimate: { usd: number; partial: boolean; missing: string[]; estimated: string[] } | null;
   /** the bridge's answer for the chat (fetchChatCost): undefined while asked, null from a bridge that predates costs */
   cost: { chat: HostChatCost | null; calls: HostCostCall[] } | null | undefined;
@@ -86,7 +93,7 @@ export function SessionSheet(props: SessionSheetProps) {
   const session = figures(props, now);
   if (!settings.trackCosts) return read.context ? <ContextSheet usage={read.context} cost={estimate} onClose={onClose} onCompact={onCompact} /> : null;
   const handoff = session !== null && session.advised !== "keep";
-  const tab: Tab = chosen ?? (handoff ? "cache" : storedTab() ?? "cache");
+  const tab: Tab = chosen ?? (handoff ? "cache" : storedTab() ?? "context");
   const pick = (next: Tab): void => { setChosen(next); storeTab(next); };
   const state = session?.cache?.state ?? null;
   const label: Record<Tab, string> = { cache: t("Cache"), cost: t("Cost"), context: t("Context") };
@@ -98,18 +105,39 @@ export function SessionSheet(props: SessionSheetProps) {
     </div>
   </div>;
   const body = tab === "context"
-    ? read.context ? <ContextPanel usage={read.context} cost={estimate} onClose={onClose} onCompact={onCompact} /> : null
+    ? <ContextTab {...props} />
     : props.cost === null ? <p className="host-context-note">{t("Update the bridge on this PC to show costs.")}</p>
     : props.cost === undefined || (tab === "cost" && props.prices === null && props.cost.chat !== null) ? <p className="host-context-note">{t("Loading…")}</p>
     : session === null ? <p className="host-context-note">{t("No calls in this chat's log yet.")}</p>
     : tab === "cache" ? <CacheTab {...props} session={session} />
-    : <CostTab session={session} />;
+    : <CostTab session={session} prices={props.prices ?? { prices: null, fallback: null }} />;
   return <SheetFrame label={t("Session")} title={t("Session")} className={`session-sheet${state ? ` is-${state}` : ""}`} head={tabs} onClose={onClose}>
     {body}
   </SheetFrame>;
 }
 
 type Session = NonNullable<ReturnType<typeof figures>>;
+
+/**
+ * The context window. While the chat works the bridge reads no breakdown (`read.context` null): the
+ * last one kept is shown, its size the log's when the log's last call is newer, with a line saying
+ * so. Nothing known at all: one line, never an empty tab.
+ */
+function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionSheetProps) {
+  const t = useT();
+  if (read.context) return <ContextPanel usage={read.context} cost={null} onClose={onClose} onCompact={onCompact} />;
+  const log = cost?.chat ?? null;
+  if (lastContext) {
+    const newer = log !== null && log.context !== null && log.lastCallAt !== null && Date.parse(log.lastCallAt) > lastContext.at;
+    const usage = newer ? { ...lastContext.usage, currentTokens: log.context! } : lastContext.usage;
+    return <>
+      <ContextPanel usage={usage} cost={null} onClose={onClose} onCompact={onCompact} />
+      <p className="host-context-note session-context-note">{t("Breakdown as of the last finished turn.")}</p>
+    </>;
+  }
+  if (log?.context) return <p className="host-context-note">{t("{size} tokens; the breakdown comes when the turn ends.", { size: formatTokenCount(log.context) })}</p>;
+  return <p className="host-context-note">{t("No context size yet.")}</p>;
+}
 
 function CacheTab(props: SessionSheetProps & { session: Session }) {
   const { read, session, settings, onClose, onCompact, onHandoff } = props;
@@ -145,6 +173,10 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
           <div className="session-cache-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(left)} aria-label={t("Cache time left")}>
             <span className={`is-${cache.state}`} style={{ width: `${left}%` }} />
           </div>
+          <div className="session-countdown-captions">
+            <span>{busy ? t("Kept warm while working") : cache.state === "cold" ? t("expired") : t("{n} min left", { n: cache.leftMin })}</span>
+            <span>{t("Expires {n} min after the last call", { n: settings.cacheLifetimeMin })}</span>
+          </div>
         </div>}
         {hit !== null && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
         {next && <div className="host-context-row"><span>{t("Next call now")}</span><span className="session-value">{usd(next.warm, false)}</span></div>}
@@ -159,47 +191,87 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   </>;
 }
 
-function CostTab({ session }: { session: Session }) {
+/** "$57.10" as the total card prints it: "$" and the cents small and dim, whole dollars large; a floor's cents rounded down */
+function Hero({ usd, floor }: { usd: number; floor: boolean }) {
+  const cents = Math.floor(usd * 100 + (floor ? 1e-9 : 0.5));
+  const whole = Math.floor(cents / 100);
+  return <div className="session-hero">
+    {floor && <span className="session-hero-floor">≥</span>}
+    <span className="session-hero-dollar">$</span>
+    <span className="session-hero-whole">{whole.toLocaleString("en-US")}</span>
+    <span className="session-hero-cents">.{String(cents % 100).padStart(2, "0")}</span>
+  </div>;
+}
+
+/** The rates the chat's models are priced at, per million tokens; a local model "local · $0". */
+function Rates({ split, models, prices, t }: { split: CostSplit; models: readonly string[]; prices: { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null }; t: Translate }) {
+  const rate = (value: number): string => `$${value < 1 ? value.toFixed(2).replace(/0$/, "") : String(Math.round(value * 100) / 100)}`;
+  return <div className="session-rates" id="session-rates">
+    <ul className="session-rates-lines">
+      <li>{t("Every call re-sends the whole conversation. The cache keeps it for 1 hour after the last call.")}</li>
+      <li>{t("Re-reading: the conversation read back from the cache, on every call.")}</li>
+      <li>{t("Storing new text: each call's new part, put in the cache.")}</li>
+      <li>{t("Cold restarts: after more than an hour without a call, the whole conversation is stored again.")}</li>
+      <li>{t("Answers: what the model writes. New input: the rest of a call, sent without the cache.")}</li>
+    </ul>
+    <div className="session-rates-table" role="table" aria-label={t("Rates per million tokens")}>
+      <div role="row" className="is-head"><span role="columnheader" /><span role="columnheader">{t("in")}</span><span role="columnheader">{t("cached")}</span><span role="columnheader">{t("write")}</span><span role="columnheader">{t("out")}</span></div>
+      {models.map((model) => {
+        const name = model.slice(model.lastIndexOf("/") + 1);
+        if (split.local.includes(model)) return <div role="row" key={model}><b role="cell">{name}</b><span role="cell" className="is-wide">{t("local · $0")}</span></div>;
+        const found = priceWithFallback(model, prices.prices ?? {}, prices.fallback);
+        if (!found) return <div role="row" key={model}><b role="cell">{name}</b><span role="cell" className="is-wide">{t("no price")}</span></div>;
+        const { price } = found;
+        return <div role="row" key={model}><b role="cell">{name}</b><span role="cell">{rate(price.input)}</span><span role="cell">{rate(price.cached ?? price.input)}</span><span role="cell">{rate(writePrice(model, price.input))}</span><span role="cell">{rate(price.output)}</span></div>;
+      })}
+    </div>
+    <p className="session-rates-foot">{t("Per million tokens. Writes at 2× input for Anthropic models (their 1-hour cache rate), at input otherwise.")}</p>
+  </div>;
+}
+
+function CostTab({ session, prices }: { session: Session; prices: { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null } }) {
   const t = useT();
+  const [rates, setRates] = useState(false);
   const split = session.split!;
   const floor = split.floor || session.chat.partial;
   const share = (value: number): string => split.usd > 0 ? `${Math.round((value / split.usd) * 100)}%` : "0%";
-  const parts = [
-    { key: "reads", label: t("Re-reading the context"), value: split.reads },
-    { key: "writes", label: t("Cache rewrites"), value: split.writes },
-    { key: "output", label: t("Answers"), value: split.output },
-    { key: "fresh", label: t("Your messages, tool results"), value: split.fresh },
-  ];
+  // Re-reading and Answers always; the others only when they cost something
+  const parts = COST_PARTS.filter((part) => part === "reads" || part === "output" || split[part] > 0);
   const messages = messageCosts(session.calls, session.model, session.price);
+  const calls = session.chat.models.reduce((sum, each) => sum + each.calls, 0);
+  const restarts = session.chat.rewrites;
+  const models = [...session.chat.models].sort((a, b) => b.input - a.input).map((each) => each.model);
+  const problems = [
+    split.missing.length > 0 ? t("No price for {models}.", { models: split.missing.join(", ") }) : null,
+    session.chat.partial ? t("The log is not fully read yet: at least this much.") : null,
+  ].filter(Boolean).join(" ");
   return <>
-    <section className="host-picker-group" aria-labelledby="session-cost">
-      <h3 className="host-picker-provider session-group-head" id="session-cost">
-        <span>{t("This chat")}</span>
-        <span>{t("{n} calls", { n: session.chat.models.reduce((sum, each) => sum + each.calls, 0) })}</span>
-      </h3>
-      <div className="host-picker-rows">
-        <div className="host-context-row session-total">
-          <div className="session-total-line"><span>{t("Cost at list price")}</span><strong className="host-context-cost">{usd(split.usd, floor)}</strong></div>
-          <div className="session-stack" aria-hidden="true">
-            {parts.map((part) => split.usd > 0 && part.value > 0 && <span key={part.key} className={`is-${part.key}`} style={{ width: `${(part.value / split.usd) * 100}%` }} />)}
-          </div>
-        </div>
-        {parts.map((part) => <div key={part.key} className="host-context-row">
-          <span><span className={`session-swatch is-${part.key}`} aria-hidden="true" />{part.label}</span>
-          <span className="session-value">{formatUsd(part.value)} · {share(part.value)}</span>
-        </div>)}
+    <section className="session-card session-cost-card" aria-labelledby="session-cost">
+      <h3 className="session-kicker" id="session-cost">{t("This chat · at list price")}</h3>
+      <Hero usd={split.usd} floor={floor} />
+      <CostStack split={split} className="session-stack" />
+      <ul className="session-parts">
+        {parts.map((part) => <li key={part} className="session-part">
+          <span className="session-part-label"><span className={`cost-dot cost-part is-${part}`} aria-hidden="true" />{partLabel(part, t)}</span>
+          <span className="session-part-value"><span className="session-part-usd">{formatUsd(split[part])}</span><span className="session-part-share">{share(split[part])}</span></span>
+        </li>)}
+      </ul>
+      <div className="session-cost-pills">
+        {restarts > 0 && <span className="session-cost-pill is-restart">
+          <span className="cost-dot cost-part is-restarts" aria-hidden="true" />
+          {split.restarts > 0
+            ? t(restarts === 1 ? "1 cold restart · {usd}" : "{n} cold restarts · {usd}", { n: restarts, usd: formatUsd(split.restarts) })
+            : t(restarts === 1 ? "1 cold restart" : "{n} cold restarts", { n: restarts })}
+        </span>}
+        <span className="session-cost-pill">{t(messages.length === 1 ? "{calls} calls · 1 reply" : "{calls} calls · {replies} replies", { calls, replies: messages.length })}</span>
+        {split.local.length > 0 && <span className="session-cost-pill">{t("local models $0")}</span>}
+        <button type="button" className="session-cost-pill is-button" aria-expanded={rates} aria-controls="session-rates" onClick={() => setRates(!rates)}>{t("Rates")} <span aria-hidden="true">ⓘ</span></button>
       </div>
-      <p className="host-context-note">{[
-        split.missing.length > 0 ? t("No price for {models}.", { models: split.missing.join(", ") }) : null,
-        session.chat.partial ? t("The log is not fully read yet: at least this much.") : null,
-      ].filter(Boolean).join(" ") || t("Cache writes priced at 2× input for Anthropic models, at input otherwise.")}</p>
+      {problems && <p className="host-context-note session-card-note">{problems}</p>}
     </section>
-    {messages.length > 0 && <section className="host-picker-group" aria-labelledby="session-chart">
-      <h3 className="host-picker-provider session-group-head" id="session-chart"><span>{t("Per message")}</span><span>{t("context ↗")}</span></h3>
-      <div className="session-chart">
-        <CostChart messages={messages} label={t("Cost per message you sent")} />
-      </div>
-      <p className="host-context-note">{t("One bar per message you sent. Red: the cache was written again, as after a pause past its lifetime. Dashed: the context size.")}</p>
+    {rates && <Rates split={split} models={models} prices={prices} t={t} />}
+    {messages.length > 0 && <section className="session-card" aria-label={t("Per reply")}>
+      <CostChart messages={messages} priced={session.price !== null} />
     </section>}
   </>;
 }

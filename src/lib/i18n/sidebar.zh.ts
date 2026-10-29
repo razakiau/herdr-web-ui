@@ -52,7 +52,6 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "{n} finished": "{n} 个已完成",
   "{n} resting": "{n} 个空闲",
   "Show all ({n} more)": "全部显示（还有 {n} 个）",
-  "now": "刚刚",
   "{n}h": "{n}小时",
   "{n}d": "{n}天",
   "For {time}": "已 {time}",

@@ -150,6 +150,15 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   // the bridge's log of the chat (ZAC-260), for the meter's cache timer, the handoff banner and the Session sheet
   const { settings: { trackCosts, costHandoffAt, cacheLifetimeMin } } = useSettings();
   const chatCostLog = useChatCostLog({ machineId, session, trackCosts, busy: chat?.busy ?? false, sheetOpen: contextOpen });
+  // the last context breakdown each chat gave: the bridge reads none while the chat works, and the
+  // Session sheet's Context tab shows this one then (ZAC-260)
+  const lastContexts = useRef(new Map<string, { usage: NonNullable<HostChatRead["context"]>; at: number }>());
+  const contextKey = `${machineId}\n${session}`;
+  if (chat?.context && chat.session === session) {
+    const kept = lastContexts.current.get(contextKey);
+    if (kept?.usage !== chat.context) lastContexts.current.set(contextKey, { usage: chat.context, at: Date.now() });
+  }
+  const lastContext = lastContexts.current.get(contextKey) ?? null;
   const cost = useMemo(() => {
     const tokens = chat?.tokens;
     if (!prices || !tokens || tokens.totals.length === 0) return null;
@@ -412,7 +421,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
         costs={{ log: chatCostLog?.chat ?? (chatCostLog === undefined ? undefined : null), settings: costSettings }}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-        sheet={trackCosts && chat ? <SessionSheet read={chat} estimate={cost} cost={chatCostLog} prices={prices ?? (pricesAnswered ? NO_PRICES : null)}
+        sheet={trackCosts && chat ? <SessionSheet read={chat} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={prices ?? (pricesAnswered ? NO_PRICES : null)}
           settings={costSettings} onClose={() => setContextOpen(false)}
           onCompact={!chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
           onHandoff={onHandoff} /> : undefined} />}

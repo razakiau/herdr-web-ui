@@ -21,6 +21,7 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { hostChatTitle } from "./HostChatActions.tsx";
+import { COST_PARTS, CostStack, partLabel } from "./CostParts.tsx";
 
 /** A PC the sheet can name: its name, and its host chats for the costliest one's title. */
 export interface CostsPc { id: string; name: string; chats: readonly HostChatRow[] }
@@ -56,13 +57,6 @@ export function CostsSheet({ period, onPeriod, totals, oldBridge, pcs, onPick, o
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
-  // what the money went on, the Session sheet's Cost tab's words and colours
-  const PARTS = [
-    { key: "reads", label: t("Re-reading the context") },
-    { key: "writes", label: t("Cache rewrites") },
-    { key: "output", label: t("Answers") },
-    { key: "fresh", label: t("Your messages, tool results") },
-  ] as const;
   const nameOf = (machineId: string): string => pcs.find((pc) => pc.id === machineId)?.name ?? machineId;
   const total = totals?.total;
   const share = (value: number): string => total && total.usd > 0 ? `${Math.round((value / total.usd) * 100)}%` : "0%";
@@ -84,11 +78,10 @@ export function CostsSheet({ period, onPeriod, totals, oldBridge, pcs, onPick, o
           {total ? <>
             <p className="costs-total"><strong className={total.floor ? "is-floor" : undefined}>{listUsd(total.usd, total.floor)}</strong><span>{t("Copilot chats")}</span></p>
             {oldBridge.map((machineId) => <p key={machineId} className="field-hint costs-old-bridge">{t("{pc}: update the bridge to count it", { pc: nameOf(machineId) })}</p>)}
-            <div className="session-stack costs-stack" aria-hidden="true">
-              {PARTS.map((part) => total.usd > 0 && total[part.key] > 0 && <span key={part.key} className={`is-${part.key}`} style={{ width: `${(total[part.key] / total.usd) * 100}%` }} />)}
-            </div>
+            {/* what the money went on, the Session sheet's Cost tab's words and colours */}
+            <CostStack split={total} className="costs-stack" />
             {total.usd > 0 && <ul className="costs-legend">
-              {PARTS.filter((part) => total[part.key] > 0).map((part) => <li key={part.key}><span className={`session-swatch is-${part.key}`} aria-hidden="true" />{part.label} {share(total[part.key])}</li>)}
+              {COST_PARTS.filter((part) => total[part] > 0).map((part) => <li key={part}><span className={`cost-dot cost-part is-${part}`} aria-hidden="true" />{partLabel(part, t)} {share(total[part])}</li>)}
             </ul>}
             {total.missing.length > 0 && <p className="field-hint">{t("No price for {models}.", { models: total.missing.join(", ") })}</p>}
             {total.floor && total.missing.length === 0 && <p className="field-hint">{t("Some logs are not fully read yet: at least this much.")}</p>}
@@ -106,7 +99,10 @@ export function CostsSheet({ period, onPeriod, totals, oldBridge, pcs, onPick, o
                     <button type="button" className="costs-pc" onClick={() => onPick(pc.machineId)}>
                       <span className="costs-pc-line">
                         <span className="costs-pc-name">{nameOf(pc.machineId)}</span>
-                        <span className={`costs-pc-usd${pc.split.floor ? " is-floor" : ""}`}>{listUsd(pc.split.usd, pc.split.floor)}</span>
+                        <span className="costs-pc-cost">
+                          <span className={`costs-pc-usd${pc.split.floor ? " is-floor" : ""}`}>{pc.split.usd === 0 && pc.split.local.length > 0 ? t("$0 · local") : listUsd(pc.split.usd, pc.split.floor)}</span>
+                          {pc.split.usd > 0 && <CostStack split={pc.split} className="cost-mini" />}
+                        </span>
                       </span>
                       <span className="costs-pc-meta">{meta}</span>
                     </button>

@@ -111,14 +111,32 @@ const button = (node: ReactTestInstance, text: string): ReactTestInstance =>
   node.find((each) => each.type === "button" && textOf(each) === text);
 
 describe("the costs chip", () => {
-  it("sums every PC's last 7 days in whole dollars, no ~, beside the plan chips", async () => {
+  it("sums every PC's last 7 days in whole dollars, no ~, the period in small caps over a split bar, beside the plan chips", async () => {
     const root = await mount(true);
     expect(urls.filter((url) => url.endsWith("/host-chats/costs")).sort()).toEqual(["/api/machines/cde/host-chats/costs", "/api/machines/desk/host-chats/costs", "/api/machines/old/host-chats/costs"]);
     const chip = chipOf(root);
     expect(chip).toHaveLength(1);
     expect(chip[0]!.type).toBe("button");
     expect(chip[0]!.props["className"]).toContain("usage-strip");
-    expect(textOf(chip[0]!)).toBe("$212 · 7d");
+    expect(textOf(classed(chip[0]!, "costs-chip-usd")[0]!)).toBe("$212");
+    expect(textOf(classed(chip[0]!, "costs-chip-period")[0]!)).toBe("7d");
+    expect(classed(chip[0]!, "costs-chip-bar")[0]!.children.map((part) => (part as ReactTestInstance).props["className"])).toEqual(["cost-part is-output"]);
+    // the sans amount, not the plan chips' mono value
+    expect(classed(chip[0]!, "usage-chip-value")).toEqual([]);
+  });
+
+  it("a floor only dims the chip's amount: no ≥ on the chip, the sheet says it", async () => {
+    const saved = ANSWERS["desk"]!;
+    ANSWERS["desk"] = { ...saved, complete: false };
+    try {
+      const root = await mount(true);
+      const chip = chipOf(root)[0]!;
+      expect(textOf(classed(chip, "costs-chip-usd")[0]!)).toBe("$212");
+      expect(classed(chip, "costs-chip-body")[0]!.props["className"]).toContain("is-floor");
+      await act(async () => { chip.props["onClick"](); });
+      await flush();
+      expect(textOf(classed(root.root, "costs-total")[0]!)).toContain("≥ $212");
+    } finally { ANSWERS["desk"] = saved; }
   });
 
   it("is absent while costs are not tracked, and asks nothing", async () => {
@@ -147,7 +165,9 @@ describe("the Costs sheet", () => {
     expect(rows.map((each) => textOf(classed(each, "costs-pc-usd")[0]!))).toEqual(["~$150", "~$62"]);
     expect(textOf(classed(rows[0]!, "costs-pc-meta")[0]!)).toBe("2 chats · biggest: FICTIONAL cost line ~$100");
     expect(textOf(classed(rows[1]!, "costs-pc-meta")[0]!)).toBe("1 chat · biggest: FICTIONAL thresholds ~$62");
-    expect(classed(sheet, "session-stack")[0]!.children.map((part) => (part as ReactTestInstance).props["className"])).toEqual(["is-output"]);
+    expect(classed(sheet, "costs-stack")[0]!.children.map((part) => (part as ReactTestInstance).props["className"])).toEqual(["cost-part is-output"]);
+    // each PC's row has its amount and its 56×4 split
+    expect(classed(sheet, "costs-pc").map((each) => classed(each, "cost-mini").length)).toEqual([1, 1]);
   });
 
   it("names a PC whose bridge predates costs under the total, and leaves it out of the sums", async () => {
@@ -162,10 +182,10 @@ describe("the Costs sheet", () => {
     const sheet = await openSheet(root);
     await act(async () => { (button(sheet, "Today").props["onClick"] as () => void)(); });
     expect(textOf(classed(root.root, "costs-total")[0]!)).toContain("~$100");
-    expect(textOf(chipOf(root)[0]!)).toBe("$100 · today");
+    expect(textOf(chipOf(root)[0]!)).toBe("$100today");
     await act(async () => { (button(classed(root.root, "costs-sheet")[0]!, "30 days").props["onClick"] as () => void)(); });
     expect(textOf(classed(root.root, "costs-total")[0]!)).toContain("~$252");
-    expect(textOf(chipOf(root)[0]!)).toBe("$252 · 30d");
+    expect(textOf(chipOf(root)[0]!)).toBe("$25230d");
   });
 
   it("opens a PC's All agents sorted by cost when it is tapped", async () => {
@@ -179,7 +199,7 @@ describe("the Costs sheet", () => {
   it("shows no figure while prices are unavailable, and says why", async () => {
     pricesReply = { prices: null, fallback: null };
     const root = await mount(true);
-    expect(textOf(chipOf(root)[0]!)).toBe("— · 7d");
+    expect(textOf(chipOf(root)[0]!)).toBe("—7d");
     const sheet = await openSheet(root);
     expect(textOf(sheet)).toContain("Prices are unavailable: costs not shown.");
     expect(textOf(sheet)).not.toContain("$");

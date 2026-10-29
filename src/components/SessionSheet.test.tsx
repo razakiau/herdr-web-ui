@@ -75,10 +75,10 @@ afterEach(() => {
 });
 
 describe("SessionSheet", () => {
-  it("is titled Session with Cache, Cost and Context tabs when costs are tracked", () => {
+  it("is titled Session with Context, Cost and Cache tabs when costs are tracked", () => {
     const html = sheet();
     expect(html).toContain('<h2 class="modal-title">Session</h2>');
-    expect(text(html)).toContain("Cache Cost Context");
+    expect(text(html)).toContain("Session Context Cost Cache");
     expect(html).toContain('class="segmented session-tabs"');
   });
 
@@ -93,6 +93,10 @@ describe("SessionSheet", () => {
   it("opens on Cache when the advice is a handoff, whatever tab was used last", () => {
     stored.set("ovis:session-tab", "context");
     expect(pressed(sheet())).toBe("Cache");
+  });
+
+  it("opens on Context with no tab used yet and no handoff advised", () => {
+    expect(pressed(sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }))).toBe("Context");
   });
 
   it("otherwise opens on the tab used last", () => {
@@ -136,32 +140,69 @@ describe("SessionSheet", () => {
     expect(html).not.toMatch(/>Hand off</);
   });
 
-  it("Cost: splits the cost into what the money went on, with a per-message chart", () => {
+  it("Cost: the total card, its rows in plain words, and pills for what happened", () => {
+    stored.set("ovis:session-tab", "cost");
+    const models = [{ model: MODEL, input: 2_000_000, cacheRead: 1_800_000, cacheWrite: 150_000, coldWrite: 100_000, output: 40_000, calls: 20 }];
+    const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models, rewrites: 2 }), calls: CALLS } });
+    const words = text(html);
+    // fresh 0.2M × $5 = $1, reads 1.8M × $0.5 = $0.90, storing 50K and restarts 100K × $10 = $0.50 + $1, answers 40K × $25 = $1: $4.40
+    expect(words).toContain("This chat · at list price $ 4 .40");
+    expect(words).toContain("Re-reading $0.90 20% Storing new text $0.50 11% Cold restarts $1.00 23% Answers $1.00 23% New input $1.00 23%");
+    expect(words).toContain("2 cold restarts · $1.00");
+    expect(words).toContain("20 calls · 3 replies");
+    expect(words).toContain("Rates ⓘ");
+    expect(words).not.toContain("local models");
+    // no paragraph under the card or the chart
+    expect(words).not.toContain("Cache writes priced");
+    expect(html).toContain('class="cost-stack session-stack"');
+  });
+
+  it("Cost: hides a part that cost nothing, except Re-reading and Answers", () => {
+    stored.set("ovis:session-tab", "cost");
+    const models = [{ model: MODEL, input: 0, cacheRead: 0, cacheWrite: 0, output: 40_000, calls: 2 }];
+    const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models, rewrites: 0 }), calls: CALLS } }));
+    expect(words).toContain("Re-reading $0.00 0% Answers $1.00 100%");
+    for (const gone of ["Storing new text", "Cold restarts", "New input", "cold restart"]) expect(words).not.toContain(gone);
+  });
+
+  it("Cost: a local model costs $0, says so in a pill and in the rates, and is not missing", () => {
+    stored.set("ovis:session-tab", "cost");
+    const models = [...chat().models, { model: "litellm/desktop-coder-heretic", input: 9_000_000, cacheRead: 0, cacheWrite: 0, output: 90_000, calls: 40 }];
+    const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
+    expect(words).toContain("local models $0");
+    expect(words).not.toContain("No price");
+    expect(words).not.toContain("≥");
+  });
+
+  it("Cost: the per-reply chart has its legend, average and time axis, the context a solid line", () => {
     stored.set("ovis:session-tab", "cost");
     const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
     const words = text(html);
-    for (const row of ["Re-reading the context", "Cache rewrites", "Answers", "Your messages, tool results"]) expect(words).toContain(row);
-    expect(words).toMatch(/Cost at list price ~\$\d/);
+    expect(words).toMatch(/Per reply avg \$\d/);
+    expect(words).toContain("Cost Cold restart Context");
+    expect(words).toMatch(/ now$/);
     expect(html.match(/<rect /g)?.length).toBeGreaterThanOrEqual(3);
-    expect(html).toContain("var(--status-blocked)");
-    expect(html).toContain("stroke-dasharray");
+    expect(html).toContain('rx="1.5"');
+    // the context line is solid; the dotted line is the average
+    expect(/<path [^>]*stroke-dasharray/.test(html)).toBe(false);
+    expect(html).toMatch(/<line [^>]*stroke-dasharray/);
   });
 
-  it("Cost: the dashed line is each message's context, its largest message at the top", () => {
+  it("Cost: the context line is each reply's context, its largest reply near the top, with headroom", () => {
     stored.set("ovis:session-tab", "cost");
     const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
-    const points = [...(/<path d="([^"]+)"[^>]*stroke-dasharray/.exec(html)?.[1] ?? "").matchAll(/[ML][\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
-    // context 50K, 150K, 210.4K against the 210.4K peak (106 px tall, from y=110): summed input would put 150K near the floor
+    const points = [...(/<path d="([^"]+)"[^>]*stroke="var\(--accent\)"/.exec(html)?.[1] ?? "").matchAll(/[ML][\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
+    // context 50K, 150K, 210.4K against the 210.4K peak (86% of 120 px): summed input would put 150K near the floor
     expect(points.length).toBe(3);
-    expect(points[2]).toBeCloseTo(4, 0);
-    expect(points[1]).toBeCloseTo(110 - (150_000 / 210_400) * 106, 0);
+    expect(points[2]).toBeCloseTo(120 - 120 * 0.86, 0);
+    expect(points[1]).toBeCloseTo(120 - (150_000 / 210_400) * 120 * 0.86, 0);
   });
 
   it("Cost: a model with no price makes the total a floor and is named", () => {
     stored.set("ovis:session-tab", "cost");
     const models = [...chat().models, { model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
     const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
-    expect(words).toMatch(/Cost at list price ≥ \$\d/);
+    expect(words).toMatch(/This chat · at list price ≥ \$ \d/);
     expect(words).toContain("No price for fictional-unpriced.");
   });
 
@@ -171,7 +212,7 @@ describe("SessionSheet", () => {
     const small = { chat: chat({ context: 40_000 }), calls: CALLS };
     const cost = text(sheet({ read: quiet, prices: empty, cost: small }));
     expect(cost).not.toContain("Loading");
-    expect(cost).toContain("Cost at list price ≥ $0.00");
+    expect(cost).toContain("This chat · at list price ≥ $ 0 .00");
     expect(cost).toContain(`No price for ${MODEL}.`);
     const cache = text(sheet({ prices: empty }));
     expect(cache).toContain("Cooling");
@@ -194,12 +235,12 @@ describe("SessionSheet", () => {
     expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
   });
 
-  it("Cost: a floor is rounded down like All agents and Costs print it", () => {
+  it("Cost: a floor's cents are rounded down", () => {
     stored.set("ovis:session-tab", "cost");
-    // $149.60 of output at $25 per million, and a model with no price: a floor
-    const models = [{ model: MODEL, input: 0, cacheRead: 0, cacheWrite: 0, output: 5_984_000, calls: 1 }, { model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
+    // $149.60 of output at $25 per million (and a crumb below), and a model with no price: a floor
+    const models = [{ model: MODEL, input: 0, cacheRead: 0, cacheWrite: 0, output: 5_984_399, calls: 1 }, { model: "fictional-unpriced", input: 1000, cacheRead: 0, cacheWrite: 0, output: 10, calls: 1 }];
     const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models }), calls: CALLS } }));
-    expect(words).toContain("Cost at list price ≥ $149");
+    expect(words).toContain("This chat · at list price ≥ $ 149 .60");
   });
 
   it("names its actions apart from the history list's session-actions", () => {
@@ -213,5 +254,33 @@ describe("SessionSheet", () => {
     expect(text(sheet({ cost: null }))).toContain("Update the bridge on this PC to show costs.");
     stored.set("ovis:session-tab", "context");
     expect(text(sheet({ cost: null }))).toContain("210.4K / 400.0K tokens");
+  });
+
+  it("Context while the chat works: the last breakdown kept, the log's newer size, and a note", () => {
+    stored.set("ovis:session-tab", "context");
+    const busy = read({ busy: true, context: null });
+    const kept = { usage: { currentTokens: 150_000, tokenLimit: 400_000, parts: [{ category: "user" as const, label: "Messages", share: 60 }] }, at: Date.parse(ago(30)) };
+    const words = text(sheet({ read: busy, lastContext: kept, cost: { chat: chat({ context: 30_000, lastCallAt: ago(1) }), calls: CALLS } }));
+    // the log's last call (1 min ago) is newer than the kept breakdown (30 min ago): its size
+    expect(words).toContain("30.0K / 400.0K tokens");
+    expect(words).toContain("Messages");
+    expect(words).toContain("Breakdown as of the last finished turn.");
+    const older = text(sheet({ read: busy, lastContext: kept, cost: { chat: chat({ context: 30_000, lastCallAt: ago(45) }), calls: CALLS } }));
+    expect(older).toContain("150.0K / 400.0K tokens");
+  });
+
+  it("Context with nothing known: one line, never an empty tab", () => {
+    stored.set("ovis:session-tab", "context");
+    const busy = read({ busy: true, context: null });
+    expect(text(sheet({ read: busy, cost: { chat: chat({ context: null, lastCallAt: null }), calls: [] } }))).toContain("No context size yet.");
+    expect(text(sheet({ read: busy, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }))).toContain("40.0K tokens; the breakdown comes when the turn ends.");
+  });
+
+  it("Cache: captions under the countdown, working and idle", () => {
+    stored.set("ovis:session-tab", "cache");
+    const working = text(sheet({ read: read({ busy: true, context: { currentTokens: 40_000, tokenLimit: 400_000 } }), cost: { chat: chat({ context: 40_000, lastCallAt: ago(1) }), calls: CALLS } }));
+    expect(working).toContain("Kept warm while working Expires 60 min after the last call");
+    const idle = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, lastCallAt: ago(20) }), calls: CALLS } }));
+    expect(idle).toContain("40 min left Expires 60 min after the last call");
   });
 });

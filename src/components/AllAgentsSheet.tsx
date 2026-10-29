@@ -34,6 +34,7 @@ import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { AgentRowBody } from "./AgentSidebar.tsx";
 import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { RowMenu } from "./RowMenu.tsx";
+import { CostStack } from "./CostParts.tsx";
 import { onRowContextMenu } from "./Sidebar.tsx";
 import "./SessionSheet.css";
 
@@ -92,10 +93,10 @@ function rowCosts(rows: readonly HostChatRow[], answer: HostCostsAnswer, prices:
   return costs;
 }
 
-/** The Cost sort's meta line: the largest context the chat reached, and how often it wrote its cache again. */
+/** The Cost sort's meta line: the largest context the chat reached, and its cold restarts (the cache stored again after it expired). */
 const peakLine = (chat: HostChatCost, t: Translate): string => [
   chat.peak > 0 ? t("{size} peak", { size: tokens(chat.peak) }) : null,
-  chat.rewrites === 1 ? t("1 rewrite") : chat.rewrites > 1 ? t("{n} rewrites", { n: chat.rewrites }) : null,
+  chat.rewrites === 1 ? t("1 cold restart") : chat.rewrites > 1 ? t("{n} cold restarts", { n: chat.rewrites }) : null,
 ].filter(Boolean).join(" · ");
 
 export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: only, initialSort = "recent", onOpen, onClose }: AllAgentsSheetProps) {
@@ -156,6 +157,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const unpriced = prices !== null && prices.prices === null && prices.fallback === null;
   const costs = useMemo(() => (track && answer && prices && !unpriced ? rowCosts(pc.chats, answer, prices) : new Map<string, RowCost>()), [track, answer, prices, unpriced, pc.chats]);
   const costed = costs.size > 0;
+  // a bridge from before costs: each row says so in the cost's place, never blank space
+  const oldBridge = track && answer === null;
   const byCostOn = costed && sort === "cost";
   // a search looks in the archived ones too: what it finds there is shown
   const showArchived = archivedOpen || (words !== "" && archived.length > 0);
@@ -173,7 +176,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     const cache = cost ? cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working") : null;
     // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing
     const dot = cache && cache.state !== "cold" ? cache.state : null;
-    const shares = cost ? cost.reads + cost.writes + cost.output : 0;
+    const localOnly = cost !== undefined && cost.usd === 0 && cost.local.length > 0 && cost.missing.length === 0;
     const menuOpen = menu?.session === row.session;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { session: row.session, anchor, point, previousFocus });
@@ -187,12 +190,11 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
             {dot && <span className={`session-dot is-${dot}`} title={t(dot === "warm" ? "Cache warm" : "Cache cooling")}>
               <span className="visually-hidden">{t(dot === "warm" ? "Cache warm" : "Cache cooling")}</span>
             </span>}
-            <span className={`all-agents-usd${cost.floor ? " is-floor" : ""}`}>{listUsd(cost.usd, cost.floor)}</span>
+            <span className={`all-agents-usd${cost.floor ? " is-floor" : ""}`}>{localOnly ? t("$0 · local") : listUsd(cost.usd, cost.floor)}</span>
           </span>
-          <span className="all-agents-split" aria-hidden="true">
-            {(["reads", "writes", "output"] as const).map((part) => <span key={part} className={`is-${part}`} style={{ width: `${shares > 0 ? (cost[part] / shares) * 100 : 0}%` }} />)}
-          </span>
+          {!localOnly && <CostStack split={cost} className="cost-mini all-agents-split" />}
         </span>}
+        {!cost && oldBridge && <span className="all-agents-cost"><span className="all-agents-usd is-floor">{t("Update the bridge")}</span></span>}
       </button>
       {actions && <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>

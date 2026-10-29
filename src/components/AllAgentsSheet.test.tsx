@@ -20,8 +20,9 @@ const row = (session: string, minutes: number, over: Partial<HostChatRow> = {}):
   ({ session, title: `FICTIONAL ${session}`, status: "idle", modified_at: ago(minutes), cwd: "/w/fictional", unread: false, archived: false, ...over });
 const cost = (session: string, models: HostChatCost["models"], over: Partial<HostChatCost> = {}): HostChatCost =>
   ({ session, models, lastCallAt: ago(5), context: 120_000, peak: 329_000, rewrites: 3, days: {}, partial: false, ...over });
-// the prompt holds the read, not the write: fresh 0.4M × $5 = $2, reads 5M × $0.5 = $2.5, writes 0.85M × $10 = $8.5, output 1M × $25 = $25: $38
-const BIG = [{ model: MODEL, input: 5_400_000, cacheRead: 5_000_000, cacheWrite: 850_000, output: 1_000_000, calls: 200 }];
+// the prompt holds the read, not the write: fresh 0.4M × $5 = $2, reads 5M × $0.5 = $2.5, storing 0.45M and
+// cold restarts 0.4M × $10 = $4.5 + $4, output 1M × $25 = $25: $38
+const BIG = [{ model: MODEL, input: 5_400_000, cacheRead: 5_000_000, cacheWrite: 850_000, coldWrite: 400_000, output: 1_000_000, calls: 200 }];
 // reads 1M × $0.5 = $0.5, output 0.1M × $25 = $2.5: $3
 const SMALL = [{ model: MODEL, input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, output: 100_000, calls: 20 }];
 
@@ -108,13 +109,13 @@ describe("All agents with costs tracked", () => {
     expect(urls.sort()).toEqual(["/api/machines/desk/host-chats/costs", "/api/usage/omniroute/pricing"]);
   });
 
-  it("gives a Copilot row its cost and a 3-part split bar", async () => {
+  it("gives a Copilot row its cost and a split bar of the five parts it spent on", async () => {
     const sheet = await open(true);
     const big = rowOf(sheet, "copilotcli:/big");
     expect(textOf(classed(big, "all-agents-usd")[0]!)).toBe("~$38");
     const bar = classed(big, "all-agents-split")[0]!;
     expect(bar.props["aria-hidden"]).toBe("true");
-    expect(bar.children.map((part) => (part as ReactTestInstance).props["className"])).toEqual(["is-reads", "is-writes", "is-output"]);
+    expect(bar.children.map((part) => (part as ReactTestInstance).props["className"])).toEqual(["cost-part is-reads", "cost-part is-writes", "cost-part is-restarts", "cost-part is-output", "cost-part is-fresh"]);
     expect(textOf(classed(rowOf(sheet, "copilotcli:/small"), "all-agents-usd")[0]!)).toBe("~$3.00");
   });
 
@@ -153,7 +154,7 @@ describe("All agents with costs tracked", () => {
     expect(textOf(classed(sheet.root, "all-agents-total")[0]!)).toStartWith("≥ $41");
   });
 
-  it("sorts by cost: one flat list, biggest first, without the rows that have no cost, peak and rewrites said", async () => {
+  it("sorts by cost: one flat list, biggest first, without the rows that have no cost, peak and cold restarts said", async () => {
     const sheet = await open(true);
     const cost = sheet.root.find((each) => each.type === "button" && textOf(each) === "Cost");
     await act(async () => { cost.props["onClick"](); });
@@ -162,7 +163,7 @@ describe("All agents with costs tracked", () => {
     expect(classed(sheet.root, "all-agents-age")).toEqual([]);
     // its own line under the place, so a phone's narrow row never cuts it off after the folder and age
     const peak = (session: string) => classed(rowOf(sheet, session), "agent-tokens").map(textOf);
-    expect(peak("copilotcli:/big")).toEqual(["329K peak · 3 rewrites"]);
+    expect(peak("copilotcli:/big")).toEqual(["329K peak · 3 cold restarts"]);
     expect(peak("copilotcli:/small")).toEqual(["40K peak"]);
     expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "agent-context")[0]!)).not.toContain("peak");
   });
@@ -171,15 +172,28 @@ describe("All agents with costs tracked", () => {
     expect(rows(await open(true, { initialSort: "cost" }))).toEqual(["copilotcli:/big", "copilotcli:/small"]);
   });
 
-  it("shows no cost, and no error, for a PC whose bridge predates costs (404)", async () => {
+  it("says to update the bridge in each row's cost place, and no error, for a PC whose bridge predates costs (404)", async () => {
     costsReply = { status: 404, body: { error: { code: "not_found", message: "unknown endpoint /api/host-chats/costs" } } };
     const sheet = await open(true, { initialSort: "cost" });
     expect(rows(sheet)).toEqual(["copilotcli:/small", "copilotcli:/none", "copilotcli:/big"]);
-    expect(classed(sheet.root, "all-agents-cost")).toEqual([]);
+    expect(classed(sheet.root, "all-agents-cost").map(textOf)).toEqual(["Update the bridge", "Update the bridge", "Update the bridge"]);
+    expect(classed(sheet.root, "all-agents-split")).toEqual([]);
     expect(classed(sheet.root, "all-agents-toolbar")).toEqual([]);
     expect(classed(sheet.root, "all-agents-subtotal")).toEqual([]);
     expect(textOf(sheet.root)).toContain("Update the bridge on this PC to show costs.");
     expect(textOf(sheet.root)).not.toContain("Error");
+  });
+});
+
+describe("All agents with local models", () => {
+  it("prices a local model's chat $0 · local with no bar, and names no missing price", async () => {
+    const LOCAL = [{ model: "litellm/desktop-coder-heretic", input: 2_000_000, cacheRead: 0, cacheWrite: 0, output: 50_000, calls: 30 }];
+    costsReply = { status: 200, body: { chats: [cost("copilotcli:/big", BIG), cost("copilotcli:/small", LOCAL)], complete: true } };
+    const sheet = await open(true);
+    const small = rowOf(sheet, "copilotcli:/small");
+    expect(classed(small, "all-agents-usd").map(textOf)).toEqual(["$0 · local"]);
+    expect(classed(small, "all-agents-split")).toEqual([]);
+    expect(classed(sheet.root, "all-agents-missing")).toEqual([]);
   });
 });
 

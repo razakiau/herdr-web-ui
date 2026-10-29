@@ -52,7 +52,6 @@ export const SIDEBAR_KO: Record<string, string> = {
   "{n} finished": "{n}개 완료",
   "{n} resting": "{n}개 쉬는 중",
   "Show all ({n} more)": "모두 보기 ({n}개 더)",
-  "now": "방금",
   "{n}h": "{n}시간",
   "{n}d": "{n}일",
   "For {time}": "{time} 경과",

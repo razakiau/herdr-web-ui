@@ -1,9 +1,49 @@
-/* The sidebar's costs chip (ZAC-260): a plan chip's strip (UsageMeters.css .usage-strip, no outline)
-   holding one figure, after the plan meters, which take the rest of the row */
+/* The sidebar's costs chip (ZAC-260, D2): a plan chip's strip (UsageMeters.css .usage-strip, no
+   outline) after the plan meters: the amount in the UI's sans (not mono) with the period in small
+   caps, over a thin bar split in the cost colours (SessionSheet.css .cost-part) */
 .costs-chip {
   flex: none;
   padding-inline: var(--space-2);
 }
+
+.costs-chip-body {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.costs-chip-top {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.costs-chip-usd {
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.costs-chip-body.is-floor .costs-chip-usd { color: var(--text-dim); }
+
+.costs-chip-period {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.costs-chip-bar {
+  height: 2px;
+  gap: 1px;
+}
+
+.costs-chip-bar > span { min-width: 1px; }
 
 /* The Costs sheet: periods, the total over the Session sheet's stack (SessionSheet.css), By PC */
 .costs-body {
@@ -51,7 +91,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-.costs-legend .session-swatch { margin-right: var(--space-1); }
+.costs-legend .cost-dot { margin-right: var(--space-1); }
+
+.costs-stack { height: 10px; }
 
 .costs-group { min-width: 0; }
 
@@ -98,6 +140,21 @@
   font-weight: var(--fw-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.costs-pc-cost {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+/* a row's 56×4 split, as in All agents */
+.cost-mini {
+  width: 56px;
+  height: 4px;
+  gap: 1px;
 }
 
 .costs-pc-usd {

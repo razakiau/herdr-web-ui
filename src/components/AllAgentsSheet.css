@@ -126,13 +126,9 @@
   white-space: nowrap;
 }
 .all-agents-usd.is-floor { color: var(--text-dim); font-weight: var(--fw-regular); }
-/* its colours are the Session sheet's Cost tab's, set there (SessionSheet.css .session-stack) */
+/* its colours and size are the cost views' own (SessionSheet.css .cost-part, CostsSheet.css .cost-mini) */
 .all-agents-split {
-  display: flex;
-  gap: 1px;
   width: 56px;
   height: 4px;
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-  background: var(--bg-hover);
+  gap: 1px;
 }
