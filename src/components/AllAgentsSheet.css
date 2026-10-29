@@ -8,7 +8,11 @@
   --side-hover: var(--bg-hover);
   --side-selected: var(--bg-hover);
 }
-.all-agents .modal-body { display: flex; flex-direction: column; gap: var(--space-2); }
+/* the header's three rows (search, pills, summary) 10 px apart, then a hairline and the list (owner's option A) */
+.all-agents .modal-header { border-bottom: 0; padding-bottom: var(--space-3); }
+/* the dialog takes the focus on opening (AllAgentsSheet.tsx): it is no control, so no ring */
+.all-agents:focus { outline: none; }
+.all-agents .modal-body { display: flex; flex-direction: column; gap: 10px; padding-top: 0; }
 /* a search field of the app's own: a lens inside it, and a phone's thumb-sized height (the app's
    34 px control reads cramped as the sheet's one field) */
 .all-agents-search {
@@ -27,7 +31,7 @@
 }
 .all-agents-search .input {
   width: 100%;
-  height: calc(var(--control-h) + var(--space-2));
+  height: 44px;
   padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
   border-radius: var(--radius-lg);
 }
@@ -36,7 +40,19 @@
 .all-agents .agent-item { padding-right: 0; }
 /* a row with a chat's ⋯ keeps the state cell's room after it, as an Agents row does */
 .all-agents .agent-item:has(> .agent-actions) { padding-right: var(--side-box); }
-.all-agents .agent-row { gap: var(--space-2); }
+/* two lines with air above and below, and a faint rule between rows, so they never touch */
+.all-agents .agent-row { gap: var(--space-2); padding-block: var(--space-2); }
+.all-agents-group .agent-item + .agent-item { border-top: var(--hairline) solid color-mix(in srgb, var(--border) 60%, transparent); }
+/* the ⋯ keeps its look and gets a thumb's 44 × 44 target */
+.all-agents .row-menu-toggle { position: relative; }
+.all-agents .row-menu-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
 .all-agents-group .agent-list { margin: 0; padding: 0; list-style: none; }
 .all-agents-age,
 .all-agents-archived {
@@ -46,59 +62,66 @@
 }
 .all-agents-archived { width: 100%; gap: var(--space-1); cursor: pointer; }
 .all-agents-archived svg { flex: none; width: var(--space-4); height: var(--space-4); }
-/* the folder pills: one line that scrolls sideways under a thumb, the picked one tinted in the selection amber */
+/* the sort chip and the folder pills: one line that scrolls sideways under a thumb, the picked
+   folder tinted in the selection amber; its end fades while there is more to scroll to */
 .all-agents-pills {
   display: flex;
   flex: none;
-  gap: var(--space-1);
+  gap: 6px;
   margin-inline: calc(var(--space-1) * -1);
-  padding: 2px var(--space-1);
+  padding: 4px var(--space-1);
   overflow-x: auto;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
 }
+.all-agents-pills.has-more { mask-image: linear-gradient(to right, currentColor calc(100% - var(--space-8)), transparent); }
 .all-agents-pills::-webkit-scrollbar { display: none; }
+.all-agents-folders { display: contents; }
 .all-agents-pill {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
   max-width: 16rem;
-  height: calc(var(--control-h) - 2px);
-  padding-inline: var(--space-3);
+  height: 36px;
+  padding-inline: 14px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
+/* 36 px drawn, 44 px to a thumb */
+.all-agents-pill::before { content: ""; position: absolute; inset: -4px 0; }
 .all-agents-pill:hover { background: var(--bg-hover); color: var(--text-strong); }
 .all-agents-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .all-agents-pill.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--text-strong); }
 .all-agents-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.all-agents-pill-count { font-variant-numeric: tabular-nums; opacity: 0.7; }
-/* costs tracked (ZAC-260): Recent · Cost on the left, the list's total on the right */
-.all-agents-toolbar {
+.all-agents-pill-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+/* the sort chip: a pill of its own on the raised ground, outlined in amber while its menu is open */
+.all-agents-sort { gap: var(--space-1); background: var(--bg-elevated); }
+.all-agents-sort.is-open { border-color: var(--accent); color: var(--text-strong); }
+.all-agents-sort > svg { flex: none; width: 14px; height: 14px; color: var(--text-dim); }
+/* the list's summary: its total, how many chats of which folder, and the split of what it spent */
+.all-agents-summary {
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-.all-agents-total {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
   margin: 0;
   color: var(--text-dim);
   font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
-.all-agents-total strong { color: var(--text-strong); font-size: var(--fs-md); font-weight: var(--fw-semibold); }
-.all-agents-total strong.is-floor { color: var(--text); }
+.all-agents-summary-total { color: var(--text-strong); font-size: var(--fs-md); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.all-agents-summary-total.is-floor { color: var(--text); }
+.all-agents-summary-scope { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.all-agents-summary-split { flex: 1 1 0; min-width: var(--space-8); height: 4px; gap: 1px; }
+/* the list under a hairline, the full width of the sheet */
+.all-agents-list-start { flex: none; height: 0; margin: 0 calc(var(--space-5) * -1); border: 0; border-top: var(--hairline) solid var(--border); }
 /* an age with its subtotal at the right, in figures rather than the label's capitals */
 .all-agents-age.is-costed { display: flex; justify-content: space-between; gap: var(--space-2); }
 .all-agents-age.is-costed > span:first-child { overflow: hidden; text-overflow: ellipsis; }

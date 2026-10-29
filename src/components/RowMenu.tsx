@@ -59,6 +59,8 @@ interface Props {
   onClose: () => void;
   /** `paths`: each hint is a path; the menu is wider and a long path gives way before its label */
   variant?: "paths";
+  /** a popover at every width: a short pick-one menu under its chip (All agents' sort), which a phone's sheet would carry away from what it changes */
+  popover?: boolean;
 }
 
 const GAP = 4;
@@ -67,9 +69,9 @@ const POPOVER_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 // the sheet is modal: its Cancel is one of the stops
 const SHEET_ITEMS = '.row-sheet-item, .row-sheet-cancel';
 
-export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, detail, header, items, align = "end", onClose, variant }: Props) {
+export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, detail, header, items, align = "end", onClose, variant, popover = false }: Props) {
   const t = useT();
-  const sheet = useMediaQuery(SHEET_QUERY);
+  const sheet = useMediaQuery(SHEET_QUERY) && !popover;
   const surface = useRef<HTMLDivElement>(null);
   useSheetSwipe(surface, sheet ? onClose : null);
   // Back closes the sheet, not the pane under it

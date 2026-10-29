@@ -60,6 +60,8 @@ beforeEach(() => {
     localStorage: { getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => records.set(key, value) },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
+    requestAnimationFrame: () => 0,
+    innerWidth: 390, innerHeight: 844,
   } });
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
     documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } },
@@ -85,10 +87,17 @@ afterEach(async () => {
   descriptors.clear();
 });
 
+/** a DOM node enough for the sheet's refs (the focus trap, the sort menu's popover, the pills' fade) */
+const nodeMock = () => ({
+  focus() {}, contains: () => false, closest: () => null, isConnected: true, querySelector: () => null, querySelectorAll: () => [],
+  addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+  offsetWidth: 200, offsetHeight: 80, scrollLeft: 0, scrollWidth: 0, clientWidth: 0, style: {},
+});
+
 async function open(track: boolean, props: { initialSort?: "recent" | "cost" } = {}): Promise<ReactTestRenderer> {
   records.set(SETTINGS_STORAGE_KEY, JSON.stringify({ trackCosts: track }));
   const sheet = createElement(AllAgentsSheet, { machineId: "desk", machineName: "Desk", pc: { host: null, chats: CHATS }, selected: null, onOpen: () => {}, onClose: () => {}, ...props });
-  await act(async () => { renderer = create(createElement(SettingsProvider, { children: sheet })); });
+  await act(async () => { renderer = create(createElement(SettingsProvider, { children: sheet }), { createNodeMock: nodeMock }); });
   // the costs and the prices answer
   for (let turn = 0; turn < 10; turn++) await act(async () => { await Promise.resolve(); });
   return renderer!;
@@ -131,18 +140,49 @@ describe("All agents with costs tracked", () => {
     expect(classed(rowOf(sheet, "copilotcli:/big"), "session-dot")).toEqual([]);
   });
 
-  it("gives each age group its subtotal and the list its total", async () => {
+  it("gives each age group its subtotal, and the list a summary line: total, chats, scope and the split", async () => {
     const sheet = await open(true);
     const subtotals = classed(sheet.root, "all-agents-subtotal").map(textOf);
     expect(subtotals).toEqual(["~$3.00", "~$38"]);
-    expect(textOf(classed(sheet.root, "all-agents-total")[0]!)).toBe("~$41Copilot chats");
+    expect(textOf(classed(sheet.root, "all-agents-summary-total")[0]!)).toBe("~$41");
+    expect(textOf(classed(sheet.root, "all-agents-summary-scope")[0]!)).toBe("3 chats · all folders");
+    expect(classed(classed(sheet.root, "all-agents-summary")[0]!, "cost-part")).toHaveLength(5);
+    // the old toggle and its "Copilot chats" total are gone
+    for (const gone of ["all-agents-toolbar", "all-agents-total", "segmented"]) expect(classed(sheet.root, gone)).toEqual([]);
   });
 
   it("totals only what the search keeps", async () => {
     const sheet = await open(true);
     const search = sheet.root.find((each) => each.type === "input");
     await act(async () => { search.props["onChange"]({ target: { value: "small" } }); });
-    expect(textOf(classed(sheet.root, "all-agents-total")[0]!)).toBe("~$3.00Copilot chats");
+    expect(textOf(classed(sheet.root, "all-agents-summary-total")[0]!)).toBe("~$3.00");
+    expect(textOf(classed(sheet.root, "all-agents-summary-scope")[0]!)).toBe("1 chat · all folders");
+  });
+
+  it("puts a sort chip first in the pill row; its menu sorts by cost and back, the pick checked", async () => {
+    const sheet = await open(true);
+    const chip = () => classed(sheet.root, "all-agents-sort")[0]!;
+    expect(textOf(chip())).toBe("Recent");
+    expect(chip().props["aria-haspopup"]).toBe("menu");
+    await act(async () => { chip().props["onClick"]({ currentTarget: nodeMock() }); });
+    expect(chip().props["aria-expanded"]).toBe(true);
+    const items = () => sheet.root.findAll((each) => each.type === "button" && each.props["role"] === "menuitemcheckbox");
+    expect(items().map((item) => [textOf(item), item.props["aria-checked"]])).toEqual([["Recent", true], ["Cost, highest first", false]]);
+    await act(async () => { items()[1]!.props["onClick"](); });
+    expect(items()).toEqual([]);
+    expect(textOf(chip())).toBe("Cost");
+    expect(rows(sheet)).toEqual(["copilotcli:/big", "copilotcli:/small"]);
+  });
+
+  it("says a row's cold restarts on its second line after the folder and age, in both sorts, and no peak", async () => {
+    for (const sort of ["recent", "cost"] as const) {
+      const sheet = await open(true, { initialSort: sort });
+      expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 3 cold restarts$/);
+      expect(textOf(classed(rowOf(sheet, "copilotcli:/small"), "agent-context")[0]!)).not.toContain("cold restart");
+      expect(classed(sheet.root, "agent-tokens")).toEqual([]);
+      expect(textOf(sheet.root)).not.toContain("peak");
+      await act(async () => { renderer?.unmount(); });
+    }
   });
 
   it("makes a partly read chat, and every total while the bridge's first scan runs, a floor", async () => {
@@ -151,34 +191,28 @@ describe("All agents with costs tracked", () => {
     expect(textOf(classed(rowOf(sheet, "copilotcli:/small"), "all-agents-usd")[0]!)).toBe("≥ $3.00");
     expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "all-agents-usd")[0]!)).toBe("≥ $38");
     expect(classed(sheet.root, "all-agents-subtotal").map(textOf)).toEqual(["≥ $3.00", "≥ $38"]);
-    expect(textOf(classed(sheet.root, "all-agents-total")[0]!)).toStartWith("≥ $41");
+    expect(textOf(classed(sheet.root, "all-agents-summary-total")[0]!)).toBe("≥ $41");
   });
 
-  it("sorts by cost: one flat list, biggest first, without the rows that have no cost, peak and cold restarts said", async () => {
-    const sheet = await open(true);
-    const cost = sheet.root.find((each) => each.type === "button" && textOf(each) === "Cost");
-    await act(async () => { cost.props["onClick"](); });
-    expect(cost.props["aria-pressed"]).toBe(true);
+  it("sorts by cost: one flat list, biggest first, without the rows that have no cost, the summary kept", async () => {
+    const sheet = await open(true, { initialSort: "cost" });
     expect(rows(sheet)).toEqual(["copilotcli:/big", "copilotcli:/small"]);
     expect(classed(sheet.root, "all-agents-age")).toEqual([]);
-    // its own line under the place, so a phone's narrow row never cuts it off after the folder and age
-    const peak = (session: string) => classed(rowOf(sheet, session), "agent-tokens").map(textOf);
-    expect(peak("copilotcli:/big")).toEqual(["329K peak · 3 cold restarts"]);
-    expect(peak("copilotcli:/small")).toEqual(["40K peak"]);
-    expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "agent-context")[0]!)).not.toContain("peak");
+    expect(textOf(classed(sheet.root, "all-agents-summary-total")[0]!)).toBe("~$41");
   });
 
   it("opens sorted by cost when asked to", async () => {
     expect(rows(await open(true, { initialSort: "cost" }))).toEqual(["copilotcli:/big", "copilotcli:/small"]);
   });
 
-  it("says to update the bridge in each row's cost place, and no error, for a PC whose bridge predates costs (404)", async () => {
+  it("says to update the bridge once, in a banner, and no error, for a PC whose bridge predates costs (404)", async () => {
     costsReply = { status: 404, body: { error: { code: "not_found", message: "unknown endpoint /api/host-chats/costs" } } };
     const sheet = await open(true, { initialSort: "cost" });
     expect(rows(sheet)).toEqual(["copilotcli:/small", "copilotcli:/none", "copilotcli:/big"]);
-    expect(classed(sheet.root, "all-agents-cost").map(textOf)).toEqual(["Update the bridge", "Update the bridge", "Update the bridge"]);
+    // the rows carry no cost cell and no text of their own: the banner says it
+    expect(classed(sheet.root, "all-agents-cost")).toEqual([]);
     expect(classed(sheet.root, "all-agents-split")).toEqual([]);
-    expect(classed(sheet.root, "all-agents-toolbar")).toEqual([]);
+    for (const gone of ["all-agents-sort", "all-agents-summary"]) expect(classed(sheet.root, gone)).toEqual([]);
     expect(classed(sheet.root, "all-agents-subtotal")).toEqual([]);
     expect(textOf(sheet.root)).toContain("Update the bridge on this PC to show costs.");
     expect(textOf(sheet.root)).not.toContain("Error");
@@ -212,7 +246,7 @@ describe("All agents without prices", () => {
   it("shows no figure at all, and says why, when the price table could not be had", async () => {
     pricesReply = { prices: null, fallback: null };
     const sheet = await open(true);
-    for (const name of ["all-agents-cost", "all-agents-toolbar", "all-agents-subtotal", "all-agents-total"]) expect(classed(sheet.root, name)).toEqual([]);
+    for (const name of ["all-agents-cost", "all-agents-sort", "all-agents-subtotal", "all-agents-summary"]) expect(classed(sheet.root, name)).toEqual([]);
     expect(textOf(sheet.root)).not.toContain("$0");
     expect(textOf(sheet.root)).toContain("Prices are unavailable: costs not shown.");
   });
@@ -223,7 +257,7 @@ describe("All agents with costs not tracked", () => {
     const sheet = await open(false, { initialSort: "cost" });
     expect(urls).toEqual([]);
     expect(rows(sheet)).toEqual(["copilotcli:/small", "copilotcli:/none", "copilotcli:/big"]);
-    for (const name of ["all-agents-cost", "all-agents-toolbar", "all-agents-subtotal", "all-agents-total", "session-dot"]) expect(classed(sheet.root, name)).toEqual([]);
+    for (const name of ["all-agents-cost", "all-agents-sort", "all-agents-subtotal", "all-agents-summary", "session-dot"]) expect(classed(sheet.root, name)).toEqual([]);
     expect(classed(sheet.root, "all-agents-age").map(textOf)).toEqual(["Today", "Last 7 days"]);
   });
 });
