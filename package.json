@@ -22,6 +22,7 @@
     "test:ui": "bun run build && bun scripts/ui-regression.ts && bun scripts/ui-contexts-regression.ts && bun scripts/sticky-modifiers-regression.ts",
     "generate:types": "bun run scripts/generate-protocol-types.ts",
     "generate:themes": "bun run scripts/generate-themes.ts",
+    "generate:file-icons": "bun run scripts/generate-file-icons.ts",
     "build:remote": "bun run scripts/build-remote-bundle.ts",
     "build:site": "bun scripts/build-site.ts",
     "test:ssh": "bun run scripts/ssh-integration.ts"
@@ -29,6 +30,7 @@
   "dependencies": {
     "@legendapp/list": "3.3.5",
     "@lydell/node-pty": "1.1.0",
+    "@microsoft/agent-host-protocol": "1.0.0",
     "@pierre/diffs": "1.5.2",
     "@tanstack/highlight": "^1.0.0",
     "@xterm/addon-fit": "^0.10.0",
@@ -39,6 +41,7 @@
     "katex": "^0.18.9",
     "lucide-react": "^1.47.0",
     "mermaid": "^12.1.0",
+    "pele": "1.6.0",
     "qrcode-generator": "^2.0.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -52,6 +55,7 @@
     "@types/react-test-renderer": "^19.1.0",
     "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.1.2",
+    "material-icon-theme": "5.39.0",
     "playwright-core": "^1.49.1",
     "react-test-renderer": "19.3.0",
     "typescript": "^7.0.2",
