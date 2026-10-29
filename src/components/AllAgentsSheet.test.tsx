@@ -236,6 +236,8 @@ describe("All agents with costs tracked", () => {
     expect(rows(sheet)).toEqual(["copilotcli:/big", "copilotcli:/small"]);
     expect(classed(sheet.root, "all-agents-age")).toEqual([]);
     expect(textOf(classed(sheet.root, "all-agents-summary-total")[0]!)).toBe("~$41");
+    // the count is of the rows the Cost list shows: "none", without a cost, is not among them
+    expect(textOf(classed(sheet.root, "all-agents-summary-scope")[0]!)).toBe("2 chats · all folders");
   });
 
   it("opens sorted by cost when asked to", async () => {

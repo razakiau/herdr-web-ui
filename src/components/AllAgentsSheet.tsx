@@ -172,7 +172,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   // the total is what the list shows now: the search's and the folder's chats, the archived ones while unfolded
   const shownRows = [...found.filter((row) => !row.archived), ...(showArchived ? archived : [])];
   const total = groupSubtotal(shownRows, costs);
-  const shownCount = shownRows.length;
+  // the Cost list leaves out the chats without a cost: its count does too
+  const shownCount = byCostOn ? shownRows.filter((row) => costs.has(row.session)).length : shownRows.length;
 
   const item = (row: HostChatRow) => {
     const title = hostChatTitle(row, t);
