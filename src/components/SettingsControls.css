@@ -61,6 +61,11 @@
   flex: 0 0 auto;
 }
 
+/* a setting that waits on another one: faded, as a hidden usage account is, and its control off */
+.settings-row.is-dimmed {
+  opacity: 0.45;
+}
+
 .settings-row-text {
   display: flex;
   flex: 1 1 auto;
@@ -170,6 +175,12 @@
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   text-align: center;
+}
+
+/* a number typed in (SettingsDialog.tsx NumberField): wide enough for four digits and the spinner */
+.settings-number {
+  width: 7em;
+  font-family: var(--font-mono);
 }
 
 .settings-select {

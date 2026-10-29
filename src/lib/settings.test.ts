@@ -1112,3 +1112,25 @@ describe("agent host settings", () => {
     for (const key of ["hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "usageGroup"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
   });
 });
+
+describe("chat costs", () => {
+  it("defaults track costs off with 150K and 60 min", () => {
+    expect(DEFAULT_SETTINGS).toMatchObject({ trackCosts: false, costHandoffAt: 150_000, cacheLifetimeMin: 60 });
+    expect(sanitizeSettings({})).toMatchObject({ trackCosts: false, costHandoffAt: 150_000, cacheLifetimeMin: 60 });
+    expect(sanitizeSettings({ trackCosts: true }).trackCosts).toBe(true);
+    for (const bad of ["true", 1, null]) expect(sanitizeSettings({ trackCosts: bad }).trackCosts).toBe(false);
+    for (const key of ["trackCosts", "costHandoffAt", "cacheLifetimeMin"]) expect(key in telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toBe(false);
+  });
+
+  it("clamps cacheLifetimeMin to 5..240 and costHandoffAt to 20K..1M", () => {
+    expect(sanitizeSettings({ cacheLifetimeMin: 1 }).cacheLifetimeMin).toBe(5);
+    expect(sanitizeSettings({ cacheLifetimeMin: 999 }).cacheLifetimeMin).toBe(240);
+    expect(sanitizeSettings({ cacheLifetimeMin: 30.6 }).cacheLifetimeMin).toBe(31);
+    expect(sanitizeSettings({ costHandoffAt: 5 }).costHandoffAt).toBe(20_000);
+    expect(sanitizeSettings({ costHandoffAt: 5_000_000 }).costHandoffAt).toBe(1_000_000);
+    expect(sanitizeSettings({ costHandoffAt: 200_000.4 }).costHandoffAt).toBe(200_000);
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, "90", null]) {
+      expect(sanitizeSettings({ cacheLifetimeMin: bad, costHandoffAt: bad })).toMatchObject({ cacheLifetimeMin: 60, costHandoffAt: 150_000 });
+    }
+  });
+});

@@ -202,6 +202,12 @@ export interface Settings {
   hostShowArchived: boolean;
   /** endless animations draw every frame instead of stepping (src/styles.css [data-motion="smooth"]) */
   smoothMotion: boolean;
+  /** a Copilot chat's cache timer, Session sheet (Cache, Cost) and costs in All agents; off is the app without them */
+  trackCosts: boolean;
+  /** the context size in tokens above which the Session sheet suggests a handoff */
+  costHandoffAt: number;
+  /** how long the provider keeps a prompt cache, in minutes (OmniRoute sends `ttl: 1h`) */
+  cacheLifetimeMin: number;
 }
 
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
@@ -217,7 +223,8 @@ type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton"
-  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion">;
+  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion"
+  | "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -309,6 +316,8 @@ export const SETTING_SCOPE = {
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
   usageGroup: "shared", hostChatsShown: "shared", hostAutoOpen: "shared", hostNewModel: "shared", hostNewApprovals: "shared", hostShowArchived: "shared",
   smoothMotion: "shared",
+  // this device's until shared/preferences.ts carries them
+  trackCosts: "device", costHandoffAt: "device", cacheLifetimeMin: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -383,6 +392,9 @@ export const DEFAULT_SETTINGS: Settings = {
   hostNewApprovals: null,
   hostShowArchived: true,
   smoothMotion: false,
+  trackCosts: false,
+  costHandoffAt: 150_000,
+  cacheLifetimeMin: 60,
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -431,6 +443,16 @@ export const CHAT_FONT_MIN = 11;
 export const CHAT_FONT_MAX = 24;
 /** each density's body size, --fs-md in src/styles.css: the interface's size when none is chosen, and through it the chat's */
 const BODY_FONT: Record<Density, number> = { comfortable: 14, compact: 13 };
+
+export const CACHE_LIFETIME_MIN = 5;
+export const CACHE_LIFETIME_MAX = 240;
+export const COST_HANDOFF_MIN = 20_000;
+export const COST_HANDOFF_MAX = 1_000_000;
+
+/** A whole number between the limits, or the fallback for anything that is not a finite number. */
+function clampWhole(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
+}
 
 function clampFont(size: number): number {
   return Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(size)));
@@ -573,6 +595,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     hostNewApprovals: typeof record["hostNewApprovals"] === "string" && record["hostNewApprovals"] !== "" && record["hostNewApprovals"].length <= 64 ? record["hostNewApprovals"] : DEFAULT_SETTINGS.hostNewApprovals,
     hostShowArchived: typeof record["hostShowArchived"] === "boolean" ? record["hostShowArchived"] : DEFAULT_SETTINGS.hostShowArchived,
     smoothMotion: typeof record["smoothMotion"] === "boolean" ? record["smoothMotion"] : DEFAULT_SETTINGS.smoothMotion,
+    trackCosts: typeof record["trackCosts"] === "boolean" ? record["trackCosts"] : DEFAULT_SETTINGS.trackCosts,
+    costHandoffAt: clampWhole(record["costHandoffAt"], COST_HANDOFF_MIN, COST_HANDOFF_MAX, DEFAULT_SETTINGS.costHandoffAt),
+    cacheLifetimeMin: clampWhole(record["cacheLifetimeMin"], CACHE_LIFETIME_MIN, CACHE_LIFETIME_MAX, DEFAULT_SETTINGS.cacheLifetimeMin),
   };
 }
 
