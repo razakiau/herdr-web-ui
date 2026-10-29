@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
-import { chatAge } from "./hostChats.ts";
+import { chatAge, fetchChatCost, fetchHostCosts } from "./hostChats.ts";
 import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, sendHostPendingNow, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -52,6 +52,24 @@ describe("host chats per PC", () => {
     answer(503, { error: { code: "agent_host_down", message: "down" }, host: { state: "no_server" } });
     const down = await fetchHostChats("desk").catch((error: unknown) => error);
     expect(isHostChatsOff(down)).toBe(false);
+  });
+
+  it("asks the PC's bridge for its costs, and one chat's with its calls", async () => {
+    const urls = answer(200, { chats: [], complete: true });
+    expect(await fetchHostCosts("desk")).toEqual({ chats: [], complete: true });
+    answer(200, { chat: null, calls: [] });
+    expect(await fetchChatCost("local", "copilotcli:/x")).toEqual({ chat: null, calls: [] });
+    expect(urls).toEqual(["/api/machines/desk/host-chats/costs"]);
+  });
+
+  it("fetchHostCosts returns null on a 404 not_found (a bridge from before costs), and throws a down host", async () => {
+    answer(404, { error: { code: "not_found", message: "unknown endpoint /api/host-chats/costs" } });
+    expect(await fetchHostCosts("desk")).toBeNull();
+    expect(await fetchChatCost("desk", "copilotcli:/x")).toBeNull();
+    answer(404, { error: { code: "host_chats_off", message: "off" } });
+    expect(await fetchHostCosts("desk")).toBeNull();
+    answer(503, { error: { code: "agent_host_down", message: "down" } });
+    expect(await fetchHostCosts("desk").catch((error: unknown) => error)).toBeInstanceOf(ApiError);
   });
 
   it("says what a host that is not ready needs, and nothing for a signed-in one", () => {

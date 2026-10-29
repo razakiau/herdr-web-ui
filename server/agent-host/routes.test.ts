@@ -12,7 +12,10 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, type LeaseClock, type AgentHost } from "./routes.ts";
+import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, setCostIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
+import { CostIndex } from "./costs.ts";
+import { forgetSessionTodos } from "./todos.ts";
+import { Database } from "bun:sqlite";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -308,6 +311,78 @@ describe("the agent host on shutdown", () => {
     }
     expect(warned.filter((line) => line.startsWith("agent-host:"))).toEqual(["agent-host: stop failed (RangeError)"]);
     expect(unhandled).toEqual([]);
+  });
+});
+
+describe("host chat costs", () => {
+  const CHAT = "591b2f3f-e34c-4671-a7b8-e46c47c0b43b";
+  const SDK = "1da5c4f1-451b-4845-953f-52a960f82afa";
+  const CLI = "7c0e2b1a-3f4d-4e5a-9b6c-0d1e2f3a4b5c";
+  afterEach(() => { setCostIndexForTests(null); forgetSessionTodos(); });
+
+  const usage = (at: string, input: number, apiCallId: string, agentId?: string): string => `${JSON.stringify({
+    type: "session.usage_record", id: `rec-${apiCallId}`, timestamp: at, parentId: "p", ...(agentId ? { agentId } : {}),
+    data: { usage: { model: "cc/claude-fictional", inputTokens: input, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, apiCallId } },
+  })}\n`;
+  /** a Copilot home with logs for `uuids`, and a VS Code store whose chat CHAT runs on SDK */
+  function store(logs: Record<string, string[]>): { home: string; agentDirs: string[] } {
+    const home = temp();
+    for (const [id, lines] of Object.entries(logs)) {
+      mkdirSync(join(home, "session-state", id), { recursive: true });
+      writeFileSync(join(home, "session-state", id, "events.jsonl"), lines.join(""));
+    }
+    const agentDirs = [join(home, "agentSessionData")];
+    mkdirSync(join(agentDirs[0]!, CHAT), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, CHAT, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: SDK })]);
+    db.close();
+    return { home, agentDirs };
+  }
+  const now = Date.now();
+  const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+
+  it("\"costs\" answers the index's chats, each under its host row's own session id", async () => {
+    const { home, agentDirs } = store({ [SDK]: [usage(at(5), 4242, "a")], [CLI]: [usage(at(3), 100, "b")] });
+    setCostIndexForTests(new CostIndex(home, agentDirs), agentDirs);
+    const vscode = `ahp-session:/${CHAT}`;
+    const r = await rig({ sessions: [summary(1), { ...summary(2), resource: vscode }] });
+    const answer = await call(r, "/api/host-chats/costs");
+    expect(answer.status).toBe(200);
+    expect(answer.json.complete).toBe(true);
+    const sessions = answer.json.chats.map((chat: { session: string }) => chat.session).sort();
+    // the VS Code chat's log under its row's id, never under its SDK id as well; a CLI chat the host does not list under its own
+    expect(sessions).toEqual([vscode, `copilotcli:/${CLI}`].sort());
+    expect(answer.json.chats.find((chat: { session: string }) => chat.session === vscode)).toMatchObject({ context: 4242, models: [{ model: "cc/claude-fictional", input: 4242, calls: 1 }] });
+  });
+
+  it("\"costs\" names a CLI chat the host lists by its own id, once", async () => {
+    const { home, agentDirs } = store({ [uuid(1)]: [usage(at(5), 300, "c")] });
+    setCostIndexForTests(new CostIndex(home, agentDirs), agentDirs);
+    const r = await rig();
+    const answer = await call(r, "/api/host-chats/costs");
+    expect(answer.json.chats.map((chat: { session: string }) => chat.session)).toEqual([sessionUri(1)]);
+  });
+
+  it("\"costs?session\" answers one chat with calls", async () => {
+    const { home, agentDirs } = store({ [SDK]: [usage(at(5), 1000, "d"), usage(at(4), 2000, "e", "sub-1")] });
+    setCostIndexForTests(new CostIndex(home, agentDirs), agentDirs);
+    const r = await rig();
+    const vscode = `ahp-session:/${CHAT}`;
+    const one = await call(r, `/api/host-chats/costs?session=${encodeURIComponent(vscode)}`);
+    expect(one.status).toBe(200);
+    expect(one.json.chat).toMatchObject({ session: vscode, context: 1000, models: [{ calls: 2 }] });
+    expect(one.json.calls.map((each: { input: number; main: boolean }) => [each.input, each.main])).toEqual([[1000, true], [2000, false]]);
+    const none = await call(r, `/api/host-chats/costs?session=${encodeURIComponent(`copilotcli:/${CLI}`)}`);
+    expect(none).toEqual({ status: 200, json: { chat: null, calls: [] } });
+  });
+
+  it("a log that fails to read answers what it has, not a 500", async () => {
+    const broken = { all: () => { throw new Error("EIO"); }, costOf: () => { throw new Error("EIO"); }, calls: () => { throw new Error("EIO"); } } as unknown as CostIndex;
+    setCostIndexForTests(broken, []);
+    const r = await rig();
+    expect(await call(r, "/api/host-chats/costs")).toEqual({ status: 200, json: { chats: [], complete: false } });
+    expect(await call(r, `/api/host-chats/costs?session=${encodeURIComponent(sessionUri(1))}`)).toEqual({ status: 200, json: { chat: null, calls: [] } });
   });
 });
 

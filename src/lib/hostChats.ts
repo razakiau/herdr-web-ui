@@ -13,7 +13,7 @@ import { machinePath } from "../../shared/machines.ts";
 import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
-import type { HostAgent, HostAnswer, HostFormAnswer, HostChanges, HostChatRead, HostChatRow, HostEditDiff, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HostAgent, HostAnswer, HostFormAnswer, HostChanges, HostChatCost, HostChatRead, HostChatRow, HostCostCall, HostCostsAnswer, HostEditDiff, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 import { daysBack } from "./hostChatGroups.ts";
@@ -29,6 +29,18 @@ export async function fetchHostState(machineId: string): Promise<AgentHostState>
 /** The PC's bridge has host chats off (or predates them): it gets no group. */
 export function isHostChatsOff(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404 && (error.code === "host_chats_off" || error.code === "not_found");
+}
+
+/** What the PC's bridge says each chat spent; null when its bridge predates costs (or host chats are off there). */
+export async function fetchHostCosts(machineId: string): Promise<HostCostsAnswer | null> {
+  try { return await getJson<HostCostsAnswer>(machinePath(machineId, "host-chats/costs")); }
+  catch (error) { if (isHostChatsOff(error)) return null; throw error; }
+}
+
+/** One chat's cost and its calls, per message; null when the PC's bridge predates costs. */
+export async function fetchChatCost(machineId: string, session: string): Promise<{ chat: HostChatCost | null; calls: HostCostCall[] } | null> {
+  try { return await getJson(machinePath(machineId, `host-chats/costs?${new URLSearchParams({ session }).toString()}`)); }
+  catch (error) { if (isHostChatsOff(error)) return null; throw error; }
 }
 
 const modified = (row: HostChatRow): number => {

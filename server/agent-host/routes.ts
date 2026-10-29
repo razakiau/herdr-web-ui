@@ -48,8 +48,10 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState, HostChanges, HostCommand } from "../../shared/host-chats.ts";
-import { readSessionTodos } from "./todos.ts";
+import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall } from "../../shared/host-chats.ts";
+import { defaultAgentSessionDirs, readSessionTodos, sdkSessionOf } from "./todos.ts";
+import { CostIndex } from "./costs.ts";
+import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
@@ -260,6 +262,7 @@ interface Call { host: AgentHost; leases: HostLeases; clock: LeaseClock; url: UR
 const GETS: Record<string, Handler> = {
   // the connection keeps its last list after a disconnect: a down host says so instead of a stale list
   "chats": async ({ host }) => { connected(host); return jsonResponse({ chats: rowsFrom(host.summaries()) }); },
+  "costs": readCosts,
   "chat": readChat,
   "models": listModels,
   "image": readImage,
@@ -680,6 +683,62 @@ async function changesetOf(call: Call, session: string): Promise<{ label: string
 
 const changeKindOf = (edit: FileEdit): FileEditKind => editKind(edit as ToolResultFileEditContent);
 const changePath = (edit: FileEdit): string => { const uri = edit.after?.uri ?? edit.before?.uri ?? ""; return pathOf(uri) ?? uri; };
+
+// ─── Costs ───────────────────────────────────────────────────────────────────
+
+/** One index per process: it keeps each log's offset, so a request reads only what was written since. */
+let costIndex: { index: CostIndex; agentDirs: readonly string[] } | null = null;
+function costsOf(): { index: CostIndex; agentDirs: readonly string[] } {
+  if (!costIndex) { const agentDirs = defaultAgentSessionDirs(); costIndex = { index: new CostIndex(defaultCopilotHome(), agentDirs), agentDirs }; }
+  return costIndex;
+}
+/** Tests: the index (and the VS Code stores it maps chats through) the route reads; null for this PC's own. */
+export function setCostIndexForTests(index: CostIndex | null, agentDirs: readonly string[] = []): void {
+  costIndex = index === null ? null : { index, agentDirs };
+}
+
+/** The SDK session a host row runs on: a CLI chat's own uuid, a VS Code chat's through its store. */
+function sdkOfRow(session: string, agentDirs: readonly string[]): string | null {
+  const at = session.indexOf(":/");
+  if (at < 0) return null;
+  const uuid = session.slice(at + 2);
+  if (!UUID.test(uuid)) return null;
+  return session.startsWith(`${PROVIDER}:/`) ? uuid : sdkSessionOf(uuid, agentDirs);
+}
+
+/**
+ * GET costs: every chat the index has read, each under the session id of the host row it belongs
+ * to (a VS Code chat's `ahp-session:/` id, not its SDK one) so the phone matches rows directly; a
+ * log no listed row runs on (a CLI chat not open in the host) keeps its `copilotcli:/` id. With
+ * `?session=`, that chat alone and its calls. A log that fails to read answers what was read.
+ */
+async function readCosts(call: Call): Promise<Response> {
+  const { index, agentDirs } = costsOf();
+  const session = call.url.searchParams.get("session");
+  if (session !== null) {
+    if (session === "") return badRequest("missing_session", "session is required");
+    let chat: HostChatCost | null = null;
+    let calls: HostCostCall[] = [];
+    try { chat = index.costOf(session); calls = chat === null ? [] : index.calls(session); } catch { chat = null; calls = []; }
+    return jsonResponse({ chat, calls });
+  }
+  let answer: { chats: HostChatCost[]; complete: boolean };
+  try { answer = index.all(); } catch { return jsonResponse({ chats: [], complete: false }); }
+  // the host's rows by the SDK session they run on; a host that is down has none to name
+  const rowBySdk = new Map<string, string>();
+  const rows = call.host.state().state === "connected" ? rowsFrom(call.host.summaries()) : [];
+  for (const row of rows) {
+    const sdk = sdkOfRow(row.session, agentDirs);
+    // the first row wins: one log is never answered twice
+    if (sdk !== null && !rowBySdk.has(sdk)) rowBySdk.set(sdk, row.session);
+  }
+  const chats = answer.chats.map((chat) => {
+    const sdk = chat.session.slice(chat.session.indexOf(":/") + 2);
+    const row = rowBySdk.get(sdk);
+    return row === undefined ? chat : { ...chat, session: row };
+  });
+  return jsonResponse({ chats, complete: answer.complete });
+}
 
 async function readChanges(call: Call): Promise<Response> {
   const session = call.url.searchParams.get("session") ?? "";
