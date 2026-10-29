@@ -35,13 +35,40 @@ function baseModel(name: string): string | null {
   return base === name ? null : base;
 }
 
-export interface FoundPrice { price: ModelPrice; via: "omniroute" | "litellm"; base?: string }
+export interface FoundPrice { price: ModelPrice; via: "omniroute" | "litellm" | "local"; base?: string }
 
 /**
- * A model's price: OmniRoute's row first, then LiteLLM's maker price by the bare name (owner, ZAC-224),
- * then the same two for a point release's base model (owner: v4.1 is priced as v4), named in `base`.
+ * A model on the owner's own GPU (ZAC-260): an id starting with `desktop-`, bare or after any
+ * `provider/` (`litellm/desktop-coder-heretic`), or routed through `llama-swap/` or `local/`. It
+ * costs $0 and is labelled local, never listed as missing a price.
+ */
+export function isLocalModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return /^(?:[^/]+\/)*desktop-/.test(lower) || /^(?:llama-swap|local)\//.test(lower);
+}
+
+const LOCAL: FoundPrice = { price: { input: 0, output: 0, cached: 0 }, via: "local" };
+
+/**
+ * The reasoning effort Copilot appends to a model's id (`cc/claude-opus-5-5-high`, ZAC-260): the
+ * same model at the same price, so not an estimate. Tried only when the full name has no price.
+ */
+const EFFORT = /-(?:minimal|low|medium|high|xhigh|max)$/;
+
+/**
+ * A model's price: $0 for a local model; OmniRoute's row first, then LiteLLM's maker price by the
+ * bare name (owner, ZAC-224), then the same two for a point release's base model (owner: v4.1 is
+ * priced as v4), named in `base`; a name with an effort suffix with none of those is priced as its
+ * name without it.
  */
 export function priceWithFallback(model: string, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): FoundPrice | null {
+  if (isLocalModel(model)) return { ...LOCAL, price: { ...LOCAL.price } };
+  const found = listedPrice(model, prices, fallback);
+  if (found || !EFFORT.test(model)) return found;
+  return listedPrice(model.replace(EFFORT, ""), prices, fallback);
+}
+
+function listedPrice(model: string, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): FoundPrice | null {
   const lower = model.toLowerCase();
   const slash = lower.lastIndexOf("/");
   const prefix = slash > 0 ? lower.slice(0, slash + 1) : "";
@@ -61,8 +88,8 @@ export function priceWithFallback(model: string, prices: ModelPrices, fallback: 
  * The chat's cost at list price, as OmniRoute counts one (computeCostFromPricing): input less the
  * cached part at the input price, the cached part at the cache price (the input price when it has
  * none), the output at the output price. Every model priced at its list price, a subscription's
- * included: what the chat would cost on the API (owner, ZAC-224). `missing`: models with no price;
- * `estimated`: models priced as their base model.
+ * included: what the chat would cost on the API (owner, ZAC-224). `missing`: models with no price
+ * (a local model is $0, never missing); `estimated`: models priced as their base model.
  */
 export function chatCost(totals: readonly HostTokenTotal[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null = null): { usd: number; missing: string[]; estimated: string[] } {
   let usd = 0;

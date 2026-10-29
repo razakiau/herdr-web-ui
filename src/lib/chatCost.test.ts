@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { chatCost, formatUsd, listUsd, priceOf, priceWithFallback, wholeUsd } from "./chatCost.ts";
+import { chatCost, formatUsd, isLocalModel, listUsd, priceOf, priceWithFallback, wholeUsd } from "./chatCost.ts";
 
 const PRICES = {
   cc: { "claude-opus-5-5": { input: 4, output: 20, cached: 0.2 } },
@@ -38,6 +38,26 @@ describe("priceWithFallback (ZAC-224)", () => {
     expect(priceWithFallback("opencode-go/deepseek-v5-flash", PRICES, FALLBACK)).toBeNull();
     expect(priceWithFallback("opencode-go/glm-5.3-flash", PRICES, FALLBACK)).toBeNull();
     expect(priceWithFallback("deepseek-v4.1-flash", PRICES, null)).toBeNull();
+  });
+});
+
+describe("priceWithFallback: effort and local models (ZAC-260)", () => {
+  it("prices a model named with its effort as the model itself, not as an estimate", () => {
+    // the Copilot log names cc/claude-opus-5-5-high; OmniRoute's table has only cc/claude-opus-5-5
+    for (const effort of ["minimal", "low", "medium", "high", "xhigh", "max"]) {
+      expect(priceWithFallback(`cc/claude-opus-5-5-${effort}`, PRICES, null)).toEqual({ price: { input: 4, output: 20, cached: 0.2 }, via: "omniroute" });
+    }
+    // only a trailing effort word, and only when the full name has no price
+    expect(priceWithFallback("cc/claude-opus-5-5-turbo", PRICES, null)).toBeNull();
+    expect(priceWithFallback("cc/claude-high-5-5", PRICES, null)).toBeNull();
+  });
+  it("a local model costs $0 and is never missing", () => {
+    for (const model of ["desktop-coder-heretic", "litellm/desktop-coder", "omniroute/desktop-qwen38", "llama-swap/qwen3-coder", "local/anything", "LLAMA-SWAP/x"]) {
+      expect(isLocalModel(model)).toBe(true);
+      expect(priceWithFallback(model, PRICES, null)).toEqual({ price: { input: 0, output: 0, cached: 0 }, via: "local" });
+    }
+    for (const model of ["cc/claude-opus-5-5", "gpt-5", "opencode-go/desktop", "notdesktop-coder", "x/llama-swap"]) expect(isLocalModel(model)).toBe(false);
+    expect(chatCost([{ model: "desktop-coder-heretic", input: 1_000_000, cached: 0, output: 1_000_000 }], PRICES)).toEqual({ usd: 0, missing: [], estimated: [] });
   });
 });
 
