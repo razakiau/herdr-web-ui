@@ -75,6 +75,30 @@ export interface HostContextUsage {
 /** A model's tokens over the chat's turns (`turnTokenTotals`, sub-agents included), for a cost estimate. */
 export interface HostTokenTotal { model: string; input: number; cached: number; output: number }
 
+/**
+ * A model's calls in a chat's Copilot log (`session.usage_record`), sub-agents included. `input`
+ * is the whole prompt, so it holds `cacheRead` and `cacheWrite`; tokens only, the client prices them.
+ */
+export interface HostCostModel { model: string; input: number; cacheRead: number; cacheWrite: number; output: number; calls: number }
+/** One message's calls (those between two user messages), the main agent's or its sub-agents', for the chart. */
+export interface HostCostCall { at: string; input: number; cacheRead: number; cacheWrite: number; output: number; main: boolean }
+/** GET /api/host-chats/costs: what a chat's log says it spent. */
+export interface HostChatCost {
+  session: string; models: HostCostModel[];
+  /** the main agent's last call: the cache's age runs from it */
+  lastCallAt: string | null;
+  /** the main agent's last prompt (`inputTokens`), the context the next call sends */
+  context: number | null;
+  /** the main agent's largest prompt, and its calls that wrote more than half their prompt to the cache (a cold cache) */
+  peak: number; rewrites: number;
+  /** the same sums by the call's UTC day ("YYYY-MM-DD"), for Today / 7 days / 30 days */
+  days: Record<string, HostCostModel[]>;
+  /** the log was only partly read so far: the sums are a floor */
+  partial: boolean;
+}
+/** Every chat the bridge has read; `complete` is false until its first scan (the last 30 days) is done. */
+export interface HostCostsAnswer { chats: HostChatCost[]; complete: boolean }
+
 export interface HostChatRead {
   session: string; title: string; status: HostChatRow["status"];
   turns: ConversationTurn[];

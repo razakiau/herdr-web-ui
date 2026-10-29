@@ -42,7 +42,7 @@ export function defaultAgentSessionDirs(): string[] {
 }
 
 /** The SDK session a VS Code chat runs on, read from its own store; null when it names none. */
-function sdkSessionOf(uuid: string, dirs: readonly string[]): string | null {
+export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | null {
   for (const dir of dirs) {
     const path = join(dir, uuid, "session.db");
     const stamp = mtime(path);

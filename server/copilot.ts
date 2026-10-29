@@ -74,7 +74,7 @@ function eventOf(line: string): Row | null {
  * subagent's `agentId`; the main chat's carry none. Its work reaches the chat as the result of
  * the `task` call that started it, as Copilot shows it.
  */
-const fromSubagent = (entry: Row): boolean => typeof entry.agentId === "string" && entry.agentId.length > 0;
+export const fromSubagent = (entry: Row): boolean => typeof entry.agentId === "string" && entry.agentId.length > 0;
 
 /** A tool call's arguments: an object as the CLI records them, a JSON string in older records. */
 function argumentsOf(value: unknown): { input: string; fields: Row } {
