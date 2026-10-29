@@ -13,7 +13,8 @@
  * `cc/claude-opus*` calls (ZAC-260): 4194 of 4283 matched OmniRoute's call_logs by (tokens_in,
  * tokens_out), cache reads equal to the token (567,265,821 both); inferred writes 8.97M against
  * OmniRoute's 9.32M (96%), cold-cache rewrites 21 against 22. A chain's newest call gets its write
- * when its next call is read, in this read or a later one.
+ * when its next call is read, in this read or a later one. A side call (`SIDE_CALL`) is left out of
+ * the chain.
  */
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -33,6 +34,17 @@ const FILES_PER_SCAN = 50;
  */
 const BYTES_PER_SCAN = 128 * 1024 * 1024;
 const CHUNK = 8 * 1024 * 1024;
+/**
+ * A call is a side call (a title, a summary: ~500 tokens) when both its prompt and its cache read are
+ * under this share of its chain's last call's. It keeps its own tokens and logged write, gets no
+ * inferred write, counts no rewrite and does not advance the chain: the next call's read is set
+ * against the last call that is not one. Measured on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
+ * the raw delta gave 12.25M overall, 5.43M of it credited to 40 side calls (19 main, 18 sub-agent,
+ * 3 user; none in OmniRoute's opus rows), each given the next main call's write. Leaving them out:
+ * matched calls 8.90M against OmniRoute's 9.32M (95.5%), rewrites 21 against 22. Rejected: a 25%
+ * threshold (86.7%), capping a write at the call's prompt (83%).
+ */
+const SIDE_CALL = 0.1;
 const USAGE_MARK = '"session.usage_record"';
 const MESSAGE_MARK = '"user.message"';
 
@@ -40,10 +52,12 @@ type Row = Record<string, unknown>;
 type Tokens = Omit<HostCostModel, "model" | "calls">;
 /** one message's calls: the main agent's and its sub-agents', apart */
 interface Message { main: HostCostCall | null; sub: HostCostCall | null }
-/** a chain's last call, its write still to infer from the chain's next read: the sums it went into */
-interface Pending {
+/** a chain's last call that is not a side call, and the sums its inferred write goes into */
+interface Last {
   cacheRead: number; input: number; main: boolean;
   model: HostCostModel; day: HostCostModel | null; call: HostCostCall;
+  /** the log gave its write: none is inferred */
+  logged: boolean;
 }
 
 interface LogState {
@@ -54,8 +68,8 @@ interface LogState {
     lastCallAt: string | null; context: number | null; peak: number; rewrites: number;
     messages: Message[];
   };
-  /** per chain (agent and model): its last call whose write the log gave as 0 */
-  chains: Map<string, Pending | null>;
+  /** per chain (agent and model): its last call that is not a side call */
+  chains: Map<string, Last>;
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
 }
@@ -109,7 +123,8 @@ function take(state: LogState, line: string): void {
   // the previous call of this chain wrote what this one reads beyond it
   const chain = `${main ? "" : String(entry.agentId)}\n${model}`;
   const before = state.chains.get(chain);
-  if (before) {
+  const sideCall = before !== undefined && tokens.input < SIDE_CALL * before.input && tokens.cacheRead < SIDE_CALL * before.cacheRead;
+  if (before && !before.logged && !sideCall) {
     const write = Math.max(0, tokens.cacheRead - before.cacheRead);
     if (write > 0) {
       before.model.cacheWrite += write;
@@ -131,7 +146,7 @@ function take(state: LogState, line: string): void {
     if (at !== null) sums.lastCallAt = at;
     sums.context = tokens.input;
     sums.peak = Math.max(sums.peak, tokens.input);
-    if (rewrote(tokens.cacheWrite, tokens.input)) sums.rewrites += 1;
+    if (!sideCall && rewrote(tokens.cacheWrite, tokens.input)) sums.rewrites += 1;
   }
   if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
   const message = sums.messages[sums.messages.length - 1]!;
@@ -143,7 +158,7 @@ function take(state: LogState, line: string): void {
   call.context = tokens.input;
   call.lastCacheRead = tokens.cacheRead;
   // a write the log gives is used as is, never added to an inferred one
-  state.chains.set(chain, tokens.cacheWrite > 0 ? null : { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call });
+  if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call, logged: tokens.cacheWrite > 0 });
 }
 
 /**

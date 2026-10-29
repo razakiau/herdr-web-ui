@@ -247,6 +247,60 @@ describe("CostIndex", () => {
       expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.cacheWrite)).toEqual([19_000, 0]);
     });
 
+    test("a side call between two main calls keeps its tokens, gets no write and leaves the chain to them", () => {
+      log(UUID, [
+        userMessage("2026-10-29T08:00:00.000Z"),
+        usage("2026-10-29T08:00:01.000Z", { input: 200_000, cacheRead: 190_000, output: 50 }),
+        // a title or summary call: 0.25% of the prompt, nothing read
+        usage("2026-10-29T08:00:02.000Z", { input: 500, cacheRead: 0, cacheWrite: 120, output: 10 }),
+        usage("2026-10-29T08:00:03.000Z", { input: 205_000, cacheRead: 199_000, output: 50 }),
+      ]);
+      const costs = index();
+      const cost = costs.costOf(`copilotcli:/${UUID}`);
+      // 199000 − 190000 onto the first call, plus the side call's own 120; never 199000 − 0 onto the side call
+      expect(cost?.models[0]).toMatchObject({ input: 405_500, cacheRead: 389_000, cacheWrite: 9_000 + 120, output: 110, calls: 3 });
+      expect(cost?.rewrites).toBe(0);
+      expect(costs.calls(`copilotcli:/${UUID}`)[0]?.cacheWrite).toBe(9_120);
+    });
+
+    test("a side call doesn't count as a rewrite and gets no write from the next call", () => {
+      log(UUID, [
+        userMessage("2026-10-29T08:00:00.000Z"),
+        usage("2026-10-29T08:00:01.000Z", { input: 200_000, cacheRead: 190_000 }),
+        userMessage("2026-10-29T08:01:00.000Z"),
+        usage("2026-10-29T08:01:01.000Z", { input: 465, cacheRead: 0 }),
+        userMessage("2026-10-29T08:02:00.000Z"),
+        usage("2026-10-29T08:02:01.000Z", { input: 232_000, cacheRead: 200_000 }),
+      ]);
+      const costs = index();
+      expect(costs.costOf(`copilotcli:/${UUID}`)?.rewrites).toBe(0);
+      expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.cacheWrite)).toEqual([10_000, 0, 0]);
+    });
+
+    test("the chain survives a read split right after a side call", () => {
+      const path = log(UUID, [
+        userMessage("2026-10-29T08:00:00.000Z"),
+        usage("2026-10-29T08:00:01.000Z", { input: 100_000, cacheRead: 90_000 }),
+        usage("2026-10-29T08:00:02.000Z", { input: 400, cacheRead: 0 }),
+      ]);
+      const costs = index();
+      expect(costs.costOf(`copilotcli:/${UUID}`)?.models[0]?.cacheWrite).toBe(0);
+      appendFileSync(path, usage("2026-10-29T08:00:03.000Z", { input: 104_000, cacheRead: 99_000 }));
+      expect(costs.costOf(`copilotcli:/${UUID}`)?.models[0]?.cacheWrite).toBe(9_000);
+      expect(costs.calls(`copilotcli:/${UUID}`)[0]?.cacheWrite).toBe(9_000);
+    });
+
+    test("a chain's first call is never a side call, nor one that reads like its predecessor", () => {
+      log(UUID, [
+        usage("2026-10-29T08:00:01.000Z", { input: 500, cacheRead: 0 }),
+        usage("2026-10-29T08:00:02.000Z", { input: 20_000, cacheRead: 400 }),
+        // small prompt but a read over 10% of the previous one: a real call
+        usage("2026-10-29T08:00:03.000Z", { input: 1_500, cacheRead: 1_000 }),
+      ]);
+      // 400 onto the first, 600 onto the second
+      expect(index().costOf(`copilotcli:/${UUID}`)?.models[0]?.cacheWrite).toBe(1_000);
+    });
+
     test("a read that drops (a compaction, a new context) infers no write, never a negative one", () => {
       log(UUID, [
         usage("2026-10-29T08:00:01.000Z", { input: 150_000, cacheRead: 149_000 }),
