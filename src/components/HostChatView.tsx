@@ -33,6 +33,7 @@ import { AttachSheet, rememberAttached } from "./AttachSheet.tsx";
 import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
+import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
@@ -145,13 +146,19 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       if (value.prices || value.fallback) setPrices(value);
     });
   }, [contextOpen]);
-  // the Session sheet's sums from the bridge's log (ZAC-260), asked on each open while costs are
-  // tracked and again when a turn ends: undefined while asked, null from a bridge before costs
+  // the bridge's log of the chat (ZAC-260) while costs are tracked, for the meter's cache timer,
+  // the handoff banner and the Session sheet: asked when the chat opens, when a turn ends and on
+  // each open of the sheet; never on a timer (the minute clock moves the cache's state).
+  // undefined while asked, null from a bridge before costs
   const { settings: { trackCosts, costHandoffAt, cacheLifetimeMin } } = useSettings();
   const [chatCostLog, setChatCostLog] = useState<Awaited<ReturnType<typeof fetchChatCost>> | undefined>(undefined);
   const turnRunning = chat?.busy ?? false;
+  const costAsked = useRef(false);
   useEffect(() => {
-    if (!contextOpen || !trackCosts) return;
+    if (!trackCosts) { costAsked.current = false; return; }
+    // a turn starting changes nothing the log says yet: asked again when it ends
+    if (costAsked.current && turnRunning && !contextOpen) return;
+    costAsked.current = true;
     let live = true;
     void fetchChatCost(machineId, session).then((value) => { if (live) setChatCostLog(value); }, () => { /* kept: the last answer, or still asking */ });
     return () => { live = false; };
@@ -341,6 +348,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     const user = users[users.length - (checkpointList!.length - at)];
     return user?.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n") ?? null;
   };
+  const costSettings = { trackCosts, costHandoffAt, cacheLifetimeMin };
+  // VS Code's /handoff, from the Session sheet and the banner: only while idle, and only when the session lists the command
+  const onHandoff = chat && !chat.busy && handoffCommandText(chat.commands) ? () => { void sendAs("send", "/handoff"); } : undefined;
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
   const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
   const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
@@ -408,15 +418,17 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
+    <HandoffBanner dismissKey={`${machineId}\n${session}`} read={chat} log={chatCostLog?.chat} settings={costSettings} onHandoff={onHandoff} />
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
+        costs={{ log: chatCostLog?.chat ?? (chatCostLog === undefined ? undefined : null), settings: costSettings }}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
         sheet={trackCosts && chat ? <SessionSheet read={chat} estimate={cost} cost={chatCostLog} prices={prices ?? (pricesAnswered ? NO_PRICES : null)}
-          settings={{ trackCosts, costHandoffAt, cacheLifetimeMin }} onClose={() => setContextOpen(false)}
+          settings={costSettings} onClose={() => setContextOpen(false)}
           onCompact={!chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-          onHandoff={!chat.busy && handoffCommandText(chat.commands) ? () => { void sendAs("send", "/handoff"); } : undefined} /> : undefined} />}
+          onHandoff={onHandoff} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}

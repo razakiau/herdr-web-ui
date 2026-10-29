@@ -675,9 +675,10 @@ button.host-model-detail[aria-expanded="true"] .host-model-detail-caret {
 }
 
 /* the meter is the composer's on every width (ZAC-207 redesign): with the agent and mode pills in
-   the settings sheet, a phone's row has room for it. Its percent shows from 600 px */
+   the settings sheet, a phone's row has room for it. Its percent shows from 600 px; while costs are
+   tracked its tokens and cache timer show on every width (owner, ZAC-260) */
 @media (max-width: 599px) {
-  .host-chat-meter .host-chat-meter-label {
+  .host-chat-meter:not(.is-tracked) .host-chat-meter-label {
     display: none;
   }
 }

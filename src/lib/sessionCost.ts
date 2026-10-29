@@ -37,6 +37,23 @@ export function advice(state: CacheState, context: number, threshold: number): A
 }
 
 /**
+ * What the meter and the handoff banner show (ZAC-260): the context's tokens, the live read's
+ * (what the meter showed before) else the log's; the cache's state and minutes left from the log's
+ * last call; the advice. `cache` is null without a log (a bridge before costs, or not answered yet):
+ * tokens alone, no state, no advice.
+ */
+export function cacheMeter(
+  read: { busy: boolean; context?: { currentTokens: number } | null },
+  log: HostChatCost | null | undefined,
+  settings: { costHandoffAt: number; cacheLifetimeMin: number },
+  now: number,
+): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice } {
+  const context = read.context?.currentTokens ?? log?.context ?? 0;
+  const cache = log ? cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, read.busy) : null;
+  return { context, cache, advised: cache ? advice(cache.state, context, settings.costHandoffAt) : "keep" };
+}
+
+/**
  * The price per million tokens of writing to the cache, which the price table lacks (builder's
  * call, ZAC-260): 2× input for Anthropic models (their 1 h cache, which OmniRoute asks for), the
  * input price for the rest (DeepSeek, OpenAI bill no write).

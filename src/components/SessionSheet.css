@@ -1,19 +1,57 @@
 /* The Session sheet (ZAC-260): the context sheet's frame with Ovis's segmented control under its
    header. The cache's state tints its dot, the advice card and the countdown: warm --status-done,
-   cooling --notice, cold --status-working (owner). */
-.session-sheet {
+   cooling --notice, cold --status-working (owner). The same colours tint the composer's meter
+   while costs are tracked and the handoff banner over the composer (HandoffBanner). */
+.session-sheet,
+.host-chat-meter.is-tracked,
+.handoff-bar {
   --cache: var(--status-done);
   --cache-tint: var(--status-done-tint);
 }
 
-.session-sheet.is-cooling {
+.session-sheet.is-cooling,
+.host-chat-meter.is-tracked.is-cooling,
+.handoff-bar.is-cooling {
   --cache: var(--notice);
   --cache-tint: color-mix(in srgb, var(--notice) 14%, transparent);
 }
 
-.session-sheet.is-cold {
+.session-sheet.is-cold,
+.host-chat-meter.is-tracked.is-cold,
+.handoff-bar.is-cold {
   --cache: var(--status-working);
   --cache-tint: var(--status-working-tint);
+}
+
+/* the meter's tinted pill while the advice is to hand off; " · 12m" / " · cold" in the cache's colour */
+.host-chat-meter.is-tracked.is-advised {
+  background: var(--cache-tint);
+  color: var(--text);
+}
+
+.host-chat-meter.is-tracked .host-chat-meter-cache {
+  color: var(--cache);
+}
+
+/* the handoff nudge over the composer: the checkpoint bar's line in the cache's tint (doubled class:
+   HostCheckpoint.css's .checkpoint-bar loads later at the same weight). Its words wrap rather than
+   cut on a phone, where Hand off and ✕ leave them ~200 px */
+.checkpoint-bar.handoff-bar {
+  border-color: color-mix(in srgb, var(--cache) 35%, var(--border));
+  background: var(--cache-tint);
+}
+
+.handoff-bar .checkpoint-bar-text {
+  white-space: normal;
+}
+
+.handoff-bar strong {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+.handoff-bar-close {
+  flex: none;
 }
 
 .session-tabs-bar {

@@ -8,9 +8,11 @@ import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
-import type { HostChatRead, HostContextUsage } from "../../shared/host-chats.ts";
+import type { HostChatCost, HostChatRead, HostContextUsage } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { contextMeter, hostStatusLine } from "../lib/hostChats.ts";
+import { contextMeter, hostStatusLine, tokens, useMinuteClock } from "../lib/hostChats.ts";
+import { cacheMeter } from "../lib/sessionCost.ts";
+import type { Settings } from "../lib/settings.ts";
 import { formatUsd } from "../lib/chatCost.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
@@ -76,6 +78,8 @@ interface MeterProps {
   onCompact?: () => void;
   /** the sheet the meter opens instead of the context window's (the Session sheet while costs are tracked, ZAC-260) */
   sheet?: ReactNode;
+  /** the chat's cost log (fetchChatCost's `.chat`: undefined while asked, null without one) and the cost settings; `now` given by a test */
+  costs?: { log: HostChatCost | null | undefined; settings: Pick<Settings, "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">; now?: number };
 }
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
@@ -89,23 +93,37 @@ export function HostChatStatus({ read, workShown = false }: { read: HostChatRead
   </div>;
 }
 
-/** The context meter: a ring and the percent; the counts are in its title and its sheet. */
-export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet }: MeterProps) {
+/**
+ * The context meter: a ring and the percent; the counts are in its title and its sheet. While costs
+ * are tracked (ZAC-260, owner's tinted pill) it shows the tokens instead, on every width, then
+ * " · 12m" in the cache's colour while cooling and " · cold" once expired, and wears the cache's
+ * tint when the advice is to hand off. Without the log (a bridge before costs): the tokens alone.
+ */
+export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet, costs }: MeterProps) {
   const t = useT();
+  const clock = useMinuteClock();
   const meter = contextMeter(read?.context ?? null);
-  if (read === null || meter === null) return null;
+  const tracked = read !== null && costs?.settings.trackCosts ? cacheMeter(read, costs.log, costs.settings, costs.now ?? clock) : null;
+  if (read === null || (meter === null && (tracked === null || tracked.context <= 0))) return null;
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
-  const percent = meter.label.split(" · ")[0];
+  const percent = meter?.percent ?? 0;
+  const state = tracked?.cache?.state ?? null;
+  // a chat working now is warm with nothing to count down: no " · 0m"
+  const suffix = state === "cold" ? t("cold") : state === "cooling" ? t("{n}m", { n: tracked!.cache!.leftMin }) : null;
+  const usage = tracked ? [meter?.label ?? tokens(tracked.context), suffix].filter(Boolean).join(" · ") : meter!.label;
+  const classes = ["host-chat-meter", percent >= 80 ? "is-high" : "", tracked ? "is-tracked" : "", state ? `is-${state}` : "", tracked && tracked.advised !== "keep" ? "is-advised" : ""].filter(Boolean).join(" ");
   return <>
-    <button type="button" className={`host-chat-meter${meter.percent >= 80 ? " is-high" : ""}`} aria-haspopup="dialog" aria-expanded={open}
-      aria-label={t("Context window: {usage}", { usage: meter.label })} title={t("Context window: {usage}", { usage: meter.label })} onClick={onOpen}>
+    <button type="button" className={classes} aria-haspopup="dialog" aria-expanded={open}
+      aria-label={t("Context window: {usage}", { usage })} title={t("Context window: {usage}", { usage })} onClick={onOpen}>
       <svg className="host-chat-meter-ring" viewBox="0 0 16 16" aria-hidden="true">
         <circle className="host-chat-meter-track" cx="8" cy="8" r={radius} />
         <circle className="host-chat-meter-used" cx="8" cy="8" r={radius}
-          strokeDasharray={`${circumference * meter.percent / 100} ${circumference}`} transform="rotate(-90 8 8)" />
+          strokeDasharray={`${circumference * percent / 100} ${circumference}`} transform="rotate(-90 8 8)" />
       </svg>
-      <span className="host-chat-meter-label" aria-hidden="true">{percent}</span>
+      <span className="host-chat-meter-label" aria-hidden="true">{tracked
+        ? <>{tokens(tracked.context)}{suffix && <> · <span className="host-chat-meter-cache">{suffix}</span></>}</>
+        : meter!.label.split(" · ")[0]}</span>
     </button>
     {open && (sheet ?? (read.context && <ContextSheet usage={read.context} cost={cost ?? null} onClose={onClose} onCompact={onCompact} />))}
   </>;

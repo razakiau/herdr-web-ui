@@ -600,7 +600,7 @@ export function hostStatusLine(read: HostChatRead, t: Translate, { workShown = f
 }
 
 /** Tokens as VS Code's meter writes them: 850, 1.5K, 84K, 1M. */
-function tokens(value: number): string {
+export function tokens(value: number): string {
   if (value < 1000) return String(value);
   const [scaled, unit] = value >= 1_000_000 ? [value / 1_000_000, "M"] : [value / 1000, "K"];
   return `${scaled >= 10 ? Math.round(scaled) : Math.round(scaled * 10) / 10}${unit}`;
