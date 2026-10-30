@@ -39,7 +39,7 @@ import { type Client, send } from "./connections.ts";
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown, coldPrices, keptWarm }: {
+export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown, coldPrices, keptWarm, keepWarmAlerts }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -77,6 +77,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   coldPrices?: () => Promise<ColdPrices>;
   /** whether OmniRoute's keep-warm plugin keeps a chat warm: then no cold alert (ZAC-260 phase 2) */
   keptWarm?: PushServiceOptions["keptWarm"];
+  /** the keep-warm window-end alert's plugin read and signed buttons (ZAC-260, pick X) */
+  keepWarmAlerts?: Pick<PushServiceOptions, "keepWarmKeys" | "keepWarmAction">;
 }) {
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
@@ -89,6 +91,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),
     hostChatsShown,
     keptWarm,
+    ...keepWarmAlerts,
     // the deployment's ntfy topic, if any (server/ntfy.ts); a test server passes its own or none
     ntfy: (options.ntfy === undefined ? ntfyFromEnv(process.env) : options.ntfy) ?? undefined,
     lookupTitle: async (paneId) => {

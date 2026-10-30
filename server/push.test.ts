@@ -8,7 +8,8 @@ import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
-import { coldAlertBody, coldFromEnv, createPushService, handlePushRequest, parseSubscription, type ColdPrices, type PushService } from "./push.ts";
+import { coldAlertBody, coldFromEnv, createPushService, handlePushRequest, parseSubscription, windowAlertBody, type ColdPrices, type PushService } from "./push.ts";
+import type { KeepWarmKey } from "../shared/keep-warm.ts";
 import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { privateStateFs } from "./private-state.ts";
@@ -1026,5 +1027,76 @@ describe("the cold-cache alert (ZAC-260)", () => {
     used = false;
     rmSync(busyDir, { recursive: true, force: true });
     expect(fake.received).toEqual([]);
+  });
+});
+
+describe("the keep-warm window-end alert (ZAC-260, pick X)", () => {
+  const PRICES: ColdPrices = { prices: null, fallback: { "claude-opus-4.8": { input: 5, output: 25, cached: 0.5 } } };
+  const RULE = { thresholdUsd: 1, lifetimeMs: 3_600_000, leadMs: 600_000 };
+  const chatRow = (status: HostChatRow["status"] = "idle"): HostChatRow => ({ session: "ahp:/s1", title: "fix the build", status, modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived: false });
+  const log = (lastCallAt: string): HostChatCost => ({
+    session: "ahp:/s1", models: [{ model: "claude-opus-4.8", input: 900_000, cacheRead: 800_000, cacheWrite: 100_000, output: 4_000, calls: 4 }],
+    lastCallAt, context: 268_000, peak: 268_000, rewrites: 0, days: {}, partial: false,
+  });
+  const keyFor = (lastRealAt: number, until: number, over: Partial<KeepWarmKey> = {}): KeepWarmKey => ({ key: "k1", model: "claude-opus-4.8", apiKey: "copilot", tokens: 268_000, prompt: 268_000,
+    lastRealAt, lastPingAt: null, nextPingAt: null, until, pings: 12, usd: 0.47, restartUsd: 2.14, missed: false, disabled: false, kept: true, ...over });
+  const arrived = async (count: number): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (fake.received.length < count) { if (Date.now() > deadline) throw new Error("the alert did not arrive"); await Bun.sleep(5); }
+  };
+
+  it("says what keeping it cost and what letting it go costs", () => {
+    expect(windowAlertBody(268_000, 8, 0.47, 2.14, 0.65)).toBe("268K · kept warm 8 h for $0.47. If it goes cold, your next message costs $2.14. When you're back, a handoff (~$0.65) makes every later turn cheaper too.");
+    expect(windowAlertBody(268_000, 16, null, 2.14, null)).toBe("268K · kept warm 16 h. If it goes cold, your next message costs $2.14.");
+  });
+
+  it("goes ahead of the window's end, with the two buttons, and asks the plugin again first", async () => {
+    const last = Date.now();
+    let keys = [keyFor(last, last + 200)];
+    const refreshed: boolean[] = [];
+    const push = subscribed({ cold: RULE, keepWarmLeadMs: 100, keepWarmKeys: async (refresh) => { refreshed.push(refresh); return keys; }, keepWarmAction: (act) => `/act/${act.how}/${act.key}/${act.from}/${act.announced}`, keptWarm: () => true });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await Bun.sleep(40); // fixed wait: proving it waits for until - lead
+    expect(fake.received).toEqual([]);
+    await arrived(1);
+    await push.settled();
+    const [payload] = fake.received.map((received) => received.payload);
+    expect(payload?.title).toBe("Mac · \"fix the build\" stops being kept warm in 1 min");
+    expect(payload?.body).toStartWith("268K · kept warm 0 h for $0.47. If it goes cold, your next message costs $2.14.");
+    expect(payload?.actions).toEqual([
+      { action: "extend", title: "Keep 8 h more", path: `/act/extend/k1/${last}/${last + 200}` },
+      { action: "cool", title: "Let it cool", path: `/act/cool/k1/${last}/${last + 200}` },
+    ]);
+    expect(refreshed).toEqual([false, true]);
+    // read again with the same window: told once
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await Bun.sleep(150); // fixed wait: proving the same window is not told twice
+    await push.settled();
+    expect(fake.received).toHaveLength(1);
+    keys = [];
+  });
+
+  it("says nothing of a window changed or let go before it is due, nor of a chat at work", async () => {
+    const last = Date.now();
+    let keys = [keyFor(last, last + 200)];
+    const push = subscribed({ cold: RULE, keepWarmLeadMs: 100, keepWarmKeys: async () => keys, keptWarm: () => true });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    // extended from another device: the armed alert's window is not this one
+    keys = [keyFor(last, last + 8 * 3_600_000)];
+    await Bun.sleep(200); // fixed wait: past the first window's alert
+    await push.settled();
+    expect(fake.received).toEqual([]);
+    // not kept (the plugin let it go): nothing armed
+    keys = [keyFor(last, last + 200, { kept: false })];
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    push.onHostChats([chatRow("working")], "mac", "Mac");
+    keys = [keyFor(last, last + 200)];
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await Bun.sleep(250); // fixed wait: proving nothing arrives
+    await push.settled();
+    expect(fake.received.filter((received) => received.payload.title.includes("kept warm"))).toEqual([]);
   });
 });

@@ -65,17 +65,22 @@ export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): 
 /** What one alert says, and where its tap lands. */
 export interface NtfyAlert {
   title: string;
-  status: AgentStatus | "ended" | "error" | "cold";
+  status: AgentStatus | "ended" | "error" | "cold" | "kept";
   body: string;
   machineId: string;
   /** a pane's alert names the pane; a host chat's names its session instead */
   paneId?: string;
   session?: string;
   workspaceId?: string;
+  /**
+   * buttons the ntfy app runs itself, a POST to the app's address (the click URL) plus `path`:
+   * the keep-warm window-end alert's (server/keep-warm-actions.ts). None without a click URL
+   */
+  actions?: { label: string; path: string }[];
 }
 
 const PRIORITY: Partial<Record<string, number>> = { blocked: 4 };
-const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake" };
+const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake", kept: "fire" };
 
 /** The app's address for the pane or the chat, as a tapped web push opens it (public/sw.js, src/lib/deepLink.ts). */
 function clickFor(base: string, alert: NtfyAlert): string {
@@ -101,6 +106,8 @@ export async function postNtfy(config: NtfyConfig, alert: NtfyAlert): Promise<bo
     ...(tag ? { tags: [tag] } : {}),
     ...(config.click ? { click: clickFor(config.click, alert) } : {}),
     ...(config.icon ? { icon: config.icon } : {}),
+    // ntfy shows at most 3; clear: the notification goes once a button worked
+    ...(config.click && alert.actions?.length ? { actions: alert.actions.slice(0, 3).map(({ label, path }) => ({ action: "http", label, url: `${config.click}${path}`, method: "POST", clear: true })) } : {}),
   };
   try {
     const response = await fetch(config.url, {

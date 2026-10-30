@@ -69,6 +69,8 @@ import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../shared/protocol.ts";
 import { avgOutput, cacheModel, coldRestartUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
 import { formatUsd } from "../shared/model-price.ts";
+import { KEEP_WARM_EXTEND_HOURS, KEEP_WARM_WINDOW_LEAD_MS, type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
+import type { KeepWarmAct } from "./keep-warm-actions.ts";
 import {
   type AlertPrefs,
   coldAlertsOn,
@@ -193,6 +195,16 @@ export interface PushServiceOptions {
    * its window, the day's cap, a missed ping) still does
    */
   keptWarm?: (chat: HostChatCost, machineId: string) => boolean | Promise<boolean>;
+  /**
+   * the keep-warm plugin's chats (ZAC-260, pick X), for the window-end alert: 15 min before a kept
+   * chat stops being pinged, it says so with "Keep 8 h more" and "Let it cool". `refresh` as the
+   * alert is due, so a window changed since is not announced
+   */
+  keepWarmKeys?: (refresh: boolean) => Promise<readonly KeepWarmKey[]>;
+  /** a signed button's path (server/keep-warm-actions.ts); without it the alert has no buttons */
+  keepWarmAction?: (act: KeepWarmAct) => string;
+  /** how long before the window's end its alert goes; absent: KEEP_WARM_WINDOW_LEAD_MS */
+  keepWarmLeadMs?: number;
 }
 
 /** The prices a big chat is weighed with: OmniRoute's table and LiteLLM's behind it, each null when missing. */
@@ -225,6 +237,24 @@ export function coldAlertBody(context: number, leadMin: number, handoff: number 
   const next = `the next call costs ~${formatUsd(restart)}`;
   return handoff === null ? `${size} goes cold in ${leadMin} min: ${next}` : `${size} goes cold in ${leadMin} min: hand off now ~${formatUsd(handoff)}, or ${next}`;
 }
+
+const sizeOf = (context: number): string => context >= 1_000_000 ? `${(context / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `${Math.round(context / 1000)}K`;
+
+/**
+ * What the keep-warm window-end alert says (owner-approved mockup X, ZAC-260): "268K · kept warm
+ * 8 h for $0.47. If it goes cold, your next message costs $2.14. When you're back, a handoff
+ * (~$0.65) makes every later turn cheaper too." Without a pings total or a hand-off price, their
+ * part is left out.
+ */
+export function windowAlertBody(context: number, hours: number, pingsUsd: number | null, restart: number, handoff: number | null): string {
+  const kept = `kept warm ${Number.isInteger(hours) ? hours : hours.toFixed(1)} h${pingsUsd === null ? "" : ` for ${formatUsd(pingsUsd)}`}`;
+  const after = handoff === null ? "" : ` When you're back, a handoff (~${formatUsd(handoff)}) makes every later turn cheaper too.`;
+  return `${sizeOf(context)} · ${kept}. If it goes cold, your next message costs ${formatUsd(restart)}.${after}`;
+}
+
+/** The two buttons, on a web push and on ntfy: `action` is the service worker's name for it. */
+export interface WindowButton { action: "extend" | "cool"; title: string; path: string }
+export const WINDOW_BUTTON_TITLES = { extend: `Keep ${KEEP_WARM_EXTEND_HOURS} h more`, cool: "Let it cool" } as const;
 
 /** Who one delay's alert goes to: these devices, and the ntfy topic or not. */
 interface Recipients { devices: PushSubscriptionRecord[]; ntfy: boolean }
@@ -328,6 +358,8 @@ export function createPushService(options: PushServiceOptions): PushService {
   const hostRows = new Map<string, HostChatRow>();
   /** each big chat's armed cold-cache alert, keyed like its status alert, by the last call it was armed for */
   const coldArmed = new Map<string, { lastCallAt: string; cancel: () => void }>();
+  /** each kept chat's armed keep-warm window-end alert, keyed the same, by the window it announces */
+  const windowArmed = new Map<string, { sig: string; cancel: () => void }>();
   const titles = new Map<string, string>();
   // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
   // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
@@ -518,6 +550,71 @@ export function createPushService(options: PushServiceOptions): PushService {
   function callOffCold(key: string): void {
     coldArmed.get(key)?.cancel();
     coldArmed.delete(key);
+    windowArmed.get(key)?.cancel();
+    windowArmed.delete(key);
+  }
+
+  const windowLead = options.keepWarmLeadMs ?? KEEP_WARM_WINDOW_LEAD_MS;
+  const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+  /**
+   * Arms each kept chat's window-end alert (ZAC-260, pick X), keyed like its cold alert, by the
+   * plugin's conversation, its real call and its window's end: an extension or a new call re-arms
+   * it at the next poll. As it is due the plugin is asked again, and a window that changed or a
+   * chat no longer kept is not announced.
+   */
+  async function armWindows(chats: readonly HostChatCost[], prices: ColdPrices, machineId: string, machineName: string | undefined): Promise<void> {
+    const keys = await options.keepWarmKeys!(false);
+    const prefix = `chat:${encodeURIComponent(machineId)}:`;
+    const seen = new Set<string>();
+    for (const chat of chats) {
+      const key = prefix + encodeURIComponent(chat.session);
+      const row = hostRows.get(key);
+      if (!row || row.archived || row.status === "working") continue;
+      const kept = keepWarmKeyFor(chat, keys);
+      if (!kept || !keptWarm(kept, now())) continue;
+      seen.add(key);
+      const sig = `${kept.key}:${kept.lastRealAt}:${kept.until}`;
+      if (windowArmed.get(key)?.sig === sig) continue;
+      windowArmed.get(key)?.cancel();
+      const context = chat.context ?? 0;
+      const model = cacheModel(chat);
+      const handoff = handoffUsd(context, model, avgOutput(chat), prices.prices ?? {}, prices.fallback);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      windowArmed.set(key, { sig, cancel: () => { clearTimeout(timer); } });
+      timer = setTimeout(() => {
+        const done = (async () => {
+          const current = hostRows.get(key);
+          if (options.hostChatsShown?.() === false || !current || current.archived || current.status === "working") return;
+          const fresh = (await options.keepWarmKeys!(true)).find((each) => each.key === kept.key);
+          if (!fresh || !keptWarm(fresh, now()) || fresh.lastRealAt !== kept.lastRealAt || fresh.until !== kept.until) return;
+          const leadMin = Math.max(1, Math.round((fresh.until - now()) / 60_000));
+          const hours = Math.round((fresh.until - fresh.lastRealAt) / 1_800_000) / 2;
+          // the plugin counts a chat's pings per UTC day: a window across midnight has no true total
+          const pingsUsd = utcDay(fresh.lastRealAt) === utcDay(now()) ? fresh.usd : null;
+          const title = `${machineName ? machineName + " · " : ""}"${current.title}" stops being kept warm in ${leadMin} min`;
+          const body = windowAlertBody(context, hours, pingsUsd, fresh.restartUsd, handoff);
+          const act = (how: "extend" | "cool") => options.keepWarmAction?.({ key: fresh.key, from: fresh.lastRealAt, announced: fresh.until, how });
+          const buttons: WindowButton[] = options.keepWarmAction ? (["extend", "cool"] as const).map((how) => ({ action: how, title: WINDOW_BUTTON_TITLES[how], path: act(how)! })) : [];
+          const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session), ...(buttons.length ? { actions: buttons } : {}) };
+          const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
+          const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;
+          await Promise.all([
+            to.length > 0 ? broadcast(message, "normal", to) : undefined,
+            ntfy ? postNtfy(ntfy, { title, status: "kept", body, machineId, session: chat.session, actions: buttons.map(({ title: label, path }) => ({ label, path })) }) : undefined,
+          ]);
+        })().catch((error: unknown) => {
+          console.error(`web push failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        inFlight.add(done);
+        void done.finally(() => inFlight.delete(done));
+      }, Math.max(0, kept.until - windowLead - now()));
+      timer.unref?.();
+    }
+    for (const key of [...windowArmed.keys()]) {
+      if (!key.startsWith(prefix) || seen.has(key)) continue;
+      windowArmed.get(key)?.cancel();
+      windowArmed.delete(key);
+    }
   }
 
   const muted = (machineId: string, paneId: string | null): boolean => paneId !== null && options.muted?.(machineId, paneId) === true;
@@ -820,6 +917,13 @@ export function createPushService(options: PushServiceOptions): PushService {
       }
       // a chat whose log is gone from the answer: nothing to time its cache by
       for (const key of [...coldArmed.keys()]) if (key.startsWith(prefix) && !seen.has(key)) callOffCold(key);
+      if (options.keepWarmKeys) {
+        const arming = armWindows(chats, prices, machineId, machineName).catch((error: unknown) => {
+          console.error(`keep-warm window alert: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        inFlight.add(arming);
+        void arming.finally(() => inFlight.delete(arming));
+      }
     },
 
     mutesChanged() {

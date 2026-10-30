@@ -23,4 +23,9 @@ export interface PushPayload {
   title: string;
   body: string;
   tag: string;
+  /**
+   * the notification's buttons (the keep-warm window-end alert, ZAC-260): `path` is a signed
+   * POST the service worker sends as the button is tapped (server/keep-warm-actions.ts)
+   */
+  actions?: { action: string; title: string; path: string }[];
 }

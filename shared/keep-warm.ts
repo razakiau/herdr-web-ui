@@ -46,8 +46,14 @@ export interface KeepWarmState {
   keys: KeepWarmKey[];
 }
 
+/**
+ * One chat's own window, set from the window-end alert ("Keep 8 h more", "Let it cool"): for the
+ * real call at `from` only (the plugin drops it at the chat's next call), until `until` (ms).
+ */
+export interface KeepWarmWindow { from: number; until: number }
+
 /** What the owner sets, from Ovis: the plugin reads it at its next sync (within a minute). */
-export interface KeepWarmSettings { enabled?: boolean; windowHours?: number; fusePerDay?: number; disabled?: string[] }
+export interface KeepWarmSettings { enabled?: boolean; windowHours?: number; fusePerDay?: number; disabled?: string[]; extend?: Record<string, KeepWarmWindow> }
 
 /** What GET /api/keepwarm answers: the plugin's state, or why there is none (keep-warm unavailable). */
 export interface KeepWarmAnswer {
@@ -84,7 +90,32 @@ export function keepWarmSettingsFrom(raw: unknown): KeepWarmSettings {
   if (num(value["windowHours"]) && value["windowHours"] > 0) settings.windowHours = Math.min(KEEP_WARM_WINDOW_HOURS_MAX, value["windowHours"]);
   if (num(value["fusePerDay"]) && value["fusePerDay"] > 0) settings.fusePerDay = Math.min(KEEP_WARM_FUSE_MAX, Math.floor(value["fusePerDay"]));
   if (Array.isArray(value["disabled"])) settings.disabled = [...new Set(value["disabled"].filter((each): each is string => typeof each === "string" && each.length <= 64))].slice(0, 500);
+  const extend = value["extend"];
+  if (extend && typeof extend === "object" && !Array.isArray(extend)) {
+    const windows = Object.entries(extend as Record<string, unknown>).flatMap(([key, each]): [string, KeepWarmWindow][] => {
+      const window = each as Partial<KeepWarmWindow> | null;
+      return key.length <= 64 && window && num(window.from) && num(window.until) ? [[key, { from: window.from, until: window.until }]] : [];
+    }).slice(0, 500);
+    if (windows.length > 0) settings.extend = Object.fromEntries(windows);
+  }
   return settings;
+}
+
+/** How much longer "Keep 8 h more" keeps a chat warm, and the plugin's cap after its last real call (EXTEND_MAX_HOURS). */
+export const KEEP_WARM_EXTEND_HOURS = 8;
+export const KEEP_WARM_EXTEND_MAX_HOURS = 48;
+/** How long before a kept chat's window ends its alert goes (owner's pick X, ZAC-260). */
+export const KEEP_WARM_WINDOW_LEAD_MS = 15 * 60_000;
+
+/**
+ * The settings with one chat's window set for its current call: "extend" keeps it warm 8 h past
+ * the end the alert announced (so a second tap on the same alert adds nothing), "cool" stops it
+ * now. Windows already over for an hour are dropped: the plugin pruned their chats or moved on.
+ */
+export function withWindow(settings: KeepWarmSettings, key: string, from: number, announced: number, how: "extend" | "cool", now: number): KeepWarmSettings {
+  const kept = Object.entries(settings.extend ?? {}).filter(([, each]) => each.until > now - 3_600_000);
+  const until = how === "extend" ? Math.min(Math.max(announced, now) + KEEP_WARM_EXTEND_HOURS * 3_600_000, from + KEEP_WARM_EXTEND_MAX_HOURS * 3_600_000) : now;
+  return { ...settings, extend: { ...Object.fromEntries(kept), [key]: { from, until } } };
 }
 
 /**

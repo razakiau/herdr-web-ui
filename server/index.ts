@@ -50,6 +50,7 @@ import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
 import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
+import { handleKeepWarmAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -257,6 +258,12 @@ export function createServer(
     const answer = await omniRoute.keepWarm();
     return keptWarm(keepWarmKeyFor(chat, answer.state?.keys ?? []), Date.now());
   };
+  /** the window-end alert's buttons (ZAC-260, pick X): signed addresses, open without sign-in */
+  const keepWarmActions = new KeepWarmActions(stateDir);
+  const keepWarmAlerts = {
+    keepWarmKeys: async (refresh: boolean) => (await omniRoute.keepWarm(refresh)).state?.keys ?? [],
+    keepWarmAction: (act: KeepWarmAct) => keepWarmActions.path(act),
+  };
   const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
     const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
@@ -281,7 +288,7 @@ export function createServer(
   /** pages in use that say so over HTTP (server/page-presence.ts): a page reading host chats has no WebSocket */
   const pages = new PagePresence();
   const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
-  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, coldPrices, keptWarm: keptWarmNow, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
+  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, coldPrices, keptWarm: keptWarmNow, keepWarmAlerts, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
   const { sidecar, serialize, push, logPushError, omo, claudeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
   // started after createCore's Node probe (server/pty/sidecar.ts), which can hold the thread up to 3 s: that wait
   // would count against the read's own 2.5 s limit, and a read cut short leaves the owner unknown for 5 minutes
@@ -386,6 +393,10 @@ export function createServer(
         // The WS client never parses a body, so the upgrade refusal stays plain text.
         return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson(access.level === "none" ? access.reason : "token_required");
       }
+
+      // a keep-warm button (ZAC-260): its signature is the credential, from ntfy's app (no cookie, no
+      // Origin) or a notification's (a watching device's too: the button only names one chat's window)
+      if (KEEP_WARM_ACT_ROUTE.test(pathname)) { setRequestRoute("/api/keepwarm/act/:signed"); return handleKeepWarmAct(request, pathname, keepWarmActions, omniRoute); }
 
       const readOnly = access.level === "full" && access.role === "watch";
       const mutating = !["GET", "HEAD", "OPTIONS"].includes(request.method);

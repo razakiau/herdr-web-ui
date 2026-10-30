@@ -77,6 +77,8 @@
   --cache-warm: var(--status-done);
   --cache-cooling: color-mix(in srgb, var(--notice) 65%, #ffffff);
   --cache-cold: color-mix(in srgb, var(--status-working) 70%, var(--text-dim));
+  /* kept warm by OmniRoute: the flame badge, orange between --notice and --status-blocked */
+  --cache-kept: color-mix(in srgb, var(--notice) 50%, var(--status-blocked));
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);

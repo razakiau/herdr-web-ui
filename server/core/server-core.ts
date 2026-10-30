@@ -37,7 +37,7 @@ type CoreOptions = Parameters<typeof createTerminalRegistry>[0]["options"] & Par
     attachHoldMs?: number;
   };
 
-export function createCore({ options, devices, preferences, usage, usageLogin, pages, agentHostEnabled, hostChatsShown, coldPrices, keptWarm, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS }: {
+export function createCore({ options, devices, preferences, usage, usageLogin, pages, agentHostEnabled, hostChatsShown, coldPrices, keptWarm, keepWarmAlerts, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS }: {
   options: CoreOptions;
   devices: DeviceStore;
   /** the shared preferences (server/preferences.ts): the status hub's web push reads the muted panes from it */
@@ -54,6 +54,8 @@ export function createCore({ options, devices, preferences, usage, usageLogin, p
   coldPrices?: () => Promise<ColdPrices>;
   /** whether OmniRoute's keep-warm plugin keeps a chat warm: then no cold alert (ZAC-260 phase 2) */
   keptWarm?: PushServiceOptions["keptWarm"];
+  /** the keep-warm window-end alert's plugin read and signed buttons (ZAC-260, pick X) */
+  keepWarmAlerts?: Pick<PushServiceOptions, "keepWarmKeys" | "keepWarmAction">;
   TYPED_SETTLE_MS: number;
   KEY_SETTLE_MS: number;
   SUBMIT_DEADLINE_MS: number;
@@ -88,7 +90,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, p
   const { pending, holdPending, holdPendingPane, drainPending, pendingFrames, queueFirstMessage, attached, closeConnection } = createPendingDelivery({ options, clients, attachments, sight, serialize, lastTyped, submitText, authorizeSocket: (client) => authorizeSocket(client), clientSnapshot: () => clientSnapshot(), omo: { sessionOf: (paneId) => omo.sessionOf(paneId) }, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, TYPED_SETTLE_MS });
 
   const { mayType, authorizeSocket, admit, setRole, watchPane, unwatchPane, killWatches, end } = createConnections({ clients, present, pending: { close: closeConnection }, devices, detachClaimed, dropClaims });
-  const { push, omo, gjc, claudeAgents, plans, clientSnapshot, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled, hostChatsShown, coldPrices, keptWarm });
+  const { push, omo, gjc, claudeAgents, plans, clientSnapshot, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled, hostChatsShown, coldPrices, keptWarm, keepWarmAlerts });
   const websocket = createSocket({
     clients, present, stopped: () => stopped, admit, setRole, watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, countVisit, drainOutput,
     // each frame type by name, with the handler of the module that owns it: anything else on a frame object never

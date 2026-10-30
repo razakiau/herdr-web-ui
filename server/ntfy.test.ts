@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AgentStatus, HerdrPane } from "../shared/protocol.ts";
-import { ntfyFromEnv } from "./ntfy.ts";
+import { ntfyFromEnv, postNtfy } from "./ntfy.ts";
 import { createPushService } from "./push.ts";
 
 /**
@@ -13,7 +13,7 @@ import { createPushService } from "./push.ts";
  * that records what it was sent and with which token.
  */
 
-interface Posted { auth: string | null; body: { topic?: string; title?: string; message?: string; priority?: number; click?: string; tags?: string[]; icon?: string } }
+interface Posted { auth: string | null; body: { topic?: string; title?: string; message?: string; priority?: number; click?: string; tags?: string[]; icon?: string; actions?: unknown[] } }
 
 let stateDir: string;
 let server: ReturnType<typeof Bun.serve>;
@@ -284,5 +284,20 @@ describe("the cold-cache alert on ntfy (ZAC-260)", () => {
     await Bun.sleep(80); // fixed wait: proving nothing is posted
     await off.settled();
     expect(posted).toEqual([]);
+  });
+});
+
+describe("the keep-warm window-end alert on ntfy (ZAC-260)", () => {
+  it("carries its buttons as POSTs to the app's address, and none without one", async () => {
+    const config = ntfyFromEnv({ HERDR_WEB_NTFY_URL: `http://127.0.0.1:${server.port}`, HERDR_WEB_NTFY_TOPIC: "herdr-agents", HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" })!;
+    const actions = [{ label: "Keep 8 h more", path: "/api/keepwarm/act/a.b" }, { label: "Let it cool", path: "/api/keepwarm/act/c.d" }];
+    await postNtfy(config, { title: "t", status: "kept", body: "b", machineId: "local", session: "ahp:/s1", actions });
+    expect(posted[0]?.body.tags).toEqual(["fire"]);
+    expect(posted[0]?.body.actions).toEqual([
+      { action: "http", label: "Keep 8 h more", url: "https://herdr.example/api/keepwarm/act/a.b", method: "POST", clear: true },
+      { action: "http", label: "Let it cool", url: "https://herdr.example/api/keepwarm/act/c.d", method: "POST", clear: true },
+    ]);
+    await postNtfy({ ...config, click: null }, { title: "t", status: "kept", body: "b", machineId: "local", session: "ahp:/s1", actions });
+    expect(posted[1]?.body.actions).toBeUndefined();
   });
 });

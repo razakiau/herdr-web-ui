@@ -212,7 +212,10 @@ self.addEventListener("push", (event) => {
         silent: watching,
         data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null,
           // a host chat's alert (server/push.ts onHostChats): its tap opens the chat
-          ...(payload.host_session ? { host_session: payload.host_session } : {}) },
+          ...(payload.host_session ? { host_session: payload.host_session } : {}),
+          // the keep-warm window-end alert's buttons (server/keep-warm-actions.ts): a tap posts the path
+          ...(Array.isArray(payload.actions) ? { actions: payload.actions.map((each) => ({ action: each.action, path: each.path })) } : {}) },
+        ...(Array.isArray(payload.actions) ? { actions: payload.actions.map((each) => ({ action: each.action, title: each.title })) } : {}),
         icon: "/icons/icon-192.png?v=sheep1",
         // Android's status bar and small icon: white on transparent, or Chrome's bell
         badge: "/icons/badge-96.png?v=sheep1",
@@ -243,6 +246,14 @@ function isAppWindow(url) {
 let latestNotificationClick = 0;
 let latestNotificationSelection = null;
 self.addEventListener("notificationclick", (event) => {
+  // a button (the keep-warm window-end alert's): do what it says where it is, open nothing
+  const button = event.action && Array.isArray(event.notification.data?.actions)
+    ? event.notification.data.actions.find((each) => each.action === event.action) : null;
+  if (button) {
+    event.notification.close();
+    event.waitUntil(fetch(button.path, { method: "POST", headers: { "x-herdr-machine": "1" } }).catch(() => {}));
+    return;
+  }
   const click = ++latestNotificationClick;
   event.notification.close();
   const paneId = event.notification.data ? event.notification.data.pane_id : null;
