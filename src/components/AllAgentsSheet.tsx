@@ -13,7 +13,7 @@
  */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Search, X } from "lucide-react";
+import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Hourglass, Search, Snowflake, Timer, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -21,11 +21,12 @@ import "./AgentSidebar.css";
 import "./AllAgentsSheet.css";
 
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
-import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
+import type { ChatPrices } from "../lib/api.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } from "../lib/hostChatGroups.ts";
-import { basename, chatAge, fetchHostCosts, hostLine, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { basename, chatAge, hostLine, tokens, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { byGoingCold, costsFeed, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
 import { cacheState, costSplit, type CostSplit } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
 import { hostChatStatus, samePath } from "../lib/hostPlacement.ts";
@@ -74,7 +75,19 @@ const AGE_LABEL: Record<ChatAge, string> = {
 };
 /** "all": every folder; else one folder's key (null: chats without one) */
 type Pick = "all" | string | null;
-type Sort = "recent" | "cost";
+export type Sort = "recent" | "cost" | "cold";
+
+/** the sort chip's word for each order */
+const SORT_LABEL: Record<Sort, string> = { recent: "Recent", cost: "Cost", cold: "Going cold" };
+
+/** A big chat's cache on its All agents row (ZAC-260, owner's pick B): its size, then the minutes left or "cold", with a small icon. */
+export function CacheText({ mark }: { mark: RowCacheMark }) {
+  const t = useT();
+  const Icon = mark.state === "cold" ? Snowflake : Timer;
+  return <span className={`all-agents-cache is-${mark.state}`}>
+    {tokens(mark.context)} · <Icon aria-hidden="true" />{mark.state === "cold" ? t("cold") : t("{n}m left", { n: mark.leftMin })}
+  </span>;
+}
 
 /** A chat's cost on its row: its split, and its log for the cache dot and the Cost sort's meta line. */
 interface RowCost extends CostSplit { chat: HostChatCost }
@@ -104,19 +117,16 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [folder, setFolder] = useState<Pick>("all");
   const [sort, setSort] = useState<Sort>(initialSort);
-  // the PC's cost logs and the prices, asked once as the sheet opens while costs are tracked:
-  // undefined while asking (or a down host: nothing shown), null for a bridge from before costs
+  // the PC's cost logs and the prices from the page's feed (lib/rowCache.ts), asked again as the sheet
+  // opens while costs are tracked: undefined until it answers (or a down host: nothing shown), null
+  // for a bridge from before costs
   const track = settings.trackCosts;
-  const [answer, setAnswer] = useState<HostCostsAnswer | null | undefined>(undefined);
-  const [prices, setPrices] = useState<ChatPrices | null>(null);
-  useEffect(() => {
-    setAnswer(undefined);
-    if (!track) return;
-    let live = true;
-    void fetchHostCosts(machineId).then((value) => { if (live) setAnswer(value); }, () => { /* a down host: no costs, as before */ });
-    void fetchModelPrices().then((value) => { if (live) setPrices(value); });
-    return () => { live = false; };
-  }, [track, machineId]);
+  const machineIds = useMemo(() => [machineId], [machineId]);
+  const feed = useCostsFeed(machineIds, track);
+  // a PC answered before (the sidebar's feed) is asked again as the sheet opens; a new one is asked by the feed itself
+  useEffect(() => { if (track && costsFeed.read().answers.has(machineId)) costsFeed.ask(); }, [track, machineId]);
+  const answer: HostCostsAnswer | null | undefined = feed?.answers.get(machineId);
+  const prices: ChatPrices | null = feed?.prices ?? null;
   // each chat's menu: its own actions (HostChatActions.tsx), over the sheet
   const actions = useHostChatActions();
   const [menu, setMenu] = useState<{ session: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null } | null>(null);
@@ -165,8 +175,19 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   // a price answer with neither table (no gateway, a failed read) prices nothing: no figures then, rather than $0 floors
   const unpriced = prices !== null && prices.prices === null && prices.fallback === null;
   const costs = useMemo(() => (track && answer && prices && !unpriced ? rowCosts(pc.chats, answer, prices) : new Map<string, RowCost>()), [track, answer, prices, unpriced, pc.chats]);
+  const logs = useMemo(() => new Map([...costs].map(([session, cost]) => [session, cost.chat])), [costs]);
   const costed = costs.size > 0;
   const byCostOn = costed && sort === "cost";
+  // a big chat's cache (ZAC-260): its mark on the row, and the Going cold order
+  const marks = useMemo(() => {
+    const found = new Map<string, RowCacheMark>();
+    for (const row of pc.chats) {
+      const mark = rowCacheMark(row, costs.get(row.session)?.chat, prices, settings, now);
+      if (mark) found.set(row.session, mark);
+    }
+    return found;
+  }, [pc.chats, costs, prices, settings, now]);
+  const byColdOn = costed && sort === "cold";
   // a search looks in the archived ones too: what it finds there is shown
   const showArchived = archivedOpen || (words !== "" && archived.length > 0);
   // the total is what the list shows now: the search's and the folder's chats, the archived ones while unfolded
@@ -181,12 +202,16 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     const cost = costs.get(row.session);
     // its cold restarts after the folder and age: the list is compared by cost, and the peak size is the open chat's Context tab's
     const restarts = cost?.chat.rewrites ?? 0;
-    const context = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
+    const words = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
       restarts === 1 ? t("1 cold restart") : restarts > 1 ? t("{n} cold restarts", { n: restarts }) : null].filter(Boolean).join(" · ");
+    // a big chat's cache after the rest (owner's pick B): "· 268K · 12m left", "· 312K · cold", in the cache's colour
+    const mark = marks.get(row.session);
+    const context = mark ? <>{words} · <CacheText mark={mark} /></> : words;
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
     const cache = cost ? cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working") : null;
-    // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing
-    const dot = cache && cache.state !== "cold" ? cache.state : null;
+    // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing;
+    // a big chat says it in words on its second line instead
+    const dot = !mark && cache && cache.state !== "cold" ? cache.state : null;
     const localOnly = cost !== undefined && cost.usd === 0 && cost.local.length > 0 && cost.missing.length === 0;
     const menuOpen = menu?.session === row.session;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
@@ -231,8 +256,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
           {/* the sort chip first, then a folder's chats only, as VS Code's sessions view filters by workspace; All is every folder */}
           {(costed || pills.length > 1) && <div ref={pillRow} className={`all-agents-pills${moreRight ? " has-more" : ""}`} onScroll={measurePills}>
             {costed && <button type="button" className={`all-agents-pill all-agents-sort${sortMenu ? " is-open" : ""}`} aria-haspopup="menu" aria-expanded={sortMenu !== null}
-              aria-label={t("Sort: {order}", { order: t(sort === "recent" ? "Recent" : "Cost") })} onClick={(event) => setSortMenu(sortMenu ? null : event.currentTarget)}>
-              <ArrowUpDown aria-hidden="true" /><span>{t(sort === "recent" ? "Recent" : "Cost")}</span><ChevronDown aria-hidden="true" />
+              aria-label={t("Sort: {order}", { order: t(SORT_LABEL[sort]) })} onClick={(event) => setSortMenu(sortMenu ? null : event.currentTarget)}>
+              <ArrowUpDown aria-hidden="true" /><span>{t(SORT_LABEL[sort])}</span><ChevronDown aria-hidden="true" />
             </button>}
             {pills.length > 1 && <div className="all-agents-folders" role="radiogroup" aria-label={t("Folders")}>
               {[{ cwd: "all" as Pick, count: pills.reduce((sum, pill) => sum + pill.count, 0) }, ...pills].map((pill) => {
@@ -258,6 +283,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
           {current.length === 0 && archived.length === 0 && <p className="agent-empty" role="status">{t(words === "" ? "No agents yet" : "No agents match")}</p>}
           {byCostOn ? <section className="all-agents-group" aria-label={t("Cost")}>
             <ul className="agent-list">{byCost(current.flatMap((group) => group.chats), costs).map(item)}</ul>
+          </section> : byColdOn ? <section className="all-agents-group" aria-label={t("Going cold")}>
+            <ul className="agent-list">{byGoingCold(current.flatMap((group) => group.chats), marks, logs).map(item)}</ul>
           </section> : current.map((group) => {
             const subtotal = groupSubtotal(group.chats, costs);
             return <section key={group.age} className="all-agents-group" aria-label={t(AGE_LABEL[group.age])}>
@@ -287,6 +314,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
       {sortMenu && <RowMenu anchor={sortMenu} align="start" popover title={t("Sort by")} onClose={() => setSortMenu(null)} items={[
         { id: "recent", label: t("Recent"), icon: Clock, checked: sort === "recent", run: () => setSort("recent") },
         { id: "cost", label: t("Cost, highest first"), icon: ArrowUpDown, checked: sort === "cost", run: () => setSort("cost") },
+        { id: "cold", label: t("Going cold"), icon: Hourglass, checked: sort === "cold", run: () => setSort("cold") },
       ]} />}
       {menu && menuRow && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={hostChatTitle(menuRow, t)} subtitle={menuRow.cwd ?? undefined}
         items={hostChatItems(actions, { machineId, chat: menuRow }, t)} onClose={() => setMenu(null)} />}

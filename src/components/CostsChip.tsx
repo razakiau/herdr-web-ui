@@ -3,27 +3,25 @@
  * price for a period, built like the plan chips beside it (their `.usage-strip` button, no
  * outline): "$5,849" with the period in small caps ("30D") over the same thin bar, split in the
  * cost colours. No "≥" here: a floor only dims the amount, the Costs sheet says how. It opens the Costs sheet. It asks each
- * PC with host chats for its costs as the sidebar mounts, every 5 minutes while it stays, and on
+ * PC with host chats for its costs through the page's feed (lib/rowCache.ts) as the sidebar mounts, every 5 minutes while it stays, and on
  * opening the sheet. Absent while costs are not tracked, and until a PC has answered with costs.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import "./UsageMeters.css";
 import "./SessionSheet.css";
 import "./CostsSheet.css";
 
 import type { HostCostsAnswer } from "../../shared/host-chats.ts";
-import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
 import { wholeUsd } from "../lib/chatCost.ts";
 import { CostStack } from "./CostParts.tsx";
-import { fetchHostCosts } from "../lib/hostChats.ts";
+import { costsFeed, useCostsFeed } from "../lib/rowCache.ts";
 import { useT } from "../lib/i18n.ts";
 import { periodTotals, type CostPeriod } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
 import { CostsSheet, PERIODS, type CostsPc } from "./CostsSheet.tsx";
 
-/** How often the chip asks again while the sidebar is shown (plan, ZAC-260): costs move by the call, not by the second. */
-const REFRESH_MS = 5 * 60_000;
+const EMPTY_ANSWERS: ReadonlyMap<string, HostCostsAnswer | null> = new Map();
 const PERIOD_KEY = "ovis:costs-period";
 
 function storedPeriod(): CostPeriod {
@@ -50,25 +48,14 @@ export function CostsChip({ pcs, onAllAgents }: CostsChipProps) {
     setPeriodState(next);
     try { localStorage.setItem(PERIOD_KEY, next); } catch { /* storage denied: for the page */ }
   };
-  // per PC its last answer: null for a bridge before costs; a PC not answered yet (or down) has none
-  const [answers, setAnswers] = useState<ReadonlyMap<string, HostCostsAnswer | null>>(() => new Map());
-  const [prices, setPrices] = useState<ChatPrices | null>(null);
-  const ids = pcs.map((pc) => pc.id).join("\n");
-
-  const ask = useCallback(() => {
-    void fetchModelPrices().then(setPrices);
-    for (const machineId of ids === "" ? [] : ids.split("\n")) {
-      // a down host keeps what it said last, and says nothing until it answers
-      void fetchHostCosts(machineId).then((answer) => setAnswers((current) => new Map(current).set(machineId, answer)), () => {});
-    }
-  }, [ids]);
-
-  useEffect(() => {
-    if (!track) { setOpen(false); return; }
-    ask();
-    const timer = setInterval(() => { if (typeof document === "undefined" || document.visibilityState !== "hidden") ask(); }, REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [track, ask]);
+  // per PC its last answer (null for a bridge before costs; a PC not answered yet, or down, has
+  // none) and the prices: the page's costs feed (lib/rowCache.ts), shared with the lists' cache marks
+  const ids = useMemo(() => pcs.map((pc) => pc.id), [pcs]);
+  const feed = useCostsFeed(ids, track);
+  const answers = feed?.answers ?? EMPTY_ANSWERS;
+  const prices = feed?.prices ?? null;
+  const ask = costsFeed.ask;
+  useEffect(() => { if (!track) setOpen(false); }, [track]);
 
   // a PC no longer listed (removed, its host chats turned off) is let go
   const shown = useMemo(() => new Map([...answers].filter(([machineId]) => pcs.some((pc) => pc.id === machineId))), [answers, pcs]);

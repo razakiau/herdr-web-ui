@@ -10,6 +10,7 @@ const realDom = await import("react-dom");
 mock.module("react-dom", () => ({ ...realDom, createPortal: (node: ReactNode) => node }));
 const { CostsChip } = await import("./CostsChip.tsx");
 const { SettingsProvider } = await import("../lib/settings.ts");
+const { costsFeed } = await import("../lib/rowCache.ts");
 
 const MODEL = "claude-fictional-4";
 // $25 per million output tokens: the sums below are whole dollars
@@ -50,6 +51,8 @@ beforeEach(() => {
   picked = [];
   hang = false;
   pricesReply = { prices: PRICES, fallback: null };
+  // the page's costs feed outlives a chip: each test starts from no answers
+  costsFeed.reset();
   const events = new EventTarget();
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });

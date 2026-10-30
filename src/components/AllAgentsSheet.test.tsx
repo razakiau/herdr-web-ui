@@ -41,6 +41,8 @@ const sheetMarked = (): boolean => typeof (fakeHistory.state as Record<string, u
 const realDom = await import("react-dom");
 mock.module("react-dom", () => ({ ...realDom, createPortal: (node: ReactNode) => node }));
 const { AllAgentsSheet } = await import("./AllAgentsSheet.tsx");
+const { costsFeed } = await import("../lib/rowCache.ts");
+type Sort = import("./AllAgentsSheet.tsx").Sort;
 const { SettingsProvider } = await import("../lib/settings.ts");
 
 const NOW = Date.now();
@@ -64,7 +66,7 @@ const CHATS = [
   row("copilotcli:/big", 60 * 24 * 3),
 ];
 const ANSWER: HostCostsAnswer = {
-  chats: [cost("copilotcli:/big", BIG, { lastCallAt: ago(60 * 24 * 3) }), cost("copilotcli:/small", SMALL, { peak: 40_000, rewrites: 0 }), cost("copilotcli:/gone", BIG)],
+  chats: [cost("copilotcli:/big", BIG, { lastCallAt: ago(60 * 24 * 3) }), cost("copilotcli:/small", SMALL, { context: 40_000, peak: 40_000, rewrites: 0 }), cost("copilotcli:/gone", BIG)],
   complete: true,
 };
 
@@ -83,6 +85,8 @@ beforeEach(() => {
   records = new Map();
   urls = [];
   costsReply = { status: 200, body: ANSWER };
+  // the page's costs feed outlives a sheet: each test starts from no answers
+  costsFeed.reset();
   pricesReply = { prices: PRICES, fallback: null };
   const events = new EventTarget();
   phone = false;
@@ -131,9 +135,10 @@ const nodeMock = () => ({
   offsetWidth: 200, offsetHeight: 80, scrollLeft: 0, scrollWidth: 0, clientWidth: 0, style: {},
 });
 
-async function open(track: boolean, props: { initialSort?: "recent" | "cost" } = {}): Promise<ReactTestRenderer> {
-  records.set(SETTINGS_STORAGE_KEY, JSON.stringify({ trackCosts: track }));
-  const sheet = createElement(AllAgentsSheet, { machineId: "desk", machineName: "Desk", pc: { host: null, chats: CHATS }, selected: null, onOpen: () => {}, onClose: () => {}, ...props });
+async function open(track: boolean, props: { initialSort?: Sort; chats?: HostChatRow[] } = {}, settings: Record<string, unknown> = {}): Promise<ReactTestRenderer> {
+  records.set(SETTINGS_STORAGE_KEY, JSON.stringify({ trackCosts: track, ...settings }));
+  const { chats = CHATS, ...rest } = props;
+  const sheet = createElement(AllAgentsSheet, { machineId: "desk", machineName: "Desk", pc: { host: null, chats }, selected: null, onOpen: () => {}, onClose: () => {}, ...rest });
   await act(async () => { renderer = create(createElement(SettingsProvider, { children: sheet }), { createNodeMock: nodeMock }); });
   // the costs and the prices answer
   for (let turn = 0; turn < 10; turn++) await act(async () => { await Promise.resolve(); });
@@ -204,7 +209,7 @@ describe("All agents with costs tracked", () => {
     await act(async () => { chip().props["onClick"]({ currentTarget: nodeMock() }); });
     expect(chip().props["aria-expanded"]).toBe(true);
     const items = () => sheet.root.findAll((each) => each.type === "button" && each.props["role"] === "menuitemcheckbox");
-    expect(items().map((item) => [textOf(item), item.props["aria-checked"]])).toEqual([["Recent", true], ["Cost, highest first", false]]);
+    expect(items().map((item) => [textOf(item), item.props["aria-checked"]])).toEqual([["Recent", true], ["Cost, highest first", false], ["Going cold", false]]);
     await act(async () => { items()[1]!.props["onClick"](); });
     expect(items()).toEqual([]);
     expect(textOf(chip())).toBe("Cost");
@@ -214,7 +219,7 @@ describe("All agents with costs tracked", () => {
   it("says a row's cold restarts on its second line after the folder and age, in both sorts, and no peak", async () => {
     for (const sort of ["recent", "cost"] as const) {
       const sheet = await open(true, { initialSort: sort });
-      expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 3 cold restarts$/);
+      expect(textOf(classed(rowOf(sheet, "copilotcli:/big"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 3 cold restarts · 120K · cold$/);
       expect(textOf(classed(rowOf(sheet, "copilotcli:/small"), "agent-context")[0]!)).not.toContain("cold restart");
       expect(classed(sheet.root, "agent-tokens")).toEqual([]);
       expect(textOf(sheet.root)).not.toContain("peak");
@@ -343,5 +348,56 @@ describe("All agents with costs not tracked", () => {
     expect(rows(sheet)).toEqual(["copilotcli:/small", "copilotcli:/none", "copilotcli:/big"]);
     for (const name of ["all-agents-cost", "all-agents-sort", "all-agents-subtotal", "all-agents-summary", "session-dot"]) expect(classed(sheet.root, name)).toEqual([]);
     expect(classed(sheet.root, "all-agents-age").map(textOf)).toEqual(["Today", "Last 7 days"]);
+  });
+});
+
+describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
+  // context × $10 written (a $5 Claude model): 300K is $3 (big), 40K $0.40 (small); lifetime 60 min
+  const BIG_CHATS = [
+    row("copilotcli:/warm", 2), row("copilotcli:/cooling", 1), row("copilotcli:/cold-old", 30), row("copilotcli:/cold-new", 20),
+    row("copilotcli:/small", 0), row("copilotcli:/busy", 40, { status: "working" }), row("copilotcli:/asks", 50, { status: "asks" }),
+  ];
+  const BIG_ANSWER: HostCostsAnswer = { complete: true, chats: [
+    cost("copilotcli:/warm", SMALL, { lastCallAt: ago(10), context: 300_000, rewrites: 0 }),
+    cost("copilotcli:/cooling", SMALL, { lastCallAt: ago(48), context: 268_000, rewrites: 0 }),
+    cost("copilotcli:/cold-old", SMALL, { lastCallAt: ago(300), context: 312_000, rewrites: 0 }),
+    cost("copilotcli:/cold-new", SMALL, { lastCallAt: ago(90), context: 1_200_000, rewrites: 0 }),
+    cost("copilotcli:/small", SMALL, { lastCallAt: ago(50), context: 40_000, rewrites: 0 }),
+    cost("copilotcli:/busy", SMALL, { lastCallAt: ago(55), context: 300_000, rewrites: 0 }),
+    cost("copilotcli:/asks", SMALL, { lastCallAt: ago(56), context: 300_000, rewrites: 0 }),
+  ] };
+  const cacheText = (sheet: ReactTestRenderer, session: string): string | null => {
+    const found = classed(rowOf(sheet, session), "all-agents-cache")[0];
+    return found ? `${found.props["className"]}: ${textOf(found)}` : null;
+  };
+
+  it("says a big chat's size and minutes left, or cold, after its folder, in the cache's colour; nothing for a small or busy one", async () => {
+    costsReply = { status: 200, body: BIG_ANSWER };
+    const sheet = await open(true, { chats: BIG_CHATS });
+    expect(cacheText(sheet, "copilotcli:/warm")).toBe("all-agents-cache is-warm: 300K · 50m left");
+    expect(cacheText(sheet, "copilotcli:/cooling")).toBe("all-agents-cache is-cooling: 268K · 12m left");
+    expect(cacheText(sheet, "copilotcli:/cold-old")).toBe("all-agents-cache is-cold: 312K · cold");
+    expect(cacheText(sheet, "copilotcli:/cold-new")).toBe("all-agents-cache is-cold: 1.2M · cold");
+    for (const quiet of ["copilotcli:/small", "copilotcli:/busy", "copilotcli:/asks"]) expect(cacheText(sheet, quiet)).toBeNull();
+    expect(textOf(classed(rowOf(sheet, "copilotcli:/cooling"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 268K · 12m left$/);
+    // the warm dot is a small chat's only: a big one says it in words
+    expect(classed(rowOf(sheet, "copilotcli:/warm"), "session-dot")).toEqual([]);
+    expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").length).toBe(1);
+  });
+
+  it("follows the dollar threshold: at $4 only the 1.2M chat ($12) is big", async () => {
+    costsReply = { status: 200, body: BIG_ANSWER };
+    const sheet = await open(true, { chats: BIG_CHATS }, { coldRestartAlertUsd: 4 });
+    expect(cacheText(sheet, "copilotcli:/warm")).toBeNull();
+    expect(cacheText(sheet, "copilotcli:/cold-new")).toBe("all-agents-cache is-cold: 1.2M · cold");
+  });
+
+  it("Going cold: big chats by minutes left, then the cold big ones newest call first, then the rest as Recent", async () => {
+    costsReply = { status: 200, body: BIG_ANSWER };
+    const sheet = await open(true, { chats: BIG_CHATS, initialSort: "cold" });
+    expect(textOf(classed(sheet.root, "all-agents-sort")[0]!)).toBe("Going cold");
+    expect(rows(sheet)).toEqual(["copilotcli:/cooling", "copilotcli:/warm", "copilotcli:/cold-new", "copilotcli:/cold-old", "copilotcli:/small", "copilotcli:/busy", "copilotcli:/asks"]);
+    // the summary line is the same as in Recent
+    expect(textOf(classed(sheet.root, "all-agents-summary-scope")[0]!)).toBe("7 chats · all folders");
   });
 });

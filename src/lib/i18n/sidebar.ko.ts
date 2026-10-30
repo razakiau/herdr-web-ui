@@ -58,4 +58,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Working": "작업 중",
   "Show agents": "표시할 에이전트",
   "No agents in this view": "이 보기에 에이전트가 없습니다",
+  "cache warm, {n} min left": "캐시 유효, {n}분 남음",
+  "cache cooling, {n} min left": "캐시 곧 만료, {n}분 남음",
+  "cache cold": "캐시 만료",
 };

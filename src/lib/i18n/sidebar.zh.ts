@@ -58,4 +58,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Working": "进行中",
   "Show agents": "显示的代理",
   "No agents in this view": "此视图中没有代理",
+  "cache warm, {n} min left": "缓存有效，剩 {n} 分钟",
+  "cache cooling, {n} min left": "缓存即将失效，剩 {n} 分钟",
+  "cache cold": "缓存已失效",
 };

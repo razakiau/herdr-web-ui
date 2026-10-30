@@ -422,3 +422,24 @@
 /* a facet is a filter, not a live agent: its working mark holds still (only rows breathe) */
 .agent-facet .agent-facet-mark .sidebar-status-dot,
 .agent-facet .agent-facet-mark .sidebar-status-glyph { animation: none; }
+
+/* a big chat's cache (ZAC-260, owner's pick A): a ring around the mark that drains to the cache's
+   expiry, dashed once cold. Drawn over the mark's cell, 4px out from the 18px logo; the state on
+   the row's right is unchanged */
+.sidebar-mark.has-cache-ring { position: relative; }
+.cache-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  overflow: visible;
+}
+.sidebar-mark .cache-ring { width: 26px; height: 26px; }
+.cache-ring rect { stroke-width: 2; }
+.cache-ring .cache-ring-track { stroke: var(--bg-hover); }
+.cache-ring.is-warm .cache-ring-stroke { stroke: var(--cache-warm); }
+.cache-ring.is-cooling .cache-ring-stroke { stroke: var(--cache-cooling); }
+.cache-ring.is-cold .cache-ring-stroke { stroke: var(--cache-cold); stroke-width: 1.5; }

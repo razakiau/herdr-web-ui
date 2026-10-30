@@ -155,3 +155,11 @@
   height: 4px;
   gap: 1px;
 }
+
+/* a big chat's cache on its second line (ZAC-260, owner's pick B): "268K · 12m left" in the cache's
+   colour (tokens in src/styles.css, 4.5:1 on every row surface), a small Timer or Snowflake before the time */
+.all-agents-cache { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.all-agents-cache.is-warm { color: var(--cache-warm); }
+.all-agents-cache.is-cooling { color: var(--cache-cooling); }
+.all-agents-cache.is-cold { color: var(--cache-cold); }
+.all-agents-cache svg { width: 0.95em; height: 0.95em; flex: none; margin-inline-start: 1px; }

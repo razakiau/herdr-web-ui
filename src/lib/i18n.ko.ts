@@ -586,6 +586,8 @@ const BASE: Record<string, string> = {
   "Sort by": "정렬",
   "Sort: {order}": "정렬: {order}",
   "Cost, highest first": "비용 높은 순",
+  "Going cold": "곧 만료되는 순",
+  "{n}m left": "{n}분 남음",
   "1 chat · {scope}": "채팅 1개 · {scope}",
   "{n} chats · {scope}": "채팅 {n}개 · {scope}",
   "all folders": "모든 폴더",

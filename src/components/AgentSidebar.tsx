@@ -24,6 +24,7 @@ import { machineFilter } from "../lib/sidebarFilter.ts";
 import { useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
 import { chatAge, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { chatLog, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
 import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
@@ -41,7 +42,8 @@ interface AgentRowBodyProps {
   title: string;
   /** the live name other tools address the agent by, when it has one */
   name: string | null;
-  context: string;
+  /** the second line's own part; a node for All agents' cache text (ZAC-260) */
+  context: ReactNode;
   /** what herdr plugins report on the pane (`$name` tokens), in the order herdr's rows draw them */
   tokens: readonly string[];
   backgroundTasks?: number;
@@ -57,21 +59,43 @@ interface AgentRowBodyProps {
   now?: AgentNow | null;
   /** how long it has been in its state (lib/since.ts formatSince), under the state glyph */
   since?: string | null;
+  /** a big chat's cache (ZAC-260, owner's pick A): a ring around the mark, draining to its expiry, dashed once cold */
+  cacheRing?: RowCacheMark | null;
+  /** what the ring says, for a screen reader ("cache warm, 12 min left") */
+  cacheWords?: string | null;
+}
+
+/**
+ * The ring around a big chat's mark (ZAC-260): a rounded square drawn as one stroke of path length
+ * 100, its dash the share of the cache's lifetime left, so it drains as the cache ages; once cold,
+ * dashed all round. The track under it in the row's hover tone; its colour the cache's token.
+ */
+export function CacheRing({ mark }: { mark: RowCacheMark }) {
+  const shape = { x: 1, y: 1, width: 30, height: 30, rx: 9, fill: "none" } as const;
+  return <svg className={`cache-ring is-${mark.state}`} viewBox="0 0 32 32" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
+    {mark.state === "cold"
+      ? <rect {...shape} className="cache-ring-stroke" strokeDasharray="2 3" />
+      : <>
+        <rect {...shape} className="cache-ring-track" />
+        <rect {...shape} className="cache-ring-stroke" pathLength={100} strokeDasharray={`${(mark.fraction * 100).toFixed(1)} 100`} />
+      </>}
+  </svg>;
 }
 
 /**
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, what
  * its plugins report, and how it is doing.
  */
-export function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted = false, place = null, now = null, since = null }: AgentRowBodyProps) {
+export function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted = false, place = null, now = null, since = null, cacheRing = null, cacheWords = null }: AgentRowBodyProps) {
   const t = useT();
   return <>
-    <span className="sidebar-mark" aria-hidden="true">{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
+    <span className={`sidebar-mark${cacheRing ? " has-cache-ring" : ""}`} aria-hidden="true">{cacheRing && <CacheRing mark={cacheRing} />}{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
     <span className="agent-copy">
       {markKind && <span className="visually-hidden">{markKind}: </span>}
       <span className="agent-main">
         <span className="agent-title-line">
           <span className="agent-title">{title}</span>
+          {cacheWords && <span className="visually-hidden">, {cacheWords}</span>}
         </span>
         {(place || name || context || now) && <span className="agent-context">
           {[
@@ -95,6 +119,11 @@ export function AgentRowBody({ mark, markKind, title, name, context, tokens, bac
       {since && <span className={`agent-since${status === "blocked" ? " is-ask" : ""}`}>{since}</span>}
     </span>
   </>;
+}
+
+/** A big chat's cache in words, for the row's accessible name (ZAC-260): "cache warm, 12 min left", "cache cold". */
+export function cacheWords(mark: RowCacheMark, t: Translate): string {
+  return mark.state === "cold" ? t("cache cold") : t(mark.state === "warm" ? "cache warm, {n} min left" : "cache cooling, {n} min left", { n: mark.leftMin });
 }
 
 /** The Agents head's summary: how many need you and how many work, leaving out a zero. */
@@ -239,6 +268,9 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const chats = hostChats?.get(machine.id)?.chats ?? [];
     return agentsListHostChats(chats, (session) => pinned.includes(hostChatPinKey(machine.id, session))).map((chat): ChatRow => ({ machine, chat }));
   }), [machines, hostChats, pinned]);
+  // the page's costs feed for the PCs with listed chats (lib/rowCache.ts), for a big chat's cache ring
+  const costPcs = useMemo(() => [...new Set(chatRows.map((row) => row.machine.id))], [chatRows]);
+  const costs = useCostsFeed(costPcs, settings.trackCosts);
   // what needs you first, then what works, then an unread finish, then the rest (lib/agentRoster.ts byAttention);
   // a host chat's "asks" needs you, and an unread one reads as a finish
   const shown = (row: ListRow): AgentStatus | undefined => row.chat
@@ -341,6 +373,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const { machine, chat } = row;
     const selected = selectedHostChat?.machineId === machine.id && selectedHostChat.session === chat.session;
     const { title, place, context, subtitle } = describeChat(row);
+    const ring = costs ? rowCacheMark(chat, chatLog(costs, machine.id, chat.session), costs.prices, settings, now) : null;
     const pinKey = hostChatPinKey(machine.id, chat.session);
     const menuOpen = menu?.key === pinKey;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
@@ -349,7 +382,8 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
       onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
       <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, subtitle, chat.cwd].filter(Boolean).join("\n")} onClick={() => onSelectHostChat?.({ machineId: machine.id, session: chat.session })}>
-        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={place} context={context} tokens={[]} status={hostChatStatus(chat)} now={hostChatNow(chat, t)} />
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={place} context={context} tokens={[]} status={hostChatStatus(chat)} now={hostChatNow(chat, t)}
+          cacheRing={ring} cacheWords={ring ? cacheWords(ring, t) : null} />
       </button>
       <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>

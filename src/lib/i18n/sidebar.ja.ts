@@ -58,4 +58,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Working": "作業中",
   "Show agents": "表示するエージェント",
   "No agents in this view": "この表示にエージェントはありません",
+  "cache warm, {n} min left": "キャッシュ有効、残り {n} 分",
+  "cache cooling, {n} min left": "キャッシュまもなく失効、残り {n} 分",
+  "cache cold": "キャッシュ失効",
 };

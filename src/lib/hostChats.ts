@@ -639,14 +639,43 @@ export function openHostChatClosed(pc: HostPc | undefined, session: string): boo
   return row === undefined || row.archived;
 }
 
-/** The clock the chats' ages and the recent window read: once a minute is enough for both. */
+/**
+ * One minute ticker for the whole page (ZAC-260): every row's age and cache mark reads the same
+ * clock, so a list of 50 chats runs one interval, not 50. It runs only while something listens and
+ * the page is shown: a hidden tab does not tick, and catches up the moment it is shown again.
+ */
+export const minuteClock = (() => {
+  let now = Date.now();
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const listeners = new Set<() => void>();
+  const hidden = (): boolean => typeof document !== "undefined" && document.visibilityState === "hidden";
+  const tick = (): void => { now = Date.now(); for (const listener of listeners) listener(); };
+  const sync = (): void => {
+    const wanted = listeners.size > 0 && !hidden();
+    if (wanted && timer === null) { timer = setInterval(tick, 60_000); if (Date.now() - now >= 60_000) tick(); }
+    else if (!wanted && timer !== null) { clearInterval(timer); timer = null; }
+  };
+  const onVisibility = (): void => sync();
+  return {
+    subscribe(listener: () => void): () => void {
+      if (listeners.size === 0 && typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+      listeners.add(listener);
+      sync();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+        sync();
+      };
+    },
+    read: (): number => now,
+    /** whether the interval runs now (for a test) */
+    running: (): boolean => timer !== null,
+  };
+})();
+
+/** The clock the chats' ages, the recent window and the cache marks read: once a minute, shared (minuteClock). */
 export function useMinuteClock(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
+  return useSyncExternalStore(minuteClock.subscribe, minuteClock.read, minuteClock.read);
 }
 
 /** A read failure that says the PC's bridge has the feature on and its host is down: it still gets a group. */

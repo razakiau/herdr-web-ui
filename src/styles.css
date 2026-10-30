@@ -69,6 +69,14 @@
   --indicator-unknown: #6c7086;
   /* a note that the view is partial (a file cut short, code left plain): warning yellow */
   --notice: #e8c55c;
+  /* a big chat's prompt cache (ZAC-260): warm green, cooling amber, cold grey-blue, never the
+     Working blue. Mixed from each palette's own colours: cooling is --notice lifted (dark) or
+     deepened (light) to clear 4.5:1 on every row surface; cold is the Working blue greyed by a
+     third of --text-dim. Measured over all 23 palettes (bg, panel, elevated, hover): warm >= 5.35,
+     cooling >= 4.68, cold >= 4.96 */
+  --cache-warm: var(--status-done);
+  --cache-cooling: color-mix(in srgb, var(--notice) 65%, #ffffff);
+  --cache-cold: color-mix(in srgb, var(--status-working) 70%, var(--text-dim));
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);
@@ -292,6 +300,7 @@
   --indicator-unknown: #9ca0b0;
   --danger-text: #8f1d1d;
   --notice: #7a5a00;
+  --cache-cooling: color-mix(in srgb, var(--notice) 50%, #000000);
   --scrim: rgba(40, 32, 22, 0.35);
   --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
   --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);

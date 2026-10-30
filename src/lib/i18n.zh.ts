@@ -590,6 +590,8 @@ const BASE: Record<string, string> = {
   "Sort by": "排序方式",
   "Sort: {order}": "排序：{order}",
   "Cost, highest first": "费用从高到低",
+  "Going cold": "即将失效",
+  "{n}m left": "剩{n}分",
   "1 chat · {scope}": "1 个聊天 · {scope}",
   "{n} chats · {scope}": "{n} 个聊天 · {scope}",
   "all folders": "所有文件夹",
