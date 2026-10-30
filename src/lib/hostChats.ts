@@ -555,7 +555,8 @@ export function noteHostChatStreamOpen(): void {
 export function onHostChatResume(listener: () => void): () => void {
   resumeListeners.add(listener);
   const shown = (): void => { if (document.visibilityState === "visible") listener(); };
-  const page = typeof document === "undefined" ? null : document;
+  // a test's stand-in document may have no events (CostsSheet.test.tsx): no page to watch then
+  const page = typeof document === "undefined" || typeof document.addEventListener !== "function" ? null : document;
   page?.addEventListener("visibilitychange", shown);
   return () => { resumeListeners.delete(listener); page?.removeEventListener("visibilitychange", shown); };
 }

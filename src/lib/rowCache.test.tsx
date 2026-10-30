@@ -208,6 +208,22 @@ describe("the costs feed keeps in step without a reload (phase 1b)", () => {
     release();
   });
 
+  it("forgets a request still in flight on reset: the next want asks the PC again", async () => {
+    const asked: string[] = [];
+    let hang = true;
+    const feed = createCostsFeed({ costs: (machineId) => { asked.push(machineId); return hang ? new Promise(() => {}) : Promise.resolve(answer); }, prices: async () => PRICES }, { resume: () => () => {}, rows: () => () => {} });
+    const first = feed.want(["desk"]);
+    await tick(0);
+    first();
+    feed.reset();
+    hang = false;
+    const second = feed.want(["desk"]);
+    await tick(0);
+    expect(asked).toEqual(["desk", "desk"]);
+    expect(feed.read().answers.get("desk")).toEqual(answer);
+    second();
+  });
+
   it("keeps the newer of the open chat's own log and the PC's answer", async () => {
     const older = { ...log(30, 300_000), session: "copilotcli:/a" };
     const newer = { ...log(2, 300_000), session: "copilotcli:/a" };

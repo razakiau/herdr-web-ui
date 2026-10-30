@@ -62,12 +62,22 @@ export function createCostsFeed(
   const seen = new Map<string, string>();
   const emit = (next: CostsFeed): void => { feed = next; for (const listener of listeners) listener(); };
   const ids = (): string[] => [...new Set([...wants.values()].flat())];
+  /** bumped by reset(): a request from before it neither lands nor holds its PC's slot */
+  let epoch = 0;
   const askPc = (machineId: string): void => {
     if (flying.has(machineId)) { flying.set(machineId, true); return; }
     flying.set(machineId, false);
-    const landed = (): void => { const again = flying.get(machineId); flying.delete(machineId); if (again && wants.size > 0) askPc(machineId); };
+    const mine = epoch;
+    const landed = (): void => {
+      if (mine !== epoch) return;
+      const again = flying.get(machineId); flying.delete(machineId);
+      if (again && wants.size > 0) askPc(machineId);
+    };
     // a down host keeps what it said last, and says nothing until it answers
-    void fetchers.costs(machineId).then((answer) => { emit({ ...feed, answers: new Map(feed.answers).set(machineId, mergeNoted(answer, feed.answers.get(machineId)?.chats ?? [])) }); landed(); }, landed);
+    void fetchers.costs(machineId).then((answer) => {
+      if (mine === epoch) emit({ ...feed, answers: new Map(feed.answers).set(machineId, mergeNoted(answer, feed.answers.get(machineId)?.chats ?? [])) });
+      landed();
+    }, landed);
   };
   const ask = (only?: readonly string[]): void => {
     void fetchers.prices().then((prices) => emit({ ...feed, prices }));
@@ -118,7 +128,7 @@ export function createCostsFeed(
       if (merged !== answer) emit({ ...feed, answers: new Map(feed.answers).set(machineId, merged) });
     },
     /** forget every answer (costs tracking turned off) */
-    reset: (): void => { seen.clear(); emit(EMPTY); },
+    reset: (): void => { epoch += 1; flying.clear(); seen.clear(); emit(EMPTY); },
   };
 }
 
