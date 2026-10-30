@@ -166,17 +166,19 @@ describe("the costs feed keeps in step without a reload (phase 1b)", () => {
     rows("desk", [row("2026-10-30T10:00:00.000Z")]);
     // the same rows again: nothing moved
     rows("desk", [row("2026-10-30T10:00:00.000Z")]);
-    await tick(15);
+    await tick(15); // fixed wait: proving nothing is asked, three debounces long
     expect(asked).toEqual(["desk"]);
     rows("desk", [row("2026-10-30T10:01:00.000Z")]);
     rows("desk", [row("2026-10-30T10:01:02.000Z")]);
     rows("desk", [row("2026-10-30T10:01:02.000Z", "asks")]);
-    await tick(15);
+    const deadline = Date.now() + 2_000;
+    while (asked.length < 2) { if (Date.now() > deadline) throw new Error("the change was never asked"); await tick(1); }
+    await tick(15); // fixed wait: proving the burst asks once, not three times
     expect(asked).toEqual(["desk", "desk"]);
     // a PC no list wants is never asked
     rows("laptop", [row("2026-10-30T10:00:00.000Z")]);
     rows("laptop", [row("2026-10-30T10:02:00.000Z")]);
-    await tick(15);
+    await tick(15); // fixed wait: proving nothing is asked
     expect(asked).toEqual(["desk", "desk"]);
     release();
   });
@@ -200,7 +202,7 @@ describe("the costs feed keeps in step without a reload (phase 1b)", () => {
       rows("desk", [row("2026-10-30T10:00:00.000Z")]);
       rows("desk", [row("2026-10-30T10:05:00.000Z")]);
       resume();
-      await tick(15);
+      await tick(15); // fixed wait: proving nothing is asked while hidden
     });
     expect(asked).toEqual([]);
     release();
