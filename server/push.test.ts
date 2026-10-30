@@ -11,6 +11,7 @@ import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { coldAlertBody, coldFromEnv, createPushService, handlePushRequest, parseSubscription, windowAlertBody, type ColdPrices, type PushService } from "./push.ts";
 import type { KeepWarmKey } from "../shared/keep-warm.ts";
 import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
+import type { HandoffAct } from "./keep-warm-actions.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { privateStateFs } from "./private-state.ts";
 
@@ -940,6 +941,20 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(bodies()).toEqual(["waiting for your input", "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68"]);
   });
 
+  it("carries \"Hand off now\", good for 2 h after it went (ZAC-262)", async () => {
+    const push = subscribed({ cold: RULE, handoffAction: (act) => `/h/${encodeURIComponent(JSON.stringify(act))}` });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    await arrived(1);
+    const sent = Date.now();
+    await push.settled();
+    const actions = fake.received[0]?.payload.actions ?? [];
+    expect(actions.map(({ action, title }) => ({ action, title }))).toEqual([{ action: "handoff", title: "Hand off now" }]);
+    const act = JSON.parse(decodeURIComponent(actions[0]!.path.slice(3))) as HandoffAct;
+    expect({ ...act, expires: 0 }).toEqual({ how: "handoff", machineId: "mac", session: "ahp:/s1", title: "fix the build", expires: 0 });
+    expect(Math.abs(act.expires - (sent + 2 * 3_600_000))).toBeLessThan(1_000);
+  });
+
   it("stays quiet for a chat OmniRoute keeps warm, asked as the alert is due (phase 2)", async () => {
     let kept = true;
     const asked: string[] = [];
@@ -1054,7 +1069,8 @@ describe("the keep-warm window-end alert (ZAC-260, pick X)", () => {
     const last = Date.now();
     let keys = [keyFor(last, last + 200)];
     const refreshed: boolean[] = [];
-    const push = subscribed({ cold: RULE, keepWarmLeadMs: 100, keepWarmKeys: async (refresh) => { refreshed.push(refresh); return keys; }, keepWarmAction: (act) => `/act/${act.how}/${act.key}/${act.from}/${act.announced}`, keptWarm: () => true });
+    const push = subscribed({ cold: RULE, keepWarmLeadMs: 100, keepWarmKeys: async (refresh) => { refreshed.push(refresh); return keys; }, keepWarmAction: (act) => `/act/${act.how}/${act.key}/${act.from}/${act.announced}`,
+      handoffAction: (act) => `/act/${act.how}/${act.machineId}/${act.title}`, keptWarm: () => true });
     push.onHostChats([chatRow()], "mac", "Mac");
     push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
     await Bun.sleep(40); // fixed wait: proving it waits for until - lead
@@ -1067,6 +1083,7 @@ describe("the keep-warm window-end alert (ZAC-260, pick X)", () => {
     expect(payload?.actions).toEqual([
       { action: "extend", title: "Keep 8 h more", path: `/act/extend/k1/${last}/${last + 200}` },
       { action: "cool", title: "Let it cool", path: `/act/cool/k1/${last}/${last + 200}` },
+      { action: "handoff", title: "Hand off now", path: "/act/handoff/mac/fix the build" },
     ]);
     expect(refreshed).toEqual([false, true]);
     // read again with the same window: told once

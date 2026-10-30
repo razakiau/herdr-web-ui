@@ -70,7 +70,7 @@ import type { ModelPrice, ModelPrices } from "../shared/protocol.ts";
 import { avgOutput, cacheModel, coldRestartUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
 import { formatUsd } from "../shared/model-price.ts";
 import { KEEP_WARM_EXTEND_HOURS, KEEP_WARM_WINDOW_LEAD_MS, type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
-import type { KeepWarmAct } from "./keep-warm-actions.ts";
+import { HANDOFF_ACT_TTL_MS, type HandoffAct, type KeepWarmAct } from "./keep-warm-actions.ts";
 import {
   type AlertPrefs,
   coldAlertsOn,
@@ -85,7 +85,7 @@ import {
 import { badRequest, jsonResponse, setRequestRoute } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
 import { writePrivateState } from "./private-state.ts";
-import { type NtfyConfig, postNtfy } from "./ntfy.ts";
+import { type NtfyAlert, type NtfyConfig, postNtfy } from "./ntfy.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
@@ -167,6 +167,11 @@ export interface PushService {
   wantsCold(): boolean;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
+  /**
+   * One post to the ntfy topic, whatever its alert choice: the answer to a tap on one of its
+   * buttons (ZAC-262, a hand-off's outcome). False with no topic; never throws.
+   */
+  ntfy(alert: NtfyAlert): Promise<boolean>;
 }
 
 export interface PushServiceOptions {
@@ -203,6 +208,8 @@ export interface PushServiceOptions {
   keepWarmKeys?: (refresh: boolean) => Promise<readonly KeepWarmKey[]>;
   /** a signed button's path (server/keep-warm-actions.ts); without it the alert has no buttons */
   keepWarmAction?: (act: KeepWarmAct) => string;
+  /** "Hand off now"'s signed path, on the cold and the window-end alerts (ZAC-262); without it neither has that button */
+  handoffAction?: (act: HandoffAct) => string;
   /** how long before the window's end its alert goes; absent: KEEP_WARM_WINDOW_LEAD_MS */
   keepWarmLeadMs?: number;
   /**
@@ -257,9 +264,9 @@ export function windowAlertBody(context: number, hours: number, pingsUsd: number
   return `${sizeOf(context)} · ${kept}. If it goes cold, your next message costs ${formatUsd(restart)}.${after}`;
 }
 
-/** The two buttons, on a web push and on ntfy: `action` is the service worker's name for it. */
-export interface WindowButton { action: "extend" | "cool"; title: string; path: string }
-export const WINDOW_BUTTON_TITLES = { extend: `Keep ${KEEP_WARM_EXTEND_HOURS} h more`, cool: "Let it cool" } as const;
+/** The alerts' buttons, on a web push and on ntfy: `action` is the service worker's name for it. */
+export interface WindowButton { action: "extend" | "cool" | "handoff"; title: string; path: string }
+export const WINDOW_BUTTON_TITLES = { extend: `Keep ${KEEP_WARM_EXTEND_HOURS} h more`, cool: "Let it cool", handoff: "Hand off now" } as const;
 
 /** Who one delay's alert goes to: these devices, and the ntfy topic or not. */
 interface Recipients { devices: PushSubscriptionRecord[]; ntfy: boolean }
@@ -605,6 +612,11 @@ export function createPushService(options: PushServiceOptions): PushService {
    * it at the next poll. As it is due the plugin is asked again, and a window that changed or a
    * chat no longer kept is not announced.
    */
+  /** "Hand off now" (ZAC-262): good for 2 h from now, as the alert goes */
+  function handoffButton(machineId: string, session: string, title: string): WindowButton | null {
+    const path = options.handoffAction?.({ how: "handoff", machineId, session, title, expires: now() + HANDOFF_ACT_TTL_MS });
+    return path ? { action: "handoff", title: WINDOW_BUTTON_TITLES.handoff, path } : null;
+  }
   async function armWindows(chats: readonly HostChatCost[], prices: ColdPrices, machineId: string, machineName: string | undefined): Promise<void> {
     const keys = await options.keepWarmKeys!(false);
     const prefix = `chat:${encodeURIComponent(machineId)}:`;
@@ -638,6 +650,9 @@ export function createPushService(options: PushServiceOptions): PushService {
           const body = windowAlertBody(context, hours, pingsUsd, fresh.restartUsd, handoff);
           const act = (how: "extend" | "cool") => options.keepWarmAction?.({ key: fresh.key, from: fresh.lastRealAt, announced: fresh.until, how });
           const buttons: WindowButton[] = options.keepWarmAction ? (["extend", "cool"] as const).map((how) => ({ action: how, title: WINDOW_BUTTON_TITLES[how], path: act(how)! })) : [];
+          // ntfy shows at most 3: this order, owner-approved (ZAC-262)
+          const handOff = handoffButton(machineId, chat.session, current.title);
+          if (handOff) buttons.push(handOff);
           const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session), ...(buttons.length ? { actions: buttons } : {}) };
           const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
           const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;
@@ -706,6 +721,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   return {
     publicKey: () => keys().publicKey,
     ntfyTopic: () => options.ntfy ? { topic: options.ntfy.topic, alerts: options.ntfy.alerts } : null,
+    ntfy: async (alert) => options.ntfy ? postNtfy(options.ntfy, alert) : false,
     parse: (value) => parseSubscription(value, options),
 
     subscribe(subscription, alerts, deviceId) {
@@ -944,7 +960,6 @@ export function createPushService(options: PushServiceOptions): PushService {
         const leadMin = Math.max(1, Math.round((expires - Math.max(now(), at)) / 60_000));
         const title = `${machineName ? machineName + " · " : ""}${row.title}`;
         const body = coldAlertBody(context, leadMin, handoff, restart);
-        const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session) };
         // armed for most of an hour: only its sending counts for settled(), never the wait
         let timer: ReturnType<typeof setTimeout> | undefined;
         const entry = { lastCallAt: chat.lastCallAt, cancel: () => { clearTimeout(timer); } };
@@ -954,11 +969,14 @@ export function createPushService(options: PushServiceOptions): PushService {
             const current = hostRows.get(key);
             if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working") return;
             if (await options.keptWarm?.(chat, machineId)) return;
+            // its body already says "hand off now ~$X" (ZAC-262); the link's 2 h start as it goes
+            const handOff = handoffButton(machineId, chat.session, current.title);
+            const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session), ...(handOff ? { actions: [handOff] } : {}) };
             const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
             const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;
             await Promise.all([
               to.length > 0 ? broadcast(message, "normal", to) : undefined,
-              ntfy ? postNtfy(ntfy, { title, status: "cold", body, machineId, session: chat.session }) : undefined,
+              ntfy ? postNtfy(ntfy, { title, status: "cold", body, machineId, session: chat.session, ...(handOff ? { actions: [{ label: handOff.title, path: handOff.path }] } : {}) }) : undefined,
             ]);
           })().catch((error: unknown) => {
             console.error(`web push failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -300,4 +300,11 @@ describe("the keep-warm window-end alert on ntfy (ZAC-260)", () => {
     await postNtfy({ ...config, click: null }, { title: "t", status: "kept", body: "b", machineId: "local", session: "ahp:/s1", actions });
     expect(posted[1]?.body.actions).toBeUndefined();
   });
+
+  it("tells a hand-off's outcome with a handshake, its tap opening the chat it names (ZAC-262)", async () => {
+    const config = ntfyFromEnv({ HERDR_WEB_NTFY_URL: `http://127.0.0.1:${server.port}`, HERDR_WEB_NTFY_TOPIC: "herdr-agents", HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" })!;
+    await postNtfy(config, { title: "Handed off \"T\" → new chat", status: "handoff", body: "T", machineId: "mac", session: "ahp:/s2" });
+    expect(posted[0]?.body.tags).toEqual(["handshake"]);
+    expect(posted[0]?.body.click).toBe("https://herdr.example/?machine=mac&chat=ahp%3A%2Fs2");
+  });
 });

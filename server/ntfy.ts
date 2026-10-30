@@ -65,7 +65,8 @@ export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): 
 /** What one alert says, and where its tap lands. */
 export interface NtfyAlert {
   title: string;
-  status: AgentStatus | "ended" | "error" | "cold" | "kept";
+  /** `handoff`: how an alert's "Hand off now" ended (server/keep-warm-actions.ts createHandoffFollower) */
+  status: AgentStatus | "ended" | "error" | "cold" | "kept" | "handoff";
   body: string;
   machineId: string;
   /** a pane's alert names the pane; a host chat's names its session instead */
@@ -74,13 +75,13 @@ export interface NtfyAlert {
   workspaceId?: string;
   /**
    * buttons the ntfy app runs itself, a POST to the app's address (the click URL) plus `path`:
-   * the keep-warm window-end alert's (server/keep-warm-actions.ts). None without a click URL
+   * the keep-warm window-end alert's and the cold alert's (server/keep-warm-actions.ts). None without a click URL
    */
   actions?: { label: string; path: string }[];
 }
 
 const PRIORITY: Partial<Record<string, number>> = { blocked: 4 };
-const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake", kept: "fire" };
+const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake", kept: "fire", handoff: "handshake" };
 
 /** The app's address for the pane or the chat, as a tapped web push opens it (public/sw.js, src/lib/deepLink.ts). */
 function clickFor(base: string, alert: NtfyAlert): string {

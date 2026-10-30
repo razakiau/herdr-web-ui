@@ -50,7 +50,7 @@ import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
 import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
-import { coolArchivedChat, handleKeepWarmAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { coolArchivedChat, createHandoffFollower, handleKeepWarmAct, type HandoffAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -263,6 +263,7 @@ export function createServer(
   const keepWarmAlerts = {
     keepWarmKeys: async (refresh: boolean) => (await omniRoute.keepWarm(refresh)).state?.keys ?? [],
     keepWarmAction: (act: KeepWarmAct) => keepWarmActions.path(act),
+    handoffAction: (act: HandoffAct) => keepWarmActions.path(act),
     coolKeepWarm: (key: KeepWarmKey) => coolArchivedChat(key, omniRoute),
   };
   const references = options.references ?? new GitHubReferenceState();
@@ -320,6 +321,31 @@ export function createServer(
   }) : null;
   localCosts?.start();
   agentHostConnection?.start();
+
+  /**
+   * "Hand off now" on an alert (ZAC-262): the chat's PC is asked as the app asks it, a remote one
+   * through its bridge's address and token (server/machines.ts pollCosts), this one in process;
+   * the outcome goes to the ntfy topic, as the alert did.
+   */
+  const handoffPath = "/api/host-chats/chat/handoff";
+  const handoffs = createHandoffFollower({
+    bridge: async (machineId, method, session) => {
+      const init: RequestInit = method === "POST"
+        ? { method, headers: { "content-type": "application/json" }, body: JSON.stringify({ session }) }
+        : { method };
+      const query = method === "GET" ? `?session=${encodeURIComponent(session)}` : "";
+      if (machineId === "local") {
+        return agentHostConnection ? hostChatsRoute(new Request(`http://local${handoffPath}${query}`, init), handoffPath, agentHostConnection) : null;
+      }
+      const endpoint = machines?.endpoint(machineId);
+      if (!endpoint) return null;
+      const headers = new Headers(init.headers);
+      headers.set("authorization", `Bearer ${endpoint.token}`);
+      return fetch(`${endpoint.url}${handoffPath}${query}`, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(15_000) });
+    },
+    tell: (outcome) => push.ntfy({ ...outcome, status: "handoff" }),
+    pcName: (machineId) => machines?.list().find((machine) => machine.id === machineId)?.name ?? "this PC",
+  });
 
   type PortalStartup = { ok: true } | { ok: false; error: unknown };
   let settlePortalStartup!: (result: PortalStartup) => void;
@@ -397,7 +423,7 @@ export function createServer(
 
       // a keep-warm button (ZAC-260): its signature is the credential, from ntfy's app (no cookie, no
       // Origin) or a notification's (a watching device's too: the button only names one chat's window)
-      if (KEEP_WARM_ACT_ROUTE.test(pathname)) { setRequestRoute("/api/keepwarm/act/:signed"); return handleKeepWarmAct(request, pathname, keepWarmActions, omniRoute); }
+      if (KEEP_WARM_ACT_ROUTE.test(pathname)) { setRequestRoute("/api/keepwarm/act/:signed"); return handleKeepWarmAct(request, pathname, keepWarmActions, omniRoute, Date.now, { startHandoff: handoffs.start }); }
 
       const readOnly = access.level === "full" && access.role === "watch";
       const mutating = !["GET", "HEAD", "OPTIONS"].includes(request.method);
@@ -702,6 +728,7 @@ export function createServer(
       core.stop(() => {
         clearInterval(draftTimer);
         localCosts?.stop();
+        handoffs.stop();
         openCodeState.clear();
         void options.portal?.shutdown();
         registration?.close();
