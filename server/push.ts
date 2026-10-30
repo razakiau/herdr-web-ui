@@ -49,10 +49,10 @@
  * as does the chat working, asking, being archived or leaving its list. Same rules as the rest:
  * nothing while a window is in use, nothing while Settings hides host chats, the chat's tag, so
  * a newer alert for it replaces this one. Opt-in: a device turns it on with AlertPrefs `cold: true`,
- * the ntfy topic with HERDR_WEB_NTFY_COLD=on; with neither, no chat log is scanned for it.
+ * the ntfy topic with NTFY_COLD=on (server/ntfy.ts); with neither, no chat log is scanned for it.
  *
  *   OVIS_COLD_ALERT_USD     the threshold in dollars (default 1; the client's own mark, a
- *                           per-device setting, only marks the lists). Its old HERDR_WEB_* name
+ *                           per-device setting, only marks the lists). Its pre-Ovis name
  *                           works too (server/legacy-env.ts)
  *   OVIS_CACHE_LIFETIME_MIN the provider's cache lifetime in minutes (default 60: OmniRoute
  *                           asks for Anthropic's 1 h cache)
