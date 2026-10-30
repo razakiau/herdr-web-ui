@@ -1100,3 +1100,77 @@ describe("the keep-warm window-end alert (ZAC-260, pick X)", () => {
     expect(fake.received.filter((received) => received.payload.title.includes("kept warm"))).toEqual([]);
   });
 });
+
+describe("archiving a chat lets it cool (ZAC-262)", () => {
+  const PRICES: ColdPrices = { prices: null, fallback: { "claude-opus-4.8": { input: 5, output: 25, cached: 0.5 } } };
+  const chatRow = (archived: boolean): HostChatRow => ({ session: "ahp:/s1", title: "fix the build", status: "idle", modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived });
+  const log = (lastCallAt: string): HostChatCost => ({
+    session: "ahp:/s1", models: [{ model: "claude-opus-4.8", input: 900_000, cacheRead: 800_000, cacheWrite: 100_000, output: 4_000, calls: 4 }],
+    lastCallAt, context: 268_000, peak: 268_000, rewrites: 0, days: {}, partial: false,
+  });
+  const keyFor = (lastRealAt: number, over: Partial<KeepWarmKey> = {}): KeepWarmKey => ({ key: "k1", model: "claude-opus-4.8", apiKey: "copilot", tokens: 268_000, prompt: 268_000,
+    lastRealAt, lastPingAt: null, nextPingAt: null, until: lastRealAt + 8 * 3_600_000, pings: 0, usd: 0, restartUsd: 2.14, missed: false, disabled: false, kept: true, ...over });
+
+  it("cools the kept chat once as it is archived, and again only after a new real call", async () => {
+    const last = Date.now() - 60_000;
+    let keys = [keyFor(last)];
+    const cooled: KeepWarmKey[] = [];
+    const push = subscribed({ keepWarmKeys: async () => keys, coolKeepWarm: async (key) => { cooled.push(key); } });
+    push.onHostChats([chatRow(false)], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    expect(cooled).toEqual([]);
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    await push.settled();
+    expect(cooled.map((key) => [key.key, key.lastRealAt])).toEqual([["k1", last]]);
+    // still archived, listed and read again: not saved twice
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    expect(cooled).toHaveLength(1);
+    // a new real call on the archived chat (the plugin started a new window): cooled again
+    const next = Date.now();
+    keys = [keyFor(next)];
+    push.onHostChatCosts([log(new Date(next).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    expect(cooled.map((key) => key.lastRealAt)).toEqual([last, next]);
+  });
+
+  it("cools a chat first seen archived once its cost row arrives", async () => {
+    const last = Date.now() - 60_000;
+    const cooled: KeepWarmKey[] = [];
+    const push = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); } });
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    await push.settled();
+    expect(cooled).toEqual([]);
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    expect(cooled).toHaveLength(1);
+  });
+
+  it("leaves alone a key not kept, a chat with no cost row, and logs a failed save", async () => {
+    const last = Date.now() - 60_000;
+    const cooled: KeepWarmKey[] = [];
+    const notKept = subscribed({ keepWarmKeys: async () => [keyFor(last, { kept: false })], coolKeepWarm: async (key) => { cooled.push(key); } });
+    notKept.onHostChats([chatRow(false)], "mac", "Mac");
+    notKept.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    notKept.onHostChats([chatRow(true)], "mac", "Mac");
+    await notKept.settled();
+    const noCost = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); } });
+    noCost.onHostChats([chatRow(false)], "mac", "Mac");
+    noCost.onHostChats([chatRow(true)], "mac", "Mac");
+    await noCost.settled();
+    expect(cooled).toEqual([]);
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failing = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async () => { throw new Error("Keep-warm is unavailable"); } });
+      failing.onHostChats([chatRow(false)], "mac", "Mac");
+      failing.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+      failing.onHostChats([chatRow(true)], "mac", "Mac");
+      await failing.settled();
+      expect(errors.mock.calls.map((call) => String(call[0]))).toContain("keep-warm cool: Keep-warm is unavailable");
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});

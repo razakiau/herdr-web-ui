@@ -54,8 +54,8 @@ export function createCore({ options, devices, preferences, usage, usageLogin, p
   coldPrices?: () => Promise<ColdPrices>;
   /** whether OmniRoute's keep-warm plugin keeps a chat warm: then no cold alert (ZAC-260 phase 2) */
   keptWarm?: PushServiceOptions["keptWarm"];
-  /** the keep-warm window-end alert's plugin read and signed buttons (ZAC-260, pick X) */
-  keepWarmAlerts?: Pick<PushServiceOptions, "keepWarmKeys" | "keepWarmAction">;
+  /** the keep-warm window-end alert's plugin read and signed buttons (ZAC-260, pick X), and archive's cool (ZAC-262) */
+  keepWarmAlerts?: Pick<PushServiceOptions, "keepWarmKeys" | "keepWarmAction" | "coolKeepWarm">;
   TYPED_SETTLE_MS: number;
   KEY_SETTLE_MS: number;
   SUBMIT_DEADLINE_MS: number;

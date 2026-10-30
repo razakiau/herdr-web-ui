@@ -205,6 +205,8 @@ export interface PushServiceOptions {
   keepWarmAction?: (act: KeepWarmAct) => string;
   /** how long before the window's end its alert goes; absent: KEEP_WARM_WINDOW_LEAD_MS */
   keepWarmLeadMs?: number;
+  /** saves "Let it cool" for a kept chat just archived (ZAC-262); absent: archiving changes nothing */
+  coolKeepWarm?: (key: KeepWarmKey) => Promise<void>;
 }
 
 /** The prices a big chat is weighed with: OmniRoute's table and LiteLLM's behind it, each null when missing. */
@@ -554,6 +556,37 @@ export function createPushService(options: PushServiceOptions): PushService {
     windowArmed.delete(key);
   }
 
+  /** each listed host chat's last cost row, so an archive told by the list finds its plugin key */
+  const lastCost = new Map<string, HostChatCost>();
+  /** the cost row's last call each archived chat was checked with: one look per real call, not per list */
+  const coolChecked = new Map<string, string>();
+  /** the plugin key and real call each archived chat was cooled for: never saved twice */
+  const cooledFor = new Map<string, string>();
+  /**
+   * Archiving a chat lets its cache cool (ZAC-262): nobody will come back to it soon, and the
+   * plugin would keep pinging it to the window's end. A key already not kept is left alone, so a
+   * chat that is cold, off or past its window costs no write.
+   */
+  function coolArchived(key: string): void {
+    if (!options.coolKeepWarm || !options.keepWarmKeys) return;
+    const chat = lastCost.get(key);
+    if (!chat?.lastCallAt || coolChecked.get(key) === chat.lastCallAt) return;
+    coolChecked.set(key, chat.lastCallAt);
+    const cool = options.coolKeepWarm;
+    const done = (async () => {
+      const kept = keepWarmKeyFor(chat, await options.keepWarmKeys!(false));
+      if (!kept || !keptWarm(kept, now())) return;
+      const sig = `${kept.key}:${kept.lastRealAt}`;
+      if (cooledFor.get(key) === sig) return;
+      cooledFor.set(key, sig);
+      await cool(kept);
+    })().catch((error: unknown) => {
+      console.error(`keep-warm cool: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    inFlight.add(done);
+    void done.finally(() => inFlight.delete(done));
+  }
+
   const windowLead = options.keepWarmLeadMs ?? KEEP_WARM_WINDOW_LEAD_MS;
   const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
   /**
@@ -803,7 +836,11 @@ export function createPushService(options: PushServiceOptions): PushService {
       for (const row of rows) {
         const key = prefix + encodeURIComponent(row.session);
         listed.add(key);
+        const wasArchived = hostRows.get(key)?.archived;
         hostRows.set(key, row);
+        // archived now, or first seen archived (CT 208 restarted): an unarchived chat is looked at afresh next time
+        if (!row.archived) coolChecked.delete(key);
+        else if (wasArchived !== true) coolArchived(key);
         // working or put away: its cache is kept warm, or nobody will come back to it. A chat that asks
         // calls nothing while it waits on the owner: its cache drains, and its alert is the most useful
         if (row.status === "working" || row.archived) callOffCold(key);
@@ -858,6 +895,9 @@ export function createPushService(options: PushServiceOptions): PushService {
         if (!key.startsWith(prefix) || listed.has(key)) continue;
         hostRows.delete(key);
         callOffCold(key);
+        lastCost.delete(key);
+        coolChecked.delete(key);
+        cooledFor.delete(key);
       }
     },
 
@@ -871,6 +911,9 @@ export function createPushService(options: PushServiceOptions): PushService {
         const row = hostRows.get(key);
         if (!row || !chat.lastCallAt) continue;
         seen.add(key);
+        lastCost.set(key, chat);
+        // the costs poll runs after the list: an archived chat's first cost row, or a new real call on it
+        if (row.archived) coolArchived(key);
         const armed = coldArmed.get(key);
         // armed for this last call already: once per idle period
         if (armed?.lastCallAt === chat.lastCallAt) continue;
@@ -917,6 +960,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       }
       // a chat whose log is gone from the answer: nothing to time its cache by
       for (const key of [...coldArmed.keys()]) if (key.startsWith(prefix) && !seen.has(key)) callOffCold(key);
+      for (const key of [...lastCost.keys()]) if (key.startsWith(prefix) && !seen.has(key)) lastCost.delete(key);
       if (options.keepWarmKeys) {
         const arming = armWindows(chats, prices, machineId, machineName).catch((error: unknown) => {
           console.error(`keep-warm window alert: ${error instanceof Error ? error.message : String(error)}`);
