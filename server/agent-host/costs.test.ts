@@ -284,9 +284,59 @@ describe("CostIndex", () => {
     const agentDirs = [join(home, "agentSessionData")];
     parentStore(agentDirs, [{ uri: `ahp-chat:/${FORK}`, sdk: UUID, origin: { kind: "fork", chat: "ahp-chat:/x", turnId: "t" } }]);
     const costs = index(agentDirs);
-    // its id names no parent: without the row's fork_of there is nothing to read
-    expect(costs.costOf(`ahp-chat:/${FORK}`)).toBeNull();
     expect(costs.costOf(`ahp-chat:/${FORK}`, `copilotcli:/${CHAT}`)?.context).toBe(777);
+    // its id names no parent: without the row's fork_of the parent's list is found by scanning the stores
+    forgetSessionTodos();
+    expect(index(agentDirs).costOf(`ahp-chat:/${FORK}`)?.context).toBe(777);
+  });
+
+  /** the backing store VS Code keeps for a chat running on its own SDK session: dir = the SDK id */
+  function backingStore(agentDirs: readonly string[], sdk: string, chat: string): void {
+    mkdirSync(join(agentDirs[0]!, sdk), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, sdk, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('peerChatBacking', ?)", [chat]);
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('peerChatBackingProvider', 'copilotcli')");
+    db.close();
+  }
+
+  test("maps ahp-chat:/<chatId> with no usable parent through the store that backs it (Specifica)", () => {
+    // as on Specifica's bridge 1071: the row is `ahp-chat:/<chatId>`, the parent's store lists it as
+    // `ahp-chat://<chatId>/<tail>` under another parent id than the row's fork_of, and its SDK
+    // session's own store names it in peerChatBacking
+    const PEER = "481f0bee-bd97-4c10-b8e7-701e91f28094";
+    const tail = (uri: string) => Buffer.from(uri).toString("base64url");
+    log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 31_337 })]);
+    const agentDirs = [join(home, "agentSessionData")];
+    backingStore(agentDirs, UUID, `ahp-chat://${PEER}/${tail(`copilotcli:/${CHAT}`)}`);
+    const costs = index(agentDirs);
+    expect(costs.costOf(`ahp-chat:/${PEER}`)?.context).toBe(31_337);
+    // a fork_of whose store does not exist or names no such chat falls back to the same
+    expect(costs.costOf(`ahp-chat:/${PEER}`, `ahp-session:/${OTHER}`)?.context).toBe(31_337);
+    expect(costs.calls(`ahp-chat:/${PEER}`)).toHaveLength(1);
+    // a chat no store names has no log
+    expect(costs.costOf("ahp-chat:/00000000-0000-4000-8000-000000000000")).toBeNull();
+  });
+
+  test("the fork rule applies to a fork listed as ahp-chat:/<chatId> resolved through its backing store", () => {
+    const FORK = "f72cf3fd-0000-4000-8000-000000000001";
+    const start = (at: string) => `${JSON.stringify({ type: "session.start", id: "s", timestamp: at, parentId: null, data: { sessionId: UUID, startTime: at } })}\n`;
+    const source = [
+      userMessage("2026-10-29T09:00:00.000Z"),
+      usage("2026-10-29T09:00:01.000Z", { input: 100_000, cacheWrite: 100_000, output: 50 }, { apiCallId: "src-1" }),
+    ];
+    log(OTHER, source);
+    log(UUID, [start("2026-10-29T12:00:00.000Z"), ...source,
+      userMessage("2026-10-29T12:00:05.000Z"),
+      usage("2026-10-29T12:00:06.000Z", { input: 101_000, cacheRead: 100_000, output: 40 }, { apiCallId: "fork-1" }),
+    ]);
+    const agentDirs = [join(home, "agentSessionData")];
+    backingStore(agentDirs, UUID, `ahp-chat:/${FORK}`);
+    const costs = index(agentDirs);
+    const fork = costs.costOf(`ahp-chat:/${FORK}`)!;
+    expect(fork.models.reduce((n, each) => n + each.calls, 0)).toBe(1);
+    expect(fork.context).toBe(101_000);
+    expect(costs.calls(`ahp-chat:/${FORK}`)).toHaveLength(1);
   });
 
   test("a fork's log counts only its own calls, not the source's it copies before its start", () => {

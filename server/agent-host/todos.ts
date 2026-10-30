@@ -8,7 +8,7 @@
  * (591b2f3f → 1da5c4f1, 5 todos).
  */
 import { Database } from "bun:sqlite";
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -27,7 +27,7 @@ const cache = new Map<string, { stamp: string; todos: StoredTodo[] | null }>();
 /** per VS Code chat: the SDK session it names, by the stamp of the store it was read from */
 const sdkCache = new Map<string, { stamp: number; sdk: string | null }>();
 
-export function forgetSessionTodos(): void { cache.clear(); sdkCache.clear(); peerCache.clear(); }
+export function forgetSessionTodos(): void { cache.clear(); sdkCache.clear(); peerCache.clear(); chatIndex.clear(); scans.clear(); }
 
 /** Where VS Code keeps a chat's own data: a Remote-SSH server's, then the desktop app's on each OS. */
 export function defaultAgentSessionDirs(): string[] {
@@ -79,7 +79,9 @@ const peerCache = new Map<string, { stamp: number; sdk: string | null }>();
  * JSON string) names `sdkSessionId`. The tail's scheme can differ from the store's (the row says
  * `ahp-session:/ddf9fd94-…`, the store `copilotcli:/ddf9fd94-…`), so an `ahp-chat://` chat is
  * matched by its chat id. Live on the Mac, 2026-10-30: 6 such rows, none found before (the text
- * after ":/" was taken for a uuid). Null for anything else.
+ * after ":/" was taken for a uuid). With no parent, or a parent whose store names no such chat
+ * (Specifica, bridge 1071), the stores that name the chat themselves (chatIndexSdk). Null for
+ * anything else.
  */
 export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: string | null = null): string | null {
   const nested = /^ahp-chat:\/\/([^/]+)\/([A-Za-z0-9_+/=-]+)$/.exec(chat);
@@ -90,21 +92,25 @@ export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: str
   if (nested) {
     try { owner = Buffer.from(nested[2]!, "base64url").toString("utf8"); } catch { return null; }
   }
-  const at = owner === null ? -1 : owner.indexOf(":/");
-  const uuid = at < 0 ? "" : owner!.slice(at + 2);
-  if (!UUID.test(uuid)) return null;
-  const same = (uri: unknown): boolean => {
-    if (typeof uri !== "string") return false;
-    if (uri === chat) return true;
-    return nested !== null && uri.startsWith(`ahp-chat://${nested[1]}/`);
-  };
+  const id = nested ? nested[1]! : flat![1]!.toLowerCase();
+  // without a parent (or when its store names no such chat), the stores that name the chat themselves
+  if (owner === null) return chatIndexSdk(id, dirs);
+  const at = owner.indexOf(":/");
+  const uuid = at < 0 ? "" : owner.slice(at + 2);
+  if (!UUID.test(uuid)) return chatIndexSdk(id, dirs);
+  // the store lists a chat in either form whichever form the host lists it in (Specifica, 2026-10-30:
+  // the row `ahp-chat:/481f0bee-…`, the parent's entry `ahp-chat://481f0bee-…/<tail>`): match its id
+  const same = (uri: unknown): boolean => typeof uri === "string" && chatIdOf(uri) === id;
   for (const dir of dirs) {
     const path = join(dir, uuid, "session.db");
     const stamp = mtime(path);
     if (stamp === null) continue;
     const key = `${path}\n${chat}`;
     const known = peerCache.get(key);
-    if (known?.stamp === stamp) return known.sdk;
+    if (known?.stamp === stamp) {
+      if (known.sdk !== null) return known.sdk;
+      break;
+    }
     let sdk: string | null = null;
     try {
       const store = new Database(path, { readonly: true });
@@ -113,16 +119,113 @@ export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: str
         const list = typeof row?.value === "string" ? JSON.parse(row.value) as unknown : null;
         const entry = Array.isArray(list) ? list.find((each) => same((each as { uri?: unknown } | null)?.uri)) as { providerData?: unknown } | undefined : undefined;
         const data = typeof entry?.providerData === "string" ? JSON.parse(entry.providerData) as { sdkSessionId?: unknown } : entry?.providerData as { sdkSessionId?: unknown } | undefined;
-        const id = data?.sdkSessionId;
-        sdk = typeof id === "string" && UUID.test(id) ? id : null;
+        const named = data?.sdkSessionId;
+        sdk = typeof named === "string" && UUID.test(named) ? named : null;
       } finally { store.close(); }
     } catch {
-      return known?.sdk ?? null;
+      if (known?.sdk) return known.sdk;
+      break;
     }
     peerCache.set(key, { stamp, sdk });
-    return sdk;
+    if (sdk !== null) return sdk;
+    break;
   }
-  return null;
+  return chatIndexSdk(id, dirs);
+}
+
+/** The chat id an `ahp-chat:` URI names, either form; null for anything else. */
+function chatIdOf(uri: string): string | null {
+  const nested = /^ahp-chat:\/\/([^/]+)\//.exec(uri);
+  if (nested) return nested[1]!;
+  const flat = /^ahp-chat:\/([0-9a-f-]{36})$/i.exec(uri);
+  return flat ? flat[1]!.toLowerCase() : null;
+}
+
+/** per store dir: its store's stamp, and the chats it names (chat id → SDK session) */
+const chatIndex = new Map<string, { stamp: number; chats: [string, string][] }>();
+/** a scan lists at most this many stores (the Mac had 1,819 dirs, 593 of them uuid-named, 2026-10-30) */
+const MAX_STORES = 5000;
+
+/**
+ * A peer chat's or fork's SDK session found without its parent (ZAC-260 phase 2): Specifica's host
+ * lists them as `ahp-chat:/<chatId>` and its row names no parent the store agrees with. Every chat
+ * VS Code runs on its own SDK session gets a backing store, `agentSessionData/<sdk>/session.db`, whose
+ * `session_metadata.peerChatBacking` names the chat's URI: the most direct link, one key per store,
+ * no parent needed (on the Mac all 7 peer chats had one, 2026-10-30). The parents' `peerChats` lists
+ * are read in the same pass as a second witness. Each store is re-read only when its mtime moves.
+ */
+function chatIndexSdk(chatId: string, dirs: readonly string[], now: number = Date.now()): string | null {
+  const scope = dirs.join("\n");
+  const hit = scans.get(scope);
+  if (hit !== undefined && (hit.chats.has(chatId) || now - hit.at < RESCAN_MS)) return hit.chats.get(chatId) ?? null;
+  const chats = scanStores(dirs);
+  scans.set(scope, { at: now, chats });
+  return chats.get(chatId) ?? null;
+}
+
+/** per set of dirs: when they were last listed, and every chat id → SDK session they named */
+const scans = new Map<string, { at: number; chats: Map<string, string> }>();
+/** a chat the stores did not name is looked for again after this long (a host lists rows every few seconds) */
+const RESCAN_MS = 15_000;
+
+function scanStores(dirs: readonly string[]): Map<string, string> {
+  const found = new Map<string, string>();
+  let listed = 0;
+  for (const dir of dirs) {
+    let names: string[];
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      if (!UUID.test(name)) continue;
+      if (++listed > MAX_STORES) return found;
+      const path = join(dir, name, "session.db");
+      const stamp = mtime(path);
+      if (stamp === null) continue;
+      let known = chatIndex.get(path);
+      if (known?.stamp !== stamp) {
+        known = { stamp, chats: readStoreChats(path, name.toLowerCase()) ?? known?.chats ?? [] };
+        chatIndex.set(path, known);
+      }
+      for (const [chat, sdk] of known.chats) {
+        // the backing store's own word wins over a parent's list
+        if (!found.has(chat) || sdk === name.toLowerCase()) found.set(chat, sdk);
+      }
+    }
+  }
+  return found;
+}
+
+/** The chats one store names: its own (peerChatBacking, the store's dir is the SDK id) and its peers'. */
+function readStoreChats(path: string, self: string): [string, string][] | null {
+  try {
+    const store = new Database(path, { readonly: true });
+    try {
+      const rows = store.query("SELECT key, value FROM session_metadata WHERE key IN ('peerChatBacking', 'peerChats')").all() as { key: string; value: unknown }[];
+      const chats: [string, string][] = [];
+      for (const row of rows) {
+        if (typeof row.value !== "string") continue;
+        if (row.key === "peerChatBacking") {
+          const chat = chatIdOf(row.value);
+          if (chat !== null) chats.push([chat, self]);
+          continue;
+        }
+        let list: unknown;
+        try { list = JSON.parse(row.value); } catch { continue; }
+        if (!Array.isArray(list)) continue;
+        for (const each of list as { uri?: unknown; providerData?: unknown }[]) {
+          const chat = typeof each?.uri === "string" ? chatIdOf(each.uri) : null;
+          if (chat === null) continue;
+          let data: { sdkSessionId?: unknown } | undefined;
+          try { data = typeof each.providerData === "string" ? JSON.parse(each.providerData) : each.providerData as typeof data; } catch { continue; }
+          const sdk = data?.sdkSessionId;
+          if (typeof sdk === "string" && UUID.test(sdk)) chats.push([chat, sdk.toLowerCase()]);
+        }
+      }
+      return chats;
+    } finally { store.close(); }
+  } catch {
+    // locked mid-write or no such table: what it named last time
+    return null;
+  }
 }
 
 function mtime(path: string): number | null {
