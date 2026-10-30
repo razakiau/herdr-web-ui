@@ -82,6 +82,7 @@ import { useAlertSignals } from "./lib/useAlertSignals.ts";
 import { useNotificationState, useNotificationSwitch, useServerAlertChannels } from "./lib/useNotifications.ts";
 import { alertsBell } from "./lib/alertsBell.ts";
 import { Droplet } from "./components/Droplet.tsx";
+import { WeekDigestHost } from "./components/WeekSheet.tsx";
 import { paneDragData, PANE_DRAG_TYPE, slotSide, type SplitSlot } from "./lib/split.ts";
 import { useLayoutNotice, useLayoutRefused } from "./lib/useLayoutNotice.ts";
 import { PaneFollowContext } from "./lib/paneSubmitContext.ts";
@@ -990,6 +991,8 @@ export function App() {
       {viewing !== null && !fileDocked && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
+      {/* the weekly digest's "This week" page (ZAC-262): its tap, `?digest=`, the Costs sheet's link */}
+      <WeekDigestHost onOpenChat={(target) => { setDrawerOpen(false); selectHostChatRef.current(target); }} />
       {hostRename && <RenameHostChatSheet title={hostRename.chat.title} onClose={() => setHostRename(null)}
         onSave={(title) => hostActions.rename(hostRename.machineId, hostRename.chat.session, title)} />}
       {/* the one place the product's name is said: it names where else the chat goes */}

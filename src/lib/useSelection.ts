@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatc
 import type { Machine } from "../../shared/machines.ts";
 import { fetchSession } from "./api.ts";
 import { fileFromLink, resolveLink, type AppLink, type LinkNote } from "./deepLink.ts";
-import { isHostChatTarget, machineGone, notificationLanding, notificationTargetFromSearch, sameLink, onNotificationTarget, type HostChatAlertTarget, type NotificationTarget } from "./notificationTarget.ts";
+import { isDigestTarget, isHostChatTarget, machineGone, notificationLanding, notificationTargetFromSearch, sameLink, onNotificationTarget, type DigestTarget, type HostChatAlertTarget, type NotificationTarget } from "./notificationTarget.ts";
+import { weekDigest } from "./weekDigest.ts";
 import type { HostChatTarget } from "../components/AgentSidebar.tsx";
 import type { TerminalPeek } from "./terminalPeek.ts";
 import { markSelection, type SelectionMark } from "./selectionMark.ts";
@@ -277,7 +278,9 @@ export function useNotificationTargets({ machinesRef, selectTargetRef, selectHos
   // yet waits as a link does (this also keeps a cold start's link, which the worker names again
   // once the page is up), and so does one on a PC this roster lacks: a roster asked for now says
   // whether it was removed (the [machines] effect below) or set up since this one was read
-  const takeNotificationTarget = useCallback((tapped: NotificationTarget | HostChatAlertTarget): void => {
+  const takeNotificationTarget = useCallback((tapped: NotificationTarget | HostChatAlertTarget | DigestTarget): void => {
+    // the weekly digest's tap opens its week's "This week" page over whatever is open (ZAC-262)
+    if (isDigestTarget(tapped)) { weekDigest.open(tapped.digest); return; }
     // a host chat's alert opens the chat in the pane's place (server/push.ts onHostChats)
     if (isHostChatTarget(tapped)) { selectHostChatRef.current({ machineId: tapped.machine_id, session: tapped.session }); return; }
     const target = tapped;

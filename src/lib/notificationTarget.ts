@@ -5,7 +5,9 @@ export type NotificationPaneView = "chat" | "terminal";
 export type NotificationTarget = { machine_id: string; pane_id: string; view?: NotificationPaneView; workspace_id?: string };
 /** A host chat's alert (server/push.ts onHostChats): its tap opens the chat on its PC. */
 export type HostChatAlertTarget = { machine_id: string; session: string };
-type Target = NotificationTarget | HostChatAlertTarget;
+/** The weekly cost digest's tap (server/digest.ts): its week's "This week" page (ZAC-262). */
+export type DigestTarget = { digest: string };
+type Target = NotificationTarget | HostChatAlertTarget | DigestTarget;
 type Select = (target: Target) => void;
 
 export function notificationTargetFromSearch(search: string): NotificationTarget | null {
@@ -25,6 +27,10 @@ export function hostChatFromSearch(search: string): HostChatAlertTarget | null {
 
 export function isHostChatTarget(target: Target): target is HostChatAlertTarget {
   return "session" in target;
+}
+
+export function isDigestTarget(target: Target): target is DigestTarget {
+  return "digest" in target;
 }
 
 export function notificationViewForPane(target: NotificationTarget | null, machineId: string, paneId: string | null): NotificationPaneView | null {
@@ -73,10 +79,11 @@ export function notificationTargets(source?: MessageSource): (select: Select) =>
   let pending: Target | null = null;
   let consumer: Select | null = null;
   source?.addEventListener("message", (event) => {
-    const data = event.data as { type?: unknown; pane_id?: unknown; machine_id?: unknown; view?: unknown; workspace_id?: unknown; session?: unknown } | null;
+    const data = event.data as { type?: unknown; pane_id?: unknown; machine_id?: unknown; view?: unknown; workspace_id?: unknown; session?: unknown; week?: unknown } | null;
     const machine_id = typeof data?.machine_id === "string" ? data.machine_id : "local";
     let target: Target;
-    if (data?.type === "select-host-chat" && typeof data.session === "string" && data.session !== "") target = { machine_id, session: data.session };
+    if (data?.type === "open-digest" && typeof data.week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.week)) target = { digest: data.week };
+    else if (data?.type === "select-host-chat" && typeof data.session === "string" && data.session !== "") target = { machine_id, session: data.session };
     else if (data?.type === "select-pane" && typeof data.pane_id === "string") {
       const pane: NotificationTarget = { machine_id, pane_id: data.pane_id };
       if (data.view === "chat" || data.view === "terminal") pane.view = data.view;

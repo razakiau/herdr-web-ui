@@ -3,7 +3,8 @@
  * or 30 days of every PC's Copilot chats at list price: the total, what the money went on (the
  * Session sheet's stack and colours), and By PC each PC's sum, its chats that made calls in the
  * period and the costliest of them. Tapping a PC opens its All agents sorted by Cost. A PC whose
- * bridge predates costs is named under the total and left out of the sums.
+ * bridge predates costs is named under the total and left out of the sums. Under the periods, once
+ * the weekly digest has saved a week, "This week" opens its page (ZAC-262, WeekSheet.tsx).
  */
 import { useEffect, useId } from "react";
 import { createPortal } from "react-dom";
@@ -37,10 +38,12 @@ export interface CostsSheetProps {
   oldBridge: readonly string[];
   pcs: readonly CostsPc[];
   onPick(machineId: string): void;
+  /** the weekly digest's "This week" page (ZAC-262); absent while no week is saved */
+  onThisWeek?: (() => void) | undefined;
   onClose(): void;
 }
 
-export function CostsSheet({ period, onPeriod, totals, oldBridge, pcs, onPick, onClose }: CostsSheetProps) {
+export function CostsSheet({ period, onPeriod, totals, oldBridge, pcs, onPick, onThisWeek, onClose }: CostsSheetProps) {
   const t = useT();
   const id = useId();
   const surface = useFocusTrap<HTMLDivElement>(true);
@@ -75,6 +78,7 @@ export function CostsSheet({ period, onPeriod, totals, oldBridge, pcs, onPick, o
           <div className="segmented costs-periods" role="group" aria-label={t("Period")}>
             {PERIODS.map((each) => <button key={each} type="button" aria-pressed={period === each} onClick={() => onPeriod(each)}>{label[each]}</button>)}
           </div>
+          {onThisWeek && <button type="button" className="btn btn-ghost costs-this-week" onClick={onThisWeek}>{t("This week")}</button>}
           {total ? <>
             <p className="costs-total"><strong className={total.floor ? "is-floor" : undefined}>{listUsd(total.usd, total.floor)}</strong><span>{t("Copilot chats")}</span></p>
             {oldBridge.map((machineId) => <p key={machineId} className="field-hint costs-old-bridge">{t("{pc}: update the bridge to count it", { pc: nameOf(machineId) })}</p>)}

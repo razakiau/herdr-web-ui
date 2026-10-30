@@ -19,6 +19,7 @@ import { costsFeed, useCostsFeed } from "../lib/rowCache.ts";
 import { useT } from "../lib/i18n.ts";
 import { periodTotals, type CostPeriod } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
+import { useWeekDigest, weekDigest } from "../lib/weekDigest.ts";
 import { CostsSheet, PERIODS, type CostsPc } from "./CostsSheet.tsx";
 
 const EMPTY_ANSWERS: ReadonlyMap<string, HostCostsAnswer | null> = new Map();
@@ -55,6 +56,7 @@ export function CostsChip({ pcs, onAllAgents }: CostsChipProps) {
   const answers = feed?.answers ?? EMPTY_ANSWERS;
   const prices = feed?.prices ?? null;
   const ask = costsFeed.ask;
+  const weeks = useWeekDigest().digests;
   useEffect(() => { if (!track) setOpen(false); }, [track]);
 
   // a PC no longer listed (removed, its host chats turned off) is let go
@@ -73,13 +75,14 @@ export function CostsChip({ pcs, onAllAgents }: CostsChipProps) {
   const label = t(floor ? "Chat costs: at least {usd}" : "Chat costs: {usd}", { usd: words });
   return <>
     <button type="button" className="usage-strip costs-chip" aria-haspopup="dialog" aria-label={label} title={label}
-      onClick={() => { ask(); setOpen(true); }}>
+      onClick={() => { ask(); void weekDigest.load(); setOpen(true); }}>
       <span className={`costs-chip-body${floor ? " is-floor" : ""}`}>
         <span className="costs-chip-top"><span className="costs-chip-usd">{usd}</span><span className="costs-chip-period">{short[period]}</span></span>
         {totals && <CostStack split={totals.total} className="costs-chip-bar" />}
       </span>
     </button>
     {open && <CostsSheet period={period} onPeriod={setPeriod} totals={totals} oldBridge={oldBridge} pcs={pcs}
-      onPick={(machineId) => { setOpen(false); onAllAgents({ machineId, sort: "cost" }); }} onClose={() => setOpen(false)} />}
+      onPick={(machineId) => { setOpen(false); onAllAgents({ machineId, sort: "cost" }); }}
+      onThisWeek={weeks?.length ? () => { setOpen(false); weekDigest.open(null); } : undefined} onClose={() => setOpen(false)} />}
   </>;
 }

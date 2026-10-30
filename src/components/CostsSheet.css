@@ -173,3 +173,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* the weekly digest's page (ZAC-262), a quiet link under the periods */
+.costs-this-week { align-self: flex-start; }

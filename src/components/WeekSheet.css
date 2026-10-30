@@ -1,0 +1,142 @@
+/* The "This week" page (ZAC-262, mockup B): the Session sheet's frame and Cost tab card
+   (SessionSheet.css: the hero, the pills, the part rows and the cost colours), with the week's own
+   head, bar a day and chat rows. Scoped under .week-sheet as the Session sheet's rules are. */
+.week-sheet .week-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.week-sheet .week-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.week-sheet .week-head .icon-button:disabled { opacity: 0.35; }
+
+.week-sheet .week-range {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.week-sheet .week-card .session-hero { margin-bottom: var(--space-1); }
+
+.week-sheet .week-delta {
+  margin: 0 0 var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* a bar a day: its height the day's share of the costliest, the cold-restart part on top */
+.week-sheet .week-bars {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  height: 112px;
+}
+
+.week-sheet .week-bar {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.week-sheet .week-bar-track {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.week-sheet .week-bar-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.week-sheet .week-bar-stack > span {
+  flex: 1 1 0;
+  min-height: 2px;
+}
+
+.week-sheet .week-bar-day {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-align: center;
+}
+
+.week-sheet .week-note { margin: var(--space-2) 0 0; }
+
+.week-sheet .week-group { min-width: 0; }
+
+.week-sheet .week-group-head { padding: var(--space-2) var(--space-3) var(--space-1); }
+
+.week-sheet .week-keep-warm .session-parts { margin: 0; padding: 0 var(--space-3); }
+
+.week-sheet .week-chats {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* a chat: its title over its PC and cold restarts, its cost at the end; the whole row is the tap */
+.week-sheet .week-chat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .week-sheet .week-chat:hover { background: var(--bg-hover); }
+}
+
+.week-sheet .week-chat-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.week-sheet .week-chat-title {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.week-sheet .week-chat-meta {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.week-sheet .week-chat-usd {
+  flex: none;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}

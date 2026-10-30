@@ -17,6 +17,7 @@ import { closeTab, closeWorkspace, moveTab, currentHostWorkspaces, firstHostTab,
 import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, subscribeSidebarPins, toggleSidebarPin } from "./sidebarPins.ts";
 import { lastViewedPane } from "./lastViewedPane.ts";
 import { hostChatFromSearch } from "./notificationTarget.ts";
+import { digestFromSearch, weekDigest } from "./weekDigest.ts";
 
 /** How a host chat is picked (App.tsx selectHostChat): "tab" makes it a tab of its agent host workspace for good. */
 export type HostChatPick = (target: HostChatTarget, how?: "tab" | "look", cwd?: string | null) => void;
@@ -53,12 +54,16 @@ export function useHostChatSelection({ selectTarget, setSelectedHostChat }: {
   const selectHostChatRef = useRef(selectHostChat); selectHostChatRef.current = selectHostChat;
   // an address naming a chat (an ntfy alert's link, a tapped alert's cold start) opens it once,
   // then leaves the address: the chat is not a place the address keeps (lib/deepLink.ts)
+  // The weekly digest's link (`?digest=<week>`, ZAC-262) opens its "This week" page the same way.
   useEffect(() => {
     const linked = hostChatFromSearch(window.location.search);
-    if (!linked) return;
-    selectHostChat({ machineId: linked.machine_id, session: linked.session });
+    const digest = digestFromSearch(window.location.search);
+    if (!linked && !digest) return;
+    if (linked) selectHostChat({ machineId: linked.machine_id, session: linked.session });
+    if (digest) weekDigest.open(digest);
     const query = new URLSearchParams(window.location.search);
     query.delete("chat");
+    query.delete("digest");
     const rest = query.toString();
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

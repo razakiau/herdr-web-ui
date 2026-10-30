@@ -15,39 +15,15 @@ import { join } from "node:path";
 
 import { addSplit, costSplit, emptySplit } from "../shared/cache-cost.ts";
 import type { HostChatRow, HostCostModel, HostCostsAnswer } from "../shared/host-chats.ts";
-import type { KeepWarmState, KeepWarmToday } from "../shared/keep-warm.ts";
-import { formatUsd } from "../shared/model-price.ts";
+import { type DigestCounts, type DigestKeepWarm, type DigestSnapshot, digestUsd } from "../shared/digest.ts";
+import type { KeepWarmState } from "../shared/keep-warm.ts";
 import type { ModelPrice, ModelPrices } from "../shared/protocol.ts";
 import { badRequest, jsonResponse } from "./http.ts";
 import { writePrivateState } from "./private-state.ts";
 
-type Counts = { restarts: number; firstWrites: number; handoffs: number };
-type KeepWarmSums = { pings: number; usd: number; avoided: number; avoidedUsd: number };
-
-export interface DigestSnapshot {
-  /** the Monday (UTC date) of the week holding the scheduled cut */
-  week: string;
-  /** what the week counts: from the previous digest's cut (or Monday 00:00 UTC) to `cut` (ms) */
-  from: number; cut: number; built: number;
-  /** a floor when a model had no price, a log was partly read, or a PC's first scan was not done */
-  total: { usd: number; floor: boolean };
-  /** each UTC day from `from`'s to `cut`'s: the first one is the previous cut day's rest */
-  days: { day: string; usd: number; restartsUsd: number }[];
-  /** the 5 costliest chats */
-  chats: { machineId: string; session: string; title: string; usd: number; restarts: number }[];
-  /** the PCs that spent, costliest first */
-  pcs: { machineId: string; name: string; usd: number; chats: number }[];
-  /** the PCs whose logs could not be read (disconnected, or a bridge before costs): not counted */
-  offline: string[];
-  /** the PCs whose bridge has no per-day counts (before ZAC-262): their money counts, their restarts and hand-offs do not */
-  noCounts: string[];
-  restarts: { n: number; usd: number };
-  firstWrites: { n: number; usd: number };
-  handoffs: number;
-  keepWarm: KeepWarmSums;
-  /** what was counted of the cut day, by `chatKey`: next week counts the rest */
-  cutDay: { day: string; perChat: Record<string, HostCostModel[]>; counts: Record<string, Counts>; keepWarm: KeepWarmToday | null };
-}
+type Counts = DigestCounts;
+type KeepWarmSums = DigestKeepWarm;
+export type { DigestSnapshot };
 
 export interface DigestPc { machineId: string; name: string; costs: HostCostsAnswer | null; rows: HostChatRow[] }
 
@@ -221,8 +197,7 @@ export function buildDigest(input: {
   };
 }
 
-/** The digest's dollars: whole from $10 on (a week's sums), cents under */
-const money = (usd: number): string => Math.abs(usd) >= 9.995 ? `$${Math.round(Math.abs(usd)).toLocaleString("en-US")}` : formatUsd(Math.abs(usd));
+const money = digestUsd;
 const nothing = (usd: number): boolean => Math.abs(usd) < 0.005;
 
 /**

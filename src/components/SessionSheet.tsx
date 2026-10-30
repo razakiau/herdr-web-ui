@@ -24,7 +24,7 @@ import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
 import { Toggle } from "./SettingsControls.tsx";
-import { COST_PARTS, CostStack, partLabel } from "./CostParts.tsx";
+import { COST_PARTS, CostStack, Hero, partLabel } from "./CostParts.tsx";
 
 type Tab = "context" | "cost" | "cache";
 const TABS: Tab[] = ["context", "cost", "cache"];
@@ -283,18 +283,6 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
       {onCompact && <button type="button" className="btn" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
     </div>}
   </>;
-}
-
-/** "$57.10" as the total card prints it: "$" and the cents small and dim, whole dollars large; a floor's cents rounded down */
-function Hero({ usd, floor }: { usd: number; floor: boolean }) {
-  const cents = Math.floor(usd * 100 + (floor ? 1e-9 : 0.5));
-  const whole = Math.floor(cents / 100);
-  return <div className="session-hero">
-    {floor && <span className="session-hero-floor">≥</span>}
-    <span className="session-hero-dollar">$</span>
-    <span className="session-hero-whole">{whole.toLocaleString("en-US")}</span>
-    <span className="session-hero-cents">.{String(cents % 100).padStart(2, "0")}</span>
-  </div>;
 }
 
 /** The rates the chat's models are priced at, per million tokens; a local model "local · $0". */

@@ -11,6 +11,7 @@ mock.module("react-dom", () => ({ ...realDom, createPortal: (node: ReactNode) =>
 const { CostsChip } = await import("./CostsChip.tsx");
 const { SettingsProvider } = await import("../lib/settings.ts");
 const { costsFeed } = await import("../lib/rowCache.ts");
+const { weekDigest } = await import("../lib/weekDigest.ts");
 
 const MODEL = "claude-fictional-4";
 // $25 per million output tokens: the sums below are whole dollars
@@ -37,6 +38,7 @@ const descriptors = new Map<string, PropertyDescriptor | undefined>();
 let records: Map<string, string>;
 let urls: string[];
 let pricesReply: unknown;
+let digestsReply: unknown;
 let hang: boolean;
 let picked: unknown[];
 let renderer: ReactTestRenderer | undefined;
@@ -51,8 +53,10 @@ beforeEach(() => {
   picked = [];
   hang = false;
   pricesReply = { prices: PRICES, fallback: null };
+  digestsReply = { digests: [] };
   // the page's costs feed outlives a chip: each test starts from no answers
   costsFeed.reset();
+  weekDigest.reset();
   const events = new EventTarget();
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
@@ -72,6 +76,7 @@ beforeEach(() => {
     urls.push(url);
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     if (url.endsWith("/pricing")) return json(200, pricesReply);
+    if (url.endsWith("/api/costs/digests")) return json(200, digestsReply);
     if (hang) return new Promise<Response>(() => {});
     const machine = /\/api\/machines\/([^/]+)\//.exec(url)?.[1] ?? "";
     const answer = ANSWERS[machine];
@@ -200,6 +205,25 @@ describe("the Costs sheet", () => {
     await act(async () => { (classed(sheet, "costs-pc")[1]!.props["onClick"] as () => void)(); });
     expect(picked).toEqual([{ machineId: "cde", sort: "cost" }]);
     expect(classed(root.root, "costs-sheet")).toEqual([]);
+  });
+
+  it("links This week under the periods once a weekly digest is saved, and opens it on the newest", async () => {
+    digestsReply = { digests: [{ week: "2026-10-26" }] };
+    const root = await mount(true);
+    const sheet = await openSheet(root);
+    expect(urls).toContain("/api/costs/digests");
+    const link = button(sheet, "This week");
+    const body = classed(sheet, "costs-body")[0]!;
+    // right after the periods
+    expect(body.children.indexOf(link)).toBe(body.children.indexOf(classed(sheet, "costs-periods")[0]!) + 1);
+    await act(async () => { (link.props["onClick"] as () => void)(); });
+    expect(weekDigest.read().open).toEqual({ week: null });
+    expect(classed(root.root, "costs-sheet")).toEqual([]);
+  });
+
+  it("has no This week link while no digest is saved", async () => {
+    const sheet = await openSheet(await mount(true));
+    expect(sheet.findAll((each) => each.type === "button" && textOf(each) === "This week")).toEqual([]);
   });
 
   it("shows no figure while prices are unavailable, and says why", async () => {

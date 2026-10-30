@@ -192,6 +192,16 @@ describe("a host chat's alert", () => {
     expect(selected).toEqual([]);
   });
 
+  it("delivers the weekly digest's tap as its week (public/sw.js open-digest)", () => {
+    const source = messages();
+    const selected: unknown[] = [];
+    source.subscribe((target) => selected.push(target));
+    source.send({ type: "open-digest", week: "2026-10-26" });
+    source.send({ type: "open-digest", week: "not a week" });
+    source.send({ type: "open-digest" });
+    expect(selected).toEqual([{ digest: "2026-10-26" }]);
+  });
+
   it("reads the chat an address names (an ntfy alert's link, a cold start)", () => {
     expect(hostChatFromSearch("?machine=mac&chat=ahp%3A%2Fs1")).toEqual({ machine_id: "mac", session: "ahp:/s1" });
     expect(hostChatFromSearch("?chat=ahp%3A%2Fs1")).toEqual({ machine_id: "local", session: "ahp:/s1" });
