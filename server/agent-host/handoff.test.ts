@@ -216,4 +216,16 @@ describe("chat/handoff", () => {
     expect(r.fake.requests.some((each) => each.method === "createSession")).toBe(false);
     expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
   });
+
+  it("a timeout cancels the still-running /handoff turn, and archives nothing", async () => {
+    const r = await rig();
+    await start(r);
+    const turnId = await handoffTurn(r);
+    r.clock.advance(HANDOFF_WAIT_MS);
+    for (let i = 0; i < 100 && (await job(r)).state === "waiting"; i++) await Bun.sleep(10);
+    expect((await job(r)).state).toBe("timeout");
+    await until("the cancel", () => sent(r.fake, "chat/turnCancelled").length > 0);
+    expect(sent(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId, duration: 0 } as StateAction }]);
+    expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
+  });
 });

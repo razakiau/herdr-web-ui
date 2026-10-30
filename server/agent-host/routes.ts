@@ -1387,6 +1387,12 @@ async function handOff(call: Call): Promise<Response> {
       const now = await watched(call, session);
       archive(call.host, session, now.channel, true);
     },
+    // as Stop does (stopTurn), on the job's channel; a turn the user started since is theirs. The
+    // lease is taken again first: the chat must be in the mirror to know which turn runs
+    cancel: async () => {
+      const now = await watched(call, session);
+      if (now.chat.activeTurn?.id === turnId) call.host.dispatch(now.channel, { type: ActionType.ChatTurnCancelled, turnId, duration: 0 } as StateAction);
+    },
   }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));
   return jsonResponse({ job });
 }

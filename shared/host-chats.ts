@@ -221,7 +221,6 @@ export interface HostSessionConfig { mode: string | null; approvals: string | nu
 /** A command the host publishes for a chat: its skills, prompts and custom agents, called as `/name`. */
 export interface HostCommand { name: string; description: string; kind: "skill" | "prompt" | "agent" }
 
-/** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */
 /**
  * Where a "Hand off & continue" job is (POST/GET /api/host-chats/chat/handoff): `/handoff` being sent,
  * its turn awaited, the next chat being started, or how it ended (`no_resume`: the reply named no
@@ -242,6 +241,7 @@ export interface HandoffJob {
   error: string | null;
 }
 
+/** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */
 /** One row of a Copilot session's `todos` table. */
 export interface HostTodo {
   id: string;

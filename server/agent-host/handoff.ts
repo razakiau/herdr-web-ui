@@ -7,6 +7,7 @@
  * Invariants:
  * - One job per chat at a time: a second start while one runs is that job.
  * - Nothing is archived unless a new chat was made and its `/resume` message went.
+ * - A timeout stops the job's own `/handoff` turn, never another one.
  * - A job is forgotten HANDOFF_FORGET_MS after it ends; the bridge's restart forgets them all.
  */
 import type { HandoffJob } from "../../shared/host-chats.ts";
@@ -46,6 +47,8 @@ export interface HandoffSteps {
   start(topic: string): Promise<{ session: string; sent: boolean }>;
   /** Archives the old chat. */
   archive(): Promise<void>;
+  /** Stops the `/handoff` turn if it still runs (a timeout), so the old chat stops spending. */
+  cancel(): Promise<void>;
 }
 
 /** Starts `session`'s job; the caller has checked none runs. The job runs on after this returns. */
@@ -64,7 +67,10 @@ export function startHandoff(host: AgentHost, clock: LeaseClock, session: string
       await steps.send();
       job.state = "waiting";
       const text = await steps.ended();
-      if (text === null) return end("timeout");
+      if (text === null) {
+        await steps.cancel().catch(() => undefined);
+        return end("timeout");
+      }
       job.topic = resumeTopic(text);
       if (job.topic === null) return end("no_resume");
       job.state = "starting";
