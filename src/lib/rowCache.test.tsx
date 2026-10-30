@@ -7,7 +7,7 @@ import { AgentRowBody, cacheWords } from "../components/AgentSidebar.tsx";
 import { translate } from "./i18n.ts";
 import { SettingsProvider } from "./settings.ts";
 import { minuteClock } from "./hostChats.ts";
-import { byGoingCold, createCostsFeed, rowCacheMark, type RowCacheMark } from "./rowCache.ts";
+import { byGoingCold, createCostsFeed, newerLog, rowCacheMark, type RowCacheMark } from "./rowCache.ts";
 
 const NOW = Date.parse("2026-11-01T12:00:00Z");
 const ago = (min: number): string => new Date(NOW - min * 60_000).toISOString();
@@ -123,6 +123,96 @@ describe("the page's costs feed", () => {
     releaseSheet();
     feed.reset();
     expect(feed.read().answers.size).toBe(0);
+  });
+});
+
+describe("the costs feed keeps in step without a reload (phase 1b)", () => {
+  const answer: HostCostsAnswer = { chats: [], complete: true };
+  const row = (modified: string, status: HostChatRow["status"] = "idle"): HostChatRow => ({ session: "copilotcli:/a", title: "FICTIONAL", status, modified_at: modified, cwd: null, unread: false, archived: false });
+  const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  function rig() {
+    const asked: string[] = [];
+    let resume = () => {};
+    let rows: (machineId: string, rows: readonly HostChatRow[]) => void = () => {};
+    const feed = createCostsFeed(
+      { costs: async (machineId) => { asked.push(machineId); return answer; }, prices: async () => PRICES },
+      { resume: (listener) => { resume = listener; return () => { resume = () => {}; }; }, rows: (listener) => { rows = listener; return () => { rows = () => {}; }; } },
+      5,
+    );
+    return { asked, feed, resume: () => resume(), rows: (machineId: string, each: readonly HostChatRow[]) => rows(machineId, each) };
+  }
+  function withVisibility(state: "visible" | "hidden", run: () => Promise<void>): Promise<void> {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "document");
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { visibilityState: state, addEventListener() {}, removeEventListener() {} } });
+    return run().finally(() => { if (saved) Object.defineProperty(globalThis, "document", saved); else delete (globalThis as { document?: unknown }).document; });
+  }
+
+  it("asks a PC once when its list pushes a new modified_at, a burst of pushes debounced into one", async () => {
+    const { asked, feed, rows } = rig();
+    const release = feed.want(["desk"]);
+    await tick(0);
+    expect(asked).toEqual(["desk"]);
+    rows("desk", [row("2026-10-30T10:00:00.000Z")]);
+    // the same rows again: nothing moved
+    rows("desk", [row("2026-10-30T10:00:00.000Z")]);
+    await tick(15);
+    expect(asked).toEqual(["desk"]);
+    rows("desk", [row("2026-10-30T10:01:00.000Z")]);
+    rows("desk", [row("2026-10-30T10:01:02.000Z")]);
+    rows("desk", [row("2026-10-30T10:01:02.000Z", "asks")]);
+    await tick(15);
+    expect(asked).toEqual(["desk", "desk"]);
+    // a PC no list wants is never asked
+    rows("laptop", [row("2026-10-30T10:00:00.000Z")]);
+    rows("laptop", [row("2026-10-30T10:02:00.000Z")]);
+    await tick(15);
+    expect(asked).toEqual(["desk", "desk"]);
+    release();
+  });
+
+  it("asks every wanted PC at once when the page is shown again or the stream reopens", async () => {
+    const { asked, feed, resume } = rig();
+    const release = feed.want(["desk", "laptop"]);
+    await tick(0);
+    asked.length = 0;
+    await withVisibility("visible", async () => { resume(); await tick(0); });
+    expect(asked.sort()).toEqual(["desk", "laptop"]);
+    release();
+  });
+
+  it("asks nothing while the page is hidden", async () => {
+    const { asked, feed, resume, rows } = rig();
+    const release = feed.want(["desk"]);
+    await tick(0);
+    asked.length = 0;
+    await withVisibility("hidden", async () => {
+      rows("desk", [row("2026-10-30T10:00:00.000Z")]);
+      rows("desk", [row("2026-10-30T10:05:00.000Z")]);
+      resume();
+      await tick(15);
+    });
+    expect(asked).toEqual([]);
+    release();
+  });
+
+  it("keeps the newer of the open chat's own log and the PC's answer", async () => {
+    const older = { ...log(30, 300_000), session: "copilotcli:/a" };
+    const newer = { ...log(2, 300_000), session: "copilotcli:/a" };
+    const feed = createCostsFeed({ costs: async () => ({ chats: [older], complete: true }), prices: async () => PRICES }, { resume: () => () => {}, rows: () => () => {} });
+    const release = feed.want(["desk"]);
+    await tick(0);
+    feed.note("desk", newer);
+    expect(feed.read().answers.get("desk")!.chats[0]!.lastCallAt).toBe(newer.lastCallAt);
+    // an older one noted changes nothing
+    feed.note("desk", older);
+    expect(feed.read().answers.get("desk")!.chats[0]!.lastCallAt).toBe(newer.lastCallAt);
+    // the PC answering an older log again keeps the newer one noted
+    feed.ask();
+    await tick(0);
+    expect(feed.read().answers.get("desk")!.chats[0]!.lastCallAt).toBe(newer.lastCallAt);
+    expect(newerLog(older, newer)).toBe(newer);
+    expect(newerLog(undefined, older)).toBe(older);
+    release();
   });
 });
 

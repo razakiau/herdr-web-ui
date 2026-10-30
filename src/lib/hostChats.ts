@@ -535,6 +535,13 @@ export function takeHostChatEvent(payload: MachineEvent, known: (machineId: stri
 }
 
 const resumeListeners = new Set<() => void>();
+const rowListeners = new Set<(machineId: string, rows: readonly HostChatRow[]) => void>();
+
+/** Calls `listener` with a PC's rows each time its list is shown anew (HostPcs): the costs feed asks again on a change (lib/rowCache.ts). */
+export function onHostChatRows(listener: (machineId: string, rows: readonly HostChatRow[]) => void): () => void {
+  rowListeners.add(listener);
+  return () => { rowListeners.delete(listener); };
+}
 
 /** App.tsx's event stream opened (or reopened after a drop): pushes may have been missed meanwhile. */
 export function noteHostChatStreamOpen(): void {
@@ -854,6 +861,7 @@ export class HostPcs {
       chats = edit.change === "gone" ? chats.filter((each) => each !== row) : chats.map((each) => each === row ? { ...each, ...edit.change as Partial<HostChatRow> } : each);
     }
     this.set(withPc(this.pcs, machineId, { host: read.host, chats, ...(read.stale ? { stale: true as const } : {}) }));
+    for (const listener of [...rowListeners]) listener(machineId, chats);
   }
 
   private set(next: ReadonlyMap<string, HostPc>): void {

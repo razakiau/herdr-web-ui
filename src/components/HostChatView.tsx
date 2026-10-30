@@ -36,6 +36,7 @@ import { SessionSheet } from "./SessionSheet.tsx";
 import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
+import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
 import { callingModel } from "../lib/sessionCost.ts";
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
@@ -152,7 +153,16 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   }, [contextOpen, trackCosts]);
   // the bridge's log of the chat (ZAC-260), for the meter's cache timer, the handoff banner and the Session sheet
   // asked again when the model stops being called: a turn's end, or the chat starting to ask the owner
-  const chatCostLog = useChatCostLog({ machineId, session, trackCosts, busy: chat ? callingModel(chat) : false, sheetOpen: contextOpen });
+  const ownLog = useChatCostLog({ machineId, session, trackCosts, busy: chat ? callingModel(chat) : false, sheetOpen: contextOpen });
+  // the meter, the Cache tab and the chat's row tell one story (phase 1b): the newer of this chat's
+  // own log and the page's feed (refreshed on a list change), and the feed is told of a newer own one
+  const feedLog = chatLog(useCostsFeedRead(trackCosts), machineId, session);
+  useEffect(() => { if (trackCosts && ownLog?.chat) costsFeed.note(machineId, ownLog.chat); }, [trackCosts, machineId, ownLog]);
+  const chatCostLog = useMemo(() => {
+    if (!ownLog) return ownLog;
+    const shown = newerLog(ownLog.chat, feedLog) ?? null;
+    return shown === ownLog.chat ? ownLog : { ...ownLog, chat: shown };
+  }, [ownLog, feedLog]);
   // the last context breakdown the chat gave, shown while it works (the bridge reads none then)
   const lastContext = keepContext(machineId, session, chat?.session === session ? chat.context : null, Date.now());
   const cost = useMemo(() => {

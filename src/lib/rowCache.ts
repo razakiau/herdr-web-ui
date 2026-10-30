@@ -9,7 +9,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
 import { chatModel, coldRestartUsd, isBigChat } from "../../shared/cache-cost.ts";
 import { fetchModelPrices, type ChatPrices } from "./api.ts";
-import { fetchHostCosts } from "./hostChats.ts";
+import { fetchHostCosts, onHostChatResume, onHostChatRows } from "./hostChats.ts";
 import { cacheState, type CacheState } from "./sessionCost.ts";
 
 /** How often the feed asks again while a list is shown (plan, ZAC-260): costs move by the call, not by the second. */
@@ -20,30 +20,79 @@ export interface CostsFeed { answers: ReadonlyMap<string, HostCostsAnswer | null
 
 const EMPTY: CostsFeed = { answers: new Map(), prices: null };
 
+/** How long the feed waits after a PC's list changed before it asks that PC (a turn ends in a burst of pushes). */
+export const COSTS_CHANGE_DEBOUNCE_MS = 3_000;
+
+/** What moves the feed besides its timer: the page shown again or the event stream reopened, and a PC's rows read anew. */
+export interface CostsFeedEvents {
+  resume(listener: () => void): () => void;
+  rows(listener: (machineId: string, rows: readonly HostChatRow[]) => void): () => void;
+}
+
+const hidden = (): boolean => typeof document !== "undefined" && document.visibilityState === "hidden";
+
+/** what of a PC's rows says a call may have happened: a row's last change and its status */
+const rowsKey = (rows: readonly HostChatRow[]): string => rows.map((row) => `${row.session}\t${row.modified_at}\t${row.status}`).sort().join("\n");
+
 /**
  * The page's costs feed, outside React: `want(ids)` registers a list's PCs and returns its release;
  * while anything is wanted and the page is shown it asks each PC every COSTS_REFRESH_MS. `ask()`
- * asks at once (a sheet opening). `fetchers` are swapped by a test.
+ * asks at once (a sheet opening). `fetchers` and `events` are swapped by a test.
+ *
+ * Kept in step without a reload (ZAC-260 phase 1b: the owner restarted the app for fresh minutes
+ * left): while anything is wanted it asks every wanted PC at once when the page is shown again or
+ * the event stream reopens (onHostChatResume), and a PC whose rows changed (a row's modified_at or
+ * status: a turn ended, a chat started asking) COSTS_CHANGE_DEBOUNCE_MS after the last change, one
+ * request in flight per PC (a change meanwhile asks once more when it lands). Never while hidden.
  */
-export function createCostsFeed(fetchers: { costs: (machineId: string) => Promise<HostCostsAnswer | null>; prices: () => Promise<ChatPrices> } = { costs: fetchHostCosts, prices: fetchModelPrices }) {
+export function createCostsFeed(
+  fetchers: { costs: (machineId: string) => Promise<HostCostsAnswer | null>; prices: () => Promise<ChatPrices> } = { costs: fetchHostCosts, prices: fetchModelPrices },
+  events: CostsFeedEvents = { resume: onHostChatResume, rows: onHostChatRows },
+  debounceMs = COSTS_CHANGE_DEBOUNCE_MS,
+) {
   let feed = EMPTY;
   const wants = new Map<number, readonly string[]>();
   let nextId = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let stops: (() => void)[] = [];
   const listeners = new Set<() => void>();
+  /** per PC: a request in flight, and whether another was asked for meanwhile */
+  const flying = new Map<string, boolean>();
+  const debounce = new Map<string, ReturnType<typeof setTimeout>>();
+  const seen = new Map<string, string>();
   const emit = (next: CostsFeed): void => { feed = next; for (const listener of listeners) listener(); };
   const ids = (): string[] => [...new Set([...wants.values()].flat())];
+  const askPc = (machineId: string): void => {
+    if (flying.has(machineId)) { flying.set(machineId, true); return; }
+    flying.set(machineId, false);
+    const landed = (): void => { const again = flying.get(machineId); flying.delete(machineId); if (again && wants.size > 0) askPc(machineId); };
+    // a down host keeps what it said last, and says nothing until it answers
+    void fetchers.costs(machineId).then((answer) => { emit({ ...feed, answers: new Map(feed.answers).set(machineId, mergeNoted(answer, feed.answers.get(machineId)?.chats ?? [])) }); landed(); }, landed);
+  };
   const ask = (only?: readonly string[]): void => {
     void fetchers.prices().then((prices) => emit({ ...feed, prices }));
-    for (const machineId of only ?? ids()) {
-      // a down host keeps what it said last, and says nothing until it answers
-      void fetchers.costs(machineId).then((answer) => emit({ ...feed, answers: new Map(feed.answers).set(machineId, answer) }), () => {});
-    }
+    for (const machineId of only ?? ids()) askPc(machineId);
+  };
+  const changed = (machineId: string, rows: readonly HostChatRow[]): void => {
+    const key = rowsKey(rows);
+    const before = seen.get(machineId);
+    seen.set(machineId, key);
+    // the first rows read are what want() asked about; a PC no list wants is not asked
+    if (before === undefined || before === key || !ids().includes(machineId) || hidden()) return;
+    clearTimeout(debounce.get(machineId));
+    debounce.set(machineId, setTimeout(() => { debounce.delete(machineId); if (wants.size > 0 && !hidden()) askPc(machineId); }, debounceMs));
   };
   const sync = (): void => {
     if (wants.size > 0 && timer === null) {
-      timer = setInterval(() => { if (typeof document === "undefined" || document.visibilityState !== "hidden") ask(); }, COSTS_REFRESH_MS);
-    } else if (wants.size === 0 && timer !== null) { clearInterval(timer); timer = null; }
+      timer = setInterval(() => { if (!hidden()) ask(); }, COSTS_REFRESH_MS);
+      stops = [events.resume(() => { if (!hidden()) ask(); }), events.rows(changed)];
+    } else if (wants.size === 0 && timer !== null) {
+      clearInterval(timer); timer = null;
+      for (const stop of stops) stop();
+      stops = [];
+      for (const each of debounce.values()) clearTimeout(each);
+      debounce.clear();
+    }
   };
   return {
     subscribe(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -58,12 +107,52 @@ export function createCostsFeed(fetchers: { costs: (machineId: string) => Promis
       return () => { wants.delete(id); sync(); };
     },
     ask: (): void => ask(),
+    /**
+     * The open chat's own log (useChatCostLog), asked as its turn ends: it replaces the feed's
+     * entry for that chat when its last call is newer, so the row and the chat screen say the same.
+     */
+    note(machineId: string, log: HostChatCost): void {
+      const answer = feed.answers.get(machineId);
+      if (!answer) return;
+      const merged = mergeNoted(answer, [log]);
+      if (merged !== answer) emit({ ...feed, answers: new Map(feed.answers).set(machineId, merged) });
+    },
     /** forget every answer (costs tracking turned off) */
-    reset: (): void => emit(EMPTY),
+    reset: (): void => { seen.clear(); emit(EMPTY); },
   };
 }
 
+/** The log whose last call is newer (the open chat's own, the feed's): either when only one is known. */
+export function newerLog(a: HostChatCost | null | undefined, b: HostChatCost | null | undefined): HostChatCost | null | undefined {
+  if (!a || !b) return a ?? b;
+  const at = (log: HostChatCost): number => { const value = Date.parse(log.lastCallAt ?? ""); return Number.isFinite(value) ? value : -Infinity; };
+  return at(b) > at(a) ? b : a;
+}
+
+/**
+ * `answer` with each chat replaced by the one in `newer` whose last call is newer (a chat screen's
+ * own log, noted after the PC answered); a chat the answer does not list is not added. The same
+ * object when nothing moves.
+ */
+function mergeNoted(answer: HostCostsAnswer | null, newer: readonly HostChatCost[]): HostCostsAnswer | null {
+  if (answer === null || newer.length === 0) return answer;
+  let moved = false;
+  const chats = answer.chats.map((chat): HostChatCost => {
+    const other = newer.find((each) => each.session === chat.session);
+    const pick = newerLog(chat, other);
+    if (pick && pick !== chat) { moved = true; return pick; }
+    return chat;
+  });
+  return moved ? { ...answer, chats } : answer;
+}
+
 export const costsFeed = createCostsFeed();
+
+/** The page's costs feed as it stands, without asking for anything (the chat screen, against its own log). */
+export function useCostsFeedRead(on: boolean): CostsFeed | null {
+  const feed = useSyncExternalStore(costsFeed.subscribe, costsFeed.read, costsFeed.read);
+  return on ? feed : null;
+}
 
 /** The page's costs feed for these PCs while `on` (costs tracked): null while off. */
 export function useCostsFeed(machineIds: readonly string[], on: boolean): CostsFeed | null {
