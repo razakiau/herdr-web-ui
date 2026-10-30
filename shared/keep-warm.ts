@@ -115,7 +115,9 @@ export function keepWarmKeyFor(
   for (const key of keys) {
     const gap = Math.abs(key.lastRealAt - at);
     if (gap > KEEP_WARM_MATCH_MS) continue;
-    if (Math.abs(key.prompt - context) > Math.max(500, context * KEEP_WARM_MATCH_TOKENS)) continue;
+    // `tokens`, not `prompt`: OmniRoute's prompt_tokens leaves out what the call newly cached
+    // (live 2026-10-30: prompt 87 for a 27,353-token first call), and the chat's context counts it.
+    if (Math.abs((key.tokens || key.prompt) - context) > Math.max(500, context * KEEP_WARM_MATCH_TOKENS)) continue;
     const score = gap + (model && bare(key.model) === model ? 0 : KEEP_WARM_MATCH_MS);
     if (!best || score < best.score) best = { key, score };
   }

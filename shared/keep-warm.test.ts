@@ -16,6 +16,10 @@ describe("keepWarmKeyFor", () => {
     expect(keepWarmKeyFor(chat(), [key()])?.key).toBe("a".repeat(40));
   });
 
+  it("matches on what the cache holds, not OmniRoute's prompt_tokens, which leaves out a fresh write", () => {
+    expect(keepWarmKeyFor(chat(), [key({ prompt: 87 })])?.key).toBe("a".repeat(40));
+  });
+
   it("matches nothing for another size, another time, or no last call", () => {
     expect(keepWarmKeyFor(chat({ context: 190_000 }), [key()])).toBeNull();
     expect(keepWarmKeyFor(chat({ lastCallAt: new Date(T + 30 * 60_000).toISOString() }), [key()])).toBeNull();
