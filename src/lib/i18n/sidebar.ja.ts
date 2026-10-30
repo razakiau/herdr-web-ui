@@ -61,4 +61,5 @@ export const SIDEBAR_JA: Record<string, string> = {
   "cache warm, {n} min left": "キャッシュ有効、残り {n} 分",
   "cache cooling, {n} min left": "キャッシュまもなく失効、残り {n} 分",
   "cache cold": "キャッシュ失効",
+  "cache kept warm": "キャッシュをウォーム維持中",
 };

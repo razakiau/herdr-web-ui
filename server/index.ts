@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 
 import type { HealthAuth, PendingMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
+import type { HostChatCost } from "../shared/host-chats.ts";
 import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
@@ -47,7 +48,8 @@ import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
-import { handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
+import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
+import { keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -250,6 +252,11 @@ export function createServer(
     const [prices, fallback] = await Promise.all([omniRoute.pricing(), litellmPrices.read()]);
     return { prices, fallback };
   };
+  /** the cold-cache alert asks it as the alert is due: a chat the plugin keeps warm gets none (ZAC-260 phase 2) */
+  const keptWarmNow = async (chat: HostChatCost): Promise<boolean> => {
+    const answer = await omniRoute.keepWarm();
+    return keptWarm(keepWarmKeyFor(chat, answer.state?.keys ?? []), Date.now());
+  };
   const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
     const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
@@ -274,7 +281,7 @@ export function createServer(
   /** pages in use that say so over HTTP (server/page-presence.ts): a page reading host chats has no WebSocket */
   const pages = new PagePresence();
   const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
-  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, coldPrices, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
+  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, coldPrices, keptWarm: keptWarmNow, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
   const { sidecar, serialize, push, logPushError, omo, claudeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
   // started after createCore's Node probe (server/pty/sidecar.ts), which can hold the thread up to 3 s: that wait
   // would count against the read's own 2.5 s limit, and a read cut short leaves the owner unknown for 5 minutes
@@ -510,6 +517,7 @@ export function createServer(
 
       if (pathname === "/api/usage") { setRequestRoute(pathname); return handleUsageRequest(request, url, usage); }
       if (pathname === "/api/usage/omniroute") { setRequestRoute(pathname); return handleOmniRouteRequest(request, omniRoute); }
+      if (pathname === "/api/usage/omniroute/keepwarm") { setRequestRoute(pathname); return handleKeepWarmRequest(request, omniRoute); }
       if (pathname === "/api/usage/omniroute/pricing") { setRequestRoute(pathname); return handleOmniRoutePricing(request, omniRoute, litellmPrices); }
       if (pathname === "/api/references/state") { setRequestRoute(pathname); return handleReferenceStateRequest(request, references); }
       if (pathname === "/api/usage/login") { setRequestRoute(pathname); bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }

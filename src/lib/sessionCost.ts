@@ -82,6 +82,30 @@ export function cacheMeter(
 }
 
 /**
+ * What switching the chat to `target` costs in the model picker (ZAC-260 phase 2, owner-approved):
+ * a prompt cache is one model's, so the next call on another model stores the whole context again,
+ * priced on the TARGET model. Null (no line) on the last call's own model, for a model still warm
+ * (its own last main-agent call within the cache's lifetime), for a chat under the big-chat
+ * threshold, unpriced, or from a bridge before 1071 (no `lastModel`: no per-model calls to weigh).
+ */
+export function switchCost(
+  log: HostChatCost | null | undefined,
+  target: string,
+  context: number,
+  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
+  now: number,
+  prices: CachePrices | null,
+): { tokens: number; usd: number } | null {
+  if (!log || !prices || context <= 0) return null;
+  const own = modelLastCall(log, target);
+  if (!own.switched) return null;
+  const at = own.lastCallAt === null ? NaN : Date.parse(own.lastCallAt);
+  if (!Number.isNaN(at) && now - at < settings.cacheLifetimeMin * 60_000) return null;
+  const usd = coldRestartUsd(context, target, prices.prices ?? {}, prices.fallback);
+  return isBigChat(usd, settings.coldRestartAlertUsd) ? { tokens: context, usd: usd! } : null;
+}
+
+/**
  * A chat's cost in dollars by what the money went on (ZAC-260): `fresh` (the prompt less what it
  * read from the cache: Copilot's `inputTokens` holds the read, not the write, checked against
  * OmniRoute's call_logs) at the input price, `reads` at the cache price (the input price when it has

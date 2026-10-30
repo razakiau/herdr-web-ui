@@ -37,7 +37,7 @@ import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
-import { callingModel } from "../lib/sessionCost.ts";
+import { callingModel, switchCost as switchCostOf } from "../lib/sessionCost.ts";
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
@@ -456,6 +456,6 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       }} />}
     {attaching !== null && <AttachSheet machineId={machineId} session={session} api={attaching} onClose={() => setAttaching(null)} />}
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
-      onModel={pickModel} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
+      onModel={pickModel} switchCost={trackCosts && chatCostLog?.chat ? (target) => switchCostOf(chatCostLog.chat, target, chat?.context?.currentTokens ?? chatCostLog.chat?.context ?? 0, costSettings, Date.now(), sheetPrices) : undefined} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
   </div>;
 }

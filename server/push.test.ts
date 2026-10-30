@@ -939,6 +939,24 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(bodies()).toEqual(["waiting for your input", "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68"]);
   });
 
+  it("stays quiet for a chat OmniRoute keeps warm, asked as the alert is due (phase 2)", async () => {
+    let kept = true;
+    const asked: string[] = [];
+    const push = subscribed({ cold: RULE, keptWarm: async (chat, machineId) => { asked.push(`${machineId} ${chat.session}`); return kept; } });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    await Bun.sleep(250); // fixed wait: past the lifetime, proving the kept chat is not told
+    await push.settled();
+    expect(fake.received).toEqual([]);
+    expect(asked).toEqual(["mac ahp:/s1"]);
+    // keep-warm let it go (off, past its window, the day's cap): the next idle period is told
+    kept = false;
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    await arrived(1);
+    await push.settled();
+    expect(fake.received).toHaveLength(1);
+  });
+
   it("weighs the last call's model, not the one that read the most (phase 1b)", async () => {
     const push = subscribed({ cold: RULE });
     // most reads on an unpriced model, the last call on a priced one: the cache going cold is the priced one's

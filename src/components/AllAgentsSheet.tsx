@@ -13,7 +13,7 @@
  */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Hourglass, Search, Snowflake, Timer, X } from "lucide-react";
+import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Flame, Hourglass, Search, Snowflake, Timer, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -26,6 +26,7 @@ import { listUsd } from "../lib/chatCost.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } from "../lib/hostChatGroups.ts";
 import { basename, chatAge, hostLine, tokens, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { keepWarmFor, useKeepWarm } from "../lib/keepWarm.ts";
 import { byGoingCold, costsFeed, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
 import { cacheState, costSplit, type CostSplit } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -126,6 +127,7 @@ function CacheLine({ parts, mark }: { parts: string[]; mark: RowCacheMark }) {
 /** A big chat's cache on its All agents row (ZAC-260, owner's pick B): its size, then the minutes left or "cold", with a small icon. */
 export function CacheText({ mark }: { mark: RowCacheMark }) {
   const t = useT();
+  if (mark.kept) return <span className="all-agents-cache is-warm is-kept">{tokens(mark.context)} · <Flame aria-hidden="true" />{t("kept warm")}</span>;
   const Icon = mark.state === "cold" ? Snowflake : Timer;
   return <span className={`all-agents-cache is-${mark.state}`}>
     {tokens(mark.context)} · <Icon aria-hidden="true" />{mark.state === "cold" ? t("cold") : t("{n}m left", { n: mark.leftMin })}
@@ -166,6 +168,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const track = settings.trackCosts;
   const machineIds = useMemo(() => [machineId], [machineId]);
   const feed = useCostsFeed(machineIds, track);
+  const keepWarm = useKeepWarm(track);
   // a PC answered before (the sidebar's feed) is asked again as the sheet opens; a new one is asked by the feed itself
   useEffect(() => { if (track && costsFeed.read().answers.has(machineId)) costsFeed.ask(); }, [track, machineId]);
   const answer: HostCostsAnswer | null | undefined = feed?.answers.get(machineId);
@@ -225,11 +228,12 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const marks = useMemo(() => {
     const found = new Map<string, RowCacheMark>();
     for (const row of pc.chats) {
-      const mark = rowCacheMark(row, costs.get(row.session)?.chat, prices, settings, now);
+      const log = costs.get(row.session)?.chat;
+      const mark = rowCacheMark(row, log, prices, settings, now, keepWarmFor(keepWarm, log, now)?.kept);
       if (mark) found.set(row.session, mark);
     }
     return found;
-  }, [pc.chats, costs, prices, settings, now]);
+  }, [pc.chats, costs, prices, settings, now, keepWarm]);
   const byColdOn = costed && sort === "cold";
   // a search looks in the archived ones too: what it finds there is shown
   const showArchived = archivedOpen || (words !== "" && archived.length > 0);

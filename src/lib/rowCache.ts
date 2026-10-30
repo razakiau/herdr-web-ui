@@ -181,7 +181,11 @@ export function chatLog(feed: CostsFeed | null, machineId: string, session: stri
 }
 
 /** What a list row shows of a big chat's cache: its state, minutes left, its share of the lifetime left and its size. */
-export interface RowCacheMark { state: CacheState; leftMin: number; ageMin: number; fraction: number; context: number; restartUsd: number }
+export interface RowCacheMark {
+  state: CacheState; leftMin: number; ageMin: number; fraction: number; context: number; restartUsd: number;
+  /** OmniRoute's keep-warm plugin keeps it warm (ZAC-260 phase 2): the ring stays full and green, with a flame */
+  kept?: boolean;
+}
 
 /**
  * A row's cache mark (ZAC-260): only for a big chat (its cold restart costs at least the threshold;
@@ -190,7 +194,7 @@ export interface RowCacheMark { state: CacheState; leftMin: number; ageMin: numb
  */
 export function rowCacheMark(
   row: Pick<HostChatRow, "status">, log: HostChatCost | undefined, prices: ChatPrices | null,
-  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number }, now: number,
+  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number }, now: number, kept = false,
 ): RowCacheMark | null {
   // only a working chat keeps its cache warm: one that asks waits on the owner and calls nothing
   if (!log || !prices || row.status === "working") return null;
@@ -199,6 +203,8 @@ export function rowCacheMark(
   if (restartUsd === null || !isBigChat(restartUsd, settings.coldRestartAlertUsd)) return null;
   const cache = cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, false);
   if (!cache) return null;
+  // kept warm: a ping renews the cache before it goes, so it reads as just written
+  if (kept) return { state: "warm", leftMin: settings.cacheLifetimeMin, ageMin: cache.ageMin, fraction: 1, context, restartUsd, kept: true };
   const lastAt = Date.parse(log.lastCallAt!);
   const fraction = cache.state === "cold" ? 0 : Math.max(0, Math.min(1, 1 - (now - lastAt) / (settings.cacheLifetimeMin * 60_000)));
   return { ...cache, fraction, context, restartUsd };

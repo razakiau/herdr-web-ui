@@ -71,6 +71,19 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(body(mark(48))).toContain("cache cooling, 12 min left");
   });
 
+  it("kept warm by OmniRoute (phase 2): a full warm ring with a flame, whatever the log's age, and says so", () => {
+    const kept = rowCacheMark(idle, log(90, 300_000), PRICES, SETTINGS, NOW, true)!;
+    expect(kept).toMatchObject({ state: "warm", fraction: 1, leftMin: 60, kept: true });
+    const html = body(kept);
+    expect(html).toContain('class="cache-ring is-warm is-kept"');
+    expect(html).toContain('stroke-dasharray="100.0 100"');
+    expect(html).toContain('data-testid="kept-warm"');
+    expect(html).toContain(", cache kept warm</span>");
+    expect(body(mark(15))).not.toContain("kept-warm");
+    // a small chat is not marked even if kept
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, true)).toBeNull();
+  });
+
   it("is dashed all round once cold, with no track, and says cache cold", () => {
     const html = body(mark(90));
     expect(html).toContain('class="cache-ring is-cold"');
@@ -93,7 +106,7 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     // `.sidebar-mark svg` sets --icon-size (18px): only the box shrank, and the glyph hung 2px below
     // the ring's centre (measured at 390px, DPR 3: glyph centre y+2 before, 0 after)
     const css = readFileSync(join(import.meta.dir, "../components/AgentSidebar.css"), "utf8");
-    const rule = css.split("}").find((block) => block.includes(".sidebar-mark.has-cache-ring > :not(.cache-ring) svg"));
+    const rule = css.split("}").find((block) => block.includes(".sidebar-mark.has-cache-ring > :not(.cache-ring, .cache-ring-flame) svg"));
     expect(rule).toBeDefined();
     expect(rule).toContain("width: 14px; height: 14px;");
   });

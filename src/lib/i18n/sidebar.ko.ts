@@ -61,4 +61,5 @@ export const SIDEBAR_KO: Record<string, string> = {
   "cache warm, {n} min left": "캐시 유효, {n}분 남음",
   "cache cooling, {n} min left": "캐시 곧 만료, {n}분 남음",
   "cache cold": "캐시 만료",
+  "cache kept warm": "캐시 웜 유지 중",
 };

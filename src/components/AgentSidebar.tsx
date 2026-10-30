@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Pin, PinOff, Terminal } from "lucide-react";
+import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Flame, Pin, PinOff, Terminal } from "lucide-react";
 
 import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -24,6 +24,7 @@ import { machineFilter } from "../lib/sidebarFilter.ts";
 import { useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
 import { chatAge, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { keepWarmFor, useKeepWarm } from "../lib/keepWarm.ts";
 import { chatLog, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
 import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
@@ -75,14 +76,14 @@ export function CacheRing({ mark }: { mark: RowCacheMark }) {
   // thick arc from 12 o'clock, clockwise, over a thin track in the same colour, so a ring with
   // minutes left still reads in its colour (a dark track hid the cooling one)
   const shape = { cx: 12, cy: 12, r: 11, fill: "none" } as const;
-  return <svg className={`cache-ring is-${mark.state}`} viewBox="0 0 24 24" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
+  return <><svg className={`cache-ring is-${mark.state}${mark.kept ? " is-kept" : ""}`} viewBox="0 0 24 24" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
     {mark.state === "cold"
       ? <circle {...shape} className="cache-ring-stroke" strokeDasharray="2 2.6" />
       : <>
         <circle {...shape} className="cache-ring-track" />
         <circle {...shape} className="cache-ring-stroke" transform="rotate(-90 12 12)" pathLength={100} strokeDasharray={`${(mark.fraction * 100).toFixed(1)} 100`} />
       </>}
-  </svg>;
+  </svg>{mark.kept && <Flame className="cache-ring-flame" aria-hidden="true" data-testid="kept-warm" />}</>;
 }
 
 /**
@@ -126,6 +127,7 @@ export function AgentRowBody({ mark, markKind, title, name, context, tokens, bac
 
 /** A big chat's cache in words, for the row's accessible name (ZAC-260): "cache warm, 12 min left", "cache cold". */
 export function cacheWords(mark: RowCacheMark, t: Translate): string {
+  if (mark.kept) return t("cache kept warm");
   return mark.state === "cold" ? t("cache cold") : t(mark.state === "warm" ? "cache warm, {n} min left" : "cache cooling, {n} min left", { n: mark.leftMin });
 }
 
@@ -274,6 +276,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // the page's costs feed for the PCs with listed chats (lib/rowCache.ts), for a big chat's cache ring
   const costPcs = useMemo(() => [...new Set(chatRows.map((row) => row.machine.id))], [chatRows]);
   const costs = useCostsFeed(costPcs, settings.trackCosts);
+  const keepWarm = useKeepWarm(settings.trackCosts);
   // what needs you first, then what works, then an unread finish, then the rest (lib/agentRoster.ts byAttention);
   // a host chat's "asks" needs you, and an unread one reads as a finish
   const shown = (row: ListRow): AgentStatus | undefined => row.chat
@@ -376,7 +379,8 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const { machine, chat } = row;
     const selected = selectedHostChat?.machineId === machine.id && selectedHostChat.session === chat.session;
     const { title, place, context, subtitle } = describeChat(row);
-    const ring = costs ? rowCacheMark(chat, chatLog(costs, machine.id, chat.session), costs.prices, settings, now) : null;
+    const log = costs ? chatLog(costs, machine.id, chat.session) : undefined;
+    const ring = costs ? rowCacheMark(chat, log, costs.prices, settings, now, keepWarmFor(keepWarm, log, now)?.kept) : null;
     const pinKey = hostChatPinKey(machine.id, chat.session);
     const menuOpen = menu?.key === pinKey;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>

@@ -19,6 +19,8 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { formatTokenCount } from "./HostChatStatus.tsx";
+import { formatUsd } from "../lib/chatCost.ts";
 
 /** A model's mark: the provider's, or VS Code's sparkle for one it cannot name. */
 export function ModelMarkIcon({ mark, size = 14 }: { mark: ModelMark; size?: number }) {
@@ -68,12 +70,17 @@ export interface ModelPickerProps {
   config: HostSessionConfig | null;
   error: string | null;
   onModel(model: { id: string; effort?: string }): void;
+  /**
+   * What switching to a model stores again (ZAC-260 phase 2): the chat's context and its price on
+   * that model, null for no line (the same model, still warm, a small chat, no costs).
+   */
+  switchCost?: ((model: string) => { tokens: number; usd: number } | null) | undefined;
   onAgent(agent: string | null): void;
   onConfig(change: { mode?: string; approvals?: string }): void;
   onClose(): void;
 }
 
-export function ModelPicker({ machineId, focus, models, agents, model, agent, config, error, onModel, onAgent, onConfig, onClose }: ModelPickerProps) {
+export function ModelPicker({ machineId, focus, models, agents, model, agent, config, error, onModel, switchCost, onAgent, onConfig, onClose }: ModelPickerProps) {
   const t = useT();
   const id = useId();
   const surface = useFocusTrap<HTMLDivElement>(true);
@@ -100,7 +107,7 @@ export function ModelPicker({ machineId, focus, models, agents, model, agent, co
         </header>
         <div className="modal-body host-picker-body">
           {error !== null && <p className="host-picker-error" role="alert">{error}</p>}
-          {focus === "model" && <ModelList machineId={machineId} models={models} model={model} onModel={onModel} />}
+          {focus === "model" && <ModelList machineId={machineId} models={models} model={model} onModel={onModel} switchCost={switchCost} />}
           {focus === "settings" && <SettingsList config={config} agents={agents} agent={agent} onConfig={onConfig} onAgent={onAgent} />}
         </div>
       </div>
@@ -109,7 +116,7 @@ export function ModelPicker({ machineId, focus, models, agents, model, agent, co
   );
 }
 
-function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps, "machineId" | "models" | "model" | "onModel">) {
+function ModelList({ machineId, models, model, onModel, switchCost }: Pick<ModelPickerProps, "machineId" | "models" | "model" | "onModel" | "switchCost">) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<string | null>(null);
@@ -157,6 +164,8 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
         // a model can stand in two sections (Recent and its group): its effort choices open in the one tapped
         const row = `${section.key}\n${each.id}`;
         const rate = multiplierLabel(each);
+        // a quiet line, no modal: the next call on this model stores the chat again (owner, ZAC-260)
+        const restart = picked ? null : switchCost?.(each.id) ?? null;
         return <div key={each.id} className={`host-model-row${picked ? " is-picked" : ""}`} data-model={each.id}>
           <button type="button" className="host-model-pick" aria-pressed={picked}
             onPointerDown={() => { const held = { fired: false, timer: setTimeout(() => { held.fired = true; togglePinned(machineId, each.id); setPinned(pinnedModels(machineId)); }, LONG_PRESS_MS) }; press.current = held; }}
@@ -178,6 +187,7 @@ function ModelList({ machineId, models, model, onModel }: Pick<ModelPickerProps,
           {detail !== "" && (each.efforts
             ? <button type="button" className="host-model-detail" aria-expanded={efforts === row} aria-label={t("Reasoning effort for {model}", { model: each.name })} onClick={() => setEfforts((open) => open === row ? null : row)}>{detail}<ChevronDown className="host-model-detail-caret" aria-hidden="true" /></button>
             : <span className="host-model-detail">{detail}</span>)}
+          {restart !== null && <p className="host-model-restart" data-restart={each.id}>{t("Switching stores {n} again ~{usd}", { n: formatTokenCount(restart.tokens), usd: formatUsd(restart.usd) })}</p>}
           {efforts === row && each.efforts && <div className="host-picker-chips" role="group" aria-label={t("Reasoning effort")}>
             {each.efforts.values.map((value) => <button key={value} type="button" className={`host-picker-chip${picked && model?.effort === value ? " is-picked" : ""}`} aria-pressed={picked && model?.effort === value} data-effort={value}
               onClick={() => { setEfforts(null); pick({ id: each.id, effort: value }); }}>{value}</button>)}

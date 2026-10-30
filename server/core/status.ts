@@ -28,7 +28,7 @@ import type { OrderSequence } from "../order-sequence.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import type { PreferenceStore } from "../preferences.ts";
 import { promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
-import { type AlertTiming, type ColdPrices, createPushService, defaultStateDir } from "../push.ts";
+import { type AlertTiming, type ColdPrices, createPushService, defaultStateDir, type PushServiceOptions } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
 import { StatusSince } from "../status-since.ts";
 import type { Telemetry } from "../telemetry.ts";
@@ -39,7 +39,7 @@ import { type Client, send } from "./connections.ts";
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown, coldPrices }: {
+export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown, coldPrices, keptWarm }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -75,6 +75,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   hostChatsShown?: () => boolean;
   /** the prices the cold-cache alert weighs a PC's chats with: none, the PCs' costs are not polled */
   coldPrices?: () => Promise<ColdPrices>;
+  /** whether OmniRoute's keep-warm plugin keeps a chat warm: then no cold alert (ZAC-260 phase 2) */
+  keptWarm?: PushServiceOptions["keptWarm"];
 }) {
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
@@ -86,6 +88,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     // the persisted list, read as each alert is scheduled and again as it goes out
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),
     hostChatsShown,
+    keptWarm,
     // the deployment's ntfy topic, if any (server/ntfy.ts); a test server passes its own or none
     ntfy: (options.ntfy === undefined ? ntfyFromEnv(process.env) : options.ntfy) ?? undefined,
     lookupTitle: async (paneId) => {

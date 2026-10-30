@@ -10,6 +10,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelPrice, ModelPrices, OmniRouteStatus, ProviderUsage, UsageWindow } from "../shared/protocol.ts";
+import { keepWarmSettingsFrom, keepWarmStateFrom, type KeepWarmAnswer, type KeepWarmSettings } from "../shared/keep-warm.ts";
 import { jsonResponse } from "./http.ts";
 import type { LiteLlmPrices } from "./litellmPrices.ts";
 import { FRESH_MS, MIN_REFRESH_MS, RETRY_MS } from "./usage.ts";
@@ -122,7 +123,12 @@ export function pricesFrom(raw: unknown): ModelPrices {
   return table;
 }
 
-export interface OmniRouteConfig { url: string; token: string }
+/** `writeToken`: a write-scope token, only for the keep-warm plugin's settings (ZAC-260); from the environment only */
+export interface OmniRouteConfig { url: string; token: string; writeToken?: string }
+
+/** How long the keep-warm plugin's state is reused: it syncs it once a minute */
+const KEEP_WARM_FRESH_MS = 30_000;
+const KEEP_WARM_PATH = "/api/plugins/keep-warm/config";
 
 /** An OmniRoute gateway's limits for /api/usage, and its state for Settings. */
 export class OmniRouteUsage {
@@ -136,6 +142,9 @@ export class OmniRouteUsage {
   private pricesAt = 0;
   private pricesRetryAt = 0;
   private pricesPending: Promise<void> | null = null;
+  private keepWarmAnswer: KeepWarmAnswer | null = null;
+  private keepWarmAt = 0;
+  private keepWarmPending: Promise<KeepWarmAnswer> | null = null;
 
   constructor(private readonly config: OmniRouteConfig,
     private readonly fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
@@ -190,11 +199,55 @@ export class OmniRouteUsage {
     return this.prices;
   }
 
+  /**
+   * The keep-warm plugin's state and the owner's settings (ZAC-260 phase 2), from the plugin's own
+   * config (GET /api/plugins/keep-warm/config, a read token is enough). Reused for
+   * KEEP_WARM_FRESH_MS; `ok: false` with fixed words when there is no gateway, no plugin, or no answer.
+   */
+  keepWarm(refresh = false): Promise<KeepWarmAnswer> {
+    const writable = !!this.config.writeToken;
+    if (this.url === null) return Promise.resolve({ ok: false, state: null, settings: {}, writable: false, problem: "No OmniRoute gateway" });
+    if (this.keepWarmPending) return this.keepWarmPending;
+    if (!refresh && this.keepWarmAnswer && this.now() < this.keepWarmAt + KEEP_WARM_FRESH_MS) return Promise.resolve(this.keepWarmAnswer);
+    const pass = this.get(KEEP_WARM_PATH).then((raw): KeepWarmAnswer => {
+      const config = record(record(raw)?.["config"]) ?? {};
+      const state = keepWarmStateFrom(config["state"]);
+      return { ok: state !== null, state, settings: keepWarmSettingsFrom(config["settings"]), writable, problem: state ? null : "Keep-warm has not reported yet" };
+    }, (error: unknown): KeepWarmAnswer => ({ ok: false, state: null, settings: {}, writable,
+      problem: error instanceof OmniRouteRefused ? "OmniRoute refused the token" : error instanceof OmniRouteMissing ? "Keep-warm is not installed" : "Could not reach OmniRoute" }))
+      .then((answer) => { this.keepWarmAnswer = answer; this.keepWarmAt = this.now(); return answer; })
+      .finally(() => { if (this.keepWarmPending === pass) this.keepWarmPending = null; });
+    this.keepWarmPending = pass;
+    return pass;
+  }
+
+  /**
+   * Replaces the owner's settings, keeping the plugin's state: the plugin's config API replaces the
+   * whole config on a PUT (no merge), so the state read just before goes back with them.
+   */
+  async saveKeepWarm(value: unknown): Promise<KeepWarmAnswer> {
+    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    if (!this.config.writeToken) throw new OmniRouteError("keepwarm_read_only", 409, "Keep-warm settings need a write token");
+    const settings: KeepWarmSettings = keepWarmSettingsFrom(value);
+    let raw: unknown;
+    try { raw = await this.get(KEEP_WARM_PATH); } catch { throw new OmniRouteError("keepwarm_unavailable", 502, "Keep-warm is unavailable"); }
+    const state = record(record(raw)?.["config"])?.["state"] ?? null;
+    const response = await this.fetcher(`${this.url}${KEEP_WARM_PATH}`, {
+      method: "PUT", redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${this.config.writeToken}` },
+      body: JSON.stringify({ config: { settings, state } }),
+    }).catch(() => null);
+    await response?.body?.cancel();
+    if (!response || !response.ok) throw new OmniRouteError("keepwarm_unavailable", 502, response && (response.status === 401 || response.status === 403) ? "OmniRoute refused the write token" : "Keep-warm is unavailable");
+    return this.keepWarm(true);
+  }
+
   private async get(path: string): Promise<unknown> {
     const response = await this.fetcher(`${this.url}${path}`, {
       method: "GET", redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { accept: "application/json", authorization: `Bearer ${this.config.token}` },
     });
+    if (response.status === 404) { await response.body?.cancel(); throw new OmniRouteMissing(); }
     if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new OmniRouteRefused(); }
     if (!response.ok) { await response.body?.cancel(); throw new Error("upstream"); }
     const raw = await response.text();
@@ -204,11 +257,13 @@ export class OmniRouteUsage {
 }
 
 class OmniRouteRefused extends Error {}
+class OmniRouteMissing extends Error {}
 
 /** The gateway named in the server's environment (HERDR_WEB_OMNIROUTE_URL, HERDR_WEB_OMNIROUTE_TOKEN). */
 export const omniRouteFromEnv = (env: Record<string, string | undefined> = process.env,
   fetcher?: (url: string, init: RequestInit) => Promise<Response>, now?: () => number): OmniRouteUsage =>
-  new OmniRouteUsage({ url: env["HERDR_WEB_OMNIROUTE_URL"]?.trim() ?? "", token: env["HERDR_WEB_OMNIROUTE_TOKEN"]?.trim() ?? "" }, fetcher, now);
+  new OmniRouteUsage({ url: env["HERDR_WEB_OMNIROUTE_URL"]?.trim() ?? "", token: env["HERDR_WEB_OMNIROUTE_TOKEN"]?.trim() ?? "",
+    writeToken: env["HERDR_WEB_OMNIROUTE_WRITE_TOKEN"]?.trim() ?? "" }, fetcher, now);
 
 export class OmniRouteError extends Error {
   constructor(readonly code: string, readonly status: number, message: string) { super(message); }
@@ -259,6 +314,10 @@ export class OmniRouteLink {
   report(refresh = false): Promise<readonly ProviderUsage[]> { return this.usage.report(refresh); }
 
   pricing(): Promise<ModelPrices | null> { return this.usage.pricing(); }
+
+  keepWarm(refresh = false): Promise<KeepWarmAnswer> { return this.usage.keepWarm(refresh); }
+
+  saveKeepWarm(value: unknown): Promise<KeepWarmAnswer> { return this.usage.saveKeepWarm(value); }
 
   /** Saves `{url, token?}` and reads the gateway once; a blank token keeps the saved one for the same URL. */
   async save(value: unknown): Promise<OmniRouteStatus> {
@@ -322,6 +381,25 @@ export async function handleOmniRouteRequest(request: Request, link: OmniRouteLi
       }
       case "DELETE": return reply(link.remove());
       default: return reply({ error: { code: "method_not_allowed", message: "Unknown OmniRoute operation" } }, 405);
+    }
+  } catch (error) {
+    const safe = error instanceof OmniRouteError ? error : invalid();
+    return reply({ error: { code: safe.code, message: safe.message } }, safe.status);
+  }
+}
+
+/** GET and PUT (the owner's settings) on /api/keepwarm (ZAC-260 phase 2); only fixed words leave it. */
+export async function handleKeepWarmRequest(request: Request, link: Pick<OmniRouteLink, "keepWarm" | "saveKeepWarm">): Promise<Response> {
+  const reply = (value: unknown, status = 200) => jsonResponse(value, status, { "cache-control": "no-store" });
+  try {
+    switch (request.method) {
+      case "GET": return reply(await link.keepWarm());
+      case "PUT": {
+        let body: unknown;
+        try { body = await request.json(); } catch { throw invalid(); }
+        return reply(await link.saveKeepWarm(body));
+      }
+      default: return reply({ error: { code: "method_not_allowed", message: "Use GET or PUT" } }, 405);
     }
   } catch (error) {
     const safe = error instanceof OmniRouteError ? error : invalid();

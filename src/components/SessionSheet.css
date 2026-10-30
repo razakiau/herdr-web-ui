@@ -493,3 +493,6 @@
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+/* the Cache tab's keep-warm row (ZAC-260 phase 2): a small flame before its label, in the warm colour */
+.session-sheet .session-keep-flame { width: 14px; height: 14px; margin-inline-end: 4px; vertical-align: -2px; color: var(--cache-warm); fill: currentColor; }
+.session-sheet .session-keep-warm .settings-toggle { flex: none; }

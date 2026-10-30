@@ -61,4 +61,5 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "cache warm, {n} min left": "缓存有效，剩 {n} 分钟",
   "cache cooling, {n} min left": "缓存即将失效，剩 {n} 分钟",
   "cache cold": "缓存已失效",
+  "cache kept warm": "缓存保持预热中",
 };

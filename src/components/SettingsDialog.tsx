@@ -22,6 +22,9 @@ import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from "./SettingsControls.tsx";
+import { keepWarmFeed, saveKeepWarm, useKeepWarm } from "../lib/keepWarm.ts";
+import { formatUsd } from "../lib/chatCost.ts";
+import type { KeepWarmSettings } from "../../shared/keep-warm.ts";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
 import { UI_FONT_MAX, UI_FONT_MIN } from "../lib/typography.ts";
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "../lib/installedFonts.ts";
@@ -368,6 +371,49 @@ function NumberField({ value, label, min, max, step, disabled, onCommit, decimal
   return prefix ? <span className="settings-number-prefixed"><span aria-hidden="true">{prefix}</span>{input}</span> : input;
 }
 
+/**
+ * Keep-warm (ZAC-260 phase 2): OmniRoute's plugin keeps big idle chats' caches warm. Its switch,
+ * how long after the last call, the day's cap, and today's tally; "unavailable" without the plugin.
+ */
+export function KeepWarmRows() {
+  const t = useT();
+  const answer = useKeepWarm(true);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (answer === null) return null;
+  const state = answer.state;
+  if (!answer.ok || !state) {
+    return <SettingsRow label={t("Keep big chats warm")} description={t("Keep-warm unavailable")} dimmed>
+      <Toggle label={t("Keep big chats warm")} checked={false} disabled onChange={() => {}} />
+    </SettingsRow>;
+  }
+  const save = (next: KeepWarmSettings): void => {
+    setSaving(true); setFailed(false);
+    void saveKeepWarm({ ...answer.settings, ...next }).then((saved) => keepWarmFeed.set(saved), () => setFailed(true)).finally(() => setSaving(false));
+  };
+  const locked = !answer.writable || saving;
+  const today = state.today;
+  const tally = [t("{n} pings", { n: today.pings }), `~${formatUsd(today.usd)}`, t("{n} restarts avoided (~{usd})", { n: today.avoided, usd: formatUsd(today.avoidedUsd) })].join(" · ");
+  return <>
+    <SettingsRow label={t("Keep big chats warm")} description={<>
+      {t("Automatic for every chat over the mark ({usd}). Turn off per chat in its Cache tab.", { usd: formatUsd(state.thresholdUsd) })}
+      {!answer.writable && <> {t("Read only: the server has no OmniRoute write token.")}</>}
+      {failed && <> <span role="alert">{t("Could not save to OmniRoute.")}</span></>}
+    </>}>
+      <Toggle label={t("Keep big chats warm")} checked={state.enabled} disabled={locked} onChange={(enabled) => save({ enabled })} />
+    </SettingsRow>
+    <SettingsRow label={t("For how long after the last call")} description={t("Hours")} dimmed={!state.enabled}>
+      <NumberField label={t("For how long after the last call")} value={state.windowHours} min={1} max={24} step={1} disabled={locked || !state.enabled} onCommit={(windowHours) => save({ windowHours })} />
+    </SettingsRow>
+    <SettingsRow label={t("Pings per day at most")} dimmed={!state.enabled}>
+      <NumberField label={t("Pings per day at most")} value={state.fusePerDay} min={1} max={1000} step={1} disabled={locked || !state.enabled} onCommit={(fusePerDay) => save({ fusePerDay })} />
+    </SettingsRow>
+    <SettingsRow label={t("Today")} description={today.fuseHit ? t("Daily cap reached: no more pings today") : undefined}>
+      <span className="settings-value" data-testid="keep-warm-today">{tally}</span>
+    </SettingsRow>
+  </>;
+}
+
 function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
@@ -409,6 +455,7 @@ function ChatPage() {
         <SettingsRow label={t("Cache lifetime")} description={t("Minutes the provider keeps the conversation cached")} dimmed={!settings.trackCosts}>
           <NumberField label={t("Cache lifetime")} value={settings.cacheLifetimeMin} min={CACHE_LIFETIME_MIN} max={CACHE_LIFETIME_MAX} step={5} disabled={!settings.trackCosts} onCommit={(cacheLifetimeMin) => update({ cacheLifetimeMin })} />
         </SettingsRow>
+        {settings.trackCosts && <KeepWarmRows />}
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">

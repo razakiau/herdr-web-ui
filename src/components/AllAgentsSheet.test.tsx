@@ -4,6 +4,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from "rea
 
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
 import { SETTINGS_STORAGE_KEY } from "../lib/themeBoot.ts";
+import { keepWarmFeed } from "../lib/keepWarm.ts";
 
 /**
  * A browser history the sheets' Back entries (lib/sheetHistory.ts) live in: one object for the
@@ -75,6 +76,7 @@ let records: Map<string, string>;
 let urls: string[];
 let costsReply: { status: number; body: unknown };
 let pricesReply: unknown;
+let keepWarmReply: { status: number; body: unknown };
 let renderer: ReactTestRenderer | undefined;
 const realFetch = globalThis.fetch;
 
@@ -87,7 +89,9 @@ beforeEach(() => {
   costsReply = { status: 200, body: ANSWER };
   // the page's costs feed outlives a sheet: each test starts from no answers
   costsFeed.reset();
+  keepWarmFeed.reset();
   pricesReply = { prices: PRICES, fallback: null };
+  keepWarmReply = { status: 404, body: { error: { code: "not_found", message: "unknown" } } };
   const events = new EventTarget();
   phone = false;
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
@@ -112,7 +116,7 @@ beforeEach(() => {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
-    const reply = url.endsWith("/pricing") ? { status: 200, body: pricesReply } : costsReply;
+    const reply = url.endsWith("/pricing") ? { status: 200, body: pricesReply } : url.endsWith("/keepwarm") ? keepWarmReply : costsReply;
     return new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
 });
@@ -157,7 +161,7 @@ const rows = (sheet: ReactTestRenderer): string[] =>
 describe("All agents with costs tracked", () => {
   it("asks the PC's bridge for its costs and the prices on opening", async () => {
     await open(true);
-    expect(urls.sort()).toEqual(["/api/machines/desk/host-chats/costs", "/api/usage/omniroute/pricing"]);
+    expect(urls.sort()).toEqual(["/api/machines/desk/host-chats/costs", "/api/usage/omniroute/keepwarm", "/api/usage/omniroute/pricing"]);
   });
 
   it("gives a Copilot row its cost and a split bar of the five parts it spent on", async () => {
@@ -390,6 +394,24 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     // the warm dot is a small chat's only: a big one says it in words
     expect(classed(rowOf(sheet, "copilotcli:/warm"), "session-dot")).toEqual([]);
     expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").length).toBe(1);
+  });
+
+  it("says kept warm for a chat OmniRoute keeps warm, with a flame, past its log's hour (phase 2)", async () => {
+    costsReply = { status: 200, body: BIG_ANSWER };
+    const keyOf = (prompt: number, minAgo: number, over: Record<string, unknown> = {}) => ({
+      key: `k${prompt}`, model: MODEL, apiKey: "cop", tokens: prompt, prompt, lastRealAt: NOW - minAgo * 60_000 + 30_000, lastPingAt: null,
+      nextPingAt: NOW + 5 * 60_000, until: NOW + 6 * 3_600_000, pings: 1, usd: 0.06, restartUsd: 3, missed: false, disabled: false, kept: true, ...over,
+    });
+    keepWarmReply = { status: 200, body: { ok: true, writable: true, problem: null, settings: {}, state: {
+      v: 1, at: NOW, enabled: true, windowHours: 8, fusePerDay: 200, idleMin: 55, thresholdUsd: 1, available: true, problem: null,
+      today: { day: "x", pings: 1, usd: 0.06, avoided: 0, avoidedUsd: 0, fuseHit: false },
+      keys: [keyOf(268_000, 48), keyOf(312_000, 300, { missed: true, kept: false })],
+    } } };
+    const sheet = await open(true, { chats: BIG_CHATS });
+    expect(cacheText(sheet, "copilotcli:/cooling")).toBe("all-agents-cache is-warm is-kept: 268K · kept warm");
+    // a missed ping: the log's story again
+    expect(cacheText(sheet, "copilotcli:/cold-old")).toBe("all-agents-cache is-cold: 312K · cold");
+    expect(cacheText(sheet, "copilotcli:/warm")).toBe("all-agents-cache is-warm: 300K · 50m left");
   });
 
   it("follows the dollar threshold: at $4 only the 1.2M chat ($12) is big", async () => {

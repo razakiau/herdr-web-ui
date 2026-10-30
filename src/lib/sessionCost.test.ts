@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatCost, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
-import { advice, cacheMeter, cacheState, coldRestartUsd, costSplit, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, writePrice } from "./sessionCost.ts";
+import { advice, cacheMeter, cacheState, coldRestartUsd, costSplit, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, switchCost, writePrice } from "./sessionCost.ts";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -96,6 +96,31 @@ describe("a prompt cache is one model's (phase 1b)", () => {
     expect(cacheMeter({ busy: false }, log, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
     const old = { ...log, lastModel: undefined };
     expect(cacheMeter({ busy: false, model: { id: "cc/claude-sonnet-5-5" } }, old, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
+  });
+});
+
+describe("switchCost: the model picker's warning (phase 2)", () => {
+  const settings = { coldRestartAlertUsd: 1, cacheLifetimeMin: 60 };
+  const prices = { prices: { cc: { ...PRICES.cc, "claude-sonnet-5-5": { input: 3, output: 15, cached: 0.3 } } }, fallback: null };
+  // Opus until 70 min ago, then DeepSeek 10 min ago (the last call); Sonnet never called
+  const log: HostChatCost = {
+    session: "s", lastCallAt: ago(10), lastModel: "deepseek/deepseek-v4-flash", context: 210_000, peak: 210_000, rewrites: 0, days: {}, partial: false,
+    models: [model({ model: "cc/claude-opus-5-5", input: 9_000_000, calls: 30, lastCallAt: ago(70) }), model({ model: "deepseek/deepseek-v4-flash", input: 210_000, calls: 1, lastCallAt: ago(10) })],
+  };
+  it("prices the switch on the target model: Opus gone cold, 210K × $5 × 2 = $2.10", () => {
+    const hint = switchCost(log, "cc/claude-opus-5-5", 210_000, settings, NOW, prices);
+    expect(hint?.tokens).toBe(210_000);
+    expect(hint?.usd).toBeCloseTo(2.1, 9);
+    // never called: Sonnet, $1.26
+    expect(switchCost(log, "cc/claude-sonnet-5-5", 210_000, settings, NOW, prices)?.usd).toBeCloseTo(1.26, 9);
+  });
+  it("says nothing on the last call's model, a model still warm, a small chat, no prices or an old bridge", () => {
+    expect(switchCost(log, "deepseek/deepseek-v4-flash", 210_000, settings, NOW, prices)).toBeNull();
+    expect(switchCost({ ...log, models: [model({ model: "cc/claude-opus-5-5", calls: 3, lastCallAt: ago(59) }), log.models[1]!] }, "cc/claude-opus-5-5", 210_000, settings, NOW, prices)).toBeNull();
+    expect(switchCost(log, "cc/claude-opus-5-5", 90_000, settings, NOW, prices)).toBeNull();
+    expect(switchCost(log, "cc/claude-opus-5-5", 210_000, settings, NOW, null)).toBeNull();
+    expect(switchCost({ ...log, lastModel: undefined }, "cc/claude-opus-5-5", 210_000, settings, NOW, prices)).toBeNull();
+    expect(switchCost(log, "unpriced/x", 210_000, settings, NOW, prices)).toBeNull();
   });
 });
 

@@ -8,6 +8,7 @@
  * otherwise on Context. With tracking off it is the context window sheet, as before.
  */
 import { useState } from "react";
+import { Flame } from "lucide-react";
 
 import "./SessionSheet.css";
 
@@ -18,8 +19,11 @@ import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
 import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, modelLastCall, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
+import { keepWarmFeed, keepWarmFor, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
+import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
+import { Toggle } from "./SettingsControls.tsx";
 import { COST_PARTS, CostStack, partLabel } from "./CostParts.tsx";
 
 type Tab = "context" | "cost" | "cache";
@@ -99,7 +103,12 @@ export function SessionSheet(props: SessionSheetProps) {
   const now = props.now ?? clock;
   const [chosen, setChosen] = useState<Tab | null>(null);
   const { read, estimate, settings, onClose, onCompact } = props;
-  const session = figures(props, now);
+  const keepWarm = useKeepWarm(settings.trackCosts);
+  const found = figures(props, now);
+  // kept warm by OmniRoute (phase 2): its pings renew the cache the CLI's log never sees
+  // only the last call's model: the composer switched to another one stores it all again on that one
+  const keep = found && !modelLastCall(found.chat, found.model).switched ? keepWarmFor(keepWarm, found.chat, now) : null;
+  const session = found && keep?.kept ? keptSession(found, settings.cacheLifetimeMin) : found;
   if (!settings.trackCosts) return read.context ? <ContextSheet usage={read.context} cost={estimate} onClose={onClose} onCompact={onCompact} /> : null;
   const handoff = session !== null && session.advised !== "keep";
   const tab: Tab = chosen ?? (handoff ? "cache" : storedTab() ?? "context");
@@ -118,7 +127,7 @@ export function SessionSheet(props: SessionSheetProps) {
     : props.cost === null ? <p className="host-context-note">{t("Update the bridge on this PC to show costs.")}</p>
     : props.cost === undefined || (tab === "cost" && props.prices === null && props.cost.chat !== null) ? <p className="host-context-note">{t("Loading…")}</p>
     : session === null ? <p className="host-context-note">{t("No calls in this chat's log yet.")}</p>
-    : tab === "cache" ? <CacheTab {...props} session={session} />
+    : tab === "cache" ? <CacheTab {...props} session={session} keep={keep} keepWarm={keepWarm} now={now} />
     : <CostTab session={session} prices={props.prices ?? { prices: null, fallback: null }} />;
   return <SheetFrame label={t("Session")} title={t("Session")} className={`session-sheet${state ? ` is-${state}` : ""}`} head={tabs} onClose={onClose}>
     {body}
@@ -158,8 +167,50 @@ function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionShee
   return <p className="host-context-note">{t("No context size yet.")}</p>;
 }
 
-function CacheTab(props: SessionSheetProps & { session: Session }) {
-  const { read, session, settings, onClose, onCompact, onHandoff } = props;
+/**
+ * A kept-warm chat's figures: warm with its whole lifetime left (a ping renews it before it goes),
+ * so no "before it goes cold" advice; handing off a big chat is still worth saying.
+ */
+function keptSession(session: Session, lifetimeMin: number): Session {
+  const cache = session.cache ? { ...session.cache, state: "warm" as const, leftMin: lifetimeMin } : session.cache;
+  const advised = session.advised === "keep" ? "keep" : "handoff-warm";
+  return { ...session, cache, advised };
+}
+
+const clockTime = (ms: number): string => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * The Cache tab's keep-warm row (phase 2): its switch, until when and today's pings; why it stopped
+ * (a ping missed, past its window, the day's cap). Only for a chat the plugin tracks.
+ */
+function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: boolean }; answer: KeepWarmAnswer; now: number }) {
+  const t = useT();
+  const [saving, setSaving] = useState(false);
+  const { key } = keep;
+  const state = answer.state!;
+  const on = state.enabled && !key.disabled;
+  const why = !state.enabled ? t("Off in Settings")
+    : key.missed ? t("Stopped: a ping found the cache gone")
+    : now >= key.until ? t("Stopped {n} h after the last call", { n: state.windowHours })
+    : state.today.fuseHit && !keep.kept ? t("Daily cap reached")
+    : null;
+  const sub = [
+    on && !why ? t("until {time} ({n} h after the last call)", { time: clockTime(key.until), n: state.windowHours }) : why,
+    key.pings > 0 ? t("{n} pings today, ~{usd}", { n: key.pings, usd: formatUsd(key.usd) }) : null,
+  ].filter(Boolean).join(" · ");
+  const toggle = (next: boolean): void => {
+    setSaving(true);
+    void saveKeepWarm(withChat(answer.settings, key.key, next)).then((saved) => keepWarmFeed.set(saved), () => {}).finally(() => setSaving(false));
+  };
+  return <div className="host-context-row session-keep-warm">
+    <span className="session-row-label"><span><Flame className="session-keep-flame" aria-hidden="true" />{t("Keep warm")}</span>{sub && <small className="session-row-sub">{sub}</small>}</span>
+    <Toggle label={t("Keep warm")} checked={!key.disabled} disabled={!answer.writable || !state.enabled || saving} onChange={toggle} />
+  </div>;
+}
+
+function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: KeepWarmKey; kept: boolean } | null; keepWarm: KeepWarmAnswer | null; now: number }) {
+  const { read, session, settings, onClose, onCompact, onHandoff, keep, keepWarm, now } = props;
+  const kept = keep?.kept === true;
   const t = useT();
   const { cache, advised, switched, next, fresh, handoff, context } = session;
   const lastMain = [...session.calls].reverse().find((call) => call.main);
@@ -174,6 +225,7 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   const unused = switched && modelLastCall(session.chat, session.model).lastCallAt === null;
   const when = cache === null ? null
     : unused ? t("No call on this model yet")
+    : kept ? (keep.key.nextPingAt ? t("kept warm · next ping {time}", { time: clockTime(keep.key.nextPingAt) }) : t("kept warm"))
     : cache.state === "cold" ? `${agoText(cache.ageMin, t)} · ${t("expired")}`
     : `${agoText(cache.ageMin, t)} · ${t("{n} min left", { n: cache.leftMin })}`;
   // a chat working now keeps its cache warm: its countdown has not started (cacheState gives 0 left)
@@ -183,8 +235,8 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   // when the cache goes: the last call plus its lifetime, on the user's clock
   const ownLast = modelLastCall(session.chat, session.model).lastCallAt ?? session.chat.lastCallAt;
   const lastAt = ownLast ? Date.parse(ownLast) : Number.NaN;
-  const deadline = busy || cold || !Number.isFinite(lastAt) ? null
-    : new Date(lastAt + settings.cacheLifetimeMin * 60_000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const logDeadline = busy || !Number.isFinite(lastAt) ? null : clockTime(lastAt + settings.cacheLifetimeMin * 60_000);
+  const deadline = cold || kept ? null : logDeadline;
   return <>
     {advised !== "keep" && <div className="session-advice" role="note">
       <strong>{t(advised === "handoff-warm" ? "Hand off if work remains" : advised === "handoff-cooling" ? "Hand off before it goes cold" : "Free moment to hand off")}</strong>
@@ -202,10 +254,11 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
             <span className={`is-${cache.state}`} style={{ width: `${left}%` }} />
           </div>
           <div className="session-countdown-captions">
-            <span>{busy ? t("Kept warm while working") : cache.state === "cold" ? t("expired") : t("{n} min left", { n: cache.leftMin })}</span>
+            <span>{busy ? t("Kept warm while working") : kept ? t("kept warm") : cache.state === "cold" ? t("expired") : t("{n} min left", { n: cache.leftMin })}</span>
             <span>{t("Expires {n} min after the last call", { n: settings.cacheLifetimeMin })}</span>
           </div>
         </div>}
+        {keep && keepWarm?.state && !unused && <KeepWarmRow keep={keep} answer={keepWarm} now={now} />}
         {hit !== null && !unused && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
         {/* cold: no warm price to have, the next call stores it all again; it is weighed against a fresh chat */}
         {/* the composer's model has no warm cache of this chat: the next call stores it all again on it, priced on it */}
@@ -216,7 +269,7 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
         {next && cold && fresh !== null && <div className="host-context-row"><span>{t("In a fresh chat")}</span><span className="session-value">{t("{usd} per call", { usd: usd(fresh, false) })}</span></div>}
         {/* warm or cooling: now, and past the deadline; a working chat has none yet */}
         {next && !cold && <div className="host-context-row"><span>{t("Next call now")}</span><span className="session-value">{usd(next.warm, false)}</span></div>}
-        {next && !cold && <div className="host-context-row"><span>{deadline ? t("If you wait past {time}", { time: deadline }) : t("After the cache expires")}</span><span className="session-value">{usd(next.cold, false)}</span></div>}
+        {next && !cold && <div className="host-context-row"><span>{kept ? (logDeadline ? t("Without keep-warm, after {time}", { time: logDeadline }) : t("Without keep-warm")) : deadline ? t("If you wait past {time}", { time: deadline }) : t("After the cache expires")}</span><span className="session-value">{usd(next.cold, false)}</span></div>}
         {/* a big chat's way out while it is warm: the price the cold alert quotes too */}
         {handoff !== null && advised !== "keep" && !cold && <div className="host-context-row"><span>{t("Hand off now")}</span><span className="session-value">{usd(handoff, false)}</span></div>}
       </div>

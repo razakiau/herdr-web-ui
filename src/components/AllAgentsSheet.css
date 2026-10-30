@@ -169,4 +169,5 @@
 .all-agents-cache.is-warm { color: var(--cache-warm); }
 .all-agents-cache.is-cooling { color: var(--cache-cooling); }
 .all-agents-cache.is-cold { color: var(--cache-cold); }
+.all-agents-cache.is-kept svg { fill: currentColor; }
 .all-agents-cache svg { width: 0.95em; height: 0.95em; flex: none; margin-inline-start: 1px; }

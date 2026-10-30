@@ -187,6 +187,12 @@ export interface PushServiceOptions {
   hostChatsShown?: () => boolean;
   /** the cold-cache alert's rule (ZAC-260); absent: coldFromEnv(process.env) */
   cold?: ColdRule;
+  /**
+   * whether OmniRoute's keep-warm plugin keeps this chat's cache warm right now (ZAC-260 phase 2):
+   * asked when the cold alert is due, so a kept chat gets none and one keep-warm let go (off, past
+   * its window, the day's cap, a missed ping) still does
+   */
+  keptWarm?: (chat: HostChatCost, machineId: string) => boolean | Promise<boolean>;
 }
 
 /** The prices a big chat is weighed with: OmniRoute's table and LiteLLM's behind it, each null when missing. */
@@ -797,6 +803,7 @@ export function createPushService(options: PushServiceOptions): PushService {
           const done = (async () => {
             const current = hostRows.get(key);
             if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working") return;
+            if (await options.keptWarm?.(chat, machineId)) return;
             const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
             const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;
             await Promise.all([

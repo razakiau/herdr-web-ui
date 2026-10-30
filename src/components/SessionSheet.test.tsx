@@ -6,6 +6,8 @@ import type { HostChatCost, HostChatRead, HostCostCall } from "../../shared/host
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { SessionSheet, type SessionSheetProps } from "./SessionSheet.tsx";
+import { keepWarmFeed } from "../lib/keepWarm.ts";
+import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
 
 const render = (element: ReactElement): string => {
   const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
@@ -355,5 +357,51 @@ describe("SessionSheet", () => {
     expect(working).toContain("Kept warm while working Expires 60 min after the last call");
     const idle = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, lastCallAt: ago(20) }), calls: CALLS } }));
     expect(idle).toContain("40 min left Expires 60 min after the last call");
+  });
+
+  describe("keep-warm (phase 2)", () => {
+    const clock = (ms: number): string => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    const lastAt = NOW - 48 * 60_000;
+    const key = (over: Partial<KeepWarmKey> = {}): KeepWarmKey => ({
+      key: "f".repeat(40), model: MODEL, apiKey: "cop", tokens: 210_400, prompt: 210_400, lastRealAt: lastAt + 20_000, lastPingAt: null,
+      nextPingAt: lastAt + 55 * 60_000, until: lastAt + 8 * 3_600_000, pings: 3, usd: 0.18, restartUsd: 2.1,
+      missed: false, disabled: false, kept: true, ...over,
+    });
+    const answer = (over: Partial<KeepWarmKey> = {}, enabled = true): KeepWarmAnswer => ({
+      ok: true, writable: true, problem: null, settings: {},
+      state: { v: 1, at: NOW, enabled, windowHours: 8, fusePerDay: 200, idleMin: 55, thresholdUsd: 1, available: true, problem: null,
+        today: { day: "2026-10-29", pings: 3, usd: 0.18, avoided: 0, avoidedUsd: 0, fuseHit: false }, keys: [key(over)] },
+    });
+    afterEach(() => keepWarmFeed.set({ ok: false, state: null, settings: {}, writable: false, problem: null }));
+
+    it("a kept chat is warm with its next ping, the switch with until when and today's pings, and the price without it", () => {
+      keepWarmFeed.set(answer());
+      const html = sheet();
+      const words = text(html);
+      expect(words).toContain(`Warm kept warm · next ping ${clock(lastAt + 55 * 60_000)}`);
+      expect(words).toContain(`Keep warm until ${clock(lastAt + 8 * 3_600_000)} (8 h after the last call) · 3 pings today, ~$0.18`);
+      expect(html).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
+      expect(words).toContain(`Without keep-warm, after ${clock(lastAt + 60 * 60_000)} ~$2.15`);
+      // kept warm: no "before it goes cold" advice
+      expect(words).not.toContain("Hand off before it goes cold");
+      expect(words).not.toContain("12 min left");
+    });
+
+    it("a ping that found the cache gone: the cache counts down from the log again, and says why keep-warm stopped", () => {
+      keepWarmFeed.set(answer({ missed: true, kept: false }));
+      const words = text(sheet());
+      expect(words).toContain("48 min ago · 12 min left");
+      expect(words).toContain("Stopped: a ping found the cache gone");
+      expect(words).toContain("Hand off before it goes cold");
+    });
+
+    it("turned off for this chat, or no plugin: phase 1's tab", () => {
+      keepWarmFeed.set(answer({ disabled: true, kept: false }));
+      expect(sheet()).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);
+      keepWarmFeed.set({ ok: false, state: null, settings: {}, writable: false, problem: "Keep-warm is not installed" });
+      const words = text(sheet());
+      expect(words).not.toContain("Keep warm");
+      expect(words).toContain("48 min ago · 12 min left");
+    });
   });
 });

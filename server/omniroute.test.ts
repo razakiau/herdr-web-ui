@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
+import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -273,5 +273,71 @@ describe("handleOmniRouteRequest", () => {
     expect(await ask(table, map)).toEqual({ prices: table, fallback: map });
     expect(await ask(null, map)).toEqual({ prices: null, fallback: map });
     expect(await ask(table, null)).toEqual({ prices: table, fallback: null });
+  });
+});
+
+describe("keep-warm (ZAC-260 phase 2)", () => {
+  const WRITE = "oma_FICTIONAL_write_token_never_in_answers";
+  const PATH = "/api/plugins/keep-warm/config";
+  const state = { v: 1, at: NOW, enabled: true, windowHours: 8, fusePerDay: 200, idleMin: 55, thresholdUsd: 1, available: true, problem: null,
+    today: { day: "2026-03-10", pings: 3, usd: 0.18, avoided: 1, avoidedUsd: 2.5, fuseHit: false },
+    keys: [{ key: "k1", model: "claude-opus-5-5", apiKey: "cop", tokens: 268_000, prompt: 268_000, lastRealAt: NOW, lastPingAt: null, nextPingAt: NOW + 3_300_000,
+      until: NOW + 8 * HOUR, pings: 3, usd: 0.18, restartUsd: 2.1, missed: false, disabled: false, kept: true }] };
+  type Call = { method: string; url: string; auth: string | null; body: unknown };
+  const gateway = (calls: Call[], answer: () => Response = () => Response.json({ config: { settings: { windowHours: 6 }, state } })) =>
+    async (url: string, init: RequestInit) => {
+      calls.push({ method: init.method ?? "GET", url, auth: new Headers(init.headers).get("authorization"), body: init.body ? JSON.parse(String(init.body)) : null });
+      if (new URL(url).pathname !== PATH) return new Response("{}", { status: 404 });
+      return init.method === "PUT" ? Response.json({ ok: true }) : answer();
+    };
+
+  it("reads the plugin's state and settings with the read token, reused for 30 s", async () => {
+    const calls: Call[] = [];
+    let now = NOW;
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, gateway(calls), () => now);
+    const answer = await service.keepWarm();
+    expect(answer).toMatchObject({ ok: true, settings: { windowHours: 6 }, writable: false, problem: null });
+    expect(answer.state?.keys.map((each) => each.key)).toEqual(["k1"]);
+    expect(calls.map((call) => [call.method, call.auth])).toEqual([["GET", `Bearer ${TOKEN}`]]);
+    now += 10_000; await service.keepWarm();
+    expect(calls).toHaveLength(1);
+    now += 30_000; await service.keepWarm();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("says why there is none: no gateway, no plugin, a refused token, no state yet", async () => {
+    expect((await new OmniRouteUsage({ url: "", token: "" }, gateway([])).keepWarm()).problem).toBe("No OmniRoute gateway");
+    const missing = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, gateway([], () => new Response("no", { status: 404 })), () => NOW);
+    expect(await missing.keepWarm()).toMatchObject({ ok: false, state: null, problem: "Keep-warm is not installed" });
+    const refused = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, gateway([], () => new Response(`bad ${TOKEN}`, { status: 403 })), () => NOW);
+    expect((await refused.keepWarm()).problem).toBe("OmniRoute refused the token");
+    const empty = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, gateway([], () => Response.json({ config: {} })), () => NOW);
+    expect(await empty.keepWarm()).toMatchObject({ ok: false, problem: "Keep-warm has not reported yet" });
+  });
+
+  it("writes the settings with the write token, putting the plugin's state back (a PUT replaces the whole config)", async () => {
+    const calls: Call[] = [];
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE }, gateway(calls), () => NOW);
+    const answer = await service.saveKeepWarm({ enabled: false, windowHours: 40, junk: 1 });
+    const put = calls.find((call) => call.method === "PUT")!;
+    expect(put.auth).toBe(`Bearer ${WRITE}`);
+    expect(put.body).toEqual({ config: { settings: { enabled: false, windowHours: 24 }, state } });
+    expect(calls.filter((call) => call.method === "GET").every((call) => call.auth === `Bearer ${TOKEN}`)).toBe(true);
+    expect(answer.writable).toBe(true);
+  });
+
+  it("refuses to write without a write token, and the route leaks no token", async () => {
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, gateway([]), () => NOW);
+    await expect(service.saveKeepWarm({ enabled: false })).rejects.toThrow("Keep-warm settings need a write token");
+    const put = await handleKeepWarmRequest(new Request("http://x/api/usage/omniroute/keepwarm", { method: "PUT", body: "{}" }), service);
+    expect(put.status).toBe(409);
+    const refused = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE },
+      async (url, init) => init.method === "PUT" ? new Response(`bad ${WRITE}`, { status: 401 }) : gateway([])(url, init), () => NOW);
+    const answer = await handleKeepWarmRequest(new Request("http://x/api/usage/omniroute/keepwarm", { method: "PUT", body: "{\"enabled\":true}" }), refused);
+    const text = await answer.text();
+    expect(answer.status).toBe(502);
+    expect(text).toContain("OmniRoute refused the write token");
+    expect(text).not.toContain(WRITE);
+    expect(text).not.toContain(TOKEN);
   });
 });
