@@ -128,23 +128,33 @@ export function SessionSheet(props: SessionSheetProps) {
 type Session = NonNullable<ReturnType<typeof figures>>;
 
 /**
- * The context window. While the chat works the bridge reads no breakdown (`read.context` null): the
- * last one kept is shown, its size the log's when the log's last call is newer, with a line saying
- * so. Nothing known at all: one line, never an empty tab.
+ * The context window. While a turn runs the host reports no breakdown (`read.context` null), and a
+ * chat driven by ask_user is one turn for hours: the split the CLI's log gives (`log.split`, bundle
+ * 1071) is shown when it is newer than the last breakdown kept, else that one, its size the log's
+ * when the log's last call is newer, each with a line saying where it comes from. Only a size: it
+ * says so, without promising the turn will end. Nothing known at all: one line, never an empty tab.
  */
 function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionSheetProps) {
   const t = useT();
   if (read.context) return <ContextPanel usage={read.context} cost={null} onClose={onClose} onCompact={onCompact} />;
   const log = cost?.chat ?? null;
+  const logAt = log?.lastCallAt ? Date.parse(log.lastCallAt) : Number.NaN;
+  const split = log?.split ?? null;
+  if (split && split.systemTokens !== undefined && (!lastContext || !(logAt <= lastContext.at))) {
+    return <>
+      <ContextPanel usage={split} cost={null} onClose={onClose} onCompact={onCompact} />
+      <p className="host-context-note session-context-note">{t("Breakdown from this chat's log, as of its last call.")}</p>
+    </>;
+  }
   if (lastContext) {
-    const newer = log !== null && log.context !== null && log.lastCallAt !== null && Date.parse(log.lastCallAt) > lastContext.at;
+    const newer = log !== null && log.context !== null && logAt > lastContext.at;
     const usage = newer ? { ...lastContext.usage, currentTokens: log.context! } : lastContext.usage;
     return <>
       <ContextPanel usage={usage} cost={null} onClose={onClose} onCompact={onCompact} />
       <p className="host-context-note session-context-note">{t("Breakdown as of the last finished turn.")}</p>
     </>;
   }
-  if (log?.context) return <p className="host-context-note">{t("{size} tokens; the breakdown comes when the turn ends.", { size: formatTokenCount(log.context) })}</p>;
+  if (log?.context) return <p className="host-context-note">{t("{size} tokens; no breakdown reported while this turn runs.", { size: formatTokenCount(log.context) })}</p>;
   return <p className="host-context-note">{t("No context size yet.")}</p>;
 }
 

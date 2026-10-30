@@ -45,6 +45,25 @@ function log(uuid: string, lines: string[]): string {
 const index = (agentDirs: readonly string[] = []) => new CostIndex(home, agentDirs, () => NOW);
 
 describe("CostIndex", () => {
+  test("splits the last prompt as the CLI's log gives it: tool definitions, the system prompt last counted, messages (phase 1b)", () => {
+    const at = (min: number) => new Date(Date.parse("2026-10-29T12:00:00.000Z") + min * 60_000).toISOString();
+    const event = (type: string, min: number, data: Record<string, unknown>, agentId?: string) => `${JSON.stringify({ type, id: `${type}-${min}`, timestamp: at(min), parentId: "p", ...(agentId ? { agentId } : {}), data })}\n`;
+    const call = (min: number, input: number, tools: number, extra: { agentId?: string } = {}) => usage(at(min), { input, cacheRead: input - 100 }, extra).replace('"maxPromptTokens":872000', `"maxPromptTokens":400000,"toolTokenCount":${tools}`);
+    log(UUID, [
+      call(0, 290_000, 29_986),
+      event("session.compaction_start", 1, { systemTokens: 25_443, conversationTokens: 230_000, toolDefinitionsTokens: 29_986, currentTokens: 290_000, tokenLimit: 400_000 }),
+      event("session.compaction_complete", 2, { systemTokens: 25_724, conversationTokens: 7_351, toolDefinitionsTokens: 29_986, tokenLimit: 400_000 }),
+      call(3, 162_000, 29_986),
+      // a sub-agent's call and compaction are its own context, not the chat's
+      call(4, 20_000, 5_000, { agentId: "a1" }),
+      event("session.compaction_complete", 5, { systemTokens: 999 }, "a1"),
+    ]);
+    expect(index().costOf(`copilotcli:/${UUID}`)!.split).toEqual({ currentTokens: 162_000, tokenLimit: 400_000, toolDefinitionsTokens: 29_986, systemTokens: 25_724, conversationTokens: 162_000 - 25_724 - 29_986 });
+    // no system prompt counted yet (no compaction, no shutdown): the tool definitions alone, no guess at the rest
+    log(OTHER, [call(0, 50_000, 29_986)]);
+    expect(index().costOf(`copilotcli:/${OTHER}`)!.split).toEqual({ currentTokens: 50_000, tokenLimit: 400_000, toolDefinitionsTokens: 29_986 });
+  });
+
   test("sums main and subagent records into models", () => {
     log(UUID, [
       usage("2026-10-29T13:00:00.000Z", { input: 1000, cacheRead: 800, output: 10 }),

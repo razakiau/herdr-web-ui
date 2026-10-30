@@ -96,6 +96,12 @@ export interface HostChatCost {
   lastCallAt: string | null;
   /** the main agent's last prompt (`inputTokens`), the context the next call sends */
   context: number | null;
+  /**
+   * that prompt split as the CLI's log gives it (server/agent-host/costs.ts splitOf): the Context
+   * tab's breakdown while the host reports none (a turn driven by ask_user runs for hours); absent
+   * from a bridge before bundle 1071
+   */
+  split?: HostContextUsage | null;
   /** the main agent's largest prompt, and its cold restarts: calls whose write is over half of what the cache holds after them */
   peak: number; rewrites: number;
   /** the same sums by the call's UTC day ("YYYY-MM-DD"), for Today / 7 days / 30 days */

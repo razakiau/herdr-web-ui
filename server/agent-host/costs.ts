@@ -24,7 +24,7 @@
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import type { HostChatCost, HostCostCall, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
+import type { HostChatCost, HostContextUsage, HostCostCall, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
 import { copilotTranscript, fromSubagent } from "../copilot.ts";
 import { peerChatSdkOf, sdkSessionOf } from "./todos.ts";
 
@@ -62,6 +62,8 @@ const SIDE_CALL = 0.1;
 const USAGE_MARK = '"session.usage_record"';
 const START_SESSION_MARK = '"session.start"';
 const MESSAGE_MARK = '"user.message"';
+/** the events that carry the CLI's own context split (systemTokens etc.): a compaction's start and end, a shutdown */
+const SPLIT_MARKS = ['"session.compaction_start"', '"session.compaction_complete"', '"session.shutdown"'];
 /**
  * The owner's answers in an agent-driven chat come back as these tools' results, not as user
  * messages (ZAC-260: 2,640 `ask_user` and 386 `askUser` calls in the Mac's logs, d97ba3a6's 514
@@ -94,6 +96,8 @@ interface LogState {
     models: Map<string, Model>; days: Map<string, Map<string, Model>>;
     lastCallAt: string | null; context: number | null; peak: number; rewrites: number;
     messages: Message[];
+    /** the main agent's system prompt as the CLI last counted it (a compaction or a shutdown), its tool definitions and prompt budget as its last call gave them */
+    system: number | null; tools: number | null; limit: number | null;
   };
   /** per chain (agent and model): its last call that is not a side call */
   chains: Map<string, Last>;
@@ -136,12 +140,12 @@ const rewrote = (write: number, cacheRead: number): boolean => write > 0.5 * (ca
 
 const fresh = (path: string): LogState => ({
   path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, startedAt: null, chains: new Map(), asks: new Set(), agents: new Map(),
-  sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, messages: [] },
+  sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, messages: [], system: null, tools: null, limit: null },
 });
 
 /** a line worth parsing: a call, a user message, an ask tool's start, or an answer to one being waited for */
 function wanted(state: LogState, line: string): boolean {
-  if (line.includes(USAGE_MARK) || line.includes(MESSAGE_MARK)) return true;
+  if (line.includes(USAGE_MARK) || line.includes(MESSAGE_MARK) || SPLIT_MARKS.some((mark) => line.includes(mark))) return true;
   if (state.startedAt === null && line.includes(START_SESSION_MARK)) return true;
   if (line.includes(START_MARK)) return ASK_MARKS.some((mark) => line.includes(mark));
   if (state.asks.size === 0 || !line.includes(COMPLETE_MARK)) return false;
@@ -179,6 +183,11 @@ function take(state: LogState, line: string): void {
   }
   const inherited = isInherited(state, entry);
   if (inherited && entry.type !== "session.usage_record") return;
+  if (entry.type === "session.compaction_start" || entry.type === "session.compaction_complete" || entry.type === "session.shutdown") {
+    const system = count(record(entry.data).systemTokens);
+    if (main && system > 0) sums.system = system;
+    return;
+  }
   if (entry.type === "user.message") {
     // a sub-agent's prompt is part of the message that started it
     if (main) sums.messages.push({ main: null, sub: null });
@@ -242,6 +251,10 @@ function take(state: LogState, line: string): void {
     if (at !== null) sums.lastCallAt = at;
     sums.context = tokens.input;
     sums.peak = Math.max(sums.peak, tokens.input);
+    if (!sideCall) {
+      if (count(usage.toolTokenCount) > 0) sums.tools = count(usage.toolTokenCount);
+      if (count(usage.maxPromptTokens) > 0) sums.limit = count(usage.maxPromptTokens);
+    }
   }
   if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
   let reply = sums.messages.length - 1;
@@ -302,10 +315,30 @@ function readLog(state: LogState, budget: number): number {
 
 const models = (map: Map<string, Model>): HostCostModel[] => [...map.values()].map((sum) => ({ ...sum }));
 
+/**
+ * The context's split as the CLI's own log gives it (ZAC-260 phase 1b): its last prompt, of the
+ * prompt budget its last call had, the tool definitions that call sent (`toolTokenCount`) and the
+ * system prompt the CLI last counted (a compaction or a shutdown: it barely moves within a
+ * session, 25,443 then 25,724 on the owner's chat), the rest messages. The host reports a
+ * breakdown only when a turn ends (`contextAttribution`), and a chat driven by ask_user is one turn
+ * for hours: live on the Mac, 2026-10-30, "resume zac-241-chineur" read `context: null` while its log
+ * had all of these. Null without a prompt or a budget; a part not known is left out, never guessed.
+ */
+function splitOf(sums: LogState["sums"]): HostContextUsage | null {
+  if (sums.context === null || sums.context <= 0 || sums.limit === null) return null;
+  const usage: HostContextUsage = { currentTokens: sums.context, tokenLimit: sums.limit };
+  if (sums.tools !== null && sums.tools < sums.context) usage.toolDefinitionsTokens = sums.tools;
+  if (sums.system !== null && sums.system + (usage.toolDefinitionsTokens ?? 0) < sums.context) {
+    usage.systemTokens = sums.system;
+    if (usage.toolDefinitionsTokens !== undefined) usage.conversationTokens = sums.context - sums.system - usage.toolDefinitionsTokens;
+  }
+  return usage;
+}
+
 function answer(session: string, state: LogState): HostChatCost {
   const sums = state.sums;
   return {
-    session, models: models(sums.models), lastCallAt: sums.lastCallAt, context: sums.context, peak: sums.peak, rewrites: sums.rewrites,
+    session, models: models(sums.models), lastCallAt: sums.lastCallAt, context: sums.context, peak: sums.peak, rewrites: sums.rewrites, split: splitOf(sums),
     days: Object.fromEntries([...sums.days].sort(([a], [b]) => a.localeCompare(b)).map(([day, map]) => [day, models(map)])),
     partial: state.partial,
   };

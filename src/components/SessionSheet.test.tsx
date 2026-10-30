@@ -309,7 +309,24 @@ describe("SessionSheet", () => {
     stored.set("ovis:session-tab", "context");
     const busy = read({ busy: true, context: null });
     expect(text(sheet({ read: busy, cost: { chat: chat({ context: null, lastCallAt: null }), calls: [] } }))).toContain("No context size yet.");
-    expect(text(sheet({ read: busy, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }))).toContain("40.0K tokens; the breakdown comes when the turn ends.");
+    const sizeOnly = text(sheet({ read: busy, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }));
+    expect(sizeOnly).toContain("40.0K tokens; no breakdown reported while this turn runs.");
+    // a chat driven by ask_user is one turn for hours: never promise the turn's end
+    expect(sizeOnly).not.toContain("when the turn ends");
+  });
+
+  it("Context of an ask_user-driven chat: the split from the chat's log, while the host reports none (phase 1b)", () => {
+    stored.set("ovis:session-tab", "context");
+    const asking = read({ busy: true, status: "asks", context: null });
+    const split = { currentTokens: 42_000, tokenLimit: 400_000, systemTokens: 8_000, toolDefinitionsTokens: 20_000, conversationTokens: 14_000 };
+    const words = text(sheet({ read: asking, cost: { chat: chat({ context: 42_000, lastCallAt: ago(1), split }), calls: CALLS } }));
+    expect(words).toContain("42.0K / 400.0K tokens");
+    expect(words).toContain("System prompt");
+    expect(words).toContain("Messages");
+    expect(words).toContain("Breakdown from this chat&#x27;s log, as of its last call.");
+    // a breakdown the host gave after the log's last call stays the one shown
+    const kept = { usage: { currentTokens: 150_000, tokenLimit: 400_000, parts: [{ category: "user" as const, label: "Messages", share: 60 }] }, at: Date.parse(ago(0)) };
+    expect(text(sheet({ read: asking, lastContext: kept, cost: { chat: chat({ context: 42_000, lastCallAt: ago(1), split }), calls: CALLS } }))).toContain("Breakdown as of the last finished turn.");
   });
 
   it("Cache: captions under the countdown, working and idle", () => {
