@@ -11,7 +11,7 @@ import { X } from "lucide-react";
 import type { HostChatCost, HostChatRead, HostContextUsage } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { contextMeter, hostStatusLine, tokens, useMinuteClock } from "../lib/hostChats.ts";
-import { cacheMeter } from "../lib/sessionCost.ts";
+import { cacheMeter, type CachePrices } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { formatUsd } from "../lib/chatCost.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -79,7 +79,7 @@ interface MeterProps {
   /** the sheet the meter opens instead of the context window's (the Session sheet while costs are tracked, ZAC-260) */
   sheet?: ReactNode;
   /** the chat's cost log (fetchChatCost's `.chat`: undefined while asked, null without one) and the cost settings; `now` given by a test */
-  costs?: { log: HostChatCost | null | undefined; settings: Pick<Settings, "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">; now?: number };
+  costs?: { log: HostChatCost | null | undefined; settings: Pick<Settings, "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">; prices: CachePrices | null; now?: number };
 }
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
@@ -103,7 +103,7 @@ export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact,
   const t = useT();
   const clock = useMinuteClock();
   const meter = contextMeter(read?.context ?? null);
-  const tracked = read !== null && costs?.settings.trackCosts ? cacheMeter(read, costs.log, costs.settings, costs.now ?? clock) : null;
+  const tracked = read !== null && costs?.settings.trackCosts ? cacheMeter(read, costs.log, costs.settings, costs.now ?? clock, costs.prices) : null;
   if (read === null || (meter === null && (tracked === null || tracked.context <= 0))) return null;
   const radius = 6;
   const circumference = 2 * Math.PI * radius;

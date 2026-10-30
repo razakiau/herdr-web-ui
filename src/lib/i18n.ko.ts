@@ -528,6 +528,7 @@ const BASE: Record<string, string> = {
   "In a fresh chat": "새 채팅에서는",
   "{usd} per call": "호출당 {usd}",
   "Hand off": "인계",
+  "Hand off now": "지금 인계하면",
   "Hand off if work remains": "작업이 남았다면 인계하세요",
   "Hand off before it goes cold": "식기 전에 인계하세요",
   "Free moment to hand off": "인계하기 좋은 때",

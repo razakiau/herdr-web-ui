@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatCost, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
-import { advice, cacheState, costSplit, mergeLive, nextCall, periodTotals, writePrice } from "./sessionCost.ts";
+import { advice, cacheMeter, cacheState, coldRestartUsd, costSplit, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, writePrice } from "./sessionCost.ts";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -27,12 +27,56 @@ describe("cacheState", () => {
 });
 
 describe("advice", () => {
-  it("keeps going under the threshold and hands off at or above it", () => {
-    expect(advice("warm", 40_000, 150_000)).toBe("keep");
-    expect(advice("cold", 40_000, 150_000)).toBe("keep");
-    expect(advice("cooling", 210_000, 150_000)).toBe("handoff-cooling");
-    expect(advice("cold", 210_000, 150_000)).toBe("handoff-cold");
-    expect(advice("warm", 210_000, 150_000)).toBe("handoff-warm");
+  it("keeps going for a small chat and hands off a big one, as urgent as its cache's state", () => {
+    expect(advice("warm", false)).toBe("keep");
+    expect(advice("cold", false)).toBe("keep");
+    expect(advice("cooling", true)).toBe("handoff-cooling");
+    expect(advice("cold", true)).toBe("handoff-cold");
+    expect(advice("warm", true)).toBe("handoff-warm");
+  });
+});
+
+describe("coldRestartUsd / isBigChat (ZAC-260: a big chat is weighed in dollars)", () => {
+  it("prices the whole context written again: 312K of Opus at $4 in, written at $8, is $2.50", () => {
+    const opus = { cc: { "claude-opus-5-5": { input: 4, output: 20, cached: 0.2 } } };
+    expect(coldRestartUsd(312_000, "cc/claude-opus-5-5", opus, null)).toBeCloseTo(2.496, 9);
+    expect(isBigChat(coldRestartUsd(312_000, "cc/claude-opus-5-5", opus, null), 1)).toBe(true);
+  });
+  it("is null for a model with no price: not big, no guess", () => {
+    expect(coldRestartUsd(900_000, "mystery-1", PRICES, null)).toBeNull();
+    expect(isBigChat(null, 0.25)).toBe(false);
+  });
+  it("is $0 for a local model, which is never big", () => {
+    expect(coldRestartUsd(900_000, "desktop-coder-heretic", PRICES, null)).toBe(0);
+    expect(isBigChat(0, 0.25)).toBe(false);
+  });
+  it("follows a context that shrank after a compaction: the same chat is small again", () => {
+    // 210K of a $5 Claude model written at $10: $2.10; compacted to 60K: $0.60
+    expect(isBigChat(coldRestartUsd(210_000, "cc/claude-opus-5-5", PRICES, null), 1)).toBe(true);
+    expect(isBigChat(coldRestartUsd(60_000, "cc/claude-opus-5-5", PRICES, null), 1)).toBe(false);
+  });
+  it("weighs a cheap model by its own price: 400K of DeepSeek at $0.30 is $0.12", () => {
+    expect(coldRestartUsd(400_000, "deepseek/deepseek-v4-flash", PRICES, null)).toBeCloseTo(0.12, 9);
+    expect(isBigChat(0.12, 1)).toBe(false);
+  });
+  it("cacheMeter advises a handoff by the dollar threshold, the read's model first", () => {
+    const log: HostChatCost = { session: "s", models: [model({ model: "deepseek/deepseek-v4-flash", input: 10 })], lastCallAt: ago(30), context: 210_000, peak: 210_000, rewrites: 0, days: {}, partial: false };
+    const settings = { coldRestartAlertUsd: 1, cacheLifetimeMin: 60 };
+    const prices = { prices: PRICES, fallback: null };
+    // the log's model alone (DeepSeek): $0.06, keep going
+    expect(cacheMeter({ busy: false }, log, settings, NOW, prices)).toMatchObject({ advised: "keep" });
+    // the chat runs on Opus now: $2.10, hand off
+    expect(cacheMeter({ busy: false, model: { id: "cc/claude-opus-5-5" } }, log, settings, NOW, prices)).toMatchObject({ advised: "handoff-warm" });
+    // prices not in yet: nothing is big
+    expect(cacheMeter({ busy: false, model: { id: "cc/claude-opus-5-5" } }, log, settings, NOW, null).advised).toBe("keep");
+  });
+});
+
+describe("handoffUsd", () => {
+  it("is three warm calls at the chat's context", () => {
+    const next = nextCall(268_000, "cc/claude-opus-5-5", 2_000, PRICES, null)!;
+    expect(handoffUsd(268_000, "cc/claude-opus-5-5", 2_000, PRICES, null)).toBeCloseTo(3 * next.warm, 9);
+    expect(handoffUsd(268_000, "mystery-1", 2_000, PRICES, null)).toBeNull();
   });
 });
 

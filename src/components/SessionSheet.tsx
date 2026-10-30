@@ -16,7 +16,7 @@ import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { cacheMeter, costSplit, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
+import { avgOutput, cacheMeter, chatModel, costSplit, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
@@ -39,7 +39,7 @@ export interface SessionSheetProps {
   cost: { chat: HostChatCost | null; calls: HostCostCall[] } | null | undefined;
   /** null until the price request answers; an answer with neither table (`{ prices: null, fallback: null }`) prices nothing */
   prices: { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null } | null;
-  settings: Pick<Settings, "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">;
+  settings: Pick<Settings, "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">;
   /** the minute clock (useMinuteClock), given by a test */
   now?: number;
   onClose(): void;
@@ -78,19 +78,19 @@ function figures(props: SessionSheetProps, now: number) {
   if (!cost?.chat) return null;
   const chat = mergeLive(cost.chat, read.tokens?.totals);
   // the meter's and the banner's rule, so the three never disagree near the threshold
-  const { context, cache, advised } = cacheMeter(read, chat, settings, now);
-  const model = read.model?.id ?? [...chat.models].sort((a, b) => b.input - a.input)[0]?.model ?? "";
-  const calls = chat.models.reduce((sum, each) => sum + each.calls, 0);
-  const output = chat.models.reduce((sum, each) => sum + each.output, 0);
+  const { context, cache, advised } = cacheMeter(read, chat, settings, now, prices);
+  const model = read.model?.id ?? chatModel(chat);
   // `prices` null: not answered yet; an answer without tables prices nothing, so every model is missing
   const table = prices?.prices ?? {};
   const fallback = prices?.fallback ?? null;
-  const avgOutput = calls > 0 ? output / calls : 0;
-  const next = prices ? nextCall(context, model, avgOutput, table, fallback) : null;
-  const fresh = prices ? nextCall(FRESH_CHAT_CONTEXT, model, avgOutput, table, fallback)?.warm ?? null : null;
+  const avg = avgOutput(chat);
+  const next = prices ? nextCall(context, model, avg, table, fallback) : null;
+  const fresh = prices ? nextCall(FRESH_CHAT_CONTEXT, model, avg, table, fallback)?.warm ?? null : null;
+  // what /handoff costs now, warm: the server's cold alert quotes the same (shared/cache-cost.ts)
+  const handoff = prices ? handoffUsd(context, model, avg, table, fallback) : null;
   const split = prices ? costSplit(chat.models, table, fallback) : null;
   const price = prices ? priceWithFallback(model, table, fallback)?.price ?? null : null;
-  return { chat, context, cache, advised, next, fresh, split, model, price, calls: cost.calls };
+  return { chat, context, cache, advised, next, fresh, handoff, split, model, price, calls: cost.calls };
 }
 
 export function SessionSheet(props: SessionSheetProps) {
@@ -151,7 +151,7 @@ function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionShee
 function CacheTab(props: SessionSheetProps & { session: Session }) {
   const { read, session, settings, onClose, onCompact, onHandoff } = props;
   const t = useT();
-  const { cache, advised, next, fresh, context } = session;
+  const { cache, advised, next, fresh, handoff, context } = session;
   const lastMain = [...session.calls].reverse().find((call) => call.main);
   // the last call's own hit: the message's sums mix in every call of its tool loop
   const hit = lastMain && lastMain.context > 0 ? Math.round((lastMain.lastCacheRead / lastMain.context) * 100) : null;
@@ -202,6 +202,8 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
         {/* warm or cooling: now, and past the deadline; a working chat has none yet */}
         {next && !cold && <div className="host-context-row"><span>{t("Next call now")}</span><span className="session-value">{usd(next.warm, false)}</span></div>}
         {next && !cold && <div className="host-context-row"><span>{deadline ? t("If you wait past {time}", { time: deadline }) : t("After the cache expires")}</span><span className="session-value">{usd(next.cold, false)}</span></div>}
+        {/* a big chat's way out while it is warm: the price the cold alert quotes too */}
+        {handoff !== null && advised !== "keep" && !cold && <div className="host-context-row"><span>{t("Hand off now")}</span><span className="session-value">{usd(handoff, false)}</span></div>}
       </div>
       {!next && props.prices && <p className="host-context-note">{t("No price for {models}.", { models: session.model || "?" })}</p>}
     </section>

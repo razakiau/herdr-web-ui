@@ -204,8 +204,11 @@ export interface Settings {
   smoothMotion: boolean;
   /** a Copilot chat's cache timer, Session sheet (Cache, Cost) and costs in All agents; off is the app without them */
   trackCosts: boolean;
-  /** the context size in tokens above which the Session sheet suggests a handoff */
-  costHandoffAt: number;
+  /**
+   * a big chat (ZAC-260): one whose cold restart (its context written to the cache again) would
+   * cost at least this many dollars; it gets the cache mark in the lists and the handoff advice
+   */
+  coldRestartAlertUsd: number;
   /** how long the provider keeps a prompt cache, in minutes (OmniRoute sends `ttl: 1h`) */
   cacheLifetimeMin: number;
 }
@@ -224,7 +227,7 @@ type TelemetrySourceSettings = Omit<Settings,
   | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton"
   | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion"
-  | "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">;
+  | "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -317,7 +320,7 @@ export const SETTING_SCOPE = {
   usageGroup: "shared", hostChatsShown: "shared", hostAutoOpen: "shared", hostNewModel: "shared", hostNewApprovals: "shared", hostShowArchived: "shared",
   smoothMotion: "shared",
   // this device's until shared/preferences.ts carries them
-  trackCosts: "device", costHandoffAt: "device", cacheLifetimeMin: "device",
+  trackCosts: "device", coldRestartAlertUsd: "device", cacheLifetimeMin: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -393,7 +396,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hostShowArchived: true,
   smoothMotion: false,
   trackCosts: false,
-  costHandoffAt: 150_000,
+  coldRestartAlertUsd: 1,
   cacheLifetimeMin: 60,
 };
 
@@ -432,8 +435,12 @@ export function alertPrefs(settings: Settings): AlertPrefs {
   return { input: settings.alertInput, done: settings.alertDone };
 }
 
-/** settings that are gone: "Copilot chats in Agents" (a host chat is an agent now, listed by the agents' rule) */
-const REMOVED_KEYS: readonly string[] = ["vscodeChatsInAgents"];
+/**
+ * settings that are gone: "Copilot chats in Agents" (a host chat is an agent now, listed by the
+ * agents' rule); the handoff threshold in tokens (ZAC-260: a big chat is weighed in dollars now,
+ * coldRestartAlertUsd, which starts at its default: tokens say nothing of a model's price)
+ */
+const REMOVED_KEYS: readonly string[] = ["vscodeChatsInAgents", "costHandoffAt"];
 export const TERMINAL_FONT_MIN = 10;
 export const TERMINAL_FONT_MAX = 22;
 export const TERMINAL_WHEEL_SPEED_MIN = 1;
@@ -446,8 +453,15 @@ const BODY_FONT: Record<Density, number> = { comfortable: 14, compact: 13 };
 
 export const CACHE_LIFETIME_MIN = 5;
 export const CACHE_LIFETIME_MAX = 240;
-export const COST_HANDOFF_MIN = 20_000;
-export const COST_HANDOFF_MAX = 1_000_000;
+/** the big-chat threshold in dollars (owner, ZAC-260): $0.25 to $20, in quarters */
+export const COLD_RESTART_USD_MIN = 0.25;
+export const COLD_RESTART_USD_MAX = 20;
+export const COLD_RESTART_USD_STEP = 0.25;
+
+/** A multiple of `step` between the limits, or the fallback for anything that is not a finite number. */
+function clampStep(value: unknown, min: number, max: number, step: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value / step) * step)) : fallback;
+}
 
 /** A whole number between the limits, or the fallback for anything that is not a finite number. */
 function clampWhole(value: unknown, min: number, max: number, fallback: number): number {
@@ -596,7 +610,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     hostShowArchived: typeof record["hostShowArchived"] === "boolean" ? record["hostShowArchived"] : DEFAULT_SETTINGS.hostShowArchived,
     smoothMotion: typeof record["smoothMotion"] === "boolean" ? record["smoothMotion"] : DEFAULT_SETTINGS.smoothMotion,
     trackCosts: typeof record["trackCosts"] === "boolean" ? record["trackCosts"] : DEFAULT_SETTINGS.trackCosts,
-    costHandoffAt: clampWhole(record["costHandoffAt"], COST_HANDOFF_MIN, COST_HANDOFF_MAX, DEFAULT_SETTINGS.costHandoffAt),
+    coldRestartAlertUsd: clampStep(record["coldRestartAlertUsd"], COLD_RESTART_USD_MIN, COLD_RESTART_USD_MAX, COLD_RESTART_USD_STEP, DEFAULT_SETTINGS.coldRestartAlertUsd),
     cacheLifetimeMin: clampWhole(record["cacheLifetimeMin"], CACHE_LIFETIME_MIN, CACHE_LIFETIME_MAX, DEFAULT_SETTINGS.cacheLifetimeMin),
   };
 }

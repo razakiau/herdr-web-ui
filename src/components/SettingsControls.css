@@ -183,6 +183,15 @@
   font-family: var(--font-mono);
 }
 
+/* a sum in dollars: "$" before the box, in the box's type */
+.settings-number-prefixed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
 .settings-select {
   max-width: 100%;
 }

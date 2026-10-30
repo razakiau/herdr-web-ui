@@ -1,6 +1,9 @@
 import type { HostChatCost, HostCostModel, HostCostsAnswer, HostTokenTotal } from "../../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { priceWithFallback } from "./chatCost.ts";
+import { chatModel, coldRestartUsd, isBigChat, writePrice } from "../../shared/cache-cost.ts";
+
+export { avgOutput, chatModel, coldRestartUsd, handoffUsd, isBigChat, nextCall, writePrice } from "../../shared/cache-cost.ts";
 
 export type CacheState = "warm" | "cooling" | "cold";
 
@@ -28,38 +31,37 @@ export function cacheState(lastCallAt: string | null, now: number, lifetimeMin: 
 export type Advice = "keep" | "handoff-warm" | "handoff-cooling" | "handoff-cold";
 
 /**
- * What to do with the chat (the spec's advice table): keep going under the handoff threshold, a
- * cold cache costing one rewrite of a small context; at or above it, hand off, the cache's state
+ * What to do with the chat (the spec's advice table): keep going while a cold restart is cheap
+ * (under the threshold in dollars, or unpriced: no guess); a big chat hands off, the cache's state
  * saying how urgent (warm: if work remains, cooling: before it goes cold, cold: a free moment).
  */
-export function advice(state: CacheState, context: number, threshold: number): Advice {
-  return context >= threshold ? `handoff-${state}` : "keep";
+export function advice(state: CacheState, big: boolean): Advice {
+  return big ? `handoff-${state}` : "keep";
 }
+
+/** The prices a chat is weighed with: null until they are in, or a table missing. */
+export interface CachePrices { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null }
 
 /**
  * What the meter and the handoff banner show (ZAC-260): the context's tokens, the live read's
  * (what the meter showed before) else the log's; the cache's state and minutes left from the log's
- * last call; the advice. `cache` is null without a log (a bridge before costs, or not answered yet):
- * tokens alone, no state, no advice.
+ * last call; what a cold restart would cost (`restartUsd`, null unpriced) and the advice, a big chat
+ * being one whose cold restart costs at least `coldRestartAlertUsd`. `cache` is null without a log
+ * (a bridge before costs, or not answered yet): tokens alone, no state, no advice; with no prices
+ * yet nothing is big.
  */
 export function cacheMeter(
-  read: { busy: boolean; context?: { currentTokens: number } | null },
+  read: { busy: boolean; context?: { currentTokens: number } | null; model?: { id: string } | null },
   log: HostChatCost | null | undefined,
-  settings: { costHandoffAt: number; cacheLifetimeMin: number },
+  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
   now: number,
-): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice } {
+  prices: CachePrices | null,
+): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice; restartUsd: number | null } {
   const context = read.context?.currentTokens ?? log?.context ?? 0;
   const cache = log ? cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, read.busy) : null;
-  return { context, cache, advised: cache ? advice(cache.state, context, settings.costHandoffAt) : "keep" };
-}
-
-/**
- * The price per million tokens of writing to the cache, which the price table lacks (builder's
- * call, ZAC-260): 2× input for Anthropic models (their 1 h cache, which OmniRoute asks for), the
- * input price for the rest (DeepSeek, OpenAI bill no write).
- */
-export function writePrice(model: string, input: number): number {
-  return /claude|anthropic|cc\//i.test(model) ? input * 2 : input;
+  const model = read.model?.id ?? (log ? chatModel(log) : "");
+  const restartUsd = prices ? coldRestartUsd(context, model, prices.prices ?? {}, prices.fallback) : null;
+  return { context, cache, restartUsd, advised: cache ? advice(cache.state, isBigChat(restartUsd, settings.coldRestartAlertUsd)) : "keep" };
 }
 
 /**
@@ -93,22 +95,6 @@ export function costSplit(models: readonly HostCostModel[], prices: ModelPrices,
   split.usd = split.fresh + split.reads + split.writes + split.restarts + split.output;
   split.floor = split.missing.length > 0;
   return split;
-}
-
-/**
- * What the chat's next call costs in dollars (builder's call, ZAC-260): its context read from the
- * cache plus the chat's average output (`warm`), or after the cache expired, the context written
- * again (`cold`). Null when the model has no price.
- */
-export function nextCall(context: number, model: string, avgOutput: number, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): { warm: number; cold: number } | null {
-  const found = priceWithFallback(model, prices, fallback);
-  if (!found) return null;
-  const { price } = found;
-  const output = avgOutput * price.output;
-  return {
-    warm: (context * (price.cached ?? price.input) + output) / 1e6,
-    cold: (context * writePrice(model, price.input) + output) / 1e6,
-  };
 }
 
 /**

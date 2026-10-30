@@ -10,7 +10,7 @@ import { X } from "lucide-react";
 import type { HostChatCost, HostChatRead } from "../../shared/host-chats.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
-import { cacheMeter, type CacheState } from "../lib/sessionCost.ts";
+import { cacheMeter, type CachePrices, type CacheState } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import "./SessionSheet.css";
 
@@ -35,20 +35,22 @@ export interface HandoffBannerProps {
   read: HostChatRead | null;
   /** the bridge's log for the chat (fetchChatCost's `.chat`): undefined while asked, null without one */
   log: HostChatCost | null | undefined;
-  settings: Pick<Settings, "trackCosts" | "costHandoffAt" | "cacheLifetimeMin">;
+  settings: Pick<Settings, "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">;
+  /** the prices a big chat is weighed with (ZAC-260): null until they are in, and nothing is big then */
+  prices: CachePrices | null;
   /** the minute clock, given by a test */
   now?: number;
   /** sends /handoff; absent while the chat works or when the session lists no handoff command */
   onHandoff?: (() => void) | undefined;
 }
 
-export function HandoffBanner({ dismissKey, read, log, settings, now, onHandoff }: HandoffBannerProps) {
+export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff }: HandoffBannerProps) {
   const t = useT();
   const locale = useLocale();
   const clock = useMinuteClock();
   const [, setHidden] = useState(0);
   if (read === null || !settings.trackCosts || !log) return null;
-  const { cache, advised } = cacheMeter(read, log, settings, now ?? clock);
+  const { cache, advised } = cacheMeter(read, log, settings, now ?? clock, prices);
   if (cache === null || advised === "keep" || isDismissed(dismissKey, cache.state)) return null;
   const { state } = cache;
   const headline = t(state === "warm" ? "Hand off if work remains" : state === "cooling" ? "Hand off before it goes cold" : "Free moment to hand off");

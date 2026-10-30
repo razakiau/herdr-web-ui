@@ -48,12 +48,12 @@ const CALLS: HostCostCall[] = [
   { at: ago(55), input: 1_680_000, cacheRead: 1_660_000, cacheWrite: 20_000, output: 2000, main: true, context: 210_400, lastCacheRead: 105_200 },
 ];
 
-// a context under the 150K threshold, live and in the log: no handoff, the sheet opens on the tab used last
+// a context whose cold restart costs under $1 (40K at $10 a million), live and in the log: no handoff, the sheet opens on the tab used last
 const quiet = read({ context: { currentTokens: 40_000, tokenLimit: 400_000 } });
 
 const props = (over: Partial<SessionSheetProps> = {}): SessionSheetProps => ({
   read: read(), estimate: null, cost: { chat: chat(), calls: CALLS }, prices: PRICES,
-  settings: { trackCosts: true, costHandoffAt: 150_000, cacheLifetimeMin: 60 },
+  settings: { trackCosts: true, coldRestartAlertUsd: 1, cacheLifetimeMin: 60 },
   now: NOW, onClose: () => {}, onCompact: () => {}, onHandoff: () => {},
   ...over,
 });
@@ -83,7 +83,7 @@ describe("SessionSheet", () => {
   });
 
   it("is today's Context window sheet, without tabs, when costs are not tracked", () => {
-    const html = sheet({ settings: { trackCosts: false, costHandoffAt: 150_000, cacheLifetimeMin: 60 } });
+    const html = sheet({ settings: { trackCosts: false, coldRestartAlertUsd: 1, cacheLifetimeMin: 60 } });
     expect(html).toContain('<h2 class="modal-title">Context window</h2>');
     expect(html).not.toContain("segmented");
     expect(text(html)).toContain("210.4K / 400.0K tokens");
@@ -118,6 +118,8 @@ describe("SessionSheet", () => {
     expect(words).toMatch(/Next call now ~\$0\.16 /);
     expect(words).toContain(`If you wait past ${deadline} ~$2.15`);
     expect(words).not.toContain("after expiry");
+    // three warm calls (shared/cache-cost.ts handoffUsd): what the cold alert quotes too
+    expect(words).toMatch(/Hand off now ~\$0\.47 /);
     expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
     // the last call's own hit, not its message's sum
     expect(words).toContain("Last call read from cache 50%");
@@ -237,7 +239,10 @@ describe("SessionSheet", () => {
     expect(cost).not.toContain("Loading");
     expect(cost).toContain("This chat · at list price ≥ $ 0 .00");
     expect(cost).toContain(`No price for ${MODEL}.`);
+    // unpriced, no chat is big (ZAC-260): no handoff forces the Cache tab, it is opened by hand
+    stored.set("ovis:session-tab", "cache");
     const cache = text(sheet({ prices: empty }));
+    expect(cache).not.toContain("Hand off before it goes cold");
     expect(cache).toContain("Cooling");
     expect(cache).toContain(`No price for ${MODEL}.`);
     expect(cache).not.toContain("Next call now");
@@ -250,8 +255,9 @@ describe("SessionSheet", () => {
 
   it("takes the context, cache and advice from the meter's rule: the live read before the log's", () => {
     stored.set("ovis:session-tab", "context");
-    // live 155K over the 150K threshold, the log's last call 145K under it: the meter advises a handoff
-    const html = sheet({ read: read({ context: { currentTokens: 155_000, tokenLimit: 400_000 } }), cost: { chat: chat({ context: 145_000, lastCallAt: ago(10) }), calls: CALLS } });
+    // at $10 a million written, live 155K ($1.55) over a $1.50 threshold, the log's last call 145K ($1.45) under it: the meter advises a handoff
+    const html = sheet({ read: read({ context: { currentTokens: 155_000, tokenLimit: 400_000 } }), cost: { chat: chat({ context: 145_000, lastCallAt: ago(10) }), calls: CALLS },
+      settings: { trackCosts: true, coldRestartAlertUsd: 1.5, cacheLifetimeMin: 60 } });
     expect(pressed(html)).toBe("Cache");
     expect(text(html)).toContain("Hand off if work remains");
     expect(text(html)).toContain("155.0K is re-read on every call.");

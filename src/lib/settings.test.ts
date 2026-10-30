@@ -1114,23 +1114,40 @@ describe("agent host settings", () => {
 });
 
 describe("chat costs", () => {
-  it("defaults track costs off with 150K and 60 min", () => {
-    expect(DEFAULT_SETTINGS).toMatchObject({ trackCosts: false, costHandoffAt: 150_000, cacheLifetimeMin: 60 });
-    expect(sanitizeSettings({})).toMatchObject({ trackCosts: false, costHandoffAt: 150_000, cacheLifetimeMin: 60 });
+  it("defaults track costs off with a $1 cold restart and 60 min", () => {
+    expect(DEFAULT_SETTINGS).toMatchObject({ trackCosts: false, coldRestartAlertUsd: 1, cacheLifetimeMin: 60 });
+    expect(sanitizeSettings({})).toMatchObject({ trackCosts: false, coldRestartAlertUsd: 1, cacheLifetimeMin: 60 });
     expect(sanitizeSettings({ trackCosts: true }).trackCosts).toBe(true);
     for (const bad of ["true", 1, null]) expect(sanitizeSettings({ trackCosts: bad }).trackCosts).toBe(false);
-    for (const key of ["trackCosts", "costHandoffAt", "cacheLifetimeMin"]) expect(key in telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toBe(false);
+    for (const key of ["trackCosts", "coldRestartAlertUsd", "cacheLifetimeMin"]) expect(key in telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toBe(false);
+    expect(SETTING_SCOPE.coldRestartAlertUsd).toBe("device");
   });
 
-  it("clamps cacheLifetimeMin to 5..240 and costHandoffAt to 20K..1M", () => {
+  it("clamps cacheLifetimeMin to 5..240 and coldRestartAlertUsd to $0.25..$20 in quarters", () => {
     expect(sanitizeSettings({ cacheLifetimeMin: 1 }).cacheLifetimeMin).toBe(5);
     expect(sanitizeSettings({ cacheLifetimeMin: 999 }).cacheLifetimeMin).toBe(240);
     expect(sanitizeSettings({ cacheLifetimeMin: 30.6 }).cacheLifetimeMin).toBe(31);
-    expect(sanitizeSettings({ costHandoffAt: 5 }).costHandoffAt).toBe(20_000);
-    expect(sanitizeSettings({ costHandoffAt: 5_000_000 }).costHandoffAt).toBe(1_000_000);
-    expect(sanitizeSettings({ costHandoffAt: 200_000.4 }).costHandoffAt).toBe(200_000);
+    expect(sanitizeSettings({ coldRestartAlertUsd: 0.05 }).coldRestartAlertUsd).toBe(0.25);
+    expect(sanitizeSettings({ coldRestartAlertUsd: 99 }).coldRestartAlertUsd).toBe(20);
+    expect(sanitizeSettings({ coldRestartAlertUsd: 1.3 }).coldRestartAlertUsd).toBe(1.25);
+    expect(sanitizeSettings({ coldRestartAlertUsd: 2.5 }).coldRestartAlertUsd).toBe(2.5);
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, "90", null]) {
-      expect(sanitizeSettings({ cacheLifetimeMin: bad, costHandoffAt: bad })).toMatchObject({ cacheLifetimeMin: 60, costHandoffAt: 150_000 });
+      expect(sanitizeSettings({ cacheLifetimeMin: bad, coldRestartAlertUsd: bad })).toMatchObject({ cacheLifetimeMin: 60, coldRestartAlertUsd: 1 });
+    }
+  });
+
+  it("drops the old token threshold quietly: the stored record loses costHandoffAt, the dollar setting starts at its default", () => {
+    const store = new Map<string, string>([["ovis:settings", JSON.stringify({ trackCosts: true, costHandoffAt: 300_000, cacheLifetimeMin: 45 })]]);
+    const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } } } });
+    try {
+      const loaded = loadSettings();
+      expect(loaded).toMatchObject({ trackCosts: true, coldRestartAlertUsd: 1, cacheLifetimeMin: 45 });
+      expect("costHandoffAt" in loaded).toBe(false);
+      expect(JSON.parse(store.get("ovis:settings") ?? "{}")).toEqual({ trackCosts: true, cacheLifetimeMin: 45 });
+    } finally {
+      if (original) Object.defineProperty(globalThis, "window", original);
+      else delete (globalThis as { window?: unknown }).window;
     }
   });
 });

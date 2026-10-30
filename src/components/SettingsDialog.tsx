@@ -12,7 +12,7 @@ import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/s
 import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
 import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
 import { CLAUDE_LAUNCH_MODES, CODEX_LAUNCH_MODES, type ClaudeLaunchMode, type CodexLaunchMode } from "../lib/agentLaunchMode.ts";
-import { CACHE_LIFETIME_MAX, CACHE_LIFETIME_MIN, CHAT_FONT_MAX, CHAT_FONT_MIN, COST_HANDOFF_MAX, COST_HANDOFF_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type HostAutoOpen, type VoiceButton } from "../lib/settings.ts";
+import { CACHE_LIFETIME_MAX, CACHE_LIFETIME_MIN, CHAT_FONT_MAX, CHAT_FONT_MIN, COLD_RESTART_USD_MAX, COLD_RESTART_USD_MIN, COLD_RESTART_USD_STEP, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type HostAutoOpen, type VoiceButton } from "../lib/settings.ts";
 import { fetchHostModels } from "../lib/hostChats.ts";
 import { APPROVALS_LABEL } from "./ModelPicker.tsx";
 import type { HostModel } from "../../shared/host-chats.ts";
@@ -351,20 +351,21 @@ function AppearancePage() {
 }
 
 /** A whole number typed in, kept on Enter or leaving the field; sanitizeSettings clamps it to its limits. */
-function NumberField({ value, label, min, max, step, disabled, onCommit }: { value: number; label: string; min: number; max: number; step: number; disabled: boolean; onCommit: (value: number) => void }) {
+/** `decimal`: rounded to `step` instead of a whole number (dollars in quarters); `prefix` drawn before the box ("$") */
+function NumberField({ value, label, min, max, step, disabled, onCommit, decimal = false, prefix }: { value: number; label: string; min: number; max: number; step: number; disabled: boolean; onCommit: (value: number) => void; decimal?: boolean; prefix?: string }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   const commit = (): void => {
-    const next = Number(draft);
+    const next = Number(draft.replace(",", "."));
     if (draft.trim() === "" || !Number.isFinite(next)) { setDraft(String(value)); return; }
-    const clamped = Math.min(max, Math.max(min, Math.round(next)));
+    const rounded = decimal ? Math.round(next / step) * step : Math.round(next);
+    const clamped = Math.min(max, Math.max(min, rounded));
     setDraft(String(clamped));
     if (clamped !== value) onCommit(clamped);
   };
-  return (
-    <input className="input settings-number" type="number" inputMode="numeric" aria-label={label} value={draft} min={min} max={max} step={step} disabled={disabled}
-      onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter") commit(); }} />
-  );
+  const input = <input className="input settings-number" type="number" inputMode={decimal ? "decimal" : "numeric"} aria-label={label} value={draft} min={min} max={max} step={step} disabled={disabled}
+    onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter") commit(); }} />;
+  return prefix ? <span className="settings-number-prefixed"><span aria-hidden="true">{prefix}</span>{input}</span> : input;
 }
 
 function ChatPage() {
@@ -402,8 +403,8 @@ function ChatPage() {
         <SettingsRow label={t("Track chat costs")} description={t("Cache timer by the send button, a Session sheet with Cache and Cost, costs in All agents")}>
           <Toggle label={t("Track chat costs")} checked={settings.trackCosts} onChange={(trackCosts) => update({ trackCosts })} />
         </SettingsRow>
-        <SettingsRow label={t("Suggest a handoff above")} description={t("Context size in thousands of tokens")} dimmed={!settings.trackCosts}>
-          <NumberField label={t("Suggest a handoff above")} value={Math.round(settings.costHandoffAt / 1000)} min={COST_HANDOFF_MIN / 1000} max={COST_HANDOFF_MAX / 1000} step={10} disabled={!settings.trackCosts} onCommit={(thousands) => update({ costHandoffAt: thousands * 1000 })} />
+        <SettingsRow label={t("Mark chats whose cold restart costs over")} description={t("Dollars to write the whole chat to the cache again: the cache mark in the lists and the handoff advice")} dimmed={!settings.trackCosts}>
+          <NumberField label={t("Mark chats whose cold restart costs over")} value={settings.coldRestartAlertUsd} min={COLD_RESTART_USD_MIN} max={COLD_RESTART_USD_MAX} step={COLD_RESTART_USD_STEP} decimal prefix="$" disabled={!settings.trackCosts} onCommit={(coldRestartAlertUsd) => update({ coldRestartAlertUsd })} />
         </SettingsRow>
         <SettingsRow label={t("Cache lifetime")} description={t("Minutes the provider keeps the conversation cached")} dimmed={!settings.trackCosts}>
           <NumberField label={t("Cache lifetime")} value={settings.cacheLifetimeMin} min={CACHE_LIFETIME_MIN} max={CACHE_LIFETIME_MAX} step={5} disabled={!settings.trackCosts} onCommit={(cacheLifetimeMin) => update({ cacheLifetimeMin })} />

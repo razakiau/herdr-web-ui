@@ -532,6 +532,7 @@ const BASE: Record<string, string> = {
   "In a fresh chat": "在新聊天中",
   "{usd} per call": "每次调用 {usd}",
   "Hand off": "交接",
+  "Hand off now": "现在交接",
   "Hand off if work remains": "如果还有工作，请交接",
   "Hand off before it goes cold": "在过期前交接",
   "Free moment to hand off": "交接的好时机",

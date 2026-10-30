@@ -530,6 +530,7 @@ const BASE: Record<string, string> = {
   "In a fresh chat": "新しいチャットでは",
   "{usd} per call": "1 回あたり {usd}",
   "Hand off": "引き継ぐ",
+  "Hand off now": "今引き継ぐと",
   "Hand off if work remains": "作業が残っていれば引き継ぎを",
   "Hand off before it goes cold": "失効する前に引き継ぎを",
   "Free moment to hand off": "引き継ぐ好機です",
