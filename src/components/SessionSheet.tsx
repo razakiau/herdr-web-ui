@@ -331,6 +331,7 @@ function CostTab({ session, prices }: { session: Session; prices: { prices: Mode
   const messages = messageCosts(session.calls, session.model, session.price);
   const calls = session.chat.models.reduce((sum, each) => sum + each.calls, 0);
   const restarts = session.chat.rewrites;
+  const firstWrites = session.chat.firstWrites ?? 0;
   const models = [...session.chat.models].sort((a, b) => b.input - a.input).map((each) => each.model);
   const problems = [
     split.missing.length > 0 ? t("No price for {models}.", { models: split.missing.join(", ") }) : null,
@@ -353,6 +354,11 @@ function CostTab({ session, prices }: { session: Session; prices: { prices: Mode
           {split.restarts > 0
             ? t(restarts === 1 ? "1 cold restart · {usd}" : "{n} cold restarts · {usd}", { n: restarts, usd: formatUsd(split.restarts) })
             : t(restarts === 1 ? "1 cold restart" : "{n} cold restarts", { n: restarts })}
+        </span>}
+        {/* the chat's first call stored the conversation with no cache to lose: a write, not a restart (ZAC-262) */}
+        {firstWrites > 0 && <span className="session-cost-pill">
+          <span className="cost-dot cost-part is-writes" aria-hidden="true" />
+          {t(firstWrites === 1 ? "First write · {usd}" : "{n} first writes · {usd}", { n: firstWrites, usd: formatUsd(split.firstWrite) })}
         </span>}
         <span className="session-cost-pill">{t(messages.length === 1 ? "{calls} calls · 1 reply" : "{calls} calls · {replies} replies", { calls, replies: messages.length })}</span>
         {split.local.length > 0 && <span className="session-cost-pill">{t("local models $0")}</span>}

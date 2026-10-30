@@ -171,6 +171,14 @@ describe("costSplit: what the money went on (ZAC-260 fix wave)", () => {
     expect(split.restarts).toBeCloseTo(100_000 * 10 / 1e6, 12);
     expect(split.usd).toBeCloseTo(split.fresh + split.reads + split.writes + split.restarts + split.output, 12);
   });
+  it("prices a chat's first write like a write, inside storing new text, not as a restart (ZAC-262)", () => {
+    const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 73_961, cacheRead: 0, cacheWrite: 80_000, firstWrite: 73_961 })], PRICES, null);
+    expect(split.firstWrite).toBeCloseTo(73_961 * writePrice("cc/claude-opus-5-5", 5) / 1e6, 12);
+    expect(split.restarts).toBe(0);
+    expect(split.writes).toBeCloseTo(80_000 * 10 / 1e6, 12);
+    expect(split.usd).toBeCloseTo(split.fresh + split.reads + split.writes + split.restarts + split.output, 12);
+    expect(costSplit([model({ model: "cc/claude-opus-5-5", cacheWrite: 100 })], PRICES, null).firstWrite).toBe(0);
+  });
   it("reads a bridge without coldWrite as no restart", () => {
     const split = costSplit([model({ model: "cc/claude-opus-5-5", input: 100, cacheRead: 0, cacheWrite: 100 })], PRICES, null);
     expect(split.restarts).toBe(0);
@@ -263,6 +271,15 @@ describe("periodTotals", () => {
     })] }]]), "today", NOW, PRICES, null);
     expect(split.total.reads).toBeCloseTo(0.5, 9);
     expect(split.total.writes).toBe(0);
+  });
+
+  it("carries a first write into the PC and the total (ZAC-262)", () => {
+    const week = periodTotals(new Map([["desk", { complete: true, chats: [chat("a", {
+      "2026-10-28": [model({ model: "cc/claude-opus-5-5", cacheWrite: 100_000, firstWrite: 100_000 })],
+    })] }]]), "7d", NOW, PRICES, null);
+    expect(week.total.firstWrite).toBeCloseTo(1, 9);
+    expect(week.pcs[0]!.split.firstWrite).toBeCloseTo(1, 9);
+    expect(week.total.writes).toBeCloseTo(1, 9);
   });
 
   it("is a floor when a chat is partly read, the first scan runs, or a model has no price", () => {

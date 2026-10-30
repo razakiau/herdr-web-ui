@@ -550,6 +550,8 @@ const BASE: Record<string, string> = {
   "{n} cold restarts": "コールドリスタート {n} 回",
   "1 cold restart · {usd}": "コールドリスタート 1 回 · {usd}",
   "{n} cold restarts · {usd}": "コールドリスタート {n} 回 · {usd}",
+  "First write · {usd}": "初回書き込み · {usd}",
+  "{n} first writes · {usd}": "初回書き込み {n} 回 · {usd}",
   "Answers: what the model writes. New input: the rest of a call, sent without the cache.": "回答：モデルが書いた分。新しい入力：呼び出しのうちキャッシュを通さずに送った残り。",
   "Breakdown as of the last finished turn.": "内訳は最後に終わったターン時点のものです。",
   "Cold restart": "コールドリスタート",

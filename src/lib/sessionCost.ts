@@ -111,13 +111,15 @@ export function switchCost(
  * OmniRoute's call_logs) at the input price, `reads` at the cache price (the input price when it has
  * none), `writes` (storing each call's new text: the writes less the cold restarts') and `restarts`
  * (`coldWrite`, the whole conversation stored again after the cache expired; 0 from a bridge before
- * 1069) at `writePrice`, `output` at the output price; `usd` their sum. A model with no price adds
- * nothing and is named in `missing`, which makes the sum a `floor`; a local model adds $0 and is
- * named in `local`.
+ * 1069) at `writePrice`, `output` at the output price; `usd` their sum. `firstWrite` (ZAC-262) is
+ * the chat's first call storing the conversation, also at `writePrice`: already inside `writes`
+ * (there was no cache to lose, so not a restart), kept apart only for its chip, never added to `usd`
+ * twice; 0 from a bridge before ZAC-262. A model with no price adds nothing and is named in
+ * `missing`, which makes the sum a `floor`; a local model adds $0 and is named in `local`.
  */
-export interface CostSplit { usd: number; reads: number; writes: number; restarts: number; output: number; fresh: number; floor: boolean; missing: string[]; local: string[] }
+export interface CostSplit { usd: number; reads: number; writes: number; restarts: number; firstWrite: number; output: number; fresh: number; floor: boolean; missing: string[]; local: string[] }
 
-export const emptySplit = (): CostSplit => ({ usd: 0, reads: 0, writes: 0, restarts: 0, output: 0, fresh: 0, floor: false, missing: [], local: [] });
+export const emptySplit = (): CostSplit => ({ usd: 0, reads: 0, writes: 0, restarts: 0, firstWrite: 0, output: 0, fresh: 0, floor: false, missing: [], local: [] });
 
 export function costSplit(models: readonly HostCostModel[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null): CostSplit {
   const split = emptySplit();
@@ -131,6 +133,7 @@ export function costSplit(models: readonly HostCostModel[], prices: ModelPrices,
     split.reads += each.cacheRead * (price.cached ?? price.input) / 1e6;
     split.writes += (each.cacheWrite - cold) * writePrice(each.model, price.input) / 1e6;
     split.restarts += cold * writePrice(each.model, price.input) / 1e6;
+    split.firstWrite += Math.min(each.firstWrite ?? 0, each.cacheWrite - cold) * writePrice(each.model, price.input) / 1e6;
     split.output += each.output * price.output / 1e6;
   }
   split.usd = split.fresh + split.reads + split.writes + split.restarts + split.output;
@@ -174,6 +177,7 @@ export function addSplit(into: CostSplit, part: CostSplit): void {
   into.reads += part.reads;
   into.writes += part.writes;
   into.restarts += part.restarts;
+  into.firstWrite += part.firstWrite;
   into.output += part.output;
   into.fresh += part.fresh;
   into.floor ||= part.floor;

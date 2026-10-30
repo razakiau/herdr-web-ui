@@ -181,6 +181,27 @@ describe("SessionSheet", () => {
     expect(html).toContain('class="cost-stack session-stack"');
   });
 
+  it("Cost: a chat's first call is a first write, not a cold restart (ZAC-262)", () => {
+    stored.set("ovis:session-tab", "cost");
+    // 59K stored at $10 a million: $0.59, inside Storing new text
+    const models = [{ model: MODEL, input: 59_000, cacheRead: 0, cacheWrite: 59_000, firstWrite: 59_000, output: 0, calls: 1 }];
+    const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models, rewrites: 0, firstWrites: 1 }), calls: CALLS } }));
+    expect(words).toContain("First write · $0.59");
+    expect(words).toContain("Storing new text $0.59");
+    expect(words).not.toContain("cold restart");
+    expect(words).not.toContain("Cold restarts");
+  });
+
+  it("Cost: first writes and cold restarts show side by side; a bridge before ZAC-262 shows no first write", () => {
+    stored.set("ovis:session-tab", "cost");
+    const models = [{ model: MODEL, input: 0, cacheRead: 0, cacheWrite: 300_000, coldWrite: 100_000, firstWrite: 100_000, output: 0, calls: 3 }];
+    const words = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000, models, rewrites: 1, firstWrites: 2 }), calls: CALLS } }));
+    expect(words).toContain("1 cold restart · $1.00");
+    expect(words).toContain("2 first writes · $1.00");
+    const old = text(sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } }));
+    expect(old).not.toContain("first write");
+  });
+
   it("Cost: hides a part that cost nothing, except Re-reading and Answers", () => {
     stored.set("ovis:session-tab", "cost");
     const models = [{ model: MODEL, input: 0, cacheRead: 0, cacheWrite: 0, output: 40_000, calls: 2 }];

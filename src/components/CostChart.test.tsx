@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { SettingsProvider } from "../lib/settings.ts";
-import { CostChart, type MessageCost } from "./CostChart.tsx";
+import { CostChart, type MessageCost, messageCosts } from "./CostChart.tsx";
 
 const descriptors = new Map<string, PropertyDescriptor | undefined>();
 let records: Map<string, string>;
@@ -149,5 +149,14 @@ describe("CostChart (option B)", () => {
     records.set("ovis:cost-chart-mode", "replies");
     const root = await mount(LONG);
     expect(hits(root)).toHaveLength(45);
+  });
+});
+
+describe("messageCosts", () => {
+  it("a reply holding the chat's first write draws no cold restart: the write is in the rest (ZAC-262)", () => {
+    const [first] = messageCosts([{ at: "2026-10-29T10:00:00Z", input: 0, cacheRead: 0, cacheWrite: 73_961, firstWrite: 73_961, output: 0, main: true, context: 73_961, lastCacheRead: 0, calls: 1, restarts: 0 }], "claude-fictional-4", { input: 5, output: 25, cached: 0.5 });
+    expect(first!.restart).toBe(0);
+    expect(first!.restarts).toBe(0);
+    expect(first!.rest).toBeCloseTo(73_961 * 10 / 1e6, 12);
   });
 });

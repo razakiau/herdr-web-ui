@@ -552,6 +552,8 @@ const BASE: Record<string, string> = {
   "{n} cold restarts": "冷启动 {n} 次",
   "1 cold restart · {usd}": "冷启动 1 次 · {usd}",
   "{n} cold restarts · {usd}": "冷启动 {n} 次 · {usd}",
+  "First write · {usd}": "首次写入 · {usd}",
+  "{n} first writes · {usd}": "首次写入 {n} 次 · {usd}",
   "Answers: what the model writes. New input: the rest of a call, sent without the cache.": "回答：模型写出的内容。新输入：调用中不经缓存发送的其余部分。",
   "Breakdown as of the last finished turn.": "明细截至上一个完成的轮次。",
   "Cold restart": "冷启动",
