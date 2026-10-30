@@ -723,10 +723,25 @@ async function readCosts(call: Call): Promise<Response> {
     const parent = call.host.state().state === "connected" ? rowsFrom(call.host.summaries()).find((row) => row.session === session)?.fork_of ?? null : null;
     const { index } = costsOf();
     try { chat = index.costOf(session, parent); calls = chat === null ? [] : index.calls(session, parent); } catch { chat = null; calls = []; }
-    return jsonResponse({ chat, calls });
+    return jsonResponse({ chat: chat === null ? null : withModelWindow(chat, call.host), calls });
   }
   // `?poll=1`: a server's cold-cache poll (server/machines.ts), read with the small budget; a page keeps its own
   return jsonResponse(call.url.searchParams.get("poll") === "1" ? await hostCostsPolled(call.host) : hostCosts(call.host));
+}
+
+/**
+ * The log's split measured against the model's window, as the host's own breakdown is (chats.ts
+ * meteredContext, review of phase 1b): the CLI's `maxPromptTokens` (400K) is its prompt budget, not
+ * the window VS Code's meter shows (528K), so an ask_user chat read 52% during its turn and ~40%
+ * once it ended with nothing changed. The window of the log's last model (matched by its name after
+ * the route prefix, "cc/x" = "omniroute/x"); the budget stays when the host lists none.
+ */
+function withModelWindow(chat: HostChatCost, host: AgentHost): HostChatCost {
+  if (!chat.split || !chat.lastModel || host.state().state !== "connected") return chat;
+  const bare = chat.lastModel.split("/").at(-1);
+  const windows = modelsFrom(host.mirror().root).filter((model) => model.context !== null && model.context > 0 && model.id.split("/").at(-1) === bare);
+  const window = windows.length > 0 ? windows[0]!.context! : null;
+  return window === null ? chat : { ...chat, split: { ...chat.split, tokenLimit: window } };
 }
 
 /**

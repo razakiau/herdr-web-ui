@@ -377,6 +377,23 @@ describe("host chat costs", () => {
     expect(none).toEqual({ status: 200, json: { chat: null, calls: [] } });
   });
 
+  it("\"costs?session\" measures the log's split against the model's window, not the CLI's prompt budget (phase 1b review)", async () => {
+    const record = (at: string, input: number, apiCallId: string) => `${JSON.stringify({
+      type: "session.usage_record", id: `rec-${apiCallId}`, timestamp: at, parentId: "p",
+      data: { usage: { model: "cc/model-a", inputTokens: input, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, apiCallId, maxPromptTokens: 400_000, toolTokenCount: 30_000 } },
+    })}\n`;
+    const shutdown = `${JSON.stringify({ type: "session.shutdown", id: "sd", timestamp: at(6), parentId: "p", data: { systemTokens: 25_000 } })}\n`;
+    const { home, agentDirs } = store({ [CLI]: [shutdown, record(at(5), 209_000, "w1")] });
+    setCostIndexForTests(new CostIndex(home, agentDirs), agentDirs);
+    // the picker lists the model under another route prefix, with VS Code's window
+    const r = await rig({ models: [{ ...MODEL, maxContextWindow: 528_000 } as SessionModelInfo] });
+    const one = await call(r, `/api/host-chats/costs?session=${encodeURIComponent(`copilotcli:/${CLI}`)}`);
+    expect(one.json.chat.split).toMatchObject({ currentTokens: 209_000, tokenLimit: 528_000, systemTokens: 25_000, toolDefinitionsTokens: 30_000 });
+    // no window listed for it: the CLI's budget stays
+    const plain = await rig();
+    expect((await call(plain, `/api/host-chats/costs?session=${encodeURIComponent(`copilotcli:/${CLI}`)}`)).json.chat.split.tokenLimit).toBe(400_000);
+  });
+
   it("a log that fails to read answers what it has, not a 500", async () => {
     const broken = { all: () => { throw new Error("EIO"); }, costOf: () => { throw new Error("EIO"); }, calls: () => { throw new Error("EIO"); } } as unknown as CostIndex;
     setCostIndexForTests(broken, []);

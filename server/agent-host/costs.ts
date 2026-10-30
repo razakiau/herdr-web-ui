@@ -321,7 +321,7 @@ const models = (map: Map<string, Model>): HostCostModel[] => [...map.values()].m
 
 /**
  * The context's split as the CLI's own log gives it (ZAC-260 phase 1b): its last prompt, of the
- * prompt budget its last call had, the tool definitions that call sent (`toolTokenCount`) and the
+ * prompt budget its last call had (a fallback: the route sets the model's window, withModelWindow), the tool definitions that call sent (`toolTokenCount`) and the
  * system prompt the CLI last counted (a compaction or a shutdown: it barely moves within a
  * session, 25,443 then 25,724 on the owner's chat), the rest messages. The host reports a
  * breakdown only when a turn ends (`contextAttribution`), and a chat driven by ask_user is one turn
