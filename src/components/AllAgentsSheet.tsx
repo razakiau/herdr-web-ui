@@ -206,7 +206,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
       restarts === 1 ? t("1 cold restart") : restarts > 1 ? t("{n} cold restarts", { n: restarts }) : null].filter(Boolean).join(" · ");
     // a big chat's cache after the rest (owner's pick B): "· 268K · 12m left", "· 312K · cold", in the cache's colour
     const mark = marks.get(row.session);
-    const context = mark ? <>{words} · <CacheText mark={mark} /></> : words;
+    // the words give way at a phone's width, never the cache: it is what the mark is for
+    const context = mark ? <span className="all-agents-context-split"><span className="all-agents-words">{words}</span><span className="all-agents-sep">{" · "}</span><CacheText mark={mark} /></span> : words;
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
     const cache = cost ? cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working") : null;
     // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing;
