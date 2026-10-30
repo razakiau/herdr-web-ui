@@ -166,6 +166,13 @@ describe("chat/handoff", () => {
     expect(wrote(r.fake)).toEqual([]);
   });
 
+  it("recent_handoff counts the plugin form /harness:handoff too", async () => {
+    const r = await rig({ turns: [user("/harness:handoff", new Date(Date.now() - 10 * 60_000).toISOString())] });
+    const answer = await start(r);
+    expect(answer.status).toBe(409);
+    expect(answer.json.error.code).toBe("recent_handoff");
+  });
+
   it("an older /handoff (2 h) does not refuse", async () => {
     const r = await rig({ turns: [user("/handoff", new Date(Date.now() - 2 * 3_600_000).toISOString())] });
     expect((await start(r)).status).toBe(200);
