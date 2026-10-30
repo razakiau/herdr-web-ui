@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -85,6 +87,15 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     // the logo shrinks to fit inside the ring, which sits in the mark's own cell, not over the title
     expect(html).toContain('width="14" height="14"');
     expect(body(null)).toContain('width="18" height="18"');
+  });
+
+  it("sizes the mark's own svg to its 14px box, so the glyph is centred in the ring (phase 1b)", () => {
+    // `.sidebar-mark svg` sets --icon-size (18px): only the box shrank, and the glyph hung 2px below
+    // the ring's centre (measured at 390px, DPR 3: glyph centre y+2 before, 0 after)
+    const css = readFileSync(join(import.meta.dir, "../components/AgentSidebar.css"), "utf8");
+    const rule = css.split("}").find((block) => block.includes(".sidebar-mark.has-cache-ring > :not(.cache-ring) svg"));
+    expect(rule).toBeDefined();
+    expect(rule).toContain("width: 14px; height: 14px;");
   });
 
   it("is absent with no mark (a small or busy chat): the row is today's", () => {

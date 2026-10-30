@@ -428,7 +428,10 @@
    own cell, centred on it (24px in the 34px cell, 5px to the title), the logo shrunk to 14px within
    it (round 6: a square ring offset over the title's first letter) */
 .sidebar-mark.has-cache-ring { position: relative; align-self: center; height: 24px; }
-.sidebar-mark.has-cache-ring > :not(.cache-ring) { width: 14px; height: 14px; }
+/* the mark's svg too: `.sidebar-mark svg` sizes it to --icon-size (18px), which hung it 2px below the
+   ring's centre out of its 14px box (phase 1b, measured at DPR 3: glyph centre 2px low) */
+.sidebar-mark.has-cache-ring > :not(.cache-ring),
+.sidebar-mark.has-cache-ring > :not(.cache-ring) svg { width: 14px; height: 14px; }
 .cache-ring {
   position: absolute;
   top: 50%;
