@@ -15,7 +15,9 @@
  * a new context) is 0, a write the log does give is taken as is. A side call (`SIDE_CALL`) is
  * left out of the chain. A main-agent call whose write is over half of what the cache holds after
  * it (`rewrote`) is a cold restart: the cache had expired, the whole conversation is stored again;
- * its write is also summed as `coldWrite`. Measured with this rule on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
+ * its write is also summed as `coldWrite`. Unless it is the log's first main-agent call of its own
+ * (a fork's copied history is not one): that is a first write, summed as `firstWrite` and counted in
+ * `firstWrites`, not a restart (ZAC-262: a new chat's first call read 0 and wrote 73,961). Measured with this rule on 2026-10-28's `cc/claude-opus*` calls (ZAC-260):
  * cache reads equal to OmniRoute's (569,791,156 in the Copilot log), inferred writes 9,195,819
  * against OmniRoute's 9,320,792 (98.7%); rewrites counted by the index 9 (main agent; 29 with
  * sub-agents, which is what OmniRoute's 22 compares to, as it counts every call). A chain's newest
@@ -73,10 +75,12 @@ const ASK_TOOLS = new Set(["ask_user", "askUser"]);
 const ASK_MARKS = ['"toolName":"ask_user"', '"toolName":"askUser"'];
 const START_MARK = '"tool.execution_start"';
 const COMPLETE_MARK = '"tool.execution_complete"';
+/** the owner's hand-off to a new chat (ZAC-262's weekly digest): the command alone or followed by its text */
+const HANDOFF = /^\/(?:harness:)?handoff(?:\s|$)/;
 const CALL_ID = /"toolCallId":"([^"]+)"/;
 
 type Row = Record<string, unknown>;
-type Tokens = { input: number; cacheRead: number; cacheWrite: number; coldWrite: number; output: number };
+type Tokens = { input: number; cacheRead: number; cacheWrite: number; coldWrite: number; firstWrite: number; output: number };
 type Model = HostCostModel & Tokens;
 type Call = HostCostCall & Tokens & { calls: number; restarts: number };
 /** one message's calls: the main agent's and its sub-agents', apart */
@@ -87,14 +91,19 @@ interface Last {
   model: Model; day: Model | null; call: Call;
   /** the log gave its write: none is inferred */
   logged: boolean;
+  /** its UTC day, for `dayCounts`; and whether it was the log's first main-agent call of its own (its write a first write) */
+  dayKey: string | null; first: boolean;
 }
+interface DayCounts { restarts: number; firstWrites: number; handoffs: number }
 
 interface LogState {
   path: string; offset: number; size: number; mtime: number;
   seenIds: Set<string>;
   sums: {
     models: Map<string, Model>; days: Map<string, Map<string, Model>>;
-    lastCallAt: string | null; context: number | null; peak: number; rewrites: number;
+    lastCallAt: string | null; context: number | null; peak: number; rewrites: number; firstWrites: number;
+    /** per UTC day: the main agent's cold restarts, first writes and hand-offs (the weekly digest) */
+    dayCounts: Map<string, DayCounts>;
     /** the main agent's last call's model: the cache the next call reads is that model's */
     lastModel: string | null;
     messages: Message[];
@@ -107,6 +116,8 @@ interface LogState {
   asks: Set<string>;
   /** per sub-agent, the reply it started in: a background one's calls land after later replies began */
   agents: Map<string, number>;
+  /** the main agent's calls of its own seen so far (not inherited, not side calls): none yet makes the next one's write a first write */
+  ownMainCalls: number;
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
   /**
@@ -119,10 +130,18 @@ interface LogState {
 
 const record = (value: unknown): Row => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const count = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-const zero = (): Tokens => ({ input: 0, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 0 });
+const zero = (): Tokens => ({ input: 0, cacheRead: 0, cacheWrite: 0, coldWrite: 0, firstWrite: 0, output: 0 });
+const dayOf = (at: string): string => new Date(at).toISOString().slice(0, 10);
+
+function countDay(sums: LogState["sums"], day: string | null, key: keyof DayCounts): void {
+  if (day === null) return;
+  let counts = sums.dayCounts.get(day);
+  if (!counts) { counts = { restarts: 0, firstWrites: 0, handoffs: 0 }; sums.dayCounts.set(day, counts); }
+  counts[key] += 1;
+}
 
 function add(into: Tokens, tokens: Tokens): void {
-  into.input += tokens.input; into.cacheRead += tokens.cacheRead; into.cacheWrite += tokens.cacheWrite; into.coldWrite += tokens.coldWrite; into.output += tokens.output;
+  into.input += tokens.input; into.cacheRead += tokens.cacheRead; into.cacheWrite += tokens.cacheWrite; into.coldWrite += tokens.coldWrite; into.firstWrite += tokens.firstWrite; into.output += tokens.output;
 }
 
 function addModel(models: Map<string, Model>, model: string, tokens: Tokens): Model {
@@ -141,8 +160,8 @@ function addModel(models: Map<string, Model>, model: string, tokens: Tokens): Mo
 const rewrote = (write: number, cacheRead: number): boolean => write > 0.5 * (cacheRead + write);
 
 const fresh = (path: string): LogState => ({
-  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, startedAt: null, chains: new Map(), asks: new Set(), agents: new Map(),
-  sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, lastModel: null, messages: [], system: null, tools: null, limit: null },
+  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), ownMainCalls: 0, partial: false, startedAt: null, chains: new Map(), asks: new Set(), agents: new Map(),
+  sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, firstWrites: 0, dayCounts: new Map(), lastModel: null, messages: [], system: null, tools: null, limit: null },
 });
 
 /** a line worth parsing: a call, a user message, an ask tool's start, or an answer to one being waited for */
@@ -192,7 +211,10 @@ function take(state: LogState, line: string): void {
   }
   if (entry.type === "user.message") {
     // a sub-agent's prompt is part of the message that started it
-    if (main) sums.messages.push({ main: null, sub: null });
+    if (!main) return;
+    sums.messages.push({ main: null, sub: null });
+    const content = record(entry.data).content;
+    if (typeof content === "string" && HANDOFF.test(content.trim()) && typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp))) countDay(sums, dayOf(entry.timestamp), "handoffs");
     return;
   }
   if (entry.type === "tool.execution_start" || entry.type === "tool.execution_complete") {
@@ -214,37 +236,44 @@ function take(state: LogState, line: string): void {
   }
   const at = typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp)) ? entry.timestamp : null;
   const model = typeof usage.model === "string" && usage.model ? usage.model : "unknown";
-  const tokens: Tokens = { input: count(usage.inputTokens), cacheRead: count(usage.cacheReadTokens), cacheWrite: count(usage.cacheWriteTokens), coldWrite: 0, output: count(usage.outputTokens) };
+  const tokens: Tokens = { input: count(usage.inputTokens), cacheRead: count(usage.cacheReadTokens), cacheWrite: count(usage.cacheWriteTokens), coldWrite: 0, firstWrite: 0, output: count(usage.outputTokens) };
   // the previous call of this chain wrote what this one reads beyond it
   const chain = `${main ? "" : String(entry.agentId)}\n${model}`;
   const before = state.chains.get(chain);
   const sideCall = before !== undefined && tokens.input < SIDE_CALL * before.input && tokens.cacheRead < SIDE_CALL * before.cacheRead;
   if (inherited) {
     // the source chat's call, counted in its own log: it only tells the fork's first call what the cache held
-    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 }, logged: tokens.cacheWrite > 0 });
+    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 }, logged: tokens.cacheWrite > 0, dayKey: null, first: false });
     return;
   }
   if (before && !before.logged && !sideCall) {
     const write = Math.max(0, tokens.cacheRead - before.cacheRead);
     if (write > 0) {
-      const cold = before.main && rewrote(write, before.cacheRead) ? write : 0;
+      const whole = before.main && rewrote(write, before.cacheRead);
+      const cold = whole && !before.first ? write : 0;
+      const first = whole && before.first ? write : 0;
       for (const sum of [before.model, before.day, before.call]) {
         if (!sum) continue;
         sum.cacheWrite += write;
         sum.coldWrite += cold;
+        sum.firstWrite += first;
       }
-      if (cold > 0) { sums.rewrites += 1; before.call.restarts += 1; }
+      if (cold > 0) { sums.rewrites += 1; before.call.restarts += 1; countDay(sums, before.dayKey, "restarts"); }
+      if (first > 0) { sums.firstWrites += 1; countDay(sums, before.dayKey, "firstWrites"); }
     }
   }
   // the cache's age, the context and a cold restart are the main agent's: a sub-agent's first call always writes
+  const dayKey = at === null ? null : dayOf(at);
+  const first = main && !sideCall && state.ownMainCalls === 0;
+  if (main && !sideCall) state.ownMainCalls += 1;
   if (main && !sideCall && rewrote(tokens.cacheWrite, tokens.cacheRead)) {
-    tokens.coldWrite = tokens.cacheWrite;
-    sums.rewrites += 1;
+    if (first) { tokens.firstWrite = tokens.cacheWrite; sums.firstWrites += 1; countDay(sums, dayKey, "firstWrites"); }
+    else { tokens.coldWrite = tokens.cacheWrite; sums.rewrites += 1; countDay(sums, dayKey, "restarts"); }
   }
   const modelSum = addModel(sums.models, model, tokens);
   let daySum: Model | null = null;
-  if (at !== null) {
-    const day = new Date(at).toISOString().slice(0, 10);
+  if (dayKey !== null) {
+    const day = dayKey;
     let models = sums.days.get(day);
     if (!models) { models = new Map(); sums.days.set(day, models); }
     daySum = addModel(models, model, tokens);
@@ -280,7 +309,7 @@ function take(state: LogState, line: string): void {
   call.context = tokens.input;
   call.lastCacheRead = tokens.cacheRead;
   // a write the log gives is used as is, never added to an inferred one
-  if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call, logged: tokens.cacheWrite > 0 });
+  if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call, logged: tokens.cacheWrite > 0, dayKey, first });
 }
 
 /**
@@ -354,8 +383,9 @@ function splitOf(sums: LogState["sums"]): HostContextUsage | null {
 function answer(session: string, state: LogState): HostChatCost {
   const sums = state.sums;
   return {
-    session, models: models(sums.models), lastCallAt: sums.lastCallAt, lastModel: sums.lastModel, context: sums.context, peak: sums.peak, rewrites: sums.rewrites, split: splitOf(sums),
+    session, models: models(sums.models), lastCallAt: sums.lastCallAt, lastModel: sums.lastModel, context: sums.context, peak: sums.peak, rewrites: sums.rewrites, firstWrites: sums.firstWrites, split: splitOf(sums),
     days: Object.fromEntries([...sums.days].sort(([a], [b]) => a.localeCompare(b)).map(([day, map]) => [day, models(map)])),
+    dayCounts: Object.fromEntries([...sums.dayCounts].sort(([a], [b]) => a.localeCompare(b)).map(([day, counts]) => [day, { ...counts }])),
     partial: state.partial,
   };
 }

@@ -88,8 +88,8 @@ describe("CostIndex", () => {
     ]);
     const cost = index().costOf(`copilotcli:/${UUID}`);
     expect(cost?.session).toBe(`copilotcli:/${UUID}`);
-    // the sub-agent's 50K logged, the main agent's first call's 1100 inferred from its next read (1900 − 800): over half the 1900 cached after it, a cold restart
-    expect(cost?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 53_000, cacheRead: 2700, cacheWrite: 51_100, coldWrite: 1100, output: 60, calls: 3, lastCallAt: "2026-10-29T13:01:00.000Z" }]);
+    // the sub-agent's 50K logged, the main agent's first call's 1100 inferred from its next read (1900 − 800): over half the 1900 cached after it, and the chat's first call, a first write (ZAC-262)
+    expect(cost?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 53_000, cacheRead: 2700, cacheWrite: 51_100, coldWrite: 0, firstWrite: 1100, output: 60, calls: 3, lastCallAt: "2026-10-29T13:01:00.000Z" }]);
     expect(cost?.lastCallAt).toBe("2026-10-29T13:01:00.000Z");
     expect(cost?.context).toBe(2000);
     expect(cost?.peak).toBe(2000);
@@ -99,6 +99,8 @@ describe("CostIndex", () => {
 
   test("counts a cold restart when the write is over half of what the cache holds after it", () => {
     log(UUID, [
+      // the chat's first call: its write would be a first write, not a restart (ZAC-262)
+      usage("2026-10-29T12:00:00.000Z", { input: 900, cacheRead: 900 }),
       usage("2026-10-29T13:00:00.000Z", { input: 1000, cacheWrite: 600 }),
       // 400 written over 600 read: 40% of the 1000 cached after it, a warm call storing its new text
       usage("2026-10-29T13:01:00.000Z", { input: 1000, cacheRead: 600, cacheWrite: 400 }),
@@ -139,7 +141,90 @@ describe("CostIndex", () => {
       usage("2026-10-29T10:00:02.000Z", { input: 103_000, cacheRead: 102_061, output: 5 }),
     ]);
     const calls = index().calls(`copilotcli:/${UUID}`);
-    expect(calls.map((call) => [call.main, call.calls, call.restarts])).toEqual([[true, 2, 1], [false, 1, 0], [true, 2, 1]]);
+    // the first reply's write is the chat's first (ZAC-262), not a restart
+    expect(calls.map((call) => [call.main, call.calls, call.restarts])).toEqual([[true, 2, 0], [false, 1, 0], [true, 2, 1]]);
+  });
+
+  test("a new chat's first call is a first write, not a cold restart (ZAC-262)", () => {
+    // OmniRoute's call_logs, 2026-10-30: a new chat's first call read 0 and wrote 73,961
+    log(UUID, [
+      userMessage("2026-10-29T08:00:00.000Z"),
+      usage("2026-10-29T08:00:01.000Z", { input: 3019, cacheRead: 0, output: 5 }),
+      usage("2026-10-29T08:00:02.000Z", { input: 75_000, cacheRead: 73_961, output: 5 }),
+    ]);
+    const costs = index();
+    const cost = costs.costOf(`copilotcli:/${UUID}`)!;
+    expect(cost.rewrites).toBe(0);
+    expect(cost.firstWrites).toBe(1);
+    expect(cost.models[0]).toMatchObject({ cacheWrite: 73_961, coldWrite: 0, firstWrite: 73_961 });
+    expect(cost.days["2026-10-29"]?.[0]).toMatchObject({ coldWrite: 0, firstWrite: 73_961 });
+    expect(cost.dayCounts?.["2026-10-29"]).toEqual({ restarts: 0, firstWrites: 1, handoffs: 0 });
+    expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.restarts)).toEqual([0]);
+  });
+
+  test("a first write the log gives is a first write too (ZAC-262)", () => {
+    log(UUID, [usage("2026-10-29T08:00:01.000Z", { input: 3019, cacheWrite: 73_961, output: 5 })]);
+    const cost = index().costOf(`copilotcli:/${UUID}`)!;
+    expect(cost.rewrites).toBe(0);
+    expect(cost.firstWrites).toBe(1);
+    expect(cost.models[0]).toMatchObject({ coldWrite: 0, firstWrite: 73_961 });
+    expect(cost.dayCounts?.["2026-10-29"]).toEqual({ restarts: 0, firstWrites: 1, handoffs: 0 });
+  });
+
+  test("a fork's first own call is a first write: the copied history is not an earlier call (ZAC-262)", () => {
+    const start = (at: string) => `${JSON.stringify({ type: "session.start", id: "s", timestamp: at, parentId: null, data: { sessionId: UUID, startTime: at } })}\n`;
+    log(UUID, [start("2026-10-29T12:00:00.000Z"),
+      usage("2026-10-29T09:00:01.000Z", { input: 100_000, cacheWrite: 100_000, output: 50 }, { apiCallId: "src-1" }),
+      usage("2026-10-29T09:00:02.000Z", { input: 101_000, cacheRead: 100_000, output: 50 }, { apiCallId: "src-2" }),
+      // hours later: the source's cache expired, the fork's first call reads nothing
+      userMessage("2026-10-29T12:00:05.000Z"),
+      usage("2026-10-29T12:00:06.000Z", { input: 103_000, cacheRead: 0, output: 40 }, { apiCallId: "fork-1" }),
+      usage("2026-10-29T12:00:07.000Z", { input: 104_000, cacheRead: 103_000, output: 40 }, { apiCallId: "fork-2" }),
+    ]);
+    const cost = index().costOf(`copilotcli:/${UUID}`)!;
+    expect(cost.firstWrites).toBe(1);
+    expect(cost.rewrites).toBe(0);
+    expect(cost.models[0]).toMatchObject({ coldWrite: 0, firstWrite: 103_000 });
+  });
+
+  test("a later cold restart still counts, on its day (ZAC-262)", () => {
+    log(UUID, [
+      userMessage("2026-10-28T08:00:00.000Z"),
+      usage("2026-10-28T08:00:01.000Z", { input: 100_000, cacheRead: 0, output: 5 }),
+      usage("2026-10-28T08:00:02.000Z", { input: 101_000, cacheRead: 99_607, output: 5 }),
+      // the next day: the cache expired
+      userMessage("2026-10-29T10:00:00.000Z"),
+      usage("2026-10-29T10:00:01.000Z", { input: 102_100, cacheRead: 0, output: 5 }),
+      usage("2026-10-29T10:00:02.000Z", { input: 103_000, cacheRead: 102_061, output: 5 }),
+    ]);
+    const costs = index();
+    const cost = costs.costOf(`copilotcli:/${UUID}`)!;
+    expect(cost.rewrites).toBe(1);
+    expect(cost.firstWrites).toBe(1);
+    expect(cost.models[0]).toMatchObject({ coldWrite: 102_061, firstWrite: 99_607 });
+    expect(cost.dayCounts).toEqual({
+      "2026-10-28": { restarts: 0, firstWrites: 1, handoffs: 0 },
+      "2026-10-29": { restarts: 1, firstWrites: 0, handoffs: 0 },
+    });
+    expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.restarts)).toEqual([0, 1]);
+  });
+
+  test("counts the main agent's hand-offs per day (ZAC-262)", () => {
+    const message = (at: string, content: string, agentId?: string) => `${JSON.stringify({ type: "user.message", id: `u-${at}`, timestamp: at, parentId: "p", ...(agentId ? { agentId } : {}), data: { content } })}\n`;
+    log(UUID, [
+      message("2026-10-29T08:00:00.000Z", "/handoff"),
+      message("2026-10-29T09:00:00.000Z", "  /harness:handoff x"),
+      message("2026-10-29T10:00:00.000Z", "handoff please"),
+      message("2026-10-29T10:30:00.000Z", "/handoffs"),
+      // a sub-agent's prompt is not the owner's
+      message("2026-10-29T11:00:00.000Z", "/handoff", "sub-1"),
+      message("2026-10-30T08:00:00.000Z", "/handoff\nnext"),
+    ]);
+    const cost = index().costOf(`copilotcli:/${UUID}`)!;
+    expect(cost.dayCounts).toEqual({
+      "2026-10-29": { restarts: 0, firstWrites: 0, handoffs: 2 },
+      "2026-10-30": { restarts: 0, firstWrites: 0, handoffs: 1 },
+    });
   });
 
   test("a sub-agent's first write is never a cold restart", () => {
@@ -230,7 +315,7 @@ describe("CostIndex", () => {
     const costs = index();
     costs.costOf(`copilotcli:/${UUID}`);
     appendFileSync(path, usage("2026-10-29T13:00:01.000Z", { input: 100 }, { apiCallId: "chatcmpl-msg_same" }));
-    expect(costs.costOf(`copilotcli:/${UUID}`)?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 100, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 0, calls: 1, lastCallAt: "2026-10-29T13:00:00.000Z" }]);
+    expect(costs.costOf(`copilotcli:/${UUID}`)?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 100, cacheRead: 0, cacheWrite: 0, coldWrite: 0, firstWrite: 0, output: 0, calls: 1, lastCallAt: "2026-10-29T13:00:00.000Z" }]);
   });
 
   test("maps a VS Code chat id to its SDK session", () => {
@@ -356,7 +441,7 @@ describe("CostIndex", () => {
     const costs = index();
     const fork = costs.costOf(`copilotcli:/${UUID}`)!;
     // one call of its own; its cache read continues the source's chain: 101K read, nothing inferred written yet
-    expect(fork.models).toEqual([{ model: "cc/claude-opus-5-5", input: 103_000, cacheRead: 101_000, cacheWrite: 0, coldWrite: 0, output: 40, calls: 1, lastCallAt: "2026-10-29T12:00:06.000Z" }]);
+    expect(fork.models).toEqual([{ model: "cc/claude-opus-5-5", input: 103_000, cacheRead: 101_000, cacheWrite: 0, coldWrite: 0, firstWrite: 0, output: 40, calls: 1, lastCallAt: "2026-10-29T12:00:06.000Z" }]);
     expect(fork.lastCallAt).toBe("2026-10-29T12:00:06.000Z");
     expect(fork.context).toBe(103_000);
     expect(fork.rewrites).toBe(0);
@@ -407,10 +492,10 @@ describe("CostIndex", () => {
       usage("2026-10-29T12:10:01.000Z", { input: 300, cacheRead: 200, output: 7 }),
     ]);
     expect(index().calls(`copilotcli:/${UUID}`)).toEqual([
-      // 100 logged, 100 inferred: the second call read 100, the next message's 200
-      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 200, coldWrite: 100, output: 10, main: true, context: 200, lastCacheRead: 100, calls: 2, restarts: 1 },
-      { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 1, main: false, context: 70, lastCacheRead: 0, calls: 1, restarts: 0 },
-      { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, coldWrite: 0, output: 7, main: true, context: 300, lastCacheRead: 200, calls: 1, restarts: 0 },
+      // 100 logged, 100 inferred: the second call read 100, the next message's 200; the first call's 100 is the chat's first write (ZAC-262)
+      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 200, coldWrite: 0, firstWrite: 100, output: 10, main: true, context: 200, lastCacheRead: 100, calls: 2, restarts: 0 },
+      { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, coldWrite: 0, firstWrite: 0, output: 1, main: false, context: 70, lastCacheRead: 0, calls: 1, restarts: 0 },
+      { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, coldWrite: 0, firstWrite: 0, output: 7, main: true, context: 300, lastCacheRead: 200, calls: 1, restarts: 0 },
     ]);
   });
 
@@ -465,8 +550,9 @@ describe("CostIndex", () => {
       expect(cost?.models[0]?.cacheWrite).toBe(11_500);
       expect(cost?.days["2026-10-28"]?.[0]?.cacheWrite).toBe(9_000);
       expect(cost?.days["2026-10-29"]?.[0]?.cacheWrite).toBe(2_500);
-      // 9000 of a 10K prompt is a cold cache's rewrite; 2500 of 12K is not
-      expect(cost?.rewrites).toBe(1);
+      // 9000 of a 10K prompt is the chat's first write (ZAC-262), not a restart; 2500 of 12K is neither
+      expect(cost?.rewrites).toBe(0);
+      expect(cost?.firstWrites).toBe(1);
       expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.cacheWrite)).toEqual([9_000, 2_500]);
     });
 
@@ -513,7 +599,9 @@ describe("CostIndex", () => {
       const cost = costs.costOf(`copilotcli:/${UUID}`);
       expect(cost?.models[0]?.cacheWrite).toBe(19_000);
       expect(cost?.days["2026-10-29"]?.[0]?.cacheWrite).toBe(19_000);
-      expect(cost?.rewrites).toBe(1);
+      // the chat's first call: a first write (ZAC-262)
+      expect(cost?.rewrites).toBe(0);
+      expect(cost?.firstWrites).toBe(1);
       // onto the first message's call, not the one just read
       expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.cacheWrite)).toEqual([19_000, 0]);
     });

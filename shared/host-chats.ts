@@ -84,6 +84,8 @@ export interface HostTokenTotal { model: string; input: number; cached: number; 
  */
 export interface HostCostModel {
   model: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; calls: number;
+  /** what the chat's first main-agent call stored (a new chat's, or a fork's first of its own): inside `cacheWrite`, not `coldWrite`; absent from a bridge before ZAC-262 */
+  firstWrite?: number;
   /** the main agent's last call on this model (a prompt cache is one model's); absent in a day's sums and from a bridge before 1071 */
   lastCallAt?: string | null;
 }
@@ -94,6 +96,8 @@ export interface HostCostModel {
  */
 export interface HostCostCall {
   at: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; main: boolean; context: number; lastCacheRead: number;
+  /** the part of `cacheWrite` that was the chat's first write (HostCostModel.firstWrite); absent from a bridge before ZAC-262 */
+  firstWrite?: number;
   /** how many calls these sums hold, and how many of them were cold restarts (the chart's card); absent from a bridge before bundle 1071 */
   calls?: number; restarts?: number;
 }
@@ -114,8 +118,12 @@ export interface HostChatCost {
   split?: HostContextUsage | null;
   /** the main agent's largest prompt, and its cold restarts: calls whose write is over half of what the cache holds after them */
   peak: number; rewrites: number;
+  /** 1 when the main agent's first call of its own stored the conversation (not a cold restart: there was no cache to lose); absent from a bridge before ZAC-262 */
+  firstWrites?: number;
   /** the same sums by the call's UTC day ("YYYY-MM-DD"), for Today / 7 days / 30 days */
   days: Record<string, HostCostModel[]>;
+  /** per UTC day, the main agent's cold restarts, first writes and hand-offs (`/handoff`, `/harness:handoff`), for the weekly digest; absent from a bridge before ZAC-262 */
+  dayCounts?: Record<string, { restarts: number; firstWrites: number; handoffs: number }>;
   /** the log was only partly read so far: the sums are a floor */
   partial: boolean;
 }
