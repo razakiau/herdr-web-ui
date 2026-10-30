@@ -27,7 +27,7 @@ const cache = new Map<string, { stamp: string; todos: StoredTodo[] | null }>();
 /** per VS Code chat: the SDK session it names, by the stamp of the store it was read from */
 const sdkCache = new Map<string, { stamp: number; sdk: string | null }>();
 
-export function forgetSessionTodos(): void { cache.clear(); sdkCache.clear(); }
+export function forgetSessionTodos(): void { cache.clear(); sdkCache.clear(); peerCache.clear(); }
 
 /** Where VS Code keeps a chat's own data: a Remote-SSH server's, then the desktop app's on each OS. */
 export function defaultAgentSessionDirs(): string[] {
@@ -62,6 +62,52 @@ export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | nu
       return known?.sdk ?? null;
     }
     sdkCache.set(path, { stamp, sdk });
+    return sdk;
+  }
+  return null;
+}
+
+/** per peer chat: the SDK session its parent's store names for it, by the stamp of that store */
+const peerCache = new Map<string, { stamp: number; sdk: string | null }>();
+
+/**
+ * The SDK session of a session's other chat, `ahp-chat://<chatId>/<tail>` (a VS Code peer chat or a
+ * fork; ZAC-260): `tail` is the parent session's URI in base64url (`ahp-session:/<uuid>` or
+ * `copilotcli:/<uuid>`), and the parent's own store keeps its chats in `session_metadata.peerChats`, a
+ * JSON array of `{uri, providerData}` whose providerData (a JSON string) names `sdkSessionId`. Live on
+ * the Mac, 2026-10-30: `ahp-chat://8f678541-…/<copilotcli:/ddf9fd94-…>` → 5b970deb-…, which the
+ * old lookup (the text after ":/" taken for a uuid) never found. Null for anything else.
+ */
+export function peerChatSdkOf(chat: string, dirs: readonly string[]): string | null {
+  const match = /^ahp-chat:\/\/([^/]+)\/([A-Za-z0-9_+/=-]+)$/.exec(chat);
+  if (!match || match[1] === "default" || match[1] === "subagent") return null;
+  let parent: string;
+  try { parent = Buffer.from(match[2]!, "base64url").toString("utf8"); } catch { return null; }
+  const at = parent.indexOf(":/");
+  const uuid = at < 0 ? "" : parent.slice(at + 2);
+  if (!UUID.test(uuid)) return null;
+  for (const dir of dirs) {
+    const path = join(dir, uuid, "session.db");
+    const stamp = mtime(path);
+    if (stamp === null) continue;
+    const key = `${path}\n${chat}`;
+    const known = peerCache.get(key);
+    if (known?.stamp === stamp) return known.sdk;
+    let sdk: string | null = null;
+    try {
+      const store = new Database(path, { readonly: true });
+      try {
+        const row = store.query("SELECT value FROM session_metadata WHERE key = 'peerChats'").get() as { value?: unknown } | null;
+        const list = typeof row?.value === "string" ? JSON.parse(row.value) as unknown : null;
+        const entry = Array.isArray(list) ? list.find((each) => (each as { uri?: unknown } | null)?.uri === chat) as { providerData?: unknown } | undefined : undefined;
+        const data = typeof entry?.providerData === "string" ? JSON.parse(entry.providerData) as { sdkSessionId?: unknown } : entry?.providerData as { sdkSessionId?: unknown } | undefined;
+        const id = data?.sdkSessionId;
+        sdk = typeof id === "string" && UUID.test(id) ? id : null;
+      } finally { store.close(); }
+    } catch {
+      return known?.sdk ?? null;
+    }
+    peerCache.set(key, { stamp, sdk });
     return sdk;
   }
   return null;

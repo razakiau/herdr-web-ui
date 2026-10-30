@@ -49,7 +49,7 @@ import {
   type StateAction,
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall } from "../../shared/host-chats.ts";
-import { defaultAgentSessionDirs, readSessionTodos, sdkSessionOf } from "./todos.ts";
+import { defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
 import { CostIndex } from "./costs.ts";
 import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
@@ -699,6 +699,7 @@ export function setCostIndexForTests(index: CostIndex | null, agentDirs: readonl
 
 /** The SDK session a host row runs on: a CLI chat's own uuid, a VS Code chat's through its store. */
 function sdkOfRow(session: string, agentDirs: readonly string[]): string | null {
+  if (session.startsWith("ahp-chat://")) return peerChatSdkOf(session, agentDirs);
   const at = session.indexOf(":/");
   if (at < 0) return null;
   const uuid = session.slice(at + 2);

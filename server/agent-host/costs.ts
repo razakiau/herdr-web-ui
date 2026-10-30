@@ -26,7 +26,7 @@ import { join } from "node:path";
 
 import type { HostChatCost, HostCostCall, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
 import { copilotTranscript, fromSubagent } from "../copilot.ts";
-import { sdkSessionOf } from "./todos.ts";
+import { peerChatSdkOf, sdkSessionOf } from "./todos.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** the first scan reads logs written in the last 30 days */
@@ -280,6 +280,11 @@ export class CostIndex {
 
   /** The SDK session a chat id names: a CLI chat's own folder, a VS Code chat's through its store. */
   private sdkOf(session: string): string | null {
+    // a session's other chat (`ahp-chat://<id>/<parent>`): its SDK session is in the parent's store
+    if (session.startsWith("ahp-chat://")) {
+      const peer = peerChatSdkOf(session, this.agentDirs);
+      return peer !== null && (this.logs.has(peer) || this.pathOf(peer) !== null) ? peer : null;
+    }
     const at = session.indexOf(":/");
     if (at < 0) return null;
     const uuid = session.slice(at + 2);

@@ -197,6 +197,30 @@ describe("CostIndex", () => {
     expect(cost?.context).toBe(4242);
   });
 
+  test("maps a peer chat (ahp-chat://<id>/<parent>) to the SDK session its parent's store names", () => {
+    // the parent runs on OTHER, its peer chat on UUID: each answers its own log
+    log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 4242 })]);
+    log(OTHER, [usage("2026-10-29T13:00:00.000Z", { input: 99 })]);
+    const agentDirs = [join(home, "agentSessionData")];
+    const peer = `ahp-chat://8f678541-9117-4969-8876-650a7d52749a/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`;
+    mkdirSync(join(agentDirs[0]!, CHAT), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, CHAT, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: OTHER })]);
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('peerChats', ?)", [JSON.stringify([
+      { uri: "ahp-chat://another/x", isRead: true, providerData: JSON.stringify({ sdkSessionId: OTHER }) },
+      { uri: peer, isRead: true, providerData: JSON.stringify({ sdkSessionId: UUID }) },
+    ])]);
+    db.close();
+    const costs = index(agentDirs);
+    const cost = costs.costOf(peer);
+    expect(cost?.session).toBe(peer);
+    expect(cost?.context).toBe(4242);
+    expect(costs.calls(peer)).toHaveLength(1);
+    // a peer the parent's store does not name has no log
+    expect(costs.costOf(`ahp-chat://unknown-id/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`)).toBeNull();
+  });
+
   test("refuses a session id that is not a uuid", () => {
     log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 1 })]);
     expect(index().costOf(`copilotcli:/../session-state/${UUID}`)).toBeNull();
