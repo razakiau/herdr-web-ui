@@ -423,23 +423,26 @@
 .agent-facet .agent-facet-mark .sidebar-status-dot,
 .agent-facet .agent-facet-mark .sidebar-status-glyph { animation: none; }
 
-/* a big chat's cache (ZAC-260, owner's pick A): a ring around the mark that drains to the cache's
-   expiry, dashed once cold. Drawn over the mark's cell, 4px out from the 18px logo; the state on
-   the row's right is unchanged */
-.sidebar-mark.has-cache-ring { position: relative; }
+/* a big chat's cache (ZAC-260, owner's pick A): a circle around the mark that drains to the cache's
+   expiry, dashed once cold; the state on the row's right is unchanged. It sits inside the mark's
+   own cell, centred on it (24px in the 34px cell, 5px to the title), the logo shrunk to 14px within
+   it (round 6: a square ring offset over the title's first letter) */
+.sidebar-mark.has-cache-ring { position: relative; align-self: center; height: 24px; }
+.sidebar-mark.has-cache-ring > :not(.cache-ring) { width: 14px; height: 14px; }
 .cache-ring {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   transform: translate(-50%, -50%);
   pointer-events: none;
   overflow: visible;
 }
-.sidebar-mark .cache-ring { width: 26px; height: 26px; }
-.cache-ring rect { stroke-width: 2; }
-.cache-ring .cache-ring-track { stroke: var(--bg-hover); }
-.cache-ring.is-warm .cache-ring-stroke { stroke: var(--cache-warm); }
-.cache-ring.is-cooling .cache-ring-stroke { stroke: var(--cache-cooling); }
+.sidebar-mark .cache-ring { width: 24px; height: 24px; }
+.cache-ring circle { stroke-width: 2.25; }
+/* the track: the state's own colour, thin; the arc of time left over it, thick */
+.cache-ring .cache-ring-track { stroke-width: 1; }
+.cache-ring.is-warm circle { stroke: var(--cache-warm); }
+.cache-ring.is-cooling circle { stroke: var(--cache-cooling); }
 .cache-ring.is-cold .cache-ring-stroke { stroke: var(--cache-cold); stroke-width: 1.5; }

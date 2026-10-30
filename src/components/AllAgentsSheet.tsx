@@ -80,6 +80,49 @@ export type Sort = "recent" | "cost" | "cold";
 /** the sort chip's word for each order */
 const SORT_LABEL: Record<Sort, string> = { recent: "Recent", cost: "Cost", cold: "Going cold" };
 
+/**
+ * A big chat's second line (round 6): its words, then its cache, which never gives way. Where the
+ * row is too narrow the last words drop whole, each with its separator (the restarts, then the
+ * age), never leaving "· … ·"; the first (the folder) alone shrinks, with an ellipsis. Measured: the
+ * words' widths once per text, the line's room on each resize.
+ */
+function CacheLine({ parts, mark }: { parts: string[]; mark: RowCacheMark }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const text = parts.join("\u0000");
+  const [fit, setFit] = useState<{ text: string; shown: number } | null>(null);
+  const shown = fit?.text === text ? fit.shown : parts.length;
+  const widths = useRef<{ text: string; words: number[] } | null>(null);
+  useLayoutEffect(() => {
+    const line = ref.current;
+    const room = line?.parentElement;
+    if (!line || !room || typeof ResizeObserver === "undefined") return;
+    const measure = (): void => {
+      if (widths.current?.text !== text) {
+        const words = [...line.querySelectorAll<HTMLElement>(".all-agents-word")];
+        // measured while every word is drawn: the first render of a text draws them all
+        if (words.length !== parts.length) return;
+        // each word's own width: the first may be drawn shrunk already, so its scroll width, whole pixels up
+        widths.current = { text, words: words.map((word) => Math.max(word.scrollWidth, Math.ceil(word.getBoundingClientRect().width))) };
+      }
+      const tail = line.querySelector<HTMLElement>(".all-agents-tail")?.getBoundingClientRect().width ?? 0;
+      // a pixel spare: a sub-pixel overflow would cut the folder to keep the age, the wrong way round
+      const space = room.getBoundingClientRect().width - tail - 1;
+      const words = widths.current.words;
+      let count = 1;
+      for (let used = words[0] ?? 0; count < words.length && used + words[count]! <= space; count++) used += words[count]!;
+      setFit((last) => last?.text === text && last.shown === count ? last : { text, shown: count });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(room);
+    return () => observer.disconnect();
+  }, [text]);
+  return <span ref={ref} className="all-agents-context-split">
+    <span className="all-agents-words">{parts.slice(0, shown).map((part, index) => <span key={index} className="all-agents-word">{index > 0 ? ` · ${part}` : part}</span>)}</span>
+    <span className="all-agents-tail"><span className="all-agents-sep">{" · "}</span><CacheText mark={mark} /></span>
+  </span>;
+}
+
 /** A big chat's cache on its All agents row (ZAC-260, owner's pick B): its size, then the minutes left or "cold", with a small icon. */
 export function CacheText({ mark }: { mark: RowCacheMark }) {
   const t = useT();
@@ -202,12 +245,13 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     const cost = costs.get(row.session);
     // its cold restarts after the folder and age: the list is compared by cost, and the peak size is the open chat's Context tab's
     const restarts = cost?.chat.rewrites ?? 0;
-    const words = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
-      restarts === 1 ? t("1 cold restart") : restarts > 1 ? t("{n} cold restarts", { n: restarts }) : null].filter(Boolean).join(" · ");
+    const parts = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
+      restarts === 1 ? t("1 cold restart") : restarts > 1 ? t("{n} cold restarts", { n: restarts }) : null].filter((part): part is string => Boolean(part));
+    const words = parts.join(" · ");
     // a big chat's cache after the rest (owner's pick B): "· 268K · 12m left", "· 312K · cold", in the cache's colour
     const mark = marks.get(row.session);
-    // the words give way at a phone's width, never the cache: it is what the mark is for
-    const context = mark ? <span className="all-agents-context-split"><span className="all-agents-words">{words}</span><span className="all-agents-sep">{" · "}</span><CacheText mark={mark} /></span> : words;
+    // at a phone's width the words give way, never the cache (it is what the mark is for)
+    const context = mark ? <CacheLine parts={parts} mark={mark} /> : words;
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
     const cache = cost ? cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working") : null;
     // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing;

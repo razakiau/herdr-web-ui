@@ -69,9 +69,19 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
   it("is dashed all round once cold, with no track, and says cache cold", () => {
     const html = body(mark(90));
     expect(html).toContain('class="cache-ring is-cold"');
-    expect(html).toContain('stroke-dasharray="2 3"');
+    expect(html).toContain('stroke-dasharray="2 2.6"');
     expect(html).not.toContain("cache-ring-track");
     expect(html).toContain(", cache cold</span>");
+  });
+
+  it("is a circle centred on the mark, its arc from 12 o'clock, the mark shrunk inside it (round 6)", () => {
+    const html = body(mark(15));
+    expect(html).not.toContain("<rect");
+    expect(html).toContain('<circle cx="12" cy="12" r="11"');
+    expect(html).toContain('transform="rotate(-90 12 12)"');
+    // the logo shrinks to fit inside the ring, which sits in the mark's own cell, not over the title
+    expect(html).toContain('width="14" height="14"');
+    expect(body(null)).toContain('width="18" height="18"');
   });
 
   it("is absent with no mark (a small or busy chat): the row is today's", () => {

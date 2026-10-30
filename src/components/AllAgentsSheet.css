@@ -160,7 +160,11 @@
    colour (tokens in src/styles.css, 4.5:1 on every row surface), a small Timer or Snowflake before the time */
 .all-agents-context-split { display: inline-flex; max-width: 100%; min-width: 0; vertical-align: bottom; }
 .all-agents-sep { flex: none; white-space: pre; }
-.all-agents-words { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* CacheLine drops the words that do not fit, whole; the first one alone shrinks, with an ellipsis */
+.all-agents-words { display: inline-flex; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.all-agents-tail { display: inline-flex; flex: none; }
+.all-agents-word { flex: none; white-space: pre; }
+.all-agents-word:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .all-agents-cache { flex: none; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
 .all-agents-cache.is-warm { color: var(--cache-warm); }
 .all-agents-cache.is-cooling { color: var(--cache-cooling); }

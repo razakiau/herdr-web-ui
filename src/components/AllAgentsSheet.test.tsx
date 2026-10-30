@@ -380,6 +380,11 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     expect(cacheText(sheet, "copilotcli:/cold-new")).toBe("all-agents-cache is-cold: 1.2M · cold");
     for (const quiet of ["copilotcli:/small", "copilotcli:/busy", "copilotcli:/asks"]) expect(cacheText(sheet, quiet)).toBeNull();
     expect(textOf(classed(rowOf(sheet, "copilotcli:/cooling"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 268K · 12m left$/);
+    // each word with its own separator, so a narrow row drops the age whole, never "· … ·" (round 6)
+    const words = classed(rowOf(sheet, "copilotcli:/cooling"), "all-agents-word").map(textOf);
+    expect(words[0]).toBe("fictional");
+    expect(words.slice(1).every((word) => word.startsWith(" · "))).toBe(true);
+    expect(words.join("")).not.toContain("…");
     // the warm dot is a small chat's only: a big one says it in words
     expect(classed(rowOf(sheet, "copilotcli:/warm"), "session-dot")).toEqual([]);
     expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").length).toBe(1);

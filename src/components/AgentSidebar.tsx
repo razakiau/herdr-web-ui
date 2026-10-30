@@ -71,13 +71,16 @@ interface AgentRowBodyProps {
  * dashed all round. The track under it in the row's hover tone; its colour the cache's token.
  */
 export function CacheRing({ mark }: { mark: RowCacheMark }) {
-  const shape = { x: 1, y: 1, width: 30, height: 30, rx: 9, fill: "none" } as const;
-  return <svg className={`cache-ring is-${mark.state}`} viewBox="0 0 32 32" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
+  // a circle round the mark (owner, round 6: not the mockup's rounded square); the time left is the
+  // thick arc from 12 o'clock, clockwise, over a thin track in the same colour, so a ring with
+  // minutes left still reads in its colour (a dark track hid the cooling one)
+  const shape = { cx: 12, cy: 12, r: 11, fill: "none" } as const;
+  return <svg className={`cache-ring is-${mark.state}`} viewBox="0 0 24 24" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
     {mark.state === "cold"
-      ? <rect {...shape} className="cache-ring-stroke" strokeDasharray="2 3" />
+      ? <circle {...shape} className="cache-ring-stroke" strokeDasharray="2 2.6" />
       : <>
-        <rect {...shape} className="cache-ring-track" />
-        <rect {...shape} className="cache-ring-stroke" pathLength={100} strokeDasharray={`${(mark.fraction * 100).toFixed(1)} 100`} />
+        <circle {...shape} className="cache-ring-track" />
+        <circle {...shape} className="cache-ring-stroke" transform="rotate(-90 12 12)" pathLength={100} strokeDasharray={`${(mark.fraction * 100).toFixed(1)} 100`} />
       </>}
   </svg>;
 }
@@ -89,7 +92,7 @@ export function CacheRing({ mark }: { mark: RowCacheMark }) {
 export function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted = false, place = null, now = null, since = null, cacheRing = null, cacheWords = null }: AgentRowBodyProps) {
   const t = useT();
   return <>
-    <span className={`sidebar-mark${cacheRing ? " has-cache-ring" : ""}`} aria-hidden="true">{cacheRing && <CacheRing mark={cacheRing} />}{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
+    <span className={`sidebar-mark${cacheRing ? " has-cache-ring" : ""}`} aria-hidden="true">{cacheRing && <CacheRing mark={cacheRing} />}{mark !== null ? <AgentMark agent={mark} size={cacheRing ? 14 : 18} /> : <Terminal />}</span>
     <span className="agent-copy">
       {markKind && <span className="visually-hidden">{markKind}: </span>}
       <span className="agent-main">
