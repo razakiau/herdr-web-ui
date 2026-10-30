@@ -38,6 +38,15 @@ const FILES_PER_SCAN = 50;
  * requests, a floor (`partial`) meanwhile, rather than blocking the bridge's terminals for seconds
  */
 const BYTES_PER_SCAN = 128 * 1024 * 1024;
+/**
+ * bytes a server-driven read takes (the cold-cache alert's poll, ZAC-260 review): nobody waits on
+ * it, so it blocks the event loop for one 16 MB read at most, and the poller takes several in a row
+ * with a yield between them (POLL_READS_PER_TICK) rather than one 128 MB one. On the owner's Mac
+ * (1.5 GB in 286 logs) the first scan was ~12 blocking 128 MB reads.
+ */
+export const POLL_BYTES_PER_SCAN = 16 * 1024 * 1024;
+/** reads a poll tick takes at most, while the index is not complete: 8 × 16 MB, the old pace */
+export const POLL_READS_PER_TICK = 8;
 const CHUNK = 8 * 1024 * 1024;
 /**
  * A call is a side call (a title, a summary: ~500 tokens) when both its prompt and its cache read are
@@ -371,8 +380,8 @@ export class CostIndex {
    * then up to 50 logs not read yet (written in the last 30 days, newest first); `complete` once
    * none is left and none stopped part way.
    */
-  all(): HostCostsAnswer {
-    let budget = this.bytesPerRequest;
+  all(bytes = this.bytesPerRequest): HostCostsAnswer {
+    let budget = Math.min(bytes, this.bytesPerRequest);
     for (const state of this.logs.values()) {
       if (budget <= 0) { state.partial = state.partial || this.stale(state); continue; }
       budget -= readLog(state, budget);

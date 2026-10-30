@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { BRIDGE_PROTOCOL, LOCAL_MACHINE, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type Machine, type MachineAction, type MachineEvent, type MachineSettings, type SetupAction, type SetupJob, type SetupProgress, type SetupRequest, type SshTarget } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot, HerdrPane } from "../shared/protocol.ts";
 import type { ColdPrices, PushService } from "./push.ts";
+import { createCostsPoller, type CostsPoller } from "./costs-poller.ts";
 import { alertStatus } from "../shared/notify-policy.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { HerdrError, sessionSnapshot } from "./herdr/client.ts";
@@ -53,7 +54,7 @@ interface Runtime {
   /** its host chats' list is being read for the alerts; `again`: it changed meanwhile, read once more */
   hostChatsRead?: { again: boolean };
   /** its chats' cost logs are read every COSTS_POLL_MS for the cold-cache alert (ZAC-260) */
-  costsPoll?: ReturnType<typeof setInterval>;
+  costsPoll?: CostsPoller;
 }
 interface JobState {
   update: boolean;
@@ -877,27 +878,27 @@ export class MachineManager {
    * The PC's chat cost logs (its bridge's /api/host-chats/costs), every COSTS_POLL_MS while it is
    * connected, handed with the prices to the cold-cache alert (server/push.ts onHostChatCosts,
    * ZAC-260). Polled, not pushed: a log grows by the call and the bridge says nothing when it does;
-   * the alert needs the last call to the minute only, and fires 10 minutes ahead. Skipped while no
-   * device and no ntfy topic wants the alert, and on a bridge before costs (404).
+   * the alert needs the last call to the minute only, and fires 10 minutes ahead. One read at a
+   * time (server/costs-poller.ts); skipped while no device and no ntfy topic wants the alert (it is
+   * opt-in), and on a bridge before costs (404).
    */
   private pollCosts(runtime: Runtime, generation: number): void {
     if (!this.agentHost || !this.coldPrices) return;
     const prices = this.coldPrices;
     const read = async (): Promise<void> => {
       const endpoint = runtime.endpoint;
-      if (!endpoint || generation !== runtime.generation || this.stopped || !this.push.wantsCold()) return;
+      if (!endpoint || generation !== runtime.generation || this.stopped) return;
       try {
-        const response = await fetch(`${endpoint.url}/api/host-chats/costs`, { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(30_000) });
+        const response = await fetch(`${endpoint.url}/api/host-chats/costs?poll=1`, { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(30_000) });
         if (!response.ok) return;
         const { chats } = await response.json() as { chats: HostChatCost[] };
         if (generation !== runtime.generation || this.stopped || !Array.isArray(chats)) return;
         this.push.onHostChatCosts(chats, await prices(), runtime.machine.id, runtime.machine.name);
       } catch { /* the bridge went away, or prices failed: the next poll tries again */ }
     };
-    clearInterval(runtime.costsPoll);
-    runtime.costsPoll = setInterval(() => void read(), this.costsPollMs);
-    runtime.costsPoll.unref();
-    void read();
+    runtime.costsPoll?.stop();
+    runtime.costsPoll = createCostsPoller({ intervalMs: this.costsPollMs, wanted: () => this.push.wantsCold(), read });
+    runtime.costsPoll.start();
   }
   private lost(runtime: Runtime, generation: number, error: unknown): void {
     if (generation !== runtime.generation || !runtime.machine.enabled || this.stopped) return;
@@ -950,7 +951,7 @@ export class MachineManager {
   private disconnect(runtime: Runtime): void {
     runtime.generation++;
     runtime.refreshQueued = false;
-    clearTimeout(runtime.retry); clearInterval(runtime.poll); clearInterval(runtime.costsPoll);
+    clearTimeout(runtime.retry); clearInterval(runtime.poll); runtime.costsPoll?.stop();
     runtime.abort?.abort(); runtime.abort = undefined;
     runtime.observer?.close(); runtime.observer = undefined;
     for (const close of runtime.terminals) close(); runtime.terminals.clear();

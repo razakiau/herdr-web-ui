@@ -50,7 +50,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall } from "../../shared/host-chats.ts";
 import { defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
-import { CostIndex } from "./costs.ts";
+import { CostIndex, POLL_BYTES_PER_SCAN, POLL_READS_PER_TICK } from "./costs.ts";
 import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
@@ -725,17 +725,32 @@ async function readCosts(call: Call): Promise<Response> {
     try { chat = index.costOf(session, parent); calls = chat === null ? [] : index.calls(session, parent); } catch { chat = null; calls = []; }
     return jsonResponse({ chat, calls });
   }
-  return jsonResponse(hostCosts(call.host));
+  // `?poll=1`: a server's cold-cache poll (server/machines.ts), read with the small budget; a page keeps its own
+  return jsonResponse(call.url.searchParams.get("poll") === "1" ? await hostCostsPolled(call.host) : hostCosts(call.host));
+}
+
+/**
+ * hostCosts for a server-driven poll (ZAC-260 review): reads of POLL_BYTES_PER_SCAN at most, a
+ * yield between them, up to POLL_READS_PER_TICK while the index is not complete, so the first
+ * scan of a big store never holds the event loop for more than one small read.
+ */
+export async function hostCostsPolled(host: Pick<AgentHost, "state" | "summaries">): Promise<{ chats: HostChatCost[]; complete: boolean }> {
+  let answer = hostCosts(host, POLL_BYTES_PER_SCAN);
+  for (let reads = 1; !answer.complete && reads < POLL_READS_PER_TICK; reads++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    answer = hostCosts(host, POLL_BYTES_PER_SCAN);
+  }
+  return answer;
 }
 
 /**
  * Every chat this PC's index has read, under its host row's session id (what GET costs answers):
  * the local PC's cold-cache alert reads it directly (server/index.ts, ZAC-260).
  */
-export function hostCosts(host: Pick<AgentHost, "state" | "summaries">): { chats: HostChatCost[]; complete: boolean } {
+export function hostCosts(host: Pick<AgentHost, "state" | "summaries">, bytes?: number): { chats: HostChatCost[]; complete: boolean } {
   const { index, agentDirs } = costsOf();
   let answer: { chats: HostChatCost[]; complete: boolean };
-  try { answer = index.all(); } catch { return { chats: [], complete: false }; }
+  try { answer = index.all(bytes); } catch { return { chats: [], complete: false }; }
   // the host's rows by the SDK session they run on; a host that is down has none to name
   const rowBySdk = new Map<string, string>();
   const rows = host.state().state === "connected" ? rowsFrom(host.summaries()) : [];

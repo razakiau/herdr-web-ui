@@ -14,7 +14,8 @@
  *   HERDR_WEB_NTFY_INPUT       on|off: an agent waiting on you (default on)
  *   HERDR_WEB_NTFY_DONE        off|long|always: a finished turn (default long)
  *   HERDR_WEB_NTFY_COLD        on|off: a big Copilot chat about to go cold (ZAC-260,
- *                              server/push.ts onHostChatCosts; default on)
+ *                              server/push.ts onHostChatCosts; default off: on starts a scan
+ *                              of the chat logs every 2 minutes)
  */
 import { readFileSync } from "node:fs";
 
@@ -57,7 +58,7 @@ export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): 
     token: token || null,
     click: click ? click.replace(/\/+$/, "") : null,
     icon: icon ? httpUrl("HERDR_WEB_NTFY_ICON", icon) : null,
-    alerts: parseAlerts({ input: input === "off" ? false : input === "on" ? true : DEFAULT_ALERTS.input, done: env["HERDR_WEB_NTFY_DONE"]?.trim(), cold: cold !== "off" }),
+    alerts: parseAlerts({ input: input === "off" ? false : input === "on" ? true : DEFAULT_ALERTS.input, done: env["HERDR_WEB_NTFY_DONE"]?.trim(), cold: cold === "on" }),
   };
 }
 

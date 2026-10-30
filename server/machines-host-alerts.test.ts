@@ -27,7 +27,7 @@ const row = (status: HostChatRow["status"]): HostChatRow => ({ session: "ahp:/s1
 const cost: HostChatCost = { session: "ahp:/s1", models: [], lastCallAt: "2026-03-10T10:00:00Z", context: 268_000, peak: 268_000, rewrites: 0, days: {}, partial: false };
 const PRICES: ColdPrices = { prices: null, fallback: null };
 
-async function fixture(agentHost: boolean, cold: { wants?: boolean; costs?: "answer" | "missing" } | null = null) {
+async function fixture(agentHost: boolean, cold: { wants?: boolean; costs?: "answer" | "missing"; pollMs?: number } | null = null) {
   const root = mkdtempSync(join(tmpdir(), "herdr-host-alerts-"));
   const seen: { rows: HostChatRow[]; machine: string | undefined; name: string | undefined }[] = [];
   const costs: { chats: HostChatCost[]; prices: ColdPrices; machine: string | undefined; name: string | undefined }[] = [];
@@ -37,8 +37,9 @@ async function fixture(agentHost: boolean, cold: { wants?: boolean; costs?: "ans
     wantsCold: () => cold?.wants ?? true,
     onHostChatCosts(chats: HostChatCost[], prices: ColdPrices, machine?: string, name?: string) { costs.push({ chats, prices, machine, name }); },
   } as unknown as PushService;
-  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => { throw new Error("local offline"); }, { agentHost, ...(cold ? { coldPrices: async () => PRICES, costsPollMs: 40 } : {}) });
+  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => { throw new Error("local offline"); }, { agentHost, ...(cold ? { coldPrices: async () => PRICES, costsPollMs: cold.pollMs ?? 40 } : {}) });
   let costReads = 0;
+  const costQueries: string[] = [];
   let chats: HostChatRow[] = [row("working")];
   let reads = 0;
   let observer: { send(data: string): unknown } | undefined;
@@ -55,6 +56,7 @@ async function fixture(agentHost: boolean, cold: { wants?: boolean; costs?: "ans
       if (path === "/api/host-chats/costs") {
         if (request.headers.get("authorization") !== "Bearer fixture-token") return new Response(null, { status: 401 });
         costReads++;
+        costQueries.push(new URL(request.url).search);
         // a bridge from before the costs answers 404
         return cold?.costs === "missing" ? new Response(null, { status: 404 }) : Response.json({ chats: [cost], complete: true });
       }
@@ -70,7 +72,7 @@ async function fixture(agentHost: boolean, cold: { wants?: boolean; costs?: "ans
   drive.machines.set("mac", runtime);
   await drive.observe(runtime);
   await until(() => observer !== undefined);
-  return { seen, costs, costReads: () => costReads, reads: () => reads, setChats: (next: HostChatRow[]) => { chats = next; }, send: (message: ServerMessage) => observer!.send(JSON.stringify(message)) };
+  return { seen, costs, costQueries, costReads: () => costReads, reads: () => reads, setChats: (next: HostChatRow[]) => { chats = next; }, send: (message: ServerMessage) => observer!.send(JSON.stringify(message)) };
 }
 
 it("reads a remote PC's host chats on connect and on each list change, for the alerts", async () => {
@@ -114,4 +116,18 @@ it("lets a bridge from before the costs be: its 404 reaches no alert", async () 
   const { costs, costReads } = await fixture(true, { costs: "missing" });
   await until(() => costReads() >= 2);
   expect(costs).toEqual([]);
+});
+
+it("reads no costs on a list change, only on its poll (ZAC-260 review: a streaming turn fires many)", async () => {
+  const { costReads, send } = await fixture(true, { pollMs: 60_000 });
+  await until(() => costReads() === 1);
+  for (let change = 0; change < 5; change++) send({ type: "host-chat-changed", session: null });
+  await Bun.sleep(80); // fixed wait: proving no read follows the changes
+  expect(costReads()).toBe(1);
+});
+
+it("asks the bridge for the poll's small read budget", async () => {
+  const { costQueries } = await fixture(true, {});
+  await until(() => costQueries.length > 0);
+  expect(costQueries[0]).toBe("?poll=1");
 });

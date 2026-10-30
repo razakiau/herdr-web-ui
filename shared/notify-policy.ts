@@ -48,8 +48,8 @@ export function paneNotificationTag(paneId: string, machineId = "local"): string
  * What one device wants to be alerted about. `input`: an agent waiting on the user.
  * `done`: a finished turn: never, only after one that worked a while (`long`, the default:
  * a quick answer is read where it was asked), or every one. `cold` (ZAC-260): a big Copilot
- * chat whose prompt cache expires in 10 minutes (server/push.ts onHostChatCosts); absent is on
- * (`coldAlertsOn`), so a device that registered before it existed hears it too.
+ * chat whose prompt cache expires in 10 minutes (server/push.ts onHostChatCosts); opt-in, absent
+ * is off (`coldAlertsOn`): wanting it starts a scan of the PCs' chat logs every 2 minutes.
  */
 export type DoneAlerts = "off" | "long" | "always";
 export interface AlertPrefs {
@@ -58,9 +58,9 @@ export interface AlertPrefs {
   cold?: boolean;
 }
 
-/** Whether these preferences want the cold-cache alert: on unless turned off. */
+/** Whether these preferences want the cold-cache alert: only when turned on. */
 export function coldAlertsOn(prefs: AlertPrefs): boolean {
-  return prefs.cold !== false;
+  return prefs.cold === true;
 }
 export const DEFAULT_ALERTS: AlertPrefs = { input: true, done: "long" };
 
@@ -71,7 +71,7 @@ export function parseAlerts(value: unknown): AlertPrefs {
   return {
     input: typeof record["input"] === "boolean" ? record["input"] : DEFAULT_ALERTS.input,
     done: done === "off" || done === "long" || done === "always" ? done : DEFAULT_ALERTS.done,
-    ...(record["cold"] === false ? { cold: false } : {}),
+    ...(record["cold"] === true ? { cold: true } : {}),
   };
 }
 

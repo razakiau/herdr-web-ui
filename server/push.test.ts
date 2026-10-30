@@ -48,7 +48,8 @@ afterEach(() => {
 /** Alerts go out at once, and each status change is awaited until its alert went out. */
 function subscribed(options: Partial<Parameters<typeof createPushService>[0]> = {}): PushService {
   const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 }, ...options });
-  push.subscribe(fake.subscription);
+  // the cold-cache alert is opt-in (ZAC-260): a device here wants it, so its tests can hear it
+  push.subscribe(fake.subscription, options.cold ? { input: true, done: "long", cold: true } : undefined);
   const onStatus = push.onStatus;
   push.onStatus = async (...args) => {
     await onStatus(...args);
@@ -966,9 +967,9 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(bodies().filter((body) => body.includes("cold"))).toEqual([]);
   });
 
-  it("skips a device that turned it off, and holds while a window is in use", async () => {
+  it("is opt-in: a device that never turned it on hears nothing and starts no scan; a window in use holds it", async () => {
     const off = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 }, cold: RULE });
-    off.subscribe(fake.subscription, { input: true, done: "long", cold: false });
+    off.subscribe(fake.subscription);
     expect(off.wantsCold()).toBe(false);
     off.onHostChats([chatRow()], "mac", "Mac");
     off.onHostChatCosts([log(at())], PRICES, "mac", "Mac");

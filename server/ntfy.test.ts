@@ -57,9 +57,10 @@ describe("ntfyFromEnv", () => {
     expect(ntfyFromEnv(base)?.alerts).toEqual({ input: true, done: "long" });
     expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_INPUT: "off", HERDR_WEB_NTFY_DONE: "always" })?.alerts).toEqual({ input: false, done: "always" });
     expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_DONE: "sometimes" })?.alerts.done).toBe("long");
-    // the cold-cache alert (ZAC-260): on unless HERDR_WEB_NTFY_COLD=off
-    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_COLD: "off" })?.alerts).toEqual({ input: true, done: "long", cold: false });
-    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_COLD: "on" })?.alerts.cold).toBeUndefined();
+    // the cold-cache alert (ZAC-260): opt-in, only with HERDR_WEB_NTFY_COLD=on
+    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_COLD: "on" })?.alerts).toEqual({ input: true, done: "long", cold: true });
+    expect(ntfyFromEnv(base)?.alerts.cold).toBeUndefined();
+    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_COLD: "off" })?.alerts.cold).toBeUndefined();
   });
 
   it("refuses a URL that is not http(s)", () => {
@@ -267,8 +268,8 @@ describe("the cold-cache alert on ntfy (ZAC-260)", () => {
   const log = { session: "ahp:/s1", models: [{ model: "claude-opus-4.8", input: 900_000, cacheRead: 800_000, cacheWrite: 100_000, output: 4_000, calls: 4 }],
     lastCallAt: new Date().toISOString(), context: 268_000, peak: 268_000, rewrites: 0, days: {}, partial: false };
 
-  it("posts a snowflake that opens the chat, unless the deployment turned it off", async () => {
-    const on = service({ HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" }, { cold: RULE });
+  it("posts a snowflake that opens the chat when the deployment turned it on, and nothing by default", async () => {
+    const on = service({ HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example", HERDR_WEB_NTFY_COLD: "on" }, { cold: RULE });
     on.onHostChats([row], "mac", "Mac");
     on.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");
     for (const deadline = Date.now() + 5_000; posted.length === 0;) { if (Date.now() > deadline) throw new Error("nothing posted"); await Bun.sleep(5); }
@@ -276,7 +277,7 @@ describe("the cold-cache alert on ntfy (ZAC-260)", () => {
     expect(posted.map((each) => each.body)).toEqual([{ topic: "herdr-agents", title: "Mac · fix the build", message: "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68",
       priority: 3, tags: ["snowflake"], click: "https://herdr.example/?machine=mac&chat=ahp%3A%2Fs1" }]);
     posted.length = 0;
-    const off = service({ HERDR_WEB_NTFY_COLD: "off" }, { cold: RULE });
+    const off = service({}, { cold: RULE });
     expect(off.wantsCold()).toBe(false);
     off.onHostChats([row], "mac", "Mac");
     off.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");

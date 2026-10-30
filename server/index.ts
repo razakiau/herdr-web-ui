@@ -60,7 +60,8 @@ import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTOR
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
-import { hostChatsRoute, hostCosts } from "./agent-host/routes.ts";
+import { hostChatsRoute, hostCostsPolled } from "./agent-host/routes.ts";
+import { createCostsPoller } from "./costs-poller.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
@@ -290,19 +291,19 @@ export function createServer(
     onChange: (event) => {
       broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null });
       // the list's statuses are what the alerts watch (server/push.ts onHostChats)
-      if (event.kind === "chats") {
-        push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
-        void readLocalCosts();
-      }
+      // never a costs read here: a streaming turn fires many; the poller's next tick is soon enough
+      if (event.kind === "chats") push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
     },
   }) : null;
   // this PC's chat cost logs for the cold-cache alert (ZAC-260), read like a remote PC's (server/machines.ts pollCosts)
-  const readLocalCosts = async (): Promise<void> => {
-    if (!agentHostConnection || !push.wantsCold()) return;
-    try { push.onHostChatCosts(hostCosts(agentHostConnection).chats, await coldPrices()); } catch { /* the next poll tries again */ }
-  };
-  const localCostsTimer = agentHostConnection ? setInterval(() => void readLocalCosts(), COSTS_POLL_MS) : null;
-  localCostsTimer?.unref();
+  // one read at a time, one per COSTS_POLL_MS, none unless the alert is wanted (server/costs-poller.ts);
+  // with the server's own smaller read budget, so the first scan is spread over several ticks
+  const localCosts = agentHostConnection ? createCostsPoller({
+    intervalMs: COSTS_POLL_MS,
+    wanted: () => push.wantsCold(),
+    read: async () => { push.onHostChatCosts((await hostCostsPolled(agentHostConnection)).chats, await coldPrices()); },
+  }) : null;
+  localCosts?.start();
   agentHostConnection?.start();
 
   type PortalStartup = { ok: true } | { ok: false; error: unknown };
@@ -680,7 +681,7 @@ export function createServer(
       settlePortalStartup({ ok: false, error: new Error("Server stopped before Portal startup cleanup completed") });
       core.stop(() => {
         clearInterval(draftTimer);
-        if (localCostsTimer) clearInterval(localCostsTimer);
+        localCosts?.stop();
         openCodeState.clear();
         void options.portal?.shutdown();
         registration?.close();

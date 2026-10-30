@@ -330,6 +330,19 @@ describe("CostIndex", () => {
     expect(costs.calls(`copilotcli:/${UUID}`)).toEqual(index().calls(`copilotcli:/${UUID}`));
   });
 
+  test("all() takes a smaller budget for a server's poll, never a larger one (ZAC-260 review)", () => {
+    log(UUID, [userMessage("2026-10-29T08:00:00.000Z"), ...Array.from({ length: 40 }, (_, i) => usage(`2026-10-29T08:00:${String(i).padStart(2, "0")}.000Z`, { input: 1000, output: 3 }))]);
+    const calls = (answer: ReturnType<CostIndex["all"]>) => answer.chats[0]?.models[0]?.calls ?? 0;
+    // the poll's budget: a few lines, a floor
+    const polled = new CostIndex(home, [], () => NOW).all(2000);
+    expect(polled.complete).toBe(false);
+    expect(calls(polled)).toBeLessThan(40);
+    // a page's request keeps the whole budget
+    expect(calls(new CostIndex(home, [], () => NOW).all())).toBe(40);
+    // asking for more than the index's own budget reads no more than it
+    expect(calls(new CostIndex(home, [], () => NOW, 2000).all(1 << 30))).toBe(calls(polled));
+  });
+
   test("calls reads a log costOf has not opened, within the same budget", () => {
     log(UUID, [userMessage("2026-10-29T08:00:00.000Z"), ...Array.from({ length: 40 }, (_, i) => usage(`2026-10-29T08:00:${String(i).padStart(2, "0")}.000Z`, { input: 1000, output: 3 }))]);
     const [message] = new CostIndex(home, [], () => NOW, 2000).calls(`copilotcli:/${UUID}`);

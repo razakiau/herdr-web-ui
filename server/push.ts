@@ -48,7 +48,8 @@
  * after. It fires once per idle period: a new call re-arms it, one before it fires calls it off,
  * as does the chat working, asking, being archived or leaving its list. Same rules as the rest:
  * nothing while a window is in use, nothing while Settings hides host chats, the chat's tag, so
- * a newer alert for it replaces this one. A device turns it off with AlertPrefs `cold: false`.
+ * a newer alert for it replaces this one. Opt-in: a device turns it on with AlertPrefs `cold: true`,
+ * the ntfy topic with HERDR_WEB_NTFY_COLD=on; with neither, no chat log is scanned for it.
  *
  *   OVIS_COLD_ALERT_USD     the threshold in dollars (default 1; the client's own mark, a
  *                           per-device setting, only marks the lists). Its old HERDR_WEB_* name

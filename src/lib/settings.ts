@@ -143,7 +143,7 @@ export interface Settings {
   alertInput: boolean;
   /** alert this device when a turn finishes: never, after a long one, or every one */
   alertDone: DoneAlerts;
-  /** alert this device 10 minutes before a big Copilot chat's cache goes cold (ZAC-260, server/push.ts onHostChatCosts) */
+  /** alert this device 10 minutes before a big Copilot chat's cache goes cold (ZAC-260, server/push.ts onHostChatCosts); off by default: on makes the server scan the chat logs every 2 minutes */
   alertCold: boolean;
   /** while the app is on screen, the same alerts drop in from the top edge (components/Droplet.tsx) */
   alertInApp: boolean;
@@ -368,7 +368,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertDone: "long",
   alertInApp: true,
   alertSound: false,
-  alertCold: true,
+  alertCold: false,
   quickReplies: ["continue", "yes", "no", "commit and push", "retry"],
   showQuickReplies: false,
   showUsage: false,
@@ -436,7 +436,7 @@ export function quickReplyButtons(settings: Settings): string[] {
 /** This device's alert choices, as the server keeps them with its push subscription. */
 export function alertPrefs(settings: Settings): AlertPrefs {
   // `cold` only when off: an older server keeps the record as it was, and absent is on
-  return { input: settings.alertInput, done: settings.alertDone, ...(settings.alertCold ? {} : { cold: false }) };
+  return { input: settings.alertInput, done: settings.alertDone, ...(settings.alertCold ? { cold: true } : {}) };
 }
 
 /**
