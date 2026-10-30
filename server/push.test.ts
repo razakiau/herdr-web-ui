@@ -878,11 +878,15 @@ describe("the cold-cache alert (ZAC-260)", () => {
   });
   const at = (ago = 0) => new Date(Date.now() - ago).toISOString();
   const bodies = () => fake.received.map((received) => received.payload.body);
+  const arrived = async (count: number): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (fake.received.length < count) { if (Date.now() > deadline) throw new Error("the alert did not arrive"); await Bun.sleep(5); }
+  };
 
   it("reads its rule from the deployment, $1 and an hour by default", () => {
     expect(coldFromEnv({})).toEqual({ thresholdUsd: 1, lifetimeMs: 3_600_000, leadMs: 600_000 });
-    expect(coldFromEnv({ HERDR_WEB_COLD_ALERT_USD: "2.5", HERDR_WEB_CACHE_LIFETIME_MIN: "5" })).toEqual({ thresholdUsd: 2.5, lifetimeMs: 300_000, leadMs: 600_000 });
-    expect(coldFromEnv({ HERDR_WEB_COLD_ALERT_USD: "-1" }).thresholdUsd).toBe(1);
+    expect(coldFromEnv({ OVIS_COLD_ALERT_USD: "2.5", OVIS_CACHE_LIFETIME_MIN: "5" })).toEqual({ thresholdUsd: 2.5, lifetimeMs: 300_000, leadMs: 600_000 });
+    expect(coldFromEnv({ OVIS_COLD_ALERT_USD: "-1" }).thresholdUsd).toBe(1);
   });
 
   it("says what is at stake: the hand-off now against the cold restart", () => {
@@ -895,9 +899,9 @@ describe("the cold-cache alert (ZAC-260)", () => {
     push.onHostChats([chatRow()], "mac", "Mac");
     const last = at();
     push.onHostChatCosts([log(last)], PRICES, "mac", "Mac");
-    await Bun.sleep(40);
+    await Bun.sleep(40); // fixed wait: proving the alert waits for lifetime - lead
     expect(fake.received).toEqual([]);
-    await Bun.sleep(120);
+    await arrived(1);
     await push.settled();
     expect(fake.received.map((received) => received.payload)).toEqual([{
       pane_id: null, host_session: "ahp:/s1", machine_id: "mac", title: "Mac · fix the build",
@@ -905,7 +909,7 @@ describe("the cold-cache alert (ZAC-260)", () => {
     }]);
     // the same last call read again on the next poll: once per idle period
     push.onHostChatCosts([log(last)], PRICES, "mac", "Mac");
-    await Bun.sleep(150);
+    await Bun.sleep(150); // fixed wait: proving the same last call is not told twice
     await push.settled();
     expect(fake.received).toHaveLength(1);
   });
@@ -914,11 +918,11 @@ describe("the cold-cache alert (ZAC-260)", () => {
     const push = subscribed({ cold: RULE });
     push.onHostChats([chatRow()], "mac", "Mac");
     push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
-    await Bun.sleep(60);
+    await Bun.sleep(60); // fixed wait: the first call ages before the next one
     push.onHostChatCosts([log(at(), 300_000)], PRICES, "mac", "Mac");
-    await Bun.sleep(80);
+    await Bun.sleep(80); // fixed wait: proving the first call's alert was called off
     expect(fake.received).toEqual([]);
-    await Bun.sleep(80);
+    await arrived(1);
     await push.settled();
     expect(bodies()).toEqual(["300K goes cold in 1 min: hand off now ~$0.52, or the next call costs ~$3.00"]);
   });
@@ -936,7 +940,7 @@ describe("the cold-cache alert (ZAC-260)", () => {
     for (const [row, cost, prices] of cases) {
       push.onHostChats([row], "mac", "Mac");
       push.onHostChatCosts([cost], prices, "mac", "Mac");
-      await Bun.sleep(150);
+      await Bun.sleep(150); // fixed wait: proving nothing arrives
       push.onHostChats([], "mac", "Mac");
     }
     await push.settled();
@@ -949,14 +953,14 @@ describe("the cold-cache alert (ZAC-260)", () => {
     push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
     push.onHostChats([chatRow("working")], "mac", "Mac");
     push.onHostChats([chatRow("idle")], "mac", "Mac");
-    await Bun.sleep(150);
+    await Bun.sleep(150); // fixed wait: proving nothing arrives
     push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
     push.onHostChats([], "mac", "Mac");
-    await Bun.sleep(150);
+    await Bun.sleep(150); // fixed wait: proving nothing arrives
     push.onHostChats([chatRow()], "mac", "Mac");
     push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
     push.onHostChatCosts([], PRICES, "mac", "Mac");
-    await Bun.sleep(150);
+    await Bun.sleep(150); // fixed wait: proving nothing arrives
     await push.settled();
     // only the turn's own finish alert, never a cold one
     expect(bodies().filter((body) => body.includes("cold"))).toEqual([]);
@@ -974,7 +978,7 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(busy.wantsCold()).toBe(true);
     busy.onHostChats([chatRow()], "mac", "Mac");
     busy.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
-    await Bun.sleep(150);
+    await Bun.sleep(150); // fixed wait: proving nothing arrives
     await Promise.all([off.settled(), busy.settled()]);
     used = false;
     rmSync(busyDir, { recursive: true, force: true });

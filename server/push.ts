@@ -50,10 +50,11 @@
  * nothing while a window is in use, nothing while Settings hides host chats, the chat's tag, so
  * a newer alert for it replaces this one. A device turns it off with AlertPrefs `cold: false`.
  *
- *   HERDR_WEB_COLD_ALERT_USD     the threshold in dollars (default 1; the client's own mark, a
- *                                per-device setting, only marks the lists)
- *   HERDR_WEB_CACHE_LIFETIME_MIN the provider's cache lifetime in minutes (default 60: OmniRoute
- *                                asks for Anthropic's 1 h cache)
+ *   OVIS_COLD_ALERT_USD     the threshold in dollars (default 1; the client's own mark, a
+ *                           per-device setting, only marks the lists). Its old HERDR_WEB_* name
+ *                           works too (server/legacy-env.ts)
+ *   OVIS_CACHE_LIFETIME_MIN the provider's cache lifetime in minutes (default 60: OmniRoute
+ *                           asks for Anthropic's 1 h cache)
  */
 
 import { createHash } from "node:crypto";
@@ -201,10 +202,10 @@ export interface ColdRule {
 }
 export const COLD_LEAD_MS = 10 * 60_000;
 
-/** HERDR_WEB_COLD_ALERT_USD (default 1) and HERDR_WEB_CACHE_LIFETIME_MIN (default 60); a value that is not a positive number is the default. */
+/** OVIS_COLD_ALERT_USD (default 1) and OVIS_CACHE_LIFETIME_MIN (default 60); a value that is not a positive number is the default. */
 export function coldFromEnv(env: Readonly<Record<string, string | undefined>>): ColdRule {
   const positive = (value: string | undefined, fallback: number): number => { const parsed = Number(value?.trim()); return value?.trim() && Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; };
-  return { thresholdUsd: positive(env["HERDR_WEB_COLD_ALERT_USD"], 1), lifetimeMs: positive(env["HERDR_WEB_CACHE_LIFETIME_MIN"], 60) * 60_000, leadMs: COLD_LEAD_MS };
+  return { thresholdUsd: positive(env["OVIS_COLD_ALERT_USD"], 1), lifetimeMs: positive(env["OVIS_CACHE_LIFETIME_MIN"], 60) * 60_000, leadMs: COLD_LEAD_MS };
 }
 
 /**
@@ -505,7 +506,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   }
 
   const coldRule = options.cold ?? coldFromEnv(process.env);
-  // the ntfy topic hears it unless the deployment said off (server/ntfy.ts HERDR_WEB_NTFY_COLD)
+  // the ntfy topic hears it unless the deployment said off (server/ntfy.ts NTFY_COLD)
   const coldNtfy = options.ntfy ? coldAlertsOn(options.ntfy.alerts) : false;
   function callOffCold(key: string): void {
     coldArmed.get(key)?.cancel();

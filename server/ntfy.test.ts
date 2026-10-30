@@ -271,7 +271,7 @@ describe("the cold-cache alert on ntfy (ZAC-260)", () => {
     const on = service({ HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" }, { cold: RULE });
     on.onHostChats([row], "mac", "Mac");
     on.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");
-    await Bun.sleep(80);
+    for (const deadline = Date.now() + 5_000; posted.length === 0;) { if (Date.now() > deadline) throw new Error("nothing posted"); await Bun.sleep(5); }
     await on.settled();
     expect(posted.map((each) => each.body)).toEqual([{ topic: "herdr-agents", title: "Mac · fix the build", message: "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68",
       priority: 3, tags: ["snowflake"], click: "https://herdr.example/?machine=mac&chat=ahp%3A%2Fs1" }]);
@@ -280,7 +280,7 @@ describe("the cold-cache alert on ntfy (ZAC-260)", () => {
     expect(off.wantsCold()).toBe(false);
     off.onHostChats([row], "mac", "Mac");
     off.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");
-    await Bun.sleep(80);
+    await Bun.sleep(80); // fixed wait: proving nothing is posted
     await off.settled();
     expect(posted).toEqual([]);
   });
