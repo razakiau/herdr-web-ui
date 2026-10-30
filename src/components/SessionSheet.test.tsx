@@ -206,13 +206,14 @@ describe("SessionSheet", () => {
     expect(words).not.toContain("avg");
   });
 
-  it("Cost: the per-reply chart has its legend, average and time axis, the context a solid line", () => {
+  it("Cost: the per-reply chart has its legend, average, both axes and time axis, the context a solid line", () => {
     stored.set("ovis:session-tab", "cost");
     const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
     const words = text(html);
     expect(words).toMatch(/Per reply avg \$\d/);
-    expect(words).toContain("Cost Cold restart Context");
-    expect(words).toMatch(/ now$/);
+    expect(words).toContain("Cost $ · left Cold restart Context K · right");
+    // $ ticks on the left, the time axis, context ticks on the right (chart B)
+    expect(words).toMatch(/\$0 \$0\.5 \$1 \$1\.5 avg \S+ \S+ now 0K 100K 200K 300K$/);
     expect(html.match(/<rect /g)?.length).toBeGreaterThanOrEqual(3);
     expect(html).toContain('rx="1.5"');
     // the context line is solid; the dotted line is the average
@@ -220,14 +221,14 @@ describe("SessionSheet", () => {
     expect(html).toMatch(/<line [^>]*stroke-dasharray/);
   });
 
-  it("Cost: the context line is each reply's context, its largest reply near the top, with headroom", () => {
+  it("Cost: the context line is each reply's context on the right axis's scale (0 to its top tick)", () => {
     stored.set("ovis:session-tab", "cost");
     const html = sheet({ read: quiet, cost: { chat: chat({ context: 40_000 }), calls: CALLS } });
     const points = [...(/<path d="([^"]+)"[^>]*stroke="var\(--accent\)"/.exec(html)?.[1] ?? "").matchAll(/[ML][\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
-    // context 50K, 150K, 210.4K against the 210.4K peak (86% of 120 px): summed input would put 150K near the floor
+    // context 50K, 150K, 210.4K on the 0–300K axis of a 128 px plot: summed input would put 150K near the floor
     expect(points.length).toBe(3);
-    expect(points[2]).toBeCloseTo(120 - 120 * 0.86, 0);
-    expect(points[1]).toBeCloseTo(120 - (150_000 / 210_400) * 120 * 0.86, 0);
+    expect(points[2]).toBeCloseTo(128 - (210_400 / 300_000) * 128, 0);
+    expect(points[1]).toBeCloseTo(128 - (150_000 / 300_000) * 128, 0);
   });
 
   it("Cost: a model with no price makes the total a floor and is named", () => {

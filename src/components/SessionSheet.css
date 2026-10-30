@@ -403,13 +403,76 @@
 .session-sheet .session-chart-legend i.is-restart { background: var(--status-blocked); }
 .session-sheet .session-chart-legend i.is-context { width: 12px; height: 2px; border-radius: 0; background: var(--accent); vertical-align: 3px; }
 
-.session-sheet .session-chart-plot { position: relative; }
+.session-sheet .session-chart-legend small { opacity: 0.8; font-size: 10px; }
+
+/* B: a selected bar's card above the plot */
+.session-sheet .session-chart-card {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) 10px;
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  font-size: var(--fs-xs);
+}
+
+.session-sheet .session-chart-card-title { margin-bottom: var(--space-1); color: var(--text-strong); font-weight: var(--fw-semibold); }
+.session-sheet .session-chart-card-row { display: flex; justify-content: space-between; color: var(--text-dim); }
+.session-sheet .session-chart-card-row b { color: var(--text-strong); font-weight: var(--fw-medium); font-variant-numeric: tabular-nums; }
+.session-sheet .session-chart-card-row i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; }
+.session-sheet .session-chart-card-row i.is-cost { background: var(--status-working); }
+.session-sheet .session-chart-card-row i.is-restart { background: var(--status-blocked); }
+.session-sheet .session-chart-card-row i.is-context { width: 12px; height: 2px; border-radius: 0; background: var(--accent); vertical-align: 3px; }
+
+.session-sheet .session-chart-mode > button { height: 24px; padding: 0 var(--space-2); font-size: var(--fs-xs); }
+
+/* B: $ on the left for the bars, K on the right for the line, the plot between them */
+.session-sheet .session-chart-frame {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--space-1);
+}
+
+.session-sheet .session-chart-yaxis {
+  position: relative;
+  height: 128px;
+  min-width: 26px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-sheet .session-chart-yaxis > span { position: absolute; transform: translateY(-50%); white-space: nowrap; }
+.session-sheet .session-chart-yaxis.is-usd { color: var(--text-dim); text-align: right; }
+.session-sheet .session-chart-yaxis.is-usd > span { right: 0; }
+.session-sheet .session-chart-yaxis.is-context { min-width: 30px; color: var(--accent); }
+.session-sheet .session-chart-yaxis.is-context > span { left: 0; }
+
+.session-sheet .session-chart-scroll { min-width: 0; }
+.session-sheet .session-chart-scroll.is-scrolling { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+
+.session-sheet .session-chart-plot { position: relative; height: 128px; }
 
 .session-sheet .session-chart-svg {
   display: block;
   width: 100%;
-  height: 120px;
+  height: 128px;
 }
+
+.session-sheet .session-chart-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--bg-elevated);
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* each bar's hit area is its whole slot, the plot's full height */
+.session-sheet .session-chart-hits { position: absolute; inset: 0; border-radius: var(--radius-sm); }
+.session-sheet .session-chart-hits:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); }
+.session-sheet .session-chart-hit { position: absolute; top: 0; bottom: 0; cursor: pointer; }
+.session-sheet .session-chart-hits:focus-visible .session-chart-hit.is-active { box-shadow: inset 0 -2px 0 var(--accent); }
 
 .session-sheet .session-chart-tag {
   position: absolute;
@@ -419,6 +482,7 @@
   color: var(--text-dim);
   font-size: 10px;
   transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .session-sheet .session-chart-axis {
