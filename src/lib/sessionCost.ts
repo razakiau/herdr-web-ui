@@ -1,9 +1,9 @@
 import type { HostChatCost, HostCostModel, HostCostsAnswer, HostTokenTotal } from "../../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { priceWithFallback } from "./chatCost.ts";
-import { chatModel, coldRestartUsd, isBigChat, writePrice } from "../../shared/cache-cost.ts";
+import { cacheModel, coldRestartUsd, isBigChat, modelLastCall, writePrice } from "../../shared/cache-cost.ts";
 
-export { avgOutput, chatModel, coldRestartUsd, handoffUsd, isBigChat, nextCall, writePrice } from "../../shared/cache-cost.ts";
+export { avgOutput, cacheModel, chatModel, coldRestartUsd, handoffUsd, isBigChat, modelLastCall, nextCall, writePrice } from "../../shared/cache-cost.ts";
 
 export type CacheState = "warm" | "cooling" | "cold";
 
@@ -66,12 +66,19 @@ export function cacheMeter(
   settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
   now: number,
   prices: CachePrices | null,
-): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice; restartUsd: number | null } {
+): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice; restartUsd: number | null; switched: boolean } {
   const context = read.context?.currentTokens ?? log?.context ?? 0;
-  const cache = log ? cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, callingModel(read)) : null;
-  const model = read.model?.id ?? (log ? chatModel(log) : "");
+  // the cache of the model the next call uses (phase 1b): the composer's pick, else the last call's
+  const model = read.model?.id ?? (log ? cacheModel(log) : "");
+  const own = log ? modelLastCall(log, model) : { lastCallAt: null, switched: false };
+  const calling = callingModel(read);
+  const found = log ? cacheState(own.lastCallAt ?? log.lastCallAt, now, settings.cacheLifetimeMin, calling) : null;
+  // a model switched to with no call of its own: nothing of the chat is in its cache yet
+  const cache = found && own.switched && own.lastCallAt === null && !calling ? { ...found, state: "cold" as const, leftMin: 0 } : found;
+  // the next call stores the whole context again on the new model: the Cache tab says why
+  const switched = own.switched && !calling && cache?.state === "cold";
   const restartUsd = prices ? coldRestartUsd(context, model, prices.prices ?? {}, prices.fallback) : null;
-  return { context, cache, restartUsd, advised: cache ? advice(cache.state, isBigChat(restartUsd, settings.coldRestartAlertUsd)) : "keep" };
+  return { context, cache, restartUsd, switched, advised: cache ? advice(cache.state, isBigChat(restartUsd, settings.coldRestartAlertUsd)) : "keep" };
 }
 
 /**

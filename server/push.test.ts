@@ -939,6 +939,20 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(bodies()).toEqual(["waiting for your input", "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68"]);
   });
 
+  it("weighs the last call's model, not the one that read the most (phase 1b)", async () => {
+    const push = subscribed({ cold: RULE });
+    // most reads on an unpriced model, the last call on a priced one: the cache going cold is the priced one's
+    const switched: HostChatCost = { ...log(at()), lastModel: "claude-opus-4.8", models: [
+      { model: "mystery-1", input: 9_000_000, cacheRead: 8_000_000, cacheWrite: 0, output: 4_000, calls: 40 },
+      { model: "claude-opus-4.8", input: 268_000, cacheRead: 260_000, cacheWrite: 8_000, output: 400, calls: 1, lastCallAt: at() },
+    ] };
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([switched], PRICES, "mac", "Mac");
+    await arrived(1);
+    await push.settled();
+    expect(bodies()[0]).toContain("268K goes cold");
+  });
+
   it("stays quiet for a small, unpriced, working, archived or already cold chat", async () => {
     const push = subscribed({ cold: RULE });
     const cases: [HostChatRow, HostChatCost, ColdPrices][] = [

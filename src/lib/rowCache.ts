@@ -7,7 +7,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
-import { chatModel, coldRestartUsd, isBigChat } from "../../shared/cache-cost.ts";
+import { cacheModel, coldRestartUsd, isBigChat } from "../../shared/cache-cost.ts";
 import { fetchModelPrices, type ChatPrices } from "./api.ts";
 import { fetchHostCosts, onHostChatResume, onHostChatRows } from "./hostChats.ts";
 import { cacheState, type CacheState } from "./sessionCost.ts";
@@ -185,7 +185,7 @@ export function rowCacheMark(
   // only a working chat keeps its cache warm: one that asks waits on the owner and calls nothing
   if (!log || !prices || row.status === "working") return null;
   const context = log.context ?? 0;
-  const restartUsd = coldRestartUsd(context, chatModel(log), prices.prices ?? {}, prices.fallback);
+  const restartUsd = coldRestartUsd(context, cacheModel(log), prices.prices ?? {}, prices.fallback);
   if (restartUsd === null || !isBigChat(restartUsd, settings.coldRestartAlertUsd)) return null;
   const cache = cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, false);
   if (!cache) return null;

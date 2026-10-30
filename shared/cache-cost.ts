@@ -39,6 +39,36 @@ export function chatModel(log: Pick<HostChatCost, "models">): string {
   return [...log.models].sort((a, b) => b.input - a.input)[0]?.model ?? "";
 }
 
+/** a model id without its route ("omniroute/claude-opus-5-5" and the log's "cc/claude-opus-5-5" are one model) */
+const bareModel = (id: string): string => id.split("/").at(-1) ?? id;
+
+/**
+ * The model whose cache a list or the cold alert weighs (phase 1b): the main agent's last call's,
+ * which is the cache the next call reads unless someone switches; from a bridge before 1071, the
+ * model that read the most (chatModel).
+ */
+export function cacheModel(log: Pick<HostChatCost, "models" | "lastModel">): string {
+  return log.lastModel ?? chatModel(log);
+}
+
+/**
+ * The last call whose cache `model`'s next call reads (ZAC-260 phase 1b). A prompt cache is one
+ * model's: switching model means the next call stores the whole context again on the new one,
+ * while the old model's cache stays warm for its lifetime. `model` (the composer's pick) is the
+ * log's last model: the chat's last call. Another model: its own last main-agent call
+ * (`HostCostModel.lastCallAt`), null when it has none, and `switched`. From a bridge before 1071
+ * (no `lastModel`), or with no model given, the chat's last call, as before.
+ * Out of scope: a router's fallback (OmniRoute serving another model than the one asked for) is not
+ * seen here; the log's model is the one asked for.
+ */
+export function modelLastCall(log: Pick<HostChatCost, "models" | "lastCallAt" | "lastModel">, model?: string | null): { lastCallAt: string | null; switched: boolean } {
+  if (!model || log.lastModel === undefined || log.lastModel === null || bareModel(log.lastModel) === bareModel(model)) return { lastCallAt: log.lastCallAt, switched: false };
+  const want = bareModel(model);
+  const calls = log.models.flatMap((each) => bareModel(each.model) === want && each.lastCallAt ? [each.lastCallAt] : []);
+  const lastCallAt = calls.sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1) ?? null;
+  return { lastCallAt, switched: true };
+}
+
 /** A log's average output per call, what nextCall adds to each call. */
 export function avgOutput(log: Pick<HostChatCost, "models">): number {
   const calls = log.models.reduce((sum, each) => sum + each.calls, 0);

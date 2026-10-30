@@ -214,6 +214,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   // what the next message carries: the phone's pick, else what the chat used last
   const model = choice.model ? { id: choice.model.id, effort: choice.model.effort ?? null } : chat?.model ?? null;
   const agent = "agent" in choice ? choice.agent ?? null : chat?.agent ?? null;
+  // the cache views weigh the model the next message goes to (phase 1b): the composer's pick
+  const cacheRead = useMemo(() => chat && model && chat.model?.id !== model.id ? { ...chat, model } : chat, [chat, model]);
   const modelEntry = catalog?.models.find((each) => each.id === model?.id);
   const modelLabel = model === null ? t("Model —") : modelEntry?.name ?? model.id;
   const agentLabel = agent === null ? t("Agent") : catalog?.agents.find((each) => each.uri === agent)?.name ?? agentName(agent);
@@ -421,16 +423,16 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
-    <HandoffBanner dismissKey={`${machineId}\n${session}`} read={chat} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff} />
+    <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff} />
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
-      toolbarEnd={<HostContextMeter read={chat} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
+      toolbarEnd={<HostContextMeter read={cacheRead} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
         costs={{ log: chatCostLog?.chat ?? (chatCostLog === undefined ? undefined : null), settings: costSettings, prices: sheetPrices }}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-        sheet={trackCosts && chat ? <SessionSheet read={chat} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}
+        sheet={trackCosts && cacheRead ? <SessionSheet read={cacheRead} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}
           settings={costSettings} onClose={() => setContextOpen(false)}
-          onCompact={!chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
+          onCompact={!cacheRead.busy ? () => { void sendAs("send", "/compact"); } : undefined}
           onHandoff={onHandoff} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}

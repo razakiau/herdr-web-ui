@@ -67,7 +67,7 @@ import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, PushPayload } from "../shared/protocol.ts";
 import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../shared/protocol.ts";
-import { avgOutput, chatModel, coldRestartUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
+import { avgOutput, cacheModel, coldRestartUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
 import { formatUsd } from "../shared/model-price.ts";
 import {
   type AlertPrefs,
@@ -775,7 +775,8 @@ export function createPushService(options: PushServiceOptions): PushService {
         callOffCold(key);
         if (row.status === "working" || row.archived) continue;
         const context = chat.context ?? 0;
-        const model = chatModel(chat);
+        // the last call's model: its cache is the one going cold (phase 1b)
+        const model = cacheModel(chat);
         const table = prices.prices ?? {};
         const restart = coldRestartUsd(context, model, table, prices.fallback);
         if (restart === null || !isBigChat(restart, coldRule.thresholdUsd)) continue;

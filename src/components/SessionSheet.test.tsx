@@ -329,6 +329,21 @@ describe("SessionSheet", () => {
     expect(text(sheet({ read: asking, lastContext: kept, cost: { chat: chat({ context: 42_000, lastCallAt: ago(1), split }), calls: CALLS } }))).toContain("Breakdown as of the last finished turn.");
   });
 
+  it("Cache after a model switch: the model has no warm cache, the next call stores it all again (phase 1b)", () => {
+    stored.set("ovis:session-tab", "cache");
+    const switched = read({ context: { currentTokens: 40_000, tokenLimit: 400_000 }, model: { id: "fictional-other", effort: null } });
+    const log = chat({ context: 40_000, lastCallAt: ago(5), lastModel: chat().models[0]!.model, models: chat().models.map((each) => ({ ...each, lastCallAt: ago(5) })) });
+    const priced = { prices: { gh: { ...PRICES.prices.gh, "fictional-other": { input: 3, output: 15, cached: 0.3 } } }, fallback: null };
+    const words = text(sheet({ read: switched, cost: { chat: log, calls: CALLS }, prices: priced }));
+    expect(words).toContain("Cold");
+    expect(words).toContain("Model changed");
+    expect(words).toContain("the next call stores 40.0K again");
+    // back on the chat's own model, five minutes after its last call: warm
+    const back = text(sheet({ read: read({ context: { currentTokens: 40_000, tokenLimit: 400_000 }, model: { id: chat().models[0]!.model, effort: null } }), cost: { chat: log, calls: CALLS } }));
+    expect(back).toContain("Warm");
+    expect(back).not.toContain("Model changed");
+  });
+
   it("Cache: captions under the countdown, working and idle", () => {
     stored.set("ovis:session-tab", "cache");
     const working = text(sheet({ read: read({ busy: true, context: { currentTokens: 40_000, tokenLimit: 400_000 } }), cost: { chat: chat({ context: 40_000, lastCallAt: ago(1) }), calls: CALLS } }));

@@ -72,6 +72,33 @@ describe("coldRestartUsd / isBigChat (ZAC-260: a big chat is weighed in dollars)
   });
 });
 
+describe("a prompt cache is one model's (phase 1b)", () => {
+  const settings = { coldRestartAlertUsd: 1, cacheLifetimeMin: 60 };
+  const prices = { prices: PRICES, fallback: null };
+  // the chat ran on Opus until 40 min ago, then one call on DeepSeek 10 min ago
+  const log: HostChatCost = {
+    session: "s", lastCallAt: ago(10), lastModel: "deepseek/deepseek-v4-flash", context: 210_000, peak: 210_000, rewrites: 0, days: {}, partial: false,
+    models: [model({ model: "cc/claude-opus-5-5", input: 9_000_000, calls: 30, lastCallAt: ago(40) }), model({ model: "deepseek/deepseek-v4-flash", input: 210_000, calls: 1, lastCallAt: ago(10) })],
+  };
+  it("counts down from the composer's model's own last call: switching back to Opus within the hour finds it warm", () => {
+    // the picker's id has another route prefix than the log's: one model
+    expect(cacheMeter({ busy: false, model: { id: "omniroute/claude-opus-5-5" } }, log, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 20 }, switched: false });
+    expect(cacheMeter({ busy: false, model: { id: "cc/claude-opus-5-5" } }, log, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 20 }, advised: "handoff-warm" });
+    expect(cacheMeter({ busy: false, model: { id: "deepseek/deepseek-v4-flash" } }, log, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
+  });
+  it("reads cold for a model with no call in the chat: the next call stores it all again, priced on that model", () => {
+    const meter = cacheMeter({ busy: false, model: { id: "cc/claude-sonnet-5-5" } }, log, settings, NOW, { prices: { cc: { ...PRICES.cc, "claude-sonnet-5-5": { input: 3, output: 15, cached: 0.3 } } }, fallback: null });
+    expect(meter).toMatchObject({ cache: { state: "cold", leftMin: 0 }, switched: true });
+    // 210K × $3 × 2 (Anthropic's write) = $1.26
+    expect(meter.restartUsd).toBeCloseTo(1.26, 9);
+  });
+  it("lists and the alert weigh the last call's model; an older bridge (no lastModel) keeps the chat's last call", () => {
+    expect(cacheMeter({ busy: false }, log, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
+    const old = { ...log, lastModel: undefined };
+    expect(cacheMeter({ busy: false, model: { id: "cc/claude-sonnet-5-5" } }, old, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
+  });
+});
+
 describe("handoffUsd", () => {
   it("is three warm calls at the chat's context", () => {
     const next = nextCall(268_000, "cc/claude-opus-5-5", 2_000, PRICES, null)!;

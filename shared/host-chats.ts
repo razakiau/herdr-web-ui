@@ -82,7 +82,11 @@ export interface HostTokenTotal { model: string; input: number; cached: number; 
  * the part of `cacheWrite` the main agent's cold restarts stored (the cache had expired); absent
  * from a bridge before bundle 1069, read as 0. Tokens only, the client prices them.
  */
-export interface HostCostModel { model: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; calls: number }
+export interface HostCostModel {
+  model: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; calls: number;
+  /** the main agent's last call on this model (a prompt cache is one model's); absent in a day's sums and from a bridge before 1071 */
+  lastCallAt?: string | null;
+}
 /**
  * One reply's calls (from a user message, or the owner's answer to `ask_user` / `askUser`, to the next), the main agent's or its sub-agents', for the chart.
  * The token counts are the calls' sums; `context` and `lastCacheRead` are the last call's own prompt
@@ -94,6 +98,8 @@ export interface HostChatCost {
   session: string; models: HostCostModel[];
   /** the main agent's last call: the cache's age runs from it */
   lastCallAt: string | null;
+  /** that call's model, whose cache the chat's next call reads unless the model is switched; absent from a bridge before 1071 */
+  lastModel?: string | null;
   /** the main agent's last prompt (`inputTokens`), the context the next call sends */
   context: number | null;
   /**

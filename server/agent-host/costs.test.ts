@@ -64,6 +64,18 @@ describe("CostIndex", () => {
     expect(index().costOf(`copilotcli:/${OTHER}`)!.split).toEqual({ currentTokens: 50_000, tokenLimit: 400_000, toolDefinitionsTokens: 29_986 });
   });
 
+  test("keeps each model's last main-agent call and the last call's model (phase 1b)", () => {
+    log(UUID, [
+      usage("2026-10-29T12:00:00.000Z", { input: 100_000, cacheRead: 99_000 }, { model: "cc/claude-opus-5-5" }),
+      usage("2026-10-29T12:30:00.000Z", { input: 100_500, cacheRead: 0 }, { model: "gpt-6" }),
+      // a sub-agent's call on opus later: not the main agent's cache
+      usage("2026-10-29T12:40:00.000Z", { input: 20_000 }, { model: "cc/claude-opus-5-5", agentId: "a1" }),
+    ]);
+    const cost = index().costOf(`copilotcli:/${UUID}`)!;
+    expect(cost.lastModel).toBe("gpt-6");
+    expect(Object.fromEntries(cost.models.map((each) => [each.model, each.lastCallAt]))).toEqual({ "cc/claude-opus-5-5": "2026-10-29T12:00:00.000Z", "gpt-6": "2026-10-29T12:30:00.000Z" });
+  });
+
   test("sums main and subagent records into models", () => {
     log(UUID, [
       usage("2026-10-29T13:00:00.000Z", { input: 1000, cacheRead: 800, output: 10 }),
@@ -73,7 +85,7 @@ describe("CostIndex", () => {
     const cost = index().costOf(`copilotcli:/${UUID}`);
     expect(cost?.session).toBe(`copilotcli:/${UUID}`);
     // the sub-agent's 50K logged, the main agent's first call's 1100 inferred from its next read (1900 − 800): over half the 1900 cached after it, a cold restart
-    expect(cost?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 53_000, cacheRead: 2700, cacheWrite: 51_100, coldWrite: 1100, output: 60, calls: 3 }]);
+    expect(cost?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 53_000, cacheRead: 2700, cacheWrite: 51_100, coldWrite: 1100, output: 60, calls: 3, lastCallAt: "2026-10-29T13:01:00.000Z" }]);
     expect(cost?.lastCallAt).toBe("2026-10-29T13:01:00.000Z");
     expect(cost?.context).toBe(2000);
     expect(cost?.peak).toBe(2000);
@@ -199,7 +211,7 @@ describe("CostIndex", () => {
     const costs = index();
     costs.costOf(`copilotcli:/${UUID}`);
     appendFileSync(path, usage("2026-10-29T13:00:01.000Z", { input: 100 }, { apiCallId: "chatcmpl-msg_same" }));
-    expect(costs.costOf(`copilotcli:/${UUID}`)?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 100, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 0, calls: 1 }]);
+    expect(costs.costOf(`copilotcli:/${UUID}`)?.models).toEqual([{ model: "cc/claude-opus-5-5", input: 100, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 0, calls: 1, lastCallAt: "2026-10-29T13:00:00.000Z" }]);
   });
 
   test("maps a VS Code chat id to its SDK session", () => {
@@ -275,7 +287,7 @@ describe("CostIndex", () => {
     const costs = index();
     const fork = costs.costOf(`copilotcli:/${UUID}`)!;
     // one call of its own; its cache read continues the source's chain: 101K read, nothing inferred written yet
-    expect(fork.models).toEqual([{ model: "cc/claude-opus-5-5", input: 103_000, cacheRead: 101_000, cacheWrite: 0, coldWrite: 0, output: 40, calls: 1 }]);
+    expect(fork.models).toEqual([{ model: "cc/claude-opus-5-5", input: 103_000, cacheRead: 101_000, cacheWrite: 0, coldWrite: 0, output: 40, calls: 1, lastCallAt: "2026-10-29T12:00:06.000Z" }]);
     expect(fork.lastCallAt).toBe("2026-10-29T12:00:06.000Z");
     expect(fork.context).toBe(103_000);
     expect(fork.rewrites).toBe(0);

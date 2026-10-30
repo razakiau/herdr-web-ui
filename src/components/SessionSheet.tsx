@@ -16,7 +16,7 @@ import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { avgOutput, cacheMeter, callingModel, chatModel, costSplit, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
+import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, modelLastCall, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
@@ -78,8 +78,8 @@ function figures(props: SessionSheetProps, now: number) {
   if (!cost?.chat) return null;
   const chat = mergeLive(cost.chat, read.tokens?.totals);
   // the meter's and the banner's rule, so the three never disagree near the threshold
-  const { context, cache, advised } = cacheMeter(read, chat, settings, now, prices);
-  const model = read.model?.id ?? chatModel(chat);
+  const { context, cache, advised, switched } = cacheMeter(read, chat, settings, now, prices);
+  const model = read.model?.id ?? cacheModel(chat);
   // `prices` null: not answered yet; an answer without tables prices nothing, so every model is missing
   const table = prices?.prices ?? {};
   const fallback = prices?.fallback ?? null;
@@ -90,7 +90,7 @@ function figures(props: SessionSheetProps, now: number) {
   const handoff = prices ? handoffUsd(context, model, avg, table, fallback) : null;
   const split = prices ? costSplit(chat.models, table, fallback) : null;
   const price = prices ? priceWithFallback(model, table, fallback)?.price ?? null : null;
-  return { chat, context, cache, advised, next, fresh, handoff, split, model, price, calls: cost.calls };
+  return { chat, context, cache, advised, switched, next, fresh, handoff, split, model, price, calls: cost.calls };
 }
 
 export function SessionSheet(props: SessionSheetProps) {
@@ -161,7 +161,7 @@ function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionShee
 function CacheTab(props: SessionSheetProps & { session: Session }) {
   const { read, session, settings, onClose, onCompact, onHandoff } = props;
   const t = useT();
-  const { cache, advised, next, fresh, handoff, context } = session;
+  const { cache, advised, switched, next, fresh, handoff, context } = session;
   const lastMain = [...session.calls].reverse().find((call) => call.main);
   // the last call's own hit: the message's sums mix in every call of its tool loop
   const hit = lastMain && lastMain.context > 0 ? Math.round((lastMain.lastCacheRead / lastMain.context) * 100) : null;
@@ -178,7 +178,8 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   const left = cache === null || cache.state === "cold" ? 0 : busy ? 100 : Math.min(100, (cache.leftMin / settings.cacheLifetimeMin) * 100);
   const cold = cache?.state === "cold";
   // when the cache goes: the last call plus its lifetime, on the user's clock
-  const lastAt = session.chat.lastCallAt ? Date.parse(session.chat.lastCallAt) : Number.NaN;
+  const ownLast = modelLastCall(session.chat, session.model).lastCallAt ?? session.chat.lastCallAt;
+  const lastAt = ownLast ? Date.parse(ownLast) : Number.NaN;
   const deadline = busy || cold || !Number.isFinite(lastAt) ? null
     : new Date(lastAt + settings.cacheLifetimeMin * 60_000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   return <>
@@ -204,8 +205,9 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
         </div>}
         {hit !== null && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
         {/* cold: no warm price to have, the next call stores it all again; it is weighed against a fresh chat */}
+        {/* the composer's model has no warm cache of this chat: the next call stores it all again on it, priced on it */}
         {next && cold && <div className="host-context-row">
-          <span className="session-row-label">{t("Next call")}<small className="session-row-sub">{t("stores {size} again", { size })}</small></span>
+          <span className="session-row-label">{t(switched ? "Model changed" : "Next call")}<small className="session-row-sub">{t(switched ? "the next call stores {size} again" : "stores {size} again", { size })}</small></span>
           <span className="session-value">{usd(next.cold, false)}</span>
         </div>}
         {next && cold && fresh !== null && <div className="host-context-row"><span>{t("In a fresh chat")}</span><span className="session-value">{t("{usd} per call", { usd: usd(fresh, false) })}</span></div>}

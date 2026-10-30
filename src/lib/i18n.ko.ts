@@ -579,6 +579,8 @@ const BASE: Record<string, string> = {
   "{calls} calls · 1 reply": "호출 {calls}회 · 응답 1개",
   "{calls} calls · {replies} replies": "호출 {calls}회 · 응답 {replies}개",
   "{size} tokens; no breakdown reported while this turn runs.": "{size} 토큰. 이 턴이 실행되는 동안에는 내역이 보고되지 않습니다.",
+  "Model changed": "모델이 바뀌었습니다",
+  "the next call stores {size} again": "다음 호출에서 {size}를 다시 저장합니다",
   "Breakdown from this chat's log, as of its last call.": "채팅 로그에서 가져온 내역입니다(마지막 호출 기준).",
   "The log is not fully read yet: at least this much.": "로그를 아직 다 읽지 않았습니다. 최소 이만큼입니다.",
   "Update the bridge on this PC to show costs.": "비용을 보려면 이 PC의 브리지를 업데이트하세요.",

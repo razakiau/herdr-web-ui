@@ -581,6 +581,8 @@ const BASE: Record<string, string> = {
   "{calls} calls · 1 reply": "呼び出し {calls} 回 · 返答 1 件",
   "{calls} calls · {replies} replies": "呼び出し {calls} 回 · 返答 {replies} 件",
   "{size} tokens; no breakdown reported while this turn runs.": "{size} トークン。このターンの実行中は内訳が報告されません。",
+  "Model changed": "モデルを変更しました",
+  "the next call stores {size} again": "次の呼び出しで {size} を再び保存します",
   "Breakdown from this chat's log, as of its last call.": "チャットのログからの内訳（最後の呼び出し時点）。",
   "The log is not fully read yet: at least this much.": "ログをまだすべて読んでいません：少なくともこの金額です。",
   "Update the bridge on this PC to show costs.": "コストを表示するには、この PC のブリッジを更新してください。",
