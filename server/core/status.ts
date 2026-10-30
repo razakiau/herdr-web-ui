@@ -28,7 +28,7 @@ import type { OrderSequence } from "../order-sequence.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import type { PreferenceStore } from "../preferences.ts";
 import { promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
-import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
+import { type AlertTiming, type ColdPrices, createPushService, defaultStateDir } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
 import { StatusSince } from "../status-since.ts";
 import type { Telemetry } from "../telemetry.ts";
@@ -39,7 +39,7 @@ import { type Client, send } from "./connections.ts";
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown }: {
+export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pages, pending, drainPending, holdPendingPane, usage, usageLogin, agentHostEnabled = false, hostChatsShown, coldPrices }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -73,6 +73,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   agentHostEnabled?: boolean;
   /** Settings' shared "Show agent host chats" (server/preferences.ts): off, their alerts stay quiet */
   hostChatsShown?: () => boolean;
+  /** the prices the cold-cache alert weighs a PC's chats with: none, the PCs' costs are not polled */
+  coldPrices?: () => Promise<ColdPrices>;
 }) {
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
@@ -195,7 +197,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, status_since: statusSince.note(paneId, status), ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
-  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch, agentHost: agentHostEnabled });
+  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch, agentHost: agentHostEnabled, coldPrices });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
 
   function broadcastAll(message: ServerMessage): void {

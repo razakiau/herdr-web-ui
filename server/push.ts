@@ -41,6 +41,19 @@
  *
  * An ntfy topic the deployment names (`ntfy`, server/ntfy.ts) is one more recipient on the same
  * schedule, with its own choice of alerts: it hears what a device with that choice would.
+ *
+ * A big Copilot chat about to go cold (ZAC-260, `onHostChatCosts`): 10 minutes before its prompt
+ * cache expires (its last call plus the cache lifetime), a chat whose cold restart would cost at
+ * least the threshold is told once, with what a hand-off costs now and what the next call costs
+ * after. It fires once per idle period: a new call re-arms it, one before it fires calls it off,
+ * as does the chat working, asking, being archived or leaving its list. Same rules as the rest:
+ * nothing while a window is in use, nothing while Settings hides host chats, the chat's tag, so
+ * a newer alert for it replaces this one. A device turns it off with AlertPrefs `cold: false`.
+ *
+ *   HERDR_WEB_COLD_ALERT_USD     the threshold in dollars (default 1; the client's own mark, a
+ *                                per-device setting, only marks the lists)
+ *   HERDR_WEB_CACHE_LIFETIME_MIN the provider's cache lifetime in minutes (default 60: OmniRoute
+ *                                asks for Anthropic's 1 h cache)
  */
 
 import { createHash } from "node:crypto";
@@ -50,9 +63,13 @@ import webpush from "web-push";
 
 import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, PushPayload } from "../shared/protocol.ts";
-import type { HostChatRow } from "../shared/host-chats.ts";
+import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
+import type { ModelPrice, ModelPrices } from "../shared/protocol.ts";
+import { avgOutput, chatModel, coldRestartUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
+import { formatUsd } from "../shared/model-price.ts";
 import {
   type AlertPrefs,
+  coldAlertsOn,
   DEFAULT_ALERTS,
   ENDED_NOTIFICATION_BODY,
   paneNotificationTag,
@@ -136,6 +153,14 @@ export interface PushService {
    * chat first seen is only the baseline, and one gone from the list takes its alert with it.
    */
   onHostChats(rows: readonly HostChatRow[], machineId?: string, machineName?: string): void;
+  /**
+   * A PC's chat cost logs (its bridge's /api/host-chats/costs) and the prices:
+   * arms, re-arms or calls off each big chat's cold-cache alert (ZAC-260). The chats' rows come
+   * from the last `onHostChats` of that PC: a chat not listed there has no alert.
+   */
+  onHostChatCosts(chats: readonly HostChatCost[], prices: ColdPrices, machineId?: string, machineName?: string): void;
+  /** whether any device or the ntfy topic wants the cold-cache alert: else the costs are not polled for it */
+  wantsCold(): boolean;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
 }
@@ -158,6 +183,39 @@ export interface PushServiceOptions {
   ntfy?: NtfyConfig;
   /** false while Settings hides agent host chats (the shared hostChatsShown): their changes are followed, never told */
   hostChatsShown?: () => boolean;
+  /** the cold-cache alert's rule (ZAC-260); absent: coldFromEnv(process.env) */
+  cold?: ColdRule;
+}
+
+/** The prices a big chat is weighed with: OmniRoute's table and LiteLLM's behind it, each null when missing. */
+export interface ColdPrices { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null }
+
+/** When a chat is big enough to warn about, and when its cache goes. */
+export interface ColdRule {
+  /** the least a cold restart costs, in dollars, for the alert */
+  thresholdUsd: number;
+  /** the provider's cache lifetime, in ms */
+  lifetimeMs: number;
+  /** how long before the expiry the alert goes, in ms */
+  leadMs: number;
+}
+export const COLD_LEAD_MS = 10 * 60_000;
+
+/** HERDR_WEB_COLD_ALERT_USD (default 1) and HERDR_WEB_CACHE_LIFETIME_MIN (default 60); a value that is not a positive number is the default. */
+export function coldFromEnv(env: Readonly<Record<string, string | undefined>>): ColdRule {
+  const positive = (value: string | undefined, fallback: number): number => { const parsed = Number(value?.trim()); return value?.trim() && Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; };
+  return { thresholdUsd: positive(env["HERDR_WEB_COLD_ALERT_USD"], 1), lifetimeMs: positive(env["HERDR_WEB_CACHE_LIFETIME_MIN"], 60) * 60_000, leadMs: COLD_LEAD_MS };
+}
+
+/**
+ * What a cold-cache alert says (owner-approved, ZAC-260): "268K goes cold in 10 min: hand off now
+ * ~$0.65, or the next call costs ~$2.50". Without a hand-off price (none for the model) only the
+ * next call's.
+ */
+export function coldAlertBody(context: number, leadMin: number, handoff: number | null, restart: number): string {
+  const size = context >= 1_000_000 ? `${(context / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `${Math.round(context / 1000)}K`;
+  const next = `the next call costs ~${formatUsd(restart)}`;
+  return handoff === null ? `${size} goes cold in ${leadMin} min: ${next}` : `${size} goes cold in ${leadMin} min: hand off now ~${formatUsd(handoff)}, or ${next}`;
 }
 
 /** Who one delay's alert goes to: these devices, and the ntfy topic or not. */
@@ -258,6 +316,10 @@ export function createPushService(options: PushServiceOptions): PushService {
   const lastStatus = new Map<string, AgentStatus>();
   /** each host chat's last status, keyed `chat:<pc>:<session>` (apart from every pane key) */
   const hostStatus = new Map<string, HostChatRow["status"]>();
+  /** each listed host chat's row as its PC last listed it, for the cold-cache alert (its title, archived, busy) */
+  const hostRows = new Map<string, HostChatRow>();
+  /** each big chat's armed cold-cache alert, keyed like its status alert, by the last call it was armed for */
+  const coldArmed = new Map<string, { lastCallAt: string; cancel: () => void }>();
   const titles = new Map<string, string>();
   // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
   // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
@@ -440,6 +502,14 @@ export function createPushService(options: PushServiceOptions): PushService {
   function callOff(key: string): void {
     waiting.get(key)?.cancel();
     waiting.delete(key);
+  }
+
+  const coldRule = options.cold ?? coldFromEnv(process.env);
+  // the ntfy topic hears it unless the deployment said off (server/ntfy.ts HERDR_WEB_NTFY_COLD)
+  const coldNtfy = options.ntfy ? coldAlertsOn(options.ntfy.alerts) : false;
+  function callOffCold(key: string): void {
+    coldArmed.get(key)?.cancel();
+    coldArmed.delete(key);
   }
 
   const muted = (machineId: string, paneId: string | null): boolean => paneId !== null && options.muted?.(machineId, paneId) === true;
@@ -628,6 +698,9 @@ export function createPushService(options: PushServiceOptions): PushService {
       for (const row of rows) {
         const key = prefix + encodeURIComponent(row.session);
         listed.add(key);
+        hostRows.set(key, row);
+        // working, asking or put away: its cache is kept warm, or nobody will come back to it
+        if (row.status === "working" || row.status === "asks" || row.archived) callOffCold(key);
         const previous = hostStatus.get(key);
         hostStatus.set(key, row.status);
         if (previous === row.status) continue;
@@ -675,6 +748,67 @@ export function createPushService(options: PushServiceOptions): PushService {
         turnStart.delete(key);
         hostStatus.delete(key);
       }
+      for (const key of [...hostRows.keys()]) {
+        if (!key.startsWith(prefix) || listed.has(key)) continue;
+        hostRows.delete(key);
+        callOffCold(key);
+      }
+    },
+
+    wantsCold: () => coldNtfy || [...store().values()].some((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS)),
+
+    onHostChatCosts(chats, prices, machineId = "local", machineName) {
+      const prefix = `chat:${encodeURIComponent(machineId)}:`;
+      const seen = new Set<string>();
+      for (const chat of chats) {
+        const key = prefix + encodeURIComponent(chat.session);
+        const row = hostRows.get(key);
+        if (!row || !chat.lastCallAt) continue;
+        seen.add(key);
+        const armed = coldArmed.get(key);
+        // armed for this last call already: once per idle period
+        if (armed?.lastCallAt === chat.lastCallAt) continue;
+        // a new call: what was armed for the last one is called off, and the chat weighed again
+        callOffCold(key);
+        if (row.status === "working" || row.status === "asks" || row.archived) continue;
+        const context = chat.context ?? 0;
+        const model = chatModel(chat);
+        const table = prices.prices ?? {};
+        const restart = coldRestartUsd(context, model, table, prices.fallback);
+        if (restart === null || !isBigChat(restart, coldRule.thresholdUsd)) continue;
+        const at = Date.parse(chat.lastCallAt) + coldRule.lifetimeMs - coldRule.leadMs;
+        const expires = Date.parse(chat.lastCallAt) + coldRule.lifetimeMs;
+        // already cold, or a log read late: an alert after the expiry says nothing true
+        if (!Number.isFinite(at) || now() >= expires) { coldArmed.set(key, { lastCallAt: chat.lastCallAt, cancel: () => {} }); continue; }
+        const handoff = handoffUsd(context, model, avgOutput(chat), table, prices.fallback);
+        const leadMin = Math.max(1, Math.round((expires - Math.max(now(), at)) / 60_000));
+        const title = `${machineName ? machineName + " · " : ""}${row.title}`;
+        const body = coldAlertBody(context, leadMin, handoff, restart);
+        const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session) };
+        // armed for most of an hour: only its sending counts for settled(), never the wait
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const entry = { lastCallAt: chat.lastCallAt, cancel: () => { clearTimeout(timer); } };
+        coldArmed.set(key, entry);
+        timer = setTimeout(() => {
+          const done = (async () => {
+            const current = hostRows.get(key);
+            if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working" || current.status === "asks") return;
+            const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
+            const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;
+            await Promise.all([
+              to.length > 0 ? broadcast(message, "normal", to) : undefined,
+              ntfy ? postNtfy(ntfy, { title, status: "cold", body, machineId, session: chat.session }) : undefined,
+            ]);
+          })().catch((error: unknown) => {
+            console.error(`web push failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          inFlight.add(done);
+          void done.finally(() => inFlight.delete(done));
+        }, Math.max(0, at - now()));
+        timer.unref?.();
+      }
+      // a chat whose log is gone from the answer: nothing to time its cache by
+      for (const key of [...coldArmed.keys()]) if (key.startsWith(prefix) && !seen.has(key)) callOffCold(key);
     },
 
     mutesChanged() {

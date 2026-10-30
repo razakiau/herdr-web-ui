@@ -8,7 +8,8 @@ import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
-import { createPushService, handlePushRequest, parseSubscription, type PushService } from "./push.ts";
+import { coldAlertBody, coldFromEnv, createPushService, handlePushRequest, parseSubscription, type ColdPrices, type PushService } from "./push.ts";
+import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { privateStateFs } from "./private-state.ts";
 
@@ -864,4 +865,119 @@ it("says nothing of host chats while Settings hides them, and picks up from thei
   push.onHostChats([row("asks")], "mac", "Mac");
   await push.settled();
   expect(fake.received.length).toBe(1);
+});
+
+describe("the cold-cache alert (ZAC-260)", () => {
+  // Opus at $5 in / $25 out / $0.50 cached: a 268K context costs $2.68 to write again
+  const PRICES: ColdPrices = { prices: null, fallback: { "claude-opus-4.8": { input: 5, output: 25, cached: 0.5 } } };
+  const RULE = { thresholdUsd: 1, lifetimeMs: 200, leadMs: 100 };
+  const chatRow = (status: HostChatRow["status"] = "idle", archived = false): HostChatRow => ({ session: "ahp:/s1", title: "fix the build", status, modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived });
+  const log = (lastCallAt: string, context = 268_000): HostChatCost => ({
+    session: "ahp:/s1", models: [{ model: "claude-opus-4.8", input: 900_000, cacheRead: 800_000, cacheWrite: 100_000, output: 4_000, calls: 4 }],
+    lastCallAt, context, peak: context, rewrites: 0, days: {}, partial: false,
+  });
+  const at = (ago = 0) => new Date(Date.now() - ago).toISOString();
+  const bodies = () => fake.received.map((received) => received.payload.body);
+
+  it("reads its rule from the deployment, $1 and an hour by default", () => {
+    expect(coldFromEnv({})).toEqual({ thresholdUsd: 1, lifetimeMs: 3_600_000, leadMs: 600_000 });
+    expect(coldFromEnv({ HERDR_WEB_COLD_ALERT_USD: "2.5", HERDR_WEB_CACHE_LIFETIME_MIN: "5" })).toEqual({ thresholdUsd: 2.5, lifetimeMs: 300_000, leadMs: 600_000 });
+    expect(coldFromEnv({ HERDR_WEB_COLD_ALERT_USD: "-1" }).thresholdUsd).toBe(1);
+  });
+
+  it("says what is at stake: the hand-off now against the cold restart", () => {
+    expect(coldAlertBody(268_000, 10, 0.477, 2.68)).toBe("268K goes cold in 10 min: hand off now ~$0.48, or the next call costs ~$2.68");
+    expect(coldAlertBody(1_200_000, 10, null, 12)).toBe("1.2M goes cold in 10 min: the next call costs ~$12.00");
+  });
+
+  it("warns once, ahead of the expiry, about a big chat left idle", async () => {
+    const push = subscribed({ cold: RULE });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    const last = at();
+    push.onHostChatCosts([log(last)], PRICES, "mac", "Mac");
+    await Bun.sleep(40);
+    expect(fake.received).toEqual([]);
+    await Bun.sleep(120);
+    await push.settled();
+    expect(fake.received.map((received) => received.payload)).toEqual([{
+      pane_id: null, host_session: "ahp:/s1", machine_id: "mac", title: "Mac · fix the build",
+      body: "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68", tag: "herdr-chat-mac-ahp%3A%2Fs1",
+    }]);
+    // the same last call read again on the next poll: once per idle period
+    push.onHostChatCosts([log(last)], PRICES, "mac", "Mac");
+    await Bun.sleep(150);
+    await push.settled();
+    expect(fake.received).toHaveLength(1);
+  });
+
+  it("re-arms after a new call, and only the new one is told", async () => {
+    const push = subscribed({ cold: RULE });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    await Bun.sleep(60);
+    push.onHostChatCosts([log(at(), 300_000)], PRICES, "mac", "Mac");
+    await Bun.sleep(80);
+    expect(fake.received).toEqual([]);
+    await Bun.sleep(80);
+    await push.settled();
+    expect(bodies()).toEqual(["300K goes cold in 1 min: hand off now ~$0.52, or the next call costs ~$3.00"]);
+  });
+
+  it("stays quiet for a small, unpriced, busy, archived or already cold chat", async () => {
+    const push = subscribed({ cold: RULE });
+    const cases: [HostChatRow, HostChatCost, ColdPrices][] = [
+      [chatRow(), log(at(), 50_000), PRICES], // a $0.50 restart, under $1
+      [chatRow(), log(at()), { prices: null, fallback: null }],
+      [chatRow("working"), log(at()), PRICES],
+      [chatRow("asks"), log(at()), PRICES],
+      [chatRow("idle", true), log(at()), PRICES],
+      [chatRow(), log(at(500)), PRICES], // expired before the log was read
+    ];
+    for (const [row, cost, prices] of cases) {
+      push.onHostChats([row], "mac", "Mac");
+      push.onHostChatCosts([cost], prices, "mac", "Mac");
+      await Bun.sleep(150);
+      push.onHostChats([], "mac", "Mac");
+    }
+    await push.settled();
+    expect(fake.received).toEqual([]);
+  });
+
+  it("is called off by a new turn, by the chat leaving the list, and by its log leaving the answer", async () => {
+    const push = subscribed({ cold: RULE });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    push.onHostChats([chatRow("working")], "mac", "Mac");
+    push.onHostChats([chatRow("idle")], "mac", "Mac");
+    await Bun.sleep(150);
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    push.onHostChats([], "mac", "Mac");
+    await Bun.sleep(150);
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    push.onHostChatCosts([], PRICES, "mac", "Mac");
+    await Bun.sleep(150);
+    await push.settled();
+    // only the turn's own finish alert, never a cold one
+    expect(bodies().filter((body) => body.includes("cold"))).toEqual([]);
+  });
+
+  it("skips a device that turned it off, and holds while a window is in use", async () => {
+    const off = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 }, cold: RULE });
+    off.subscribe(fake.subscription, { input: true, done: "long", cold: false });
+    expect(off.wantsCold()).toBe(false);
+    off.onHostChats([chatRow()], "mac", "Mac");
+    off.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    let used = true;
+    const busyDir = mkdtempSync(join(tmpdir(), "ovis-push-"));
+    const busy = subscribed({ cold: RULE, inUse: () => used, stateDir: busyDir });
+    expect(busy.wantsCold()).toBe(true);
+    busy.onHostChats([chatRow()], "mac", "Mac");
+    busy.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    await Bun.sleep(150);
+    await Promise.all([off.settled(), busy.settled()]);
+    used = false;
+    rmSync(busyDir, { recursive: true, force: true });
+    expect(fake.received).toEqual([]);
+  });
 });

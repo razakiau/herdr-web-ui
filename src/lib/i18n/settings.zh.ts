@@ -315,4 +315,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Push to this device": "推送到此设备",
   "Off": "关闭",
   "On": "开启",
+  "A big chat about to go cold": "大型聊天的缓存即将失效",
+  "10 minutes before a Copilot chat's cache expires, when a cold restart would cost more than the server's mark ($1 by default)": "Copilot 聊天的缓存失效前 10 分钟，冷重启费用超过服务器设定的金额（默认 $1）时",
 };

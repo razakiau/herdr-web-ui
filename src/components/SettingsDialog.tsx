@@ -534,6 +534,9 @@ function AlertsPage({ onEnableNotifications, onDisableNotifications }: { onEnabl
         <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
           <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
         </SettingsRow>
+        <SettingsRow label={t("A big chat about to go cold")} description={t("10 minutes before a Copilot chat's cache expires, when a cold restart would cost more than the server's mark ($1 by default)")}>
+          <Toggle label={t("A big chat about to go cold")} checked={settings.alertCold} onChange={(alertCold) => update({ alertCold })} />
+        </SettingsRow>
       </SettingsGroup>
       <SettingsGroup title={t("On this device")} section="device">
         {/* web push alone: the in-app alerts below and the server's ntfy topic are channels of their own */}

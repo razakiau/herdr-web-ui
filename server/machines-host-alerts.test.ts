@@ -2,12 +2,12 @@ import { afterEach, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HostChatRow } from "../shared/host-chats.ts";
+import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
 import type { Machine } from "../shared/machines.ts";
 import type { ServerMessage } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
 import { MachineManager } from "./machines.ts";
-import type { PushService } from "./push.ts";
+import type { ColdPrices, PushService } from "./push.ts";
 
 /**
  * A remote PC's host chats reach the alerts (server/push.ts onHostChats): its list is read when
@@ -24,11 +24,21 @@ async function until(check: () => boolean): Promise<void> {
 
 const row = (status: HostChatRow["status"]): HostChatRow => ({ session: "ahp:/s1", title: "fix", status, modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived: false });
 
-async function fixture(agentHost: boolean) {
+const cost: HostChatCost = { session: "ahp:/s1", models: [], lastCallAt: "2026-03-10T10:00:00Z", context: 268_000, peak: 268_000, rewrites: 0, days: {}, partial: false };
+const PRICES: ColdPrices = { prices: null, fallback: null };
+
+async function fixture(agentHost: boolean, cold: { wants?: boolean; costs?: "answer" | "missing" } | null = null) {
   const root = mkdtempSync(join(tmpdir(), "herdr-host-alerts-"));
   const seen: { rows: HostChatRow[]; machine: string | undefined; name: string | undefined }[] = [];
-  const push = { seed() {}, async onStatus() {}, async onEnded() {}, onHostChats(rows: HostChatRow[], machine?: string, name?: string) { seen.push({ rows, machine, name }); } } as unknown as PushService;
-  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => { throw new Error("local offline"); }, { agentHost });
+  const costs: { chats: HostChatCost[]; prices: ColdPrices; machine: string | undefined; name: string | undefined }[] = [];
+  const push = {
+    seed() {}, async onStatus() {}, async onEnded() {},
+    onHostChats(rows: HostChatRow[], machine?: string, name?: string) { seen.push({ rows, machine, name }); },
+    wantsCold: () => cold?.wants ?? true,
+    onHostChatCosts(chats: HostChatCost[], prices: ColdPrices, machine?: string, name?: string) { costs.push({ chats, prices, machine, name }); },
+  } as unknown as PushService;
+  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => { throw new Error("local offline"); }, { agentHost, ...(cold ? { coldPrices: async () => PRICES, costsPollMs: 40 } : {}) });
+  let costReads = 0;
   let chats: HostChatRow[] = [row("working")];
   let reads = 0;
   let observer: { send(data: string): unknown } | undefined;
@@ -42,6 +52,12 @@ async function fixture(agentHost: boolean) {
         reads++;
         return Response.json({ chats });
       }
+      if (path === "/api/host-chats/costs") {
+        if (request.headers.get("authorization") !== "Bearer fixture-token") return new Response(null, { status: 401 });
+        costReads++;
+        // a bridge from before the costs answers 404
+        return cold?.costs === "missing" ? new Response(null, { status: 404 }) : Response.json({ chats: [cost], complete: true });
+      }
       return Response.json({ snapshot: { protocol: 22, version: "fixture", workspaces: [], tabs: [], layouts: [], agents: [], panes: [] } });
     },
     websocket: { open(ws) { observer = ws; }, message() {} },
@@ -54,7 +70,7 @@ async function fixture(agentHost: boolean) {
   drive.machines.set("mac", runtime);
   await drive.observe(runtime);
   await until(() => observer !== undefined);
-  return { seen, reads: () => reads, setChats: (next: HostChatRow[]) => { chats = next; }, send: (message: ServerMessage) => observer!.send(JSON.stringify(message)) };
+  return { seen, costs, costReads: () => costReads, reads: () => reads, setChats: (next: HostChatRow[]) => { chats = next; }, send: (message: ServerMessage) => observer!.send(JSON.stringify(message)) };
 }
 
 it("reads a remote PC's host chats on connect and on each list change, for the alerts", async () => {
@@ -77,4 +93,25 @@ it("reads nothing when this server shows no host chats", async () => {
   await Bun.sleep(50); // fixed wait: proving no read follows
   expect(reads()).toBe(0);
   expect(seen).toEqual([]);
+});
+
+it("polls a remote PC's chat cost logs for the cold-cache alert, with the prices (ZAC-260)", async () => {
+  const { costs } = await fixture(true, {});
+  // read on connect, then again on the poll: the last call moves with every call, unannounced
+  await until(() => costs.length >= 2);
+  expect(costs[0]).toEqual({ chats: [cost], prices: PRICES, machine: "mac", name: "Mac" });
+});
+
+it("reads no costs while nobody wants the cold-cache alert, nor without prices to weigh them", async () => {
+  const quiet = await fixture(true, { wants: false });
+  const unpriced = await fixture(true);
+  await Bun.sleep(150); // fixed wait: proving no read follows across several polls
+  expect(quiet.costReads()).toBe(0);
+  expect(unpriced.costReads()).toBe(0);
+});
+
+it("lets a bridge from before the costs be: its 404 reaches no alert", async () => {
+  const { costs, costReads } = await fixture(true, { costs: "missing" });
+  await until(() => costReads() >= 2);
+  expect(costs).toEqual([]);
 });

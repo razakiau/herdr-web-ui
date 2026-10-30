@@ -57,6 +57,9 @@ describe("ntfyFromEnv", () => {
     expect(ntfyFromEnv(base)?.alerts).toEqual({ input: true, done: "long" });
     expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_INPUT: "off", HERDR_WEB_NTFY_DONE: "always" })?.alerts).toEqual({ input: false, done: "always" });
     expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_DONE: "sometimes" })?.alerts.done).toBe("long");
+    // the cold-cache alert (ZAC-260): on unless HERDR_WEB_NTFY_COLD=off
+    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_COLD: "off" })?.alerts).toEqual({ input: true, done: "long", cold: false });
+    expect(ntfyFromEnv({ ...base, HERDR_WEB_NTFY_COLD: "on" })?.alerts.cold).toBeUndefined();
   });
 
   it("refuses a URL that is not http(s)", () => {
@@ -254,5 +257,31 @@ describe("GET /api/push says where else alerts go", () => {
     const { handlePushRequest } = await import("./push.ts");
     const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 } });
     expect((await (await handlePushRequest(new Request("http://localhost/api/push"), "/api/push", push, null))!.json()).ntfy).toBeNull();
+  });
+});
+
+describe("the cold-cache alert on ntfy (ZAC-260)", () => {
+  const RULE = { thresholdUsd: 1, lifetimeMs: 120, leadMs: 100 };
+  const PRICES = { prices: null, fallback: { "claude-opus-4.8": { input: 5, output: 25, cached: 0.5 } } };
+  const row = { session: "ahp:/s1", title: "fix the build", status: "idle" as const, modified_at: "2026-03-10T10:00:00Z", cwd: null, unread: false, archived: false };
+  const log = { session: "ahp:/s1", models: [{ model: "claude-opus-4.8", input: 900_000, cacheRead: 800_000, cacheWrite: 100_000, output: 4_000, calls: 4 }],
+    lastCallAt: new Date().toISOString(), context: 268_000, peak: 268_000, rewrites: 0, days: {}, partial: false };
+
+  it("posts a snowflake that opens the chat, unless the deployment turned it off", async () => {
+    const on = service({ HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" }, { cold: RULE });
+    on.onHostChats([row], "mac", "Mac");
+    on.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");
+    await Bun.sleep(80);
+    await on.settled();
+    expect(posted.map((each) => each.body)).toEqual([{ topic: "herdr-agents", title: "Mac · fix the build", message: "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68",
+      priority: 3, tags: ["snowflake"], click: "https://herdr.example/?machine=mac&chat=ahp%3A%2Fs1" }]);
+    posted.length = 0;
+    const off = service({ HERDR_WEB_NTFY_COLD: "off" }, { cold: RULE });
+    expect(off.wantsCold()).toBe(false);
+    off.onHostChats([row], "mac", "Mac");
+    off.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");
+    await Bun.sleep(80);
+    await off.settled();
+    expect(posted).toEqual([]);
   });
 });

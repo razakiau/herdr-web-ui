@@ -13,6 +13,8 @@
  *   HERDR_WEB_NTFY_ICON        an image URL the phone shows beside each alert        optional
  *   HERDR_WEB_NTFY_INPUT       on|off: an agent waiting on you (default on)
  *   HERDR_WEB_NTFY_DONE        off|long|always: a finished turn (default long)
+ *   HERDR_WEB_NTFY_COLD        on|off: a big Copilot chat about to go cold (ZAC-260,
+ *                              server/push.ts onHostChatCosts; default on)
  */
 import { readFileSync } from "node:fs";
 
@@ -48,20 +50,21 @@ export function ntfyFromEnv(env: Readonly<Record<string, string | undefined>>): 
   const token = (file ? readFileSync(file, "utf8") : env["HERDR_WEB_NTFY_TOKEN"] ?? "").trim();
   const click = env["HERDR_WEB_NTFY_CLICK_URL"]?.trim();
   const input = env["HERDR_WEB_NTFY_INPUT"]?.trim();
+  const cold = env["HERDR_WEB_NTFY_COLD"]?.trim();
   return {
     url: url.replace(/\/+$/, ""),
     topic,
     token: token || null,
     click: click ? click.replace(/\/+$/, "") : null,
     icon: icon ? httpUrl("HERDR_WEB_NTFY_ICON", icon) : null,
-    alerts: parseAlerts({ input: input === "off" ? false : input === "on" ? true : DEFAULT_ALERTS.input, done: env["HERDR_WEB_NTFY_DONE"]?.trim() }),
+    alerts: parseAlerts({ input: input === "off" ? false : input === "on" ? true : DEFAULT_ALERTS.input, done: env["HERDR_WEB_NTFY_DONE"]?.trim(), cold: cold !== "off" }),
   };
 }
 
 /** What one alert says, and where its tap lands. */
 export interface NtfyAlert {
   title: string;
-  status: AgentStatus | "ended" | "error";
+  status: AgentStatus | "ended" | "error" | "cold";
   body: string;
   machineId: string;
   /** a pane's alert names the pane; a host chat's names its session instead */
@@ -71,7 +74,7 @@ export interface NtfyAlert {
 }
 
 const PRIORITY: Partial<Record<string, number>> = { blocked: 4 };
-const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x" };
+const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake" };
 
 /** The app's address for the pane or the chat, as a tapped web push opens it (public/sw.js, src/lib/deepLink.ts). */
 function clickFor(base: string, alert: NtfyAlert): string {

@@ -60,8 +60,9 @@ import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTOR
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
-import { hostChatsRoute } from "./agent-host/routes.ts";
+import { hostChatsRoute, hostCosts } from "./agent-host/routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
+import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
@@ -243,6 +244,11 @@ export function createServer(
   const usageLogin = options.usageLogin ?? new UsageLoginService();
   const omniRoute = options.omniRoute ?? new OmniRouteLink(stateDir);
   const litellmPrices = options.litellmPrices ?? new LiteLlmPrices();
+  /** what the cold-cache alert prices a chat with: the same pair GET /api/costs/prices answers */
+  const coldPrices = async () => {
+    const [prices, fallback] = await Promise.all([omniRoute.pricing(), litellmPrices.read()]);
+    return { prices, fallback };
+  };
   const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {
     const [hub, gateway] = await Promise.all([cliProxy.report(refresh), omniRoute.report(refresh)]);
@@ -267,7 +273,7 @@ export function createServer(
   /** pages in use that say so over HTTP (server/page-presence.ts): a page reading host chats has no WebSocket */
   const pages = new PagePresence();
   const agentHost = options.agentHost ?? { enabled: process.env["HERDR_WEB_AGENT_HOST"] === "on", startHost: process.env["HERDR_WEB_AGENT_HOST_START"] !== "off" };
-  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
+  const core = createCore({ options: { ...options, stateDir, openCodeState, orderSequence }, devices, preferences, usage, usageLogin, pages, agentHostEnabled: agentHost.enabled, hostChatsShown: () => preferences.get().settings.hostChatsShown !== false, coldPrices, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
   const { sidecar, serialize, push, logPushError, omo, claudeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
   // started after createCore's Node probe (server/pty/sidecar.ts), which can hold the thread up to 3 s: that wait
   // would count against the read's own 2.5 s limit, and a read cut short leaves the owner unknown for 5 minutes
@@ -284,9 +290,19 @@ export function createServer(
     onChange: (event) => {
       broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null });
       // the list's statuses are what the alerts watch (server/push.ts onHostChats)
-      if (event.kind === "chats") push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
+      if (event.kind === "chats") {
+        push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
+        void readLocalCosts();
+      }
     },
   }) : null;
+  // this PC's chat cost logs for the cold-cache alert (ZAC-260), read like a remote PC's (server/machines.ts pollCosts)
+  const readLocalCosts = async (): Promise<void> => {
+    if (!agentHostConnection || !push.wantsCold()) return;
+    try { push.onHostChatCosts(hostCosts(agentHostConnection).chats, await coldPrices()); } catch { /* the next poll tries again */ }
+  };
+  const localCostsTimer = agentHostConnection ? setInterval(() => void readLocalCosts(), COSTS_POLL_MS) : null;
+  localCostsTimer?.unref();
   agentHostConnection?.start();
 
   type PortalStartup = { ok: true } | { ok: false; error: unknown };
@@ -664,6 +680,7 @@ export function createServer(
       settlePortalStartup({ ok: false, error: new Error("Server stopped before Portal startup cleanup completed") });
       core.stop(() => {
         clearInterval(draftTimer);
+        if (localCostsTimer) clearInterval(localCostsTimer);
         openCodeState.clear();
         void options.portal?.shutdown();
         registration?.close();

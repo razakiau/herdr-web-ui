@@ -714,7 +714,6 @@ function sdkOfRow(session: string, agentDirs: readonly string[], parent: string 
  * `?session=`, that chat alone and its calls. A log that fails to read answers what was read.
  */
 async function readCosts(call: Call): Promise<Response> {
-  const { index, agentDirs } = costsOf();
   const session = call.url.searchParams.get("session");
   if (session !== null) {
     if (session === "") return badRequest("missing_session", "session is required");
@@ -722,14 +721,24 @@ async function readCosts(call: Call): Promise<Response> {
     let calls: HostCostCall[] = [];
     // a fork or peer chat whose id names no parent: the host's row says whose it is
     const parent = call.host.state().state === "connected" ? rowsFrom(call.host.summaries()).find((row) => row.session === session)?.fork_of ?? null : null;
+    const { index } = costsOf();
     try { chat = index.costOf(session, parent); calls = chat === null ? [] : index.calls(session, parent); } catch { chat = null; calls = []; }
     return jsonResponse({ chat, calls });
   }
+  return jsonResponse(hostCosts(call.host));
+}
+
+/**
+ * Every chat this PC's index has read, under its host row's session id (what GET costs answers):
+ * the local PC's cold-cache alert reads it directly (server/index.ts, ZAC-260).
+ */
+export function hostCosts(host: Pick<AgentHost, "state" | "summaries">): { chats: HostChatCost[]; complete: boolean } {
+  const { index, agentDirs } = costsOf();
   let answer: { chats: HostChatCost[]; complete: boolean };
-  try { answer = index.all(); } catch { return jsonResponse({ chats: [], complete: false }); }
+  try { answer = index.all(); } catch { return { chats: [], complete: false }; }
   // the host's rows by the SDK session they run on; a host that is down has none to name
   const rowBySdk = new Map<string, string>();
-  const rows = call.host.state().state === "connected" ? rowsFrom(call.host.summaries()) : [];
+  const rows = host.state().state === "connected" ? rowsFrom(host.summaries()) : [];
   for (const row of rows) {
     const sdk = sdkOfRow(row.session, agentDirs, row.fork_of ?? null);
     // the first row wins: one log is never answered twice
@@ -740,7 +749,7 @@ async function readCosts(call: Call): Promise<Response> {
     const row = rowBySdk.get(sdk);
     return row === undefined ? chat : { ...chat, session: row };
   });
-  return jsonResponse({ chats, complete: answer.complete });
+  return { chats, complete: answer.complete };
 }
 
 async function readChanges(call: Call): Promise<Response> {

@@ -315,4 +315,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Push to this device": "このデバイスにプッシュ",
   "Off": "オフ",
   "On": "オン",
+  "A big chat about to go cold": "大きなチャットのキャッシュがまもなく失効",
+  "10 minutes before a Copilot chat's cache expires, when a cold restart would cost more than the server's mark ($1 by default)": "Copilot チャットのキャッシュが失効する 10 分前、コールド再開の費用がサーバーの設定額（既定 $1）を超えるとき",
 };

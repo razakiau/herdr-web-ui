@@ -686,6 +686,11 @@ describe("alert choices", () => {
     expect(alertPrefs(DEFAULT_SETTINGS)).toEqual({ input: true, done: "long" });
     expect(alertPrefs(sanitizeSettings({ alertInput: false, alertDone: "always" }))).toEqual({ input: false, done: "always" });
     expect(alertPrefs(sanitizeSettings({ alertInput: "no", alertDone: "sometimes" }))).toEqual({ input: true, done: "long" });
+    // the cold-cache alert (ZAC-260): on by default and then left out; sent only when turned off
+    expect(DEFAULT_SETTINGS.alertCold).toBe(true);
+    expect(SETTING_SCOPE.alertCold).toBe("device");
+    expect(alertPrefs(sanitizeSettings({ alertCold: false }))).toEqual({ input: true, done: "long", cold: false });
+    expect(sanitizeSettings({ alertCold: "no" }).alertCold).toBe(true);
   });
 });
 

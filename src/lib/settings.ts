@@ -143,6 +143,8 @@ export interface Settings {
   alertInput: boolean;
   /** alert this device when a turn finishes: never, after a long one, or every one */
   alertDone: DoneAlerts;
+  /** alert this device 10 minutes before a big Copilot chat's cache goes cold (ZAC-260, server/push.ts onHostChatCosts) */
+  alertCold: boolean;
   /** while the app is on screen, the same alerts drop in from the top edge (components/Droplet.tsx) */
   alertInApp: boolean;
   /** an open tab chimes for the same alerts (lib/alertSound.ts), heard also when a Focus silences notifications; off until chosen */
@@ -227,7 +229,7 @@ type TelemetrySourceSettings = Omit<Settings,
   | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton"
   | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion"
-  | "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">;
+  | "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin" | "alertCold">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -309,7 +311,7 @@ export const SETTING_SCOPE = {
   chatFontSize: "device", chatFontFamily: "device", uiFontSize: "device", chatWidth: "device", enterSends: "device",
   // a desk's composer button: a phone never shows it
   composerNewTabButton: "device",
-  keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
+  keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertCold: "device", alertInApp: "device", alertSound: "device",
   paletteLight: "device", paletteDark: "device", statusIndicators: "device",
   // the account's, so an app installed again (from another browser, 2026-10-22) keeps them
   voiceInput: "shared", voiceLanguage: "shared", voicePolishChat: "shared", voicePolishTerminal: "shared",
@@ -366,6 +368,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertDone: "long",
   alertInApp: true,
   alertSound: false,
+  alertCold: true,
   quickReplies: ["continue", "yes", "no", "commit and push", "retry"],
   showQuickReplies: false,
   showUsage: false,
@@ -432,7 +435,8 @@ export function quickReplyButtons(settings: Settings): string[] {
 
 /** This device's alert choices, as the server keeps them with its push subscription. */
 export function alertPrefs(settings: Settings): AlertPrefs {
-  return { input: settings.alertInput, done: settings.alertDone };
+  // `cold` only when off: an older server keeps the record as it was, and absent is on
+  return { input: settings.alertInput, done: settings.alertDone, ...(settings.alertCold ? {} : { cold: false }) };
 }
 
 /**
@@ -577,6 +581,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     alertDone: record["alertDone"] === "off" || record["alertDone"] === "long" || record["alertDone"] === "always" ? record["alertDone"] : DEFAULT_SETTINGS.alertDone,
     alertInApp: typeof record["alertInApp"] === "boolean" ? record["alertInApp"] : DEFAULT_SETTINGS.alertInApp,
     alertSound: typeof record["alertSound"] === "boolean" ? record["alertSound"] : DEFAULT_SETTINGS.alertSound,
+    alertCold: typeof record["alertCold"] === "boolean" ? record["alertCold"] : DEFAULT_SETTINGS.alertCold,
     // kept as typed (a trailing space is the next word being started), only bounded
     quickReplies: Array.isArray(record["quickReplies"])
       ? record["quickReplies"].filter((reply): reply is string => typeof reply === "string").slice(0, QUICK_REPLIES_MAX).map((reply) => reply.slice(0, QUICK_REPLY_MAX_CHARS))

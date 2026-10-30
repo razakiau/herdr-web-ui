@@ -315,4 +315,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Push to this device": "이 기기로 푸시",
   "Off": "끄기",
   "On": "켜기",
+  "A big chat about to go cold": "큰 채팅의 캐시가 곧 만료됨",
+  "10 minutes before a Copilot chat's cache expires, when a cold restart would cost more than the server's mark ($1 by default)": "Copilot 채팅의 캐시가 만료되기 10분 전, 콜드 재시작 비용이 서버에 설정된 금액(기본 $1)을 넘을 때",
 };
