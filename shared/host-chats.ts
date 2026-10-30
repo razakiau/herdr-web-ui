@@ -222,6 +222,26 @@ export interface HostSessionConfig { mode: string | null; approvals: string | nu
 export interface HostCommand { name: string; description: string; kind: "skill" | "prompt" | "agent" }
 
 /** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */
+/**
+ * Where a "Hand off & continue" job is (POST/GET /api/host-chats/chat/handoff): `/handoff` being sent,
+ * its turn awaited, the next chat being started, or how it ended (`no_resume`: the reply named no
+ * `/resume` line; `timeout`: no end within 20 min; `failed`: the host failed a step).
+ */
+export type HandoffState = "sending" | "waiting" | "starting" | "done" | "no_resume" | "timeout" | "failed";
+/** One chat's hand-off job, held in the bridge's memory until an hour after it ends. */
+export interface HandoffJob {
+  session: string;
+  state: HandoffState;
+  startedAt: number;
+  endedAt: number | null;
+  /** the `/resume <topic>` the reply named */
+  topic: string | null;
+  /** the chat started with `/resume <topic>` */
+  newSession: string | null;
+  /** a code, never a transport's message */
+  error: string | null;
+}
+
 /** One row of a Copilot session's `todos` table. */
 export interface HostTodo {
   id: string;

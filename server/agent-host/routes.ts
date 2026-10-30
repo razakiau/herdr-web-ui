@@ -59,8 +59,9 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { workOf } from "./artifacts.ts";
-import { agentsFrom, ANSWER_REF, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
+import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
+import { HANDOFF_WAIT_MS, handoffJob, handoffRunning, startHandoff } from "./handoff.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
 export interface AgentHost {
@@ -272,6 +273,7 @@ const GETS: Record<string, Handler> = {
   "changes/diff": readChangeDiff,
   "session/config": readConfig,
   "files": listFiles,
+  "chat/handoff": readHandoff,
 };
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
@@ -294,6 +296,7 @@ const POSTS: Record<string, Handler> = {
   "chat/archive": markArchived,
   "chat/delete": deleteChat,
   "chat/discard": discardChat,
+  "chat/handoff": handOff,
   "session/config": writeConfig,
 };
 
@@ -1247,16 +1250,24 @@ async function newChat(call: Call): Promise<Response> {
   const model = modelOf(call.body["model"]);
   const agent = agentOf(call.body["agent"]);
   connected(call.host);
-  // the phone's id names the session: a retry of a chat already made makes nothing
+  return jsonResponse(await createChatWith(call, id, cwd, empty ? null : messageFrom(call.host.mirror().root, words, model, agent)));
+}
+
+/**
+ * Makes the session the id names in `cwd` and sends `message` as its first turn (none: VS Code's
+ * New Chat, left empty). The phone's id names the session: a retry of a chat already made makes
+ * nothing. `sent: false` when the session exists but its message did not go.
+ */
+async function createChatWith(call: Call, id: string, cwd: string, message: Message | null): Promise<{ session: string; sent?: false }> {
   const session = `${PROVIDER}:/${id}`;
-  if (known(call.host, session)) return jsonResponse(empty ? { session } : await madeBefore(call, session));
+  if (known(call.host, session)) return message === null ? { session } : await madeBefore(call, session);
   await call.host.request("createSession", {
     channel: session, provider: PROVIDER, workingDirectories: [pathToFileURL(cwd).href], config: { isolation: "folder" },
   });
-  if (empty) {
+  if (message === null) {
     emptiesOf(call.host).add(session);
     await call.leases.sessions.take(session);
-    return jsonResponse({ session });
+    return { session };
   }
   // the session exists from here on: whatever fails next, the phone is told which one, so it opens
   // that chat (the message still in its composer) instead of retrying into a second, empty one
@@ -1264,13 +1275,13 @@ async function newChat(call: Call): Promise<Response> {
     await call.leases.sessions.take(session);
     const channel = call.host.mirror().getSession(session)?.defaultChat;
     const chat = call.host.chat(session);
-    if (!channel || !chat) return jsonResponse({ session, sent: false });
-    send(call.host, session, channel, chat, messageFrom(call.host.mirror().root, words, model, agent), id);
+    if (!channel || !chat) return { session, sent: false };
+    send(call.host, session, channel, chat, message, id);
   } catch (error) {
     console.warn(`agent-host: chat/new made ${session} but its first message did not go (${errorName(error)})`);
-    return jsonResponse({ session, sent: false });
+    return { session, sent: false };
   }
-  return jsonResponse({ session });
+  return { session };
 }
 
 /** How long a fork waits for the host's catalog to list it after createChat answers. */
@@ -1321,6 +1332,91 @@ async function madeBefore(call: Call, session: string): Promise<{ session: strin
 
 /** An error's name for a log line: never its message, which can carry a transport's URL. */
 const errorName = (error: unknown): string => error instanceof Error ? error.name : typeof error;
+
+// ─── Hand off & continue ─────────────────────────────────────────────────────
+
+/** A `/handoff` this recent as the chat's newest message refuses another: a re-tap after a lost job writes no second note. */
+const RECENT_HANDOFF_MS = 60 * 60_000;
+/** The commands that write a hand-off note: the harness plugin's skill, by either name (costs.ts counts both). */
+const HANDOFF_MESSAGE = /^\/(?:harness:)?handoff\b/;
+
+/**
+ * Hand off & continue (handoff.ts): answers at once with the job, which runs on. A job already
+ * running for the chat is that job (its own `/handoff` turn makes the chat busy). Refused: a busy
+ * chat, one without the `handoff` command, and one whose newest message is a `/handoff` sent
+ * within RECENT_HANDOFF_MS.
+ */
+async function handOff(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const running = handoffJob(call.host, session);
+  if (handoffRunning(running)) return jsonResponse({ job: running });
+  const { channel, chat: watchedChat } = await watched(call, session);
+  if (watchedChat.activeTurn !== undefined) return conflictResponse("busy", "the chat is working: hand off when it is done");
+  // the customizations first; the plugins' skills are only in the host's "/" completions (sessionSkills)
+  const listed = (commands: HostCommand[]): boolean => commands.some((each) => each.name === "handoff");
+  if (!listed(commandsFrom(call.host.mirror().getSession(ownerOf(call.host, session)))) && !listed(await sessionSkills(call.host, session))) {
+    return conflictResponse("no_handoff", "this chat has no /handoff");
+  }
+  const newest = watchedChat.turns.at(-1);
+  const at = Date.parse(newest?.startedAt ?? "");
+  if (newest && HANDOFF_MESSAGE.test(newest.message.text.trim()) && Date.now() - at < RECENT_HANDOFF_MS) {
+    return conflictResponse("recent_handoff", "a hand-off note was asked for less than an hour ago");
+  }
+  const cwd = folderOf(call.host, session);
+  if (cwd === null) return conflictResponse("no_folder", "this chat has no folder on its PC to start the next chat in");
+  // the chat's current model, effort included (as HostChatRead.model reads it); its agent stays the same
+  const latest = newest?.message;
+  const model = latest?.model ?? watchedChat.draft?.model;
+  const agent = latest?.agent;
+  const message = (words: string): Message => ({ text: words, origin: { kind: MessageKind.User }, ...(model ? { model } : {}) });
+  const turnId = randomUUID();
+  // the checks above awaited: a second tap may have started the job, or a turn begun, meanwhile.
+  // Nothing awaits from here to startHandoff, which holds the job at once
+  const again = handoffJob(call.host, session);
+  if (handoffRunning(again)) return jsonResponse({ job: again });
+  const chat = call.host.chat(session) ?? missing();
+  if (chat.activeTurn !== undefined) return conflictResponse("busy", "the chat is working: hand off when it is done");
+  const job = startHandoff(call.host, call.clock, session, {
+    send: async () => { send(call.host, session, channel, chat, { ...message("/handoff"), ...(agent ? { agent } : {}) }, turnId); },
+    ended: () => handoffEnded(call, session, turnId),
+    start: async (topic) => {
+      const made = await createChatWith(call, randomUUID(), cwd, message(`/resume ${topic}`));
+      return { session: made.session, sent: made.sent !== false };
+    },
+    archive: async () => {
+      const now = await watched(call, session);
+      archive(call.host, session, now.channel, true);
+    },
+  }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));
+  return jsonResponse({ job });
+}
+
+/**
+ * The text of turn `turnId`'s reply once it has ended, polled from the mirror as ended() does, or
+ * null at HANDOFF_WAIT_MS on the call's clock. A question it asks is not an end: it keeps waiting.
+ * The chat's lease is renewed meanwhile, so its watch (and the mirror's copy) stays.
+ */
+async function handoffEnded(call: Call, session: string, turnId: string): Promise<string | null> {
+  let late = false;
+  const timer = call.clock.setTimeout(() => { late = true; }, HANDOFF_WAIT_MS);
+  try {
+    while (!late) {
+      const chat = call.host.chat(session);
+      const done = chat?.activeTurn?.id === turnId ? undefined : chat?.turns.find((turn) => turn.id === turnId);
+      if (done) return done.responseParts.flatMap((part) => part.kind === ResponsePartKind.Markdown ? [part.content] : []).join("\n");
+      await call.leases.sessions.take(session).catch(() => undefined);
+      await Bun.sleep(50); // fixed wait: one poll step
+    }
+    return null;
+  } finally { call.clock.clearTimeout(timer); }
+}
+
+async function readHandoff(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session") ?? "";
+  if (session === "") return badRequest("missing_session", "session is required");
+  const job = handoffJob(call.host, session);
+  return job ? jsonResponse({ job }) : jsonResponse({ error: { code: "job_not_found", message: "no hand-off job for this chat on this PC" } }, 404);
+}
 
 // ─── Questions and tool calls ────────────────────────────────────────────────
 
@@ -1472,16 +1568,20 @@ async function markArchived(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const isArchived = flag(call.body["archived"], "archived");
   const { channel } = await watched(call, session);
+  archive(call.host, session, channel, isArchived);
+  return jsonResponse({ ok: true });
+}
+
+function archive(host: AgentHost, session: string, channel: string, isArchived: boolean): void {
   // a fork is archived on its own chat's channel, as VS Code's archiveChat: the host takes it there
-  if (isFork(call.host, session)) {
-    call.host.dispatch(channel, { type: ActionType.ChatIsArchivedChanged, isArchived } as StateAction);
-    return jsonResponse({ ok: true });
+  if (isFork(host, session)) {
+    host.dispatch(channel, { type: ActionType.ChatIsArchivedChanged, isArchived } as StateAction);
+    return;
   }
   // on the session, as VS Code's setSessionArchived: the host refuses chat/isArchivedChanged on a
   // session's default chat ("Only a known independently manageable non-default chat can be
   // archived"), so that marked nothing and the chat came back after a reload
-  call.host.dispatch(session, { type: ActionType.SessionIsArchivedChanged, isArchived } as StateAction);
-  return jsonResponse({ ok: true });
+  host.dispatch(session, { type: ActionType.SessionIsArchivedChanged, isArchived } as StateAction);
 }
 
 /**
