@@ -1,9 +1,8 @@
-import type { HostChatCost, HostCostModel, HostCostsAnswer, HostTokenTotal } from "../../shared/host-chats.ts";
+import type { HostChatCost, HostCostsAnswer, HostTokenTotal } from "../../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
-import { priceWithFallback } from "./chatCost.ts";
-import { cacheModel, coldRestartUsd, isBigChat, modelLastCall, writePrice } from "../../shared/cache-cost.ts";
+import { addSplit, cacheModel, coldRestartUsd, costSplit, type CostSplit, emptySplit, isBigChat, modelLastCall } from "../../shared/cache-cost.ts";
 
-export { avgOutput, cacheModel, chatModel, coldRestartUsd, handoffUsd, isBigChat, modelLastCall, nextCall, writePrice } from "../../shared/cache-cost.ts";
+export { addSplit, avgOutput, cacheModel, chatModel, coldRestartUsd, costSplit, type CostSplit, emptySplit, handoffUsd, isBigChat, modelLastCall, nextCall, writePrice } from "../../shared/cache-cost.ts";
 
 export type CacheState = "warm" | "cooling" | "cold";
 
@@ -106,42 +105,6 @@ export function switchCost(
 }
 
 /**
- * A chat's cost in dollars by what the money went on (ZAC-260): `fresh` (the prompt less what it
- * read from the cache: Copilot's `inputTokens` holds the read, not the write, checked against
- * OmniRoute's call_logs) at the input price, `reads` at the cache price (the input price when it has
- * none), `writes` (storing each call's new text: the writes less the cold restarts') and `restarts`
- * (`coldWrite`, the whole conversation stored again after the cache expired; 0 from a bridge before
- * 1069) at `writePrice`, `output` at the output price; `usd` their sum. `firstWrite` (ZAC-262) is
- * the chat's first call storing the conversation, also at `writePrice`: already inside `writes`
- * (there was no cache to lose, so not a restart), kept apart only for its chip, never added to `usd`
- * twice; 0 from a bridge before ZAC-262. A model with no price adds nothing and is named in
- * `missing`, which makes the sum a `floor`; a local model adds $0 and is named in `local`.
- */
-export interface CostSplit { usd: number; reads: number; writes: number; restarts: number; firstWrite: number; output: number; fresh: number; floor: boolean; missing: string[]; local: string[] }
-
-export const emptySplit = (): CostSplit => ({ usd: 0, reads: 0, writes: 0, restarts: 0, firstWrite: 0, output: 0, fresh: 0, floor: false, missing: [], local: [] });
-
-export function costSplit(models: readonly HostCostModel[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null): CostSplit {
-  const split = emptySplit();
-  for (const each of models) {
-    const found = priceWithFallback(each.model, prices, fallback);
-    if (!found) { split.missing.push(each.model); continue; }
-    if (found.via === "local") { if (!split.local.includes(each.model)) split.local.push(each.model); continue; }
-    const { price } = found;
-    const cold = Math.min(each.coldWrite ?? 0, each.cacheWrite);
-    split.fresh += Math.max(0, each.input - each.cacheRead) * price.input / 1e6;
-    split.reads += each.cacheRead * (price.cached ?? price.input) / 1e6;
-    split.writes += (each.cacheWrite - cold) * writePrice(each.model, price.input) / 1e6;
-    split.restarts += cold * writePrice(each.model, price.input) / 1e6;
-    split.firstWrite += Math.min(each.firstWrite ?? 0, each.cacheWrite - cold) * writePrice(each.model, price.input) / 1e6;
-    split.output += each.output * price.output / 1e6;
-  }
-  split.usd = split.fresh + split.reads + split.writes + split.restarts + split.output;
-  split.floor = split.missing.length > 0;
-  return split;
-}
-
-/**
  * The log's sums with the open chat's live totals (`turnTokenTotals`, every turn and sub-agent),
  * which run ahead of the log by the running turn's calls. Per model only what the live totals hold
  * beyond the log is added (input, cache reads, output), a model the log lacks whole; nothing is ever
@@ -170,20 +133,6 @@ const PERIOD_DAYS: Record<CostPeriod, number> = { today: 1, "7d": 7, "30d": 30 }
 export interface PcPeriod { machineId: string; split: CostSplit; chats: number; biggest: { session: string; split: CostSplit } | null }
 /** Every PC's spend in a period (the Costs sheet and its chip): the PCs costliest first, and the PCs whose bridge predates costs. */
 export interface PeriodTotals { total: CostSplit; pcs: PcPeriod[]; oldBridge: string[] }
-
-/** `part` into `into`: the sums, a floor when either is, each model named once */
-export function addSplit(into: CostSplit, part: CostSplit): void {
-  into.usd += part.usd;
-  into.reads += part.reads;
-  into.writes += part.writes;
-  into.restarts += part.restarts;
-  into.firstWrite += part.firstWrite;
-  into.output += part.output;
-  into.fresh += part.fresh;
-  into.floor ||= part.floor;
-  for (const model of part.missing) if (!into.missing.includes(model)) into.missing.push(model);
-  for (const model of part.local) if (!into.local.includes(model)) into.local.push(model);
-}
 
 /**
  * What every PC spent in a period, by the day each call was made (builder's call, ZAC-260): a

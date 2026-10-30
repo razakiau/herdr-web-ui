@@ -172,6 +172,11 @@ export interface PushService {
    * buttons (ZAC-262, a hand-off's outcome). False with no topic; never throws.
    */
   ntfy(alert: NtfyAlert): Promise<boolean>;
+  /**
+   * The weekly digest (ZAC-262, server/digest.ts): to the ntfy topic whenever there is one, and to
+   * each device that has cold alerts on (the cost alerts); its tap opens the week's page.
+   */
+  digest(week: string, title: string, body: string): Promise<void>;
 }
 
 export interface PushServiceOptions {
@@ -722,6 +727,13 @@ export function createPushService(options: PushServiceOptions): PushService {
     publicKey: () => keys().publicKey,
     ntfyTopic: () => options.ntfy ? { topic: options.ntfy.topic, alerts: options.ntfy.alerts } : null,
     ntfy: async (alert) => options.ntfy ? postNtfy(options.ntfy, alert) : false,
+    async digest(week, title, body) {
+      const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
+      await Promise.all([
+        to.length > 0 ? broadcast({ pane_id: null, digest: week, title, body, tag: `digest:${week}` }, "normal", to) : undefined,
+        options.ntfy ? postNtfy(options.ntfy, { title, status: "digest", body, machineId: "local", digest: week }) : undefined,
+      ]);
+    },
     parse: (value) => parseSubscription(value, options),
 
     subscribe(subscription, alerts, deviceId) {

@@ -37,6 +37,9 @@ export interface KeepWarmKey {
 
 export interface KeepWarmToday { day: string; pings: number; usd: number; avoided: number; avoidedUsd: number; fuseHit: boolean }
 
+/** One finished UTC day's pings and what they saved, as the plugin's `rollDay` keeps it (ZAC-262, the weekly digest). */
+export interface KeepWarmDay { day: string; pings: number; usd: number; avoided: number; avoidedUsd: number }
+
 export interface KeepWarmState {
   v: 1; at: number; enabled: boolean; windowHours: number; fusePerDay: number; idleMin: number; thresholdUsd: number;
   /** the plugin has its OmniRoute key: without it no ping can go */
@@ -44,6 +47,8 @@ export interface KeepWarmState {
   problem: string | null;
   today: KeepWarmToday;
   keys: KeepWarmKey[];
+  /** the last 14 finished UTC days, oldest first; [] from a plugin before ZAC-262 (a day missing counts as 0) */
+  history?: KeepWarmDay[];
 }
 
 /**
@@ -78,7 +83,9 @@ export function keepWarmStateFrom(raw: unknown): KeepWarmState | null {
   if (state.v !== 1 || !Array.isArray(state.keys) || !state.today || typeof state.today !== "object") return null;
   const keys = state.keys.filter((each): each is KeepWarmKey => !!each && typeof each === "object"
     && typeof each.key === "string" && num(each.lastRealAt) && num(each.until) && num(each.prompt));
-  return { ...state, keys } as KeepWarmState;
+  const history = (Array.isArray(state.history) ? state.history : []).filter((each): each is KeepWarmDay => !!each && typeof each === "object"
+    && typeof each.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(each.day) && num(each.pings) && num(each.usd) && num(each.avoided) && num(each.avoidedUsd));
+  return { ...state, keys, history } as KeepWarmState;
 }
 
 /** The settings as stored, with anything malformed dropped. */

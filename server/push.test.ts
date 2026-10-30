@@ -60,6 +60,19 @@ function subscribed(options: Partial<Parameters<typeof createPushService>[0]> = 
   return push;
 }
 
+describe("weekly digest (ZAC-262)", () => {
+  it("goes to a device with cold alerts on, its tap naming the week; none to a device without", async () => {
+    const push = subscribed({ cold: { thresholdUsd: 1, lifetimeMs: 3_600_000, leadMs: 600_000 } });
+    await push.digest("2026-10-26", "📊 $184 this week", "4 hand-offs");
+    expect(fake.received).toHaveLength(1);
+    expect(fake.received[0]!.payload).toMatchObject({ pane_id: null, digest: "2026-10-26", title: "📊 $184 this week", body: "4 hand-offs", tag: "digest:2026-10-26" });
+    const quiet = createPushService({ loopbackHttp: true, stateDir: mkdtempSync(join(tmpdir(), "ovis-push-quiet-")) });
+    quiet.subscribe(fake.subscription);
+    await quiet.digest("2026-10-26", "t", "b");
+    expect(fake.received).toHaveLength(1);
+  });
+});
+
 describe("parseSubscription", () => {
   it("accepts what a browser's PushSubscription.toJSON() produces", () => {
     const browserJson = { ...fake.subscription, expirationTime: null };

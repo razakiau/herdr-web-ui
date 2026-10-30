@@ -213,6 +213,8 @@ self.addEventListener("push", (event) => {
         data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null,
           // a host chat's alert (server/push.ts onHostChats): its tap opens the chat
           ...(payload.host_session ? { host_session: payload.host_session } : {}),
+          // the weekly digest (server/digest.ts): its tap opens the week's page
+          ...(payload.digest ? { digest: payload.digest } : {}),
           // the keep-warm window-end alert's buttons (server/keep-warm-actions.ts): a tap posts the path
           ...(Array.isArray(payload.actions) ? { actions: payload.actions.map((each) => ({ action: each.action, path: each.path })) } : {}) },
         ...(Array.isArray(payload.actions) ? { actions: payload.actions.map((each) => ({ action: each.action, title: each.title })) } : {}),
@@ -261,7 +263,9 @@ self.addEventListener("notificationclick", (event) => {
   // the workspace the pane was last seen in: an ended pane's tap opens it (src/lib/deepLink.ts)
   const workspaceId = event.notification.data?.workspace_id || null;
   const hostSession = event.notification.data?.host_session || null;
-  const selection = hostSession ? { type: "select-host-chat", machine_id: machineId, session: hostSession }
+  const digest = event.notification.data?.digest || null;
+  const selection = digest ? { type: "open-digest", week: digest }
+    : hostSession ? { type: "select-host-chat", machine_id: machineId, session: hostSession }
     : paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat", ...(workspaceId ? { workspace_id: workspaceId } : {}) } : null;
   // Remember the intent before any lookup: an older focus can finish while this one
   // is still finding its window.
@@ -272,7 +276,8 @@ self.addEventListener("notificationclick", (event) => {
       const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
         .filter((client) => isAppWindow(client.url));
       if (click !== latestNotificationClick) return;
-      const url = hostSession ? `/?machine=${encodeURIComponent(machineId)}&chat=${encodeURIComponent(hostSession)}`
+      const url = digest ? `/?digest=${encodeURIComponent(digest)}`
+        : hostSession ? `/?machine=${encodeURIComponent(machineId)}&chat=${encodeURIComponent(hostSession)}`
         : paneId ? `/?machine=${encodeURIComponent(machineId)}${workspaceId ? `&ws=${encodeURIComponent(workspaceId)}` : ""}&pane=${encodeURIComponent(paneId)}&view=chat` : "/";
       const selectLatest = (client) => { if (client && latestNotificationSelection) client.postMessage(latestNotificationSelection); };
       const open = async () => {

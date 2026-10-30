@@ -55,6 +55,13 @@ describe("wire shapes", () => {
     expect(state?.keys).toHaveLength(1);
   });
 
+  it("reads the plugin's finished days, none from a plugin before them, a malformed day dropped", () => {
+    expect(keepWarmStateFrom({ v: 1, keys: [], today: { day: "2026-10-31" } })?.history).toEqual([]);
+    expect(keepWarmStateFrom({ v: 1, keys: [], today: {}, history: "x" })?.history).toEqual([]);
+    const day = { day: "2026-10-30", pings: 12, usd: 0.4, avoided: 2, avoidedUsd: 3.1 };
+    expect(keepWarmStateFrom({ v: 1, keys: [], today: {}, history: [day, { day: "yesterday", pings: 1, usd: 0, avoided: 0, avoidedUsd: 0 }, { ...day, usd: "1" }, null] })?.history).toEqual([day]);
+  });
+
   it("clamps settings to the plugin's own limits", () => {
     expect(keepWarmSettingsFrom({ enabled: false, windowHours: 99, fusePerDay: 5000.7, disabled: ["x", "x", 4] }))
       .toEqual({ enabled: false, windowHours: 24, fusePerDay: 1000, disabled: ["x"] });

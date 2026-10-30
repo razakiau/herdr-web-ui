@@ -18,6 +18,8 @@ export interface PushPayload {
   pane_id: string | null;
   /** A host chat's session (shared/host-chats.ts), when the alert is a chat's, not a pane's: its tap opens the chat. */
   host_session?: string;
+  /** The weekly digest's week (server/digest.ts, ZAC-262): its tap opens the "This week" page on it. */
+  digest?: string;
   /** The workspace the pane was last seen in, so the tap of an ended pane opens that workspace. Absent when not known. */
   workspace_id?: string;
   title: string;

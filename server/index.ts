@@ -9,12 +9,12 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { OrderSequence } from "./order-sequence.ts";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { accessSync, constants, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { HealthAuth, PendingMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import type { HostChatCost } from "../shared/host-chats.ts";
+import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../shared/host-chats.ts";
 import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
@@ -63,7 +63,8 @@ import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTOR
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
-import { hostChatsRoute, hostCostsPolled } from "./agent-host/routes.ts";
+import { hostChatsRoute, hostCosts, hostCostsPolled } from "./agent-host/routes.ts";
+import { createDigestScheduler, type DigestPc, digestRunner, DigestStore, handleDigestRequest } from "./digest.ts";
 import { createCostsPoller } from "./costs-poller.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { COSTS_POLL_MS } from "./machines.ts";
@@ -180,6 +181,8 @@ export function createServer(
     /** herdr's config.toml, for its sidebar rows (server/herdr-sidebar.ts) and its copy_on_select (server/herdr-ui.ts); unset, where herdr itself reads it. Tests pass a temp file. */
     herdrConfigPath?: string;
     registerBridge?: boolean;
+    /** run the weekly cost digest (server/digest.ts) on Sunday 19:00 Paris: the real server only, never a test's */
+    weeklyDigest?: boolean;
     /** PLUGIN_ACTION_WAIT_MS in server/plugin-routes.ts; a test shortens it to see a run that outlasts the wait */
     pluginActionWaitMs?: number;
     /** SUBMIT_DEADLINE_MS; tests shorten it */
@@ -335,6 +338,52 @@ export function createServer(
     tell: (outcome) => push.ntfy({ ...outcome, status: "handoff" }),
     pcName: (machineId) => machines?.list().find((machine) => machine.id === machineId)?.name ?? "this PC",
   });
+
+  /**
+   * The weekly cost digest (ZAC-262, server/digest.ts): every PC's whole cost log (a full read, not
+   * the cold poll's budget), this PC's through its own index, another's over its bridge; a PC that
+   * does not answer is named "not counted". Sent to ntfy and to devices with cold alerts on.
+   */
+  const digests = new DigestStore(stateDir);
+  const remoteJson = async <T,>(endpoint: { url: string; token: string }, path: string, timeoutMs: number): Promise<T | null> => {
+    try {
+      const response = await fetch(`${endpoint.url}${path}`, { headers: { authorization: `Bearer ${endpoint.token}` }, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) { await response.body?.cancel(); return null; }
+      return await response.json() as T;
+    } catch { return null; }
+  };
+  const digestPcs = async (): Promise<DigestPc[]> => {
+    const pcs: Promise<DigestPc>[] = [];
+    if (agentHostConnection) {
+      const connected = agentHostConnection.state().state === "connected";
+      pcs.push(Promise.resolve({ machineId: "local", name: machines?.list().find((machine) => machine.id === "local")?.name ?? osHostname(),
+        costs: hostCosts(agentHostConnection), rows: connected ? rowsFrom(agentHostConnection.summaries()) : [] }));
+    }
+    for (const machine of machines?.list() ?? []) {
+      if (machine.id === "local" || !machine.enabled) continue;
+      pcs.push((async () => {
+        const endpoint = machines?.endpoint(machine.id);
+        if (!endpoint) return { machineId: machine.id, name: machine.name, costs: null, rows: [] };
+        const [costs, list] = await Promise.all([
+          remoteJson<HostCostsAnswer>(endpoint, "/api/host-chats/costs", 60_000),
+          remoteJson<{ chats: HostChatRow[] }>(endpoint, "/api/host-chats/chats", 15_000),
+        ]);
+        return { machineId: machine.id, name: machine.name, costs: costs && Array.isArray(costs.chats) ? costs : null, rows: Array.isArray(list?.chats) ? list.chats : [] };
+      })());
+    }
+    return Promise.all(pcs);
+  };
+  const digestScheduler = options.weeklyDigest ? createDigestScheduler({
+    store: digests,
+    run: digestRunner({
+      store: digests,
+      pcs: digestPcs,
+      prices: coldPrices,
+      keepWarm: async () => (await omniRoute.keepWarm(true)).state,
+      send: (week, text) => push.digest(week, text.title, text.body),
+    }),
+  }) : null;
+  void digestScheduler?.start();
 
   type PortalStartup = { ok: true } | { ok: false; error: unknown };
   let settlePortalStartup!: (result: PortalStartup) => void;
@@ -545,6 +594,7 @@ export function createServer(
       if (pathname === "/api/usage") { setRequestRoute(pathname); return handleUsageRequest(request, url, usage); }
       if (pathname === "/api/usage/omniroute") { setRequestRoute(pathname); return handleOmniRouteRequest(request, omniRoute); }
       if (pathname === "/api/usage/omniroute/keepwarm") { setRequestRoute(pathname); return handleKeepWarmRequest(request, omniRoute); }
+      if (pathname === "/api/costs/digests" || pathname === "/api/costs/digest") { setRequestRoute(pathname); return handleDigestRequest(request, url, digests)!; }
       if (pathname === "/api/usage/omniroute/pricing") { setRequestRoute(pathname); return handleOmniRoutePricing(request, omniRoute, litellmPrices); }
       if (pathname === "/api/references/state") { setRequestRoute(pathname); return handleReferenceStateRequest(request, references); }
       if (pathname === "/api/usage/login") { setRequestRoute(pathname); bunServer.timeout(request, 30); return usageLogin.handle(request, collector.trackPane); }
@@ -718,6 +768,7 @@ export function createServer(
         clearInterval(draftTimer);
         localCosts?.stop();
         handoffs.stop();
+        digestScheduler?.stop();
         openCodeState.clear();
         void options.portal?.shutdown();
         registration?.close();
@@ -742,7 +793,7 @@ if (import.meta.main) {
   const portal = new PortalService({ stateDir });
   let instance: ReturnType<typeof createServer>;
   try {
-    instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), portal, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), stateDir, siblingStateDir: siblingStateDir(stateDir) });
+    instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), portal, telemetry, registerBridge: true, weeklyDigest: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), stateDir, siblingStateDir: siblingStateDir(stateDir) });
   } catch (err) {
     const { code, syscall } = err as { code?: string; syscall?: string };
     // only the bind itself: a permission error reading a state file keeps its own message and path
