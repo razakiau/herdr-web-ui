@@ -57,6 +57,7 @@ import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
+import { handoffCommand } from "../../shared/handoff-command.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { workOf } from "./artifacts.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
@@ -1343,7 +1344,7 @@ const HANDOFF_MESSAGE = /^\/(?:harness:)?handoff\b/;
 /**
  * Hand off & continue (handoff.ts): answers at once with the job, which runs on. A job already
  * running for the chat is that job (its own `/handoff` turn makes the chat busy). Refused: a busy
- * chat, one without the `handoff` command, and one whose newest message is a `/handoff` sent
+ * chat, one without the hand-off skill (handoffCommand: `handoff` or `harness:handoff`), and one whose newest message is a `/handoff` sent
  * within RECENT_HANDOFF_MS.
  */
 async function handOff(call: Call): Promise<Response> {
@@ -1353,10 +1354,12 @@ async function handOff(call: Call): Promise<Response> {
   const { channel, chat: watchedChat } = await watched(call, session);
   if (watchedChat.activeTurn !== undefined) return conflictResponse("busy", "the chat is working: hand off when it is done");
   // the customizations first; the plugins' skills are only in the host's "/" completions (sessionSkills)
-  const listed = (commands: HostCommand[]): boolean => commands.some((each) => each.name === "handoff");
-  if (!listed(commandsFrom(call.host.mirror().getSession(ownerOf(call.host, session)))) && !listed(await sessionSkills(call.host, session))) {
-    return conflictResponse("no_handoff", "this chat has no /handoff");
-  }
+  // a plugin's skill is listed namespaced there (`harness:handoff`): handoffCommand names what to send from both
+  // lists, as the chat's own "/" commands join them. A plain `handoff` among the customizations needs no completions
+  const customized = commandsFrom(call.host.mirror().getSession(ownerOf(call.host, session)));
+  const plain = handoffCommand(customized);
+  const named = plain?.handoff === "/handoff" ? plain : handoffCommand([...customized, ...await sessionSkills(call.host, session)]);
+  if (named === null) return conflictResponse("no_handoff", "this chat has no /handoff");
   const newest = watchedChat.turns.at(-1);
   const at = Date.parse(newest?.startedAt ?? "");
   if (newest && HANDOFF_MESSAGE.test(newest.message.text.trim()) && Date.now() - at < RECENT_HANDOFF_MS) {
@@ -1377,10 +1380,10 @@ async function handOff(call: Call): Promise<Response> {
   const chat = call.host.chat(session) ?? missing();
   if (chat.activeTurn !== undefined) return conflictResponse("busy", "the chat is working: hand off when it is done");
   const job = startHandoff(call.host, call.clock, session, {
-    send: async () => { send(call.host, session, channel, chat, { ...message("/handoff"), ...(agent ? { agent } : {}) }, turnId); },
+    send: async () => { send(call.host, session, channel, chat, { ...message(named.handoff), ...(agent ? { agent } : {}) }, turnId); },
     ended: () => handoffEnded(call, session, turnId),
     start: async (topic) => {
-      const made = await createChatWith(call, randomUUID(), cwd, message(`/resume ${topic}`));
+      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`));
       return { session: made.session, sent: made.sent !== false };
     },
     archive: async () => {

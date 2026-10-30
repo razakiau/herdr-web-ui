@@ -37,6 +37,8 @@ const summary = (n: number): SessionSummary => ({
 });
 
 const HANDOFF_SKILL = { id: "handoff", type: "skill", name: "handoff", uri: "file:///tmp/fictional/skills/handoff", enabled: true, description: "FICTIONAL writes a hand-off note" };
+/** A plugin's skill, named as the host lists it: `<plugin>:<skill>`. */
+const pluginSkill = (name: string) => ({ ...HANDOFF_SKILL, id: name, name, uri: `file:///tmp/fictional/plugins/${name.replace(":", "/")}` });
 const sessionState = (n: number, skills: unknown[] = [HANDOFF_SKILL]): SessionState => ({
   provider: "copilotcli", title: `FICTIONAL_chat_${n}`, status: 1, lifecycle: "ready", activeClients: [],
   chats: [{ resource: chatUri(n), title: `FICTIONAL_chat_${n}`, status: 1, modifiedAt: AT }], defaultChat: chatUri(n),
@@ -100,8 +102,8 @@ const sent = (fake: FakeAgentHost, type: string) => fake.dispatched.filter((each
 const wrote = (fake: FakeAgentHost) => fake.dispatched.filter((each) => each.action.type !== "session/activeClientSet");
 
 /** The `/handoff` turn the job started, once it is in the mirror. */
-async function handoffTurn(r: Rig): Promise<string> {
-  await until("the /handoff turn", () => r.conn.chat(sessionUri(1))?.activeTurn?.message.text === "/handoff");
+async function handoffTurn(r: Rig, text = "/handoff"): Promise<string> {
+  await until(`the ${text} turn`, () => r.conn.chat(sessionUri(1))?.activeTurn?.message.text === text);
   return r.conn.chat(sessionUri(1))!.activeTurn!.id;
 }
 
@@ -133,6 +135,27 @@ describe("chat/handoff", () => {
     expect(answer.status).toBe(409);
     expect(answer.json.error.code).toBe("no_handoff");
     expect(wrote(r.fake)).toEqual([]);
+  });
+
+  it("refuses another plugin's handoff with 409 no_handoff", async () => {
+    const r = await rig({}, [pluginSkill("mattpocock-skills:handoff"), pluginSkill("mattpocock-skills:resume")]);
+    const answer = await start(r);
+    expect(answer.status).toBe(409);
+    expect(answer.json.error.code).toBe("no_handoff");
+    expect(wrote(r.fake)).toEqual([]);
+  });
+
+  it("hands off where the skill is listed as harness:handoff: /harness:handoff, then /harness:resume <topic>", async () => {
+    const r = await rig({}, [pluginSkill("mattpocock-skills:handoff"), pluginSkill("harness:handoff"), pluginSkill("harness:resume")]);
+    const answer = await start(r);
+    expect(answer.status).toBe(200);
+    const turnId = await handoffTurn(r, "/harness:handoff");
+    expect(sent(r.fake, "chat/turnStarted")[0]!.action).toMatchObject({ message: { text: "/harness:handoff", model: SELECTION } });
+    reply(r, turnId, "FICTIONAL note written.\nStart the next chat with: /resume zac-262");
+    for (let i = 0; i < 200 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
+    expect(await job(r)).toMatchObject({ state: "done", topic: "zac-262", error: null });
+    const resumed = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1))!;
+    expect(resumed.action).toMatchObject({ message: { text: "/harness:resume zac-262", model: SELECTION } });
   });
 
   it("recent_handoff: the newest user message is a /handoff 10 min old and no job runs", async () => {

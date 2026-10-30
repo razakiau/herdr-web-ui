@@ -1,3 +1,4 @@
+import { handoffCommand } from "../../shared/handoff-command.ts";
 import type { HostCommand } from "../../shared/host-chats.ts";
 import type { SlashCommand } from "../../shared/protocol.ts";
 
@@ -11,10 +12,10 @@ export function compactCommandText(commands: readonly SlashCommand[]): string | 
 }
 
 /**
- * The text a Hand off click sends, or null when the session does not list a `handoff` command
- * among its "/" commands (HostChatRead.commands, the handoff skill): drawn only where it can work,
- * as Compact is (ZAC-260).
+ * The text a Hand off click sends, or null when the session does not list the hand-off skill
+ * among its "/" commands (HostChatRead.commands): `/handoff`, or `/harness:handoff` where only the
+ * plugin's namespaced name is listed (handoffCommand). Drawn only where it can work, as Compact is (ZAC-260).
  */
 export function handoffCommandText(commands: readonly HostCommand[]): string | null {
-  return commands.some((command) => command.name === "handoff") ? "/handoff" : null;
+  return handoffCommand(commands)?.handoff ?? null;
 }
