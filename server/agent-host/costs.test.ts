@@ -127,6 +127,21 @@ describe("CostIndex", () => {
     expect(costs.calls(`copilotcli:/${UUID}`).map((call) => call.coldWrite)).toEqual([0, 102_061]);
   });
 
+  test("calls: each reply says how many calls it holds and how many were cold restarts (the chart's card)", () => {
+    log(UUID, [
+      userMessage("2026-10-29T08:00:00.000Z"),
+      usage("2026-10-29T08:00:01.000Z", { input: 1000, cacheWrite: 1000, output: 5 }),
+      usage("2026-10-29T08:00:02.000Z", { input: 1100, cacheRead: 1000, cacheWrite: 100, output: 5 }),
+      usage("2026-10-29T08:00:03.000Z", { input: 500, output: 5 }, { agentId: "sub-1" }),
+      // the cache expired: a write the log does not give, inferred from the next call's read
+      userMessage("2026-10-29T10:00:00.000Z"),
+      usage("2026-10-29T10:00:01.000Z", { input: 102_100, cacheRead: 0, output: 5 }),
+      usage("2026-10-29T10:00:02.000Z", { input: 103_000, cacheRead: 102_061, output: 5 }),
+    ]);
+    const calls = index().calls(`copilotcli:/${UUID}`);
+    expect(calls.map((call) => [call.main, call.calls, call.restarts])).toEqual([[true, 2, 1], [false, 1, 0], [true, 2, 1]]);
+  });
+
   test("a sub-agent's first write is never a cold restart", () => {
     log(UUID, [
       usage("2026-10-29T08:00:01.000Z", { input: 50_000, cacheRead: 0 }, { agentId: "sub-1" }),
@@ -343,9 +358,9 @@ describe("CostIndex", () => {
     ]);
     expect(index().calls(`copilotcli:/${UUID}`)).toEqual([
       // 100 logged, 100 inferred: the second call read 100, the next message's 200
-      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 200, coldWrite: 100, output: 10, main: true, context: 200, lastCacheRead: 100 },
-      { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 1, main: false, context: 70, lastCacheRead: 0 },
-      { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, coldWrite: 0, output: 7, main: true, context: 300, lastCacheRead: 200 },
+      { at: "2026-10-29T12:00:01.000Z", input: 300, cacheRead: 100, cacheWrite: 200, coldWrite: 100, output: 10, main: true, context: 200, lastCacheRead: 100, calls: 2, restarts: 1 },
+      { at: "2026-10-29T12:00:03.000Z", input: 70, cacheRead: 0, cacheWrite: 0, coldWrite: 0, output: 1, main: false, context: 70, lastCacheRead: 0, calls: 1, restarts: 0 },
+      { at: "2026-10-29T12:10:01.000Z", input: 300, cacheRead: 200, cacheWrite: 0, coldWrite: 0, output: 7, main: true, context: 300, lastCacheRead: 200, calls: 1, restarts: 0 },
     ]);
   });
 

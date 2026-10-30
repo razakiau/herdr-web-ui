@@ -92,7 +92,11 @@ export interface HostCostModel {
  * The token counts are the calls' sums; `context` and `lastCacheRead` are the last call's own prompt
  * (`inputTokens`) and cache read: the context size the message ended at, and the last call's cache hit.
  */
-export interface HostCostCall { at: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; main: boolean; context: number; lastCacheRead: number }
+export interface HostCostCall {
+  at: string; input: number; cacheRead: number; cacheWrite: number; coldWrite?: number; output: number; main: boolean; context: number; lastCacheRead: number;
+  /** how many calls these sums hold, and how many of them were cold restarts (the chart's card); absent from a bridge before bundle 1071 */
+  calls?: number; restarts?: number;
+}
 /** GET /api/host-chats/costs: what a chat's log says it spent. */
 export interface HostChatCost {
   session: string; models: HostCostModel[];

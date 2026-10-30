@@ -78,7 +78,7 @@ const CALL_ID = /"toolCallId":"([^"]+)"/;
 type Row = Record<string, unknown>;
 type Tokens = { input: number; cacheRead: number; cacheWrite: number; coldWrite: number; output: number };
 type Model = HostCostModel & Tokens;
-type Call = HostCostCall & Tokens;
+type Call = HostCostCall & Tokens & { calls: number; restarts: number };
 /** one message's calls: the main agent's and its sub-agents', apart */
 interface Message { main: Call | null; sub: Call | null }
 /** a chain's last call that is not a side call, and the sums its inferred write goes into */
@@ -221,7 +221,7 @@ function take(state: LogState, line: string): void {
   const sideCall = before !== undefined && tokens.input < SIDE_CALL * before.input && tokens.cacheRead < SIDE_CALL * before.cacheRead;
   if (inherited) {
     // the source chat's call, counted in its own log: it only tells the fork's first call what the cache held
-    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0 }, logged: tokens.cacheWrite > 0 });
+    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 }, logged: tokens.cacheWrite > 0 });
     return;
   }
   if (before && !before.logged && !sideCall) {
@@ -233,7 +233,7 @@ function take(state: LogState, line: string): void {
         sum.cacheWrite += write;
         sum.coldWrite += cold;
       }
-      if (cold > 0) sums.rewrites += 1;
+      if (cold > 0) { sums.rewrites += 1; before.call.restarts += 1; }
     }
   }
   // the cache's age, the context and a cold restart are the main agent's: a sub-agent's first call always writes
@@ -270,9 +270,12 @@ function take(state: LogState, line: string): void {
   }
   const message = sums.messages[reply]!;
   const side = main ? "main" : "sub";
-  const call = message[side] ?? (message[side] = { at: at ?? "", ...zero(), main, context: 0, lastCacheRead: 0 });
+  const call = message[side] ?? (message[side] = { at: at ?? "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 });
   if (call.at === "" && at !== null) call.at = at;
   add(call, tokens);
+  // the chart's card: "Reply 11 · … · 37 calls", and a day's "Cold restarts (2)"
+  call.calls += 1;
+  if (tokens.coldWrite > 0) call.restarts += 1;
   // the sums would read a 10-call tool loop at 200K as 2M: the last call's own prompt is the context
   call.context = tokens.input;
   call.lastCacheRead = tokens.cacheRead;
