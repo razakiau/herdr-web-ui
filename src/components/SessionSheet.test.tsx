@@ -113,24 +113,37 @@ describe("SessionSheet", () => {
     expect(words).toContain("Cooling");
     expect(words).toContain("48 min ago · 12 min left");
     expect(words).toContain("Hand off before it goes cold");
-    expect(words).toMatch(/Next call now ~\$\d/);
-    expect(words).toMatch(/Next call after expiry ~\$\d/);
+    // warm now, cold past the deadline: the last call (48 min ago) plus the 60 min lifetime, in the user's clock
+    const deadline = new Date(NOW + 12 * 60_000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    expect(words).toMatch(/Next call now ~\$0\.16 /);
+    expect(words).toContain(`If you wait past ${deadline} ~$2.15`);
+    expect(words).not.toContain("after expiry");
     expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
     // the last call's own hit, not its message's sum
     expect(words).toContain("Last call read from cache 50%");
   });
 
-  it("Cache: a chat working now is warm, never 0 min left", () => {
+  it("Cache: a chat working now is warm, never 0 min left, its expiry with no deadline yet", () => {
     const words = text(sheet({ read: read({ busy: true }), cost: { chat: chat({ lastCallAt: ago(90) }), calls: CALLS } }));
     expect(words).toContain("Warm");
     expect(words).not.toContain("0 min left");
     expect(words).not.toContain("Cold");
+    expect(words).toMatch(/Next call now ~\$0\.16 After the cache expires ~\$2\.15/);
+    expect(words).not.toContain("If you wait past");
   });
 
-  it("Cache: a cold chat says it expired", () => {
+  it("Cache: a cold chat says it expired, prices its next call cold whatever you do, and a fresh chat's", () => {
     const words = text(sheet({ cost: { chat: chat({ lastCallAt: ago(130) }), calls: CALLS } }));
     expect(words).toContain("2 h ago · expired");
     expect(words).toContain("Free moment to hand off");
+    expect(words).toContain("The next call stores 210.4K again whatever you do. If work remains, a fresh chat is cheaper from the next reply on.");
+    expect(words).not.toContain("costs nothing extra");
+    // no warm price to have: the next call stores the whole context again
+    expect(words).not.toContain("Next call now");
+    expect(words).not.toContain("If you wait past");
+    expect(words).toContain("Next call stores 210.4K again ~$2.15");
+    // 70K read warm ($0.035) and the average 2,000 output tokens ($0.05)
+    expect(words).toMatch(/In a fresh chat ~\$0\.0[89] per call/);
   });
 
   it("has no Hand off button when the session does not list /handoff", () => {

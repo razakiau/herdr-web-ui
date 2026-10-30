@@ -65,6 +65,13 @@ const agoText = (minutes: number, t: Translate): string => minutes >= 60 ? t("{n
 /** a price as an estimate ("~$0.11") or, when something is not counted, a floor rounded down like the lists print it ("≥ $149") */
 const usd = (value: number, floor: boolean): string => floor ? listUsd(value, true) : `~${formatUsd(value)}`;
 
+/**
+ * A new chat's prompt at its first call: the system prompt and the tool definitions. Measured on the
+ * owner's chats (ZAC-260, 2026-10-30): they start at ~65-75K. "In a fresh chat" prices one call at
+ * it, read warm, plus the chat's average output.
+ */
+const FRESH_CHAT_CONTEXT = 70_000;
+
 /** what the chat's sums say, the live turn folded in, for both cost tabs */
 function figures(props: SessionSheetProps, now: number) {
   const { read, cost, prices, settings } = props;
@@ -78,10 +85,12 @@ function figures(props: SessionSheetProps, now: number) {
   // `prices` null: not answered yet; an answer without tables prices nothing, so every model is missing
   const table = prices?.prices ?? {};
   const fallback = prices?.fallback ?? null;
-  const next = prices ? nextCall(context, model, calls > 0 ? output / calls : 0, table, fallback) : null;
+  const avgOutput = calls > 0 ? output / calls : 0;
+  const next = prices ? nextCall(context, model, avgOutput, table, fallback) : null;
+  const fresh = prices ? nextCall(FRESH_CHAT_CONTEXT, model, avgOutput, table, fallback)?.warm ?? null : null;
   const split = prices ? costSplit(chat.models, table, fallback) : null;
   const price = prices ? priceWithFallback(model, table, fallback)?.price ?? null : null;
-  return { chat, context, cache, advised, next, split, model, price, calls: cost.calls };
+  return { chat, context, cache, advised, next, fresh, split, model, price, calls: cost.calls };
 }
 
 export function SessionSheet(props: SessionSheetProps) {
@@ -142,13 +151,13 @@ function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionShee
 function CacheTab(props: SessionSheetProps & { session: Session }) {
   const { read, session, settings, onClose, onCompact, onHandoff } = props;
   const t = useT();
-  const { cache, advised, next, context } = session;
+  const { cache, advised, next, fresh, context } = session;
   const lastMain = [...session.calls].reverse().find((call) => call.main);
   // the last call's own hit: the message's sums mix in every call of its tool loop
   const hit = lastMain && lastMain.context > 0 ? Math.round((lastMain.lastCacheRead / lastMain.context) * 100) : null;
   const size = formatTokenCount(context);
   const ratio = next && next.warm > 0 ? Math.round(next.cold / next.warm) : null;
-  const why = advised === "handoff-cold" ? t("The next call rewrites {size} whatever you do, so a fresh chat costs nothing extra.", { size })
+  const why = advised === "handoff-cold" ? t("The next call stores {size} again whatever you do. If work remains, a fresh chat is cheaper from the next reply on.", { size })
     : advised === "handoff-cooling" && cache ? [t("{size} is re-read on every call.", { size }), ratio ? t("The cache expires in {n} min; after that the next call costs about {ratio} warm ones.", { n: cache.leftMin, ratio }) : t("The cache expires in {n} min.", { n: cache.leftMin })].join(" ")
     : t("{size} is re-read on every call.", { size });
   const when = cache === null ? null
@@ -157,6 +166,11 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   // a chat working now keeps its cache warm: its countdown has not started (cacheState gives 0 left)
   const busy = read.busy;
   const left = cache === null || cache.state === "cold" ? 0 : busy ? 100 : Math.min(100, (cache.leftMin / settings.cacheLifetimeMin) * 100);
+  const cold = cache?.state === "cold";
+  // when the cache goes: the last call plus its lifetime, on the user's clock
+  const lastAt = session.chat.lastCallAt ? Date.parse(session.chat.lastCallAt) : Number.NaN;
+  const deadline = busy || cold || !Number.isFinite(lastAt) ? null
+    : new Date(lastAt + settings.cacheLifetimeMin * 60_000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   return <>
     {advised !== "keep" && <div className="session-advice" role="note">
       <strong>{t(advised === "handoff-warm" ? "Hand off if work remains" : advised === "handoff-cooling" ? "Hand off before it goes cold" : "Free moment to hand off")}</strong>
@@ -179,8 +193,15 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
           </div>
         </div>}
         {hit !== null && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
-        {next && <div className="host-context-row"><span>{t("Next call now")}</span><span className="session-value">{usd(next.warm, false)}</span></div>}
-        {next && <div className="host-context-row"><span>{t("Next call after expiry")}</span><span className="session-value">{usd(next.cold, false)}</span></div>}
+        {/* cold: no warm price to have, the next call stores it all again; it is weighed against a fresh chat */}
+        {next && cold && <div className="host-context-row">
+          <span className="session-row-label">{t("Next call")}<small className="session-row-sub">{t("stores {size} again", { size })}</small></span>
+          <span className="session-value">{usd(next.cold, false)}</span>
+        </div>}
+        {next && cold && fresh !== null && <div className="host-context-row"><span>{t("In a fresh chat")}</span><span className="session-value">{t("{usd} per call", { usd: usd(fresh, false) })}</span></div>}
+        {/* warm or cooling: now, and past the deadline; a working chat has none yet */}
+        {next && !cold && <div className="host-context-row"><span>{t("Next call now")}</span><span className="session-value">{usd(next.warm, false)}</span></div>}
+        {next && !cold && <div className="host-context-row"><span>{deadline ? t("If you wait past {time}", { time: deadline }) : t("After the cache expires")}</span><span className="session-value">{usd(next.cold, false)}</span></div>}
       </div>
       {!next && props.prices && <p className="host-context-note">{t("No price for {models}.", { models: session.model || "?" })}</p>}
     </section>
