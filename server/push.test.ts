@@ -1115,7 +1115,7 @@ describe("archiving a chat lets it cool (ZAC-262)", () => {
     const last = Date.now() - 60_000;
     let keys = [keyFor(last)];
     const cooled: KeepWarmKey[] = [];
-    const push = subscribed({ keepWarmKeys: async () => keys, coolKeepWarm: async (key) => { cooled.push(key); } });
+    const push = subscribed({ keepWarmKeys: async () => keys, coolKeepWarm: async (key) => { cooled.push(key); return true; } });
     push.onHostChats([chatRow(false)], "mac", "Mac");
     push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
     await push.settled();
@@ -1139,7 +1139,7 @@ describe("archiving a chat lets it cool (ZAC-262)", () => {
   it("cools a chat first seen archived once its cost row arrives", async () => {
     const last = Date.now() - 60_000;
     const cooled: KeepWarmKey[] = [];
-    const push = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); } });
+    const push = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); return true; } });
     push.onHostChats([chatRow(true)], "mac", "Mac");
     await push.settled();
     expect(cooled).toEqual([]);
@@ -1148,15 +1148,69 @@ describe("archiving a chat lets it cool (ZAC-262)", () => {
     expect(cooled).toHaveLength(1);
   });
 
+  it("looks again at the next poll while the plugin's cached answer lags the chat's new call", async () => {
+    const before = Date.now() - 3_600_000;
+    const last = Date.now() - 60_000;
+    // the cached read still has the chat's previous call: no key matches the new one yet
+    let keys = [keyFor(before)];
+    const cooled: KeepWarmKey[] = [];
+    const push = subscribed({ keepWarmKeys: async () => keys, coolKeepWarm: async (key) => { cooled.push(key); return true; } });
+    push.onHostChats([chatRow(false)], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    await push.settled();
+    expect(cooled).toEqual([]);
+    keys = [keyFor(last)];
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    expect(cooled.map((key) => key.lastRealAt)).toEqual([last]);
+  });
+
+  it("looks again when the fresh read finds the plugin past the call it matched", async () => {
+    const last = Date.now() - 60_000;
+    const answers = [false, true];
+    const cooled: KeepWarmKey[] = [];
+    const push = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); return answers.shift() ?? true; } });
+    push.onHostChats([chatRow(false)], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    await push.settled();
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    await push.settled();
+    expect(cooled).toHaveLength(2);
+  });
+
+  it("logs a failed save once per real call", async () => {
+    const last = Date.now() - 60_000;
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failing = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async () => { throw new Error("Keep-warm is unavailable"); } });
+      failing.onHostChats([chatRow(false)], "mac", "Mac");
+      failing.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+      failing.onHostChats([chatRow(true)], "mac", "Mac");
+      await failing.settled();
+      failing.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+      failing.onHostChats([chatRow(true)], "mac", "Mac");
+      await failing.settled();
+      expect(errors.mock.calls.filter((call) => String(call[0]).startsWith("keep-warm cool:"))).toHaveLength(1);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("leaves alone a key not kept, a chat with no cost row, and logs a failed save", async () => {
     const last = Date.now() - 60_000;
     const cooled: KeepWarmKey[] = [];
-    const notKept = subscribed({ keepWarmKeys: async () => [keyFor(last, { kept: false })], coolKeepWarm: async (key) => { cooled.push(key); } });
+    const notKept = subscribed({ keepWarmKeys: async () => [keyFor(last, { kept: false })], coolKeepWarm: async (key) => { cooled.push(key); return true; } });
     notKept.onHostChats([chatRow(false)], "mac", "Mac");
     notKept.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
     notKept.onHostChats([chatRow(true)], "mac", "Mac");
     await notKept.settled();
-    const noCost = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); } });
+    const noCost = subscribed({ keepWarmKeys: async () => [keyFor(last)], coolKeepWarm: async (key) => { cooled.push(key); return true; } });
     noCost.onHostChats([chatRow(false)], "mac", "Mac");
     noCost.onHostChats([chatRow(true)], "mac", "Mac");
     await noCost.settled();

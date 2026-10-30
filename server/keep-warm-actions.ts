@@ -13,7 +13,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { withWindow } from "../shared/keep-warm.ts";
+import { type KeepWarmKey, keptWarm, withWindow } from "../shared/keep-warm.ts";
 import { jsonResponse } from "./http.ts";
 import type { OmniRouteLink } from "./omniroute.ts";
 import { writePrivateState } from "./private-state.ts";
@@ -101,4 +101,20 @@ export async function handleKeepWarmAct(request: Request, pathname: string, acti
   } catch {
     return reply({ error: { code: "keepwarm_unavailable", message: "Keep-warm is unavailable" } }, 502);
   }
+}
+
+/**
+ * An archived chat's "Let it cool" (ZAC-262), as the button saves it: the plugin is read again
+ * first, so a window let go since is left as it is, and the save keeps the owner's other settings.
+ * False when that read cannot vouch for the call push matched (no answer, the key gone, or a newer
+ * real call: push's cached read lagged), so push looks again at its next poll; a failed save throws.
+ */
+export async function coolArchivedChat(key: KeepWarmKey, link: Pick<OmniRouteLink, "keepWarm" | "saveKeepWarm">, now: () => number = Date.now): Promise<boolean> {
+  const answer = await link.keepWarm(true);
+  const current = answer.state?.keys.find((each) => each.key === key.key);
+  if (!answer.ok || !current || current.lastRealAt !== key.lastRealAt) return false;
+  const at = now();
+  if (!keptWarm(current, at)) return true;
+  await link.saveKeepWarm(withWindow(answer.settings, key.key, key.lastRealAt, at, "cool", at));
+  return true;
 }

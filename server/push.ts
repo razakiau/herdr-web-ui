@@ -205,8 +205,11 @@ export interface PushServiceOptions {
   keepWarmAction?: (act: KeepWarmAct) => string;
   /** how long before the window's end its alert goes; absent: KEEP_WARM_WINDOW_LEAD_MS */
   keepWarmLeadMs?: number;
-  /** saves "Let it cool" for a kept chat just archived (ZAC-262); absent: archiving changes nothing */
-  coolKeepWarm?: (key: KeepWarmKey) => Promise<void>;
+  /**
+   * saves "Let it cool" for a kept chat just archived (ZAC-262); absent: archiving changes nothing.
+   * False when the plugin, read again, has a newer real call for the key: push looks again next poll
+   */
+  coolKeepWarm?: (key: KeepWarmKey) => Promise<boolean>;
 }
 
 /** The prices a big chat is weighed with: OmniRoute's table and LiteLLM's behind it, each null when missing. */
@@ -558,9 +561,13 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   /** each listed host chat's last cost row, so an archive told by the list finds its plugin key */
   const lastCost = new Map<string, HostChatCost>();
-  /** the cost row's last call each archived chat was checked with: one look per real call, not per list */
+  /**
+   * the cost row's last call each archived chat was settled for (cooled, or its key found not kept):
+   * one look per real call, not per list. Left unset while no key matches, as the plugin's cached
+   * answer can lag the chat's log: the next costs poll looks again
+   */
   const coolChecked = new Map<string, string>();
-  /** the plugin key and real call each archived chat was cooled for: never saved twice */
+  /** the plugin key and real call each archived chat was cooled for: never saved twice, a failed save logged once */
   const cooledFor = new Map<string, string>();
   /**
    * Archiving a chat lets its cache cool (ZAC-262): nobody will come back to it soon, and the
@@ -570,16 +577,19 @@ export function createPushService(options: PushServiceOptions): PushService {
   function coolArchived(key: string): void {
     if (!options.coolKeepWarm || !options.keepWarmKeys) return;
     const chat = lastCost.get(key);
-    if (!chat?.lastCallAt || coolChecked.get(key) === chat.lastCallAt) return;
-    coolChecked.set(key, chat.lastCallAt);
+    const lastCallAt = chat?.lastCallAt;
+    if (!chat || !lastCallAt || coolChecked.get(key) === lastCallAt) return;
     const cool = options.coolKeepWarm;
     const done = (async () => {
       const kept = keepWarmKeyFor(chat, await options.keepWarmKeys!(false));
-      if (!kept || !keptWarm(kept, now())) return;
+      if (!kept) return;
+      coolChecked.set(key, lastCallAt);
+      if (!keptWarm(kept, now())) return;
       const sig = `${kept.key}:${kept.lastRealAt}`;
       if (cooledFor.get(key) === sig) return;
       cooledFor.set(key, sig);
-      await cool(kept);
+      // false: the plugin, read again, has moved past this call (a stale cached match): look again next poll
+      if (await cool(kept) === false) { coolChecked.delete(key); cooledFor.delete(key); }
     })().catch((error: unknown) => {
       console.error(`keep-warm cool: ${error instanceof Error ? error.message : String(error)}`);
     });

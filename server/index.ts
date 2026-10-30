@@ -49,8 +49,8 @@ import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
 import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
-import { type KeepWarmKey, keepWarmKeyFor, keptWarm, withWindow } from "../shared/keep-warm.ts";
-import { handleKeepWarmAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
+import { coolArchivedChat, handleKeepWarmAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -263,17 +263,7 @@ export function createServer(
   const keepWarmAlerts = {
     keepWarmKeys: async (refresh: boolean) => (await omniRoute.keepWarm(refresh)).state?.keys ?? [],
     keepWarmAction: (act: KeepWarmAct) => keepWarmActions.path(act),
-    /**
-     * an archived chat's "Let it cool" (ZAC-262), as the button saves it: read again first, so a
-     * window let go or a new real call since is left as it is, and the save keeps the owner's other settings
-     */
-    coolKeepWarm: async (key: KeepWarmKey) => {
-      const answer = await omniRoute.keepWarm(true);
-      const current = answer.state?.keys.find((each) => each.key === key.key);
-      const now = Date.now();
-      if (!answer.ok || !current || current.lastRealAt !== key.lastRealAt || !keptWarm(current, now)) return;
-      await omniRoute.saveKeepWarm(withWindow(answer.settings, key.key, key.lastRealAt, now, "cool", now));
-    },
+    coolKeepWarm: (key: KeepWarmKey) => coolArchivedChat(key, omniRoute),
   };
   const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {

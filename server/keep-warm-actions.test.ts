@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { type KeepWarmAnswer, type KeepWarmKey, type KeepWarmSettings, keepWarmSettingsFrom, withWindow } from "../shared/keep-warm.ts";
 import { requiresAuth } from "./auth.ts";
-import { handleKeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { coolArchivedChat, handleKeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 
 const H = 3_600_000;
 const FROM = Date.parse("2026-10-30T08:00:00Z");
@@ -105,5 +105,24 @@ describe("the window-end alert's buttons", () => {
     expect((await handleKeepWarmAct(new Request(`http://x${forged}`, { method: "POST" }), forged, actions, fake)).status).toBe(404);
     expect((await handleKeepWarmAct(new Request(`http://x${path}`), path, actions, fake)).status).toBe(405);
     expect([...moved.saved, ...gone.saved, ...fake.saved]).toEqual([]);
+  });
+});
+
+describe("an archived chat's cool (ZAC-262)", () => {
+  const NOW = FROM + H;
+  it("saves \"Let it cool\" for the call push matched, keeping the owner's settings", async () => {
+    const fake = link([key()], { enabled: true });
+    expect(await coolArchivedChat(key(), fake, () => NOW)).toBe(true);
+    expect(fake.saved).toEqual([{ ...withWindow({ enabled: true }, "k1", FROM, NOW, "cool", NOW) }]);
+  });
+
+  it("saves nothing for a key let go, and answers false when the plugin moved past the call or lost it", async () => {
+    const letGo = link([key({ kept: false })]);
+    expect(await coolArchivedChat(key(), letGo, () => NOW)).toBe(true);
+    const moved = link([key({ lastRealAt: FROM + H })]);
+    expect(await coolArchivedChat(key(), moved, () => NOW)).toBe(false);
+    const gone = link([]);
+    expect(await coolArchivedChat(key(), gone, () => NOW)).toBe(false);
+    expect([...letGo.saved, ...moved.saved, ...gone.saved]).toEqual([]);
   });
 });
