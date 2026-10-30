@@ -85,6 +85,11 @@ describe("HostContextMeter with costs tracked", () => {
     expect(buttonClass(meter(read(210_000, { model: { id: "desktop-coder", effort: null } }), log(120)))).not.toContain("is-advised");
   });
 
+  it("counts down for a chat waiting on the owner: its turn is open but calls nothing", () => {
+    expect(label(meter(read(210_000, { busy: true, status: "asks" }), log(50)))).toBe("210K · 10m");
+    expect(label(meter(read(210_000, { busy: true, status: "asks" }), log(70)))).toBe("210K · cold");
+  });
+
   it("never prints 0m for a chat working now", () => {
     const html = meter(read(210_000, { busy: true }), log(70));
     expect(label(html)).toBe("210K");

@@ -28,9 +28,12 @@ describe("rowCacheMark", () => {
     expect(rowCacheMark(idle, log(48, 300_000), PRICES, SETTINGS, NOW)!.fraction).toBeCloseTo(0.2, 9);
     expect(rowCacheMark(idle, log(61, 300_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "cold", fraction: 0 });
   });
-  it("is absent for a busy chat, a small one, an unpriced or local one, and without a log or prices", () => {
+  it("marks a chat waiting on the owner: it calls nothing while it asks, so its cache drains", () => {
+    expect(rowCacheMark({ status: "asks" }, log(48, 300_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "cooling", leftMin: 12 });
+    expect(rowCacheMark({ status: "asks" }, log(150, 300_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "cold", fraction: 0 });
+  });
+  it("is absent for a working chat, a small one, an unpriced or local one, and without a log or prices", () => {
     expect(rowCacheMark({ status: "working" }, log(10, 300_000), PRICES, SETTINGS, NOW)).toBeNull();
-    expect(rowCacheMark({ status: "asks" }, log(10, 300_000), PRICES, SETTINGS, NOW)).toBeNull();
     expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW)).toBeNull();
     expect(rowCacheMark(idle, log(10, 900_000, "mystery-1"), PRICES, SETTINGS, NOW)).toBeNull();
     expect(rowCacheMark(idle, log(10, 900_000, "desktop-coder"), PRICES, SETTINGS, NOW)).toBeNull();

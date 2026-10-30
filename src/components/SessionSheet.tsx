@@ -16,7 +16,7 @@ import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { avgOutput, cacheMeter, chatModel, costSplit, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
+import { avgOutput, cacheMeter, callingModel, chatModel, costSplit, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
@@ -164,7 +164,7 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
     : cache.state === "cold" ? `${agoText(cache.ageMin, t)} · ${t("expired")}`
     : `${agoText(cache.ageMin, t)} · ${t("{n} min left", { n: cache.leftMin })}`;
   // a chat working now keeps its cache warm: its countdown has not started (cacheState gives 0 left)
-  const busy = read.busy;
+  const busy = callingModel(read);
   const left = cache === null || cache.state === "cold" ? 0 : busy ? 100 : Math.min(100, (cache.leftMin / settings.cacheLifetimeMin) * 100);
   const cold = cache?.state === "cold";
   // when the cache goes: the last call plus its lifetime, on the user's clock

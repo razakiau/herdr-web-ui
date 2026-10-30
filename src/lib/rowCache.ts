@@ -86,14 +86,15 @@ export interface RowCacheMark { state: CacheState; leftMin: number; ageMin: numb
 
 /**
  * A row's cache mark (ZAC-260): only for a big chat (its cold restart costs at least the threshold;
- * an unpriced or local one never is) that is not working or asking, whose log has a last call.
+ * an unpriced or local one never is) that is not working (one asking waits on the owner: its cache drains), whose log has a last call.
  * `fraction` drains from 1 right after the last call to 0 at expiry (0 when cold).
  */
 export function rowCacheMark(
   row: Pick<HostChatRow, "status">, log: HostChatCost | undefined, prices: ChatPrices | null,
   settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number }, now: number,
 ): RowCacheMark | null {
-  if (!log || !prices || row.status === "working" || row.status === "asks") return null;
+  // only a working chat keeps its cache warm: one that asks waits on the owner and calls nothing
+  if (!log || !prices || row.status === "working") return null;
   const context = log.context ?? 0;
   const restartUsd = coldRestartUsd(context, chatModel(log), prices.prices ?? {}, prices.fallback);
   if (restartUsd === null || !isBigChat(restartUsd, settings.coldRestartAlertUsd)) return null;

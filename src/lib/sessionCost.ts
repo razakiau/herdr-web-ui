@@ -28,6 +28,16 @@ export function cacheState(lastCallAt: string | null, now: number, lifetimeMin: 
   return { state, ageMin, leftMin };
 }
 
+/**
+ * Whether the chat's model is being called right now, which is what keeps its cache warm (ZAC-260,
+ * owner's phone check): a turn running, and not waiting on the owner. A chat that asks (ask_user, a
+ * permission) has a turn open (`busy`) but calls nothing while it waits, so its cache drains like
+ * an idle one's; the owner's "Needs you" rows had waited 2–3 h, cold, and showed nothing.
+ */
+export function callingModel(read: { busy: boolean; status?: string }): boolean {
+  return read.busy && read.status !== "asks";
+}
+
 export type Advice = "keep" | "handoff-warm" | "handoff-cooling" | "handoff-cold";
 
 /**
@@ -51,14 +61,14 @@ export interface CachePrices { prices: ModelPrices | null; fallback: Record<stri
  * yet nothing is big.
  */
 export function cacheMeter(
-  read: { busy: boolean; context?: { currentTokens: number } | null; model?: { id: string } | null },
+  read: { busy: boolean; status?: string; context?: { currentTokens: number } | null; model?: { id: string } | null },
   log: HostChatCost | null | undefined,
   settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
   now: number,
   prices: CachePrices | null,
 ): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice; restartUsd: number | null } {
   const context = read.context?.currentTokens ?? log?.context ?? 0;
-  const cache = log ? cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, read.busy) : null;
+  const cache = log ? cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, callingModel(read)) : null;
   const model = read.model?.id ?? (log ? chatModel(log) : "");
   const restartUsd = prices ? coldRestartUsd(context, model, prices.prices ?? {}, prices.fallback) : null;
   return { context, cache, restartUsd, advised: cache ? advice(cache.state, isBigChat(restartUsd, settings.coldRestartAlertUsd)) : "keep" };

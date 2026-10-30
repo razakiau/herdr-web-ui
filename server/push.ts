@@ -701,8 +701,9 @@ export function createPushService(options: PushServiceOptions): PushService {
         const key = prefix + encodeURIComponent(row.session);
         listed.add(key);
         hostRows.set(key, row);
-        // working, asking or put away: its cache is kept warm, or nobody will come back to it
-        if (row.status === "working" || row.status === "asks" || row.archived) callOffCold(key);
+        // working or put away: its cache is kept warm, or nobody will come back to it. A chat that asks
+        // calls nothing while it waits on the owner: its cache drains, and its alert is the most useful
+        if (row.status === "working" || row.archived) callOffCold(key);
         const previous = hostStatus.get(key);
         hostStatus.set(key, row.status);
         if (previous === row.status) continue;
@@ -772,7 +773,7 @@ export function createPushService(options: PushServiceOptions): PushService {
         if (armed?.lastCallAt === chat.lastCallAt) continue;
         // a new call: what was armed for the last one is called off, and the chat weighed again
         callOffCold(key);
-        if (row.status === "working" || row.status === "asks" || row.archived) continue;
+        if (row.status === "working" || row.archived) continue;
         const context = chat.context ?? 0;
         const model = chatModel(chat);
         const table = prices.prices ?? {};
@@ -794,7 +795,7 @@ export function createPushService(options: PushServiceOptions): PushService {
         timer = setTimeout(() => {
           const done = (async () => {
             const current = hostRows.get(key);
-            if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working" || current.status === "asks") return;
+            if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working") return;
             const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
             const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;
             await Promise.all([

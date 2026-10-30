@@ -125,6 +125,13 @@ describe("SessionSheet", () => {
     expect(words).toContain("Last call read from cache 50%");
   });
 
+  it("Cache: a chat waiting on the owner counts down: its open turn calls nothing (owner's phone check)", () => {
+    const words = text(sheet({ read: read({ busy: true, status: "asks" }), cost: { chat: chat({ lastCallAt: ago(90) }), calls: CALLS } }));
+    expect(words).toContain("Cold");
+    expect(words).not.toContain("Working now");
+    expect(words).not.toContain("Kept warm while working");
+  });
+
   it("Cache: a chat working now is warm, never 0 min left, its expiry with no deadline yet", () => {
     const words = text(sheet({ read: read({ busy: true }), cost: { chat: chat({ lastCallAt: ago(90) }), calls: CALLS } }));
     expect(words).toContain("Warm");

@@ -928,13 +928,23 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(bodies()).toEqual(["300K goes cold in 1 min: hand off now ~$0.52, or the next call costs ~$3.00"]);
   });
 
-  it("stays quiet for a small, unpriced, busy, archived or already cold chat", async () => {
+  it("warns about a chat waiting on the owner: it calls nothing while it asks, so its cache drains", async () => {
+    const push = subscribed({ cold: RULE });
+    push.onHostChats([chatRow("working")], "mac", "Mac");
+    push.onHostChats([chatRow("asks")], "mac", "Mac");
+    push.onHostChatCosts([log(at())], PRICES, "mac", "Mac");
+    await arrived(2);
+    await push.settled();
+    // the question's own alert, then the cold one
+    expect(bodies()).toEqual(["waiting for your input", "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68"]);
+  });
+
+  it("stays quiet for a small, unpriced, working, archived or already cold chat", async () => {
     const push = subscribed({ cold: RULE });
     const cases: [HostChatRow, HostChatCost, ColdPrices][] = [
       [chatRow(), log(at(), 50_000), PRICES], // a $0.50 restart, under $1
       [chatRow(), log(at()), { prices: null, fallback: null }],
       [chatRow("working"), log(at()), PRICES],
-      [chatRow("asks"), log(at()), PRICES],
       [chatRow("idle", true), log(at()), PRICES],
       [chatRow(), log(at(500)), PRICES], // expired before the log was read
     ];

@@ -378,7 +378,9 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     expect(cacheText(sheet, "copilotcli:/cooling")).toBe("all-agents-cache is-cooling: 268K · 12m left");
     expect(cacheText(sheet, "copilotcli:/cold-old")).toBe("all-agents-cache is-cold: 312K · cold");
     expect(cacheText(sheet, "copilotcli:/cold-new")).toBe("all-agents-cache is-cold: 1.2M · cold");
-    for (const quiet of ["copilotcli:/small", "copilotcli:/busy", "copilotcli:/asks"]) expect(cacheText(sheet, quiet)).toBeNull();
+    for (const quiet of ["copilotcli:/small", "copilotcli:/busy"]) expect(cacheText(sheet, quiet)).toBeNull();
+    // waiting on the owner calls nothing: its cache drains like an idle chat's (owner's phone check)
+    expect(cacheText(sheet, "copilotcli:/asks")).toBe("all-agents-cache is-cooling: 300K · 4m left");
     expect(textOf(classed(rowOf(sheet, "copilotcli:/cooling"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 268K · 12m left$/);
     // each word with its own separator, so a narrow row drops the age whole, never "· … ·" (round 6)
     const words = classed(rowOf(sheet, "copilotcli:/cooling"), "all-agents-word").map(textOf);
@@ -401,7 +403,7 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     costsReply = { status: 200, body: BIG_ANSWER };
     const sheet = await open(true, { chats: BIG_CHATS, initialSort: "cold" });
     expect(textOf(classed(sheet.root, "all-agents-sort")[0]!)).toBe("Going cold");
-    expect(rows(sheet)).toEqual(["copilotcli:/cooling", "copilotcli:/warm", "copilotcli:/cold-new", "copilotcli:/cold-old", "copilotcli:/small", "copilotcli:/busy", "copilotcli:/asks"]);
+    expect(rows(sheet)).toEqual(["copilotcli:/asks", "copilotcli:/cooling", "copilotcli:/warm", "copilotcli:/cold-new", "copilotcli:/cold-old", "copilotcli:/small", "copilotcli:/busy"]);
     // the summary line is the same as in Recent
     expect(textOf(classed(sheet.root, "all-agents-summary-scope")[0]!)).toBe("7 chats · all folders");
   });

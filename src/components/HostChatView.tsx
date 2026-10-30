@@ -36,6 +36,7 @@ import { SessionSheet } from "./SessionSheet.tsx";
 import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
+import { callingModel } from "../lib/sessionCost.ts";
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
@@ -150,7 +151,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     });
   }, [contextOpen, trackCosts]);
   // the bridge's log of the chat (ZAC-260), for the meter's cache timer, the handoff banner and the Session sheet
-  const chatCostLog = useChatCostLog({ machineId, session, trackCosts, busy: chat?.busy ?? false, sheetOpen: contextOpen });
+  // asked again when the model stops being called: a turn's end, or the chat starting to ask the owner
+  const chatCostLog = useChatCostLog({ machineId, session, trackCosts, busy: chat ? callingModel(chat) : false, sheetOpen: contextOpen });
   // the last context breakdown the chat gave, shown while it works (the bridge reads none then)
   const lastContext = keepContext(machineId, session, chat?.session === session ? chat.context : null, Date.now());
   const cost = useMemo(() => {
