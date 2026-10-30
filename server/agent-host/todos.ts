@@ -71,21 +71,33 @@ export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | nu
 const peerCache = new Map<string, { stamp: number; sdk: string | null }>();
 
 /**
- * The SDK session of a session's other chat, `ahp-chat://<chatId>/<tail>` (a VS Code peer chat or a
- * fork; ZAC-260): `tail` is the parent session's URI in base64url (`ahp-session:/<uuid>` or
- * `copilotcli:/<uuid>`), and the parent's own store keeps its chats in `session_metadata.peerChats`, a
- * JSON array of `{uri, providerData}` whose providerData (a JSON string) names `sdkSessionId`. Live on
- * the Mac, 2026-10-30: `ahp-chat://8f678541-…/<copilotcli:/ddf9fd94-…>` → 5b970deb-…, which the
- * old lookup (the text after ":/" taken for a uuid) never found. Null for anything else.
+ * The SDK session of a session's other chat (ZAC-260): a VS Code peer chat (origin "user") or a fork
+ * (Fork Conversation, origin "fork"). Its id is `ahp-chat://<chatId>/<tail>`, `tail` the parent
+ * session's URI in base64url, or `ahp-chat:/<uuid>`, which names no parent: the caller passes it
+ * (`parent`, the host row's `fork_of`). The parent's own store keeps its chats in
+ * `session_metadata.peerChats`, a JSON array of `{uri, providerData, origin}` whose providerData (a
+ * JSON string) names `sdkSessionId`. The tail's scheme can differ from the store's (the row says
+ * `ahp-session:/ddf9fd94-…`, the store `copilotcli:/ddf9fd94-…`), so an `ahp-chat://` chat is
+ * matched by its chat id. Live on the Mac, 2026-10-30: 6 such rows, none found before (the text
+ * after ":/" was taken for a uuid). Null for anything else.
  */
-export function peerChatSdkOf(chat: string, dirs: readonly string[]): string | null {
-  const match = /^ahp-chat:\/\/([^/]+)\/([A-Za-z0-9_+/=-]+)$/.exec(chat);
-  if (!match || match[1] === "default" || match[1] === "subagent") return null;
-  let parent: string;
-  try { parent = Buffer.from(match[2]!, "base64url").toString("utf8"); } catch { return null; }
-  const at = parent.indexOf(":/");
-  const uuid = at < 0 ? "" : parent.slice(at + 2);
+export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: string | null = null): string | null {
+  const nested = /^ahp-chat:\/\/([^/]+)\/([A-Za-z0-9_+/=-]+)$/.exec(chat);
+  const flat = /^ahp-chat:\/([0-9a-f-]{36})$/i.exec(chat);
+  if (nested && (nested[1] === "default" || nested[1] === "subagent")) return null;
+  if (!nested && !flat) return null;
+  let owner = parent;
+  if (nested) {
+    try { owner = Buffer.from(nested[2]!, "base64url").toString("utf8"); } catch { return null; }
+  }
+  const at = owner === null ? -1 : owner.indexOf(":/");
+  const uuid = at < 0 ? "" : owner!.slice(at + 2);
   if (!UUID.test(uuid)) return null;
+  const same = (uri: unknown): boolean => {
+    if (typeof uri !== "string") return false;
+    if (uri === chat) return true;
+    return nested !== null && uri.startsWith(`ahp-chat://${nested[1]}/`);
+  };
   for (const dir of dirs) {
     const path = join(dir, uuid, "session.db");
     const stamp = mtime(path);
@@ -99,7 +111,7 @@ export function peerChatSdkOf(chat: string, dirs: readonly string[]): string | n
       try {
         const row = store.query("SELECT value FROM session_metadata WHERE key = 'peerChats'").get() as { value?: unknown } | null;
         const list = typeof row?.value === "string" ? JSON.parse(row.value) as unknown : null;
-        const entry = Array.isArray(list) ? list.find((each) => (each as { uri?: unknown } | null)?.uri === chat) as { providerData?: unknown } | undefined : undefined;
+        const entry = Array.isArray(list) ? list.find((each) => same((each as { uri?: unknown } | null)?.uri)) as { providerData?: unknown } | undefined : undefined;
         const data = typeof entry?.providerData === "string" ? JSON.parse(entry.providerData) as { sdkSessionId?: unknown } : entry?.providerData as { sdkSessionId?: unknown } | undefined;
         const id = data?.sdkSessionId;
         sdk = typeof id === "string" && UUID.test(id) ? id : null;

@@ -197,28 +197,73 @@ describe("CostIndex", () => {
     expect(cost?.context).toBe(4242);
   });
 
-  test("maps a peer chat (ahp-chat://<id>/<parent>) to the SDK session its parent's store names", () => {
-    // the parent runs on OTHER, its peer chat on UUID: each answers its own log
-    log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 4242 })]);
-    log(OTHER, [usage("2026-10-29T13:00:00.000Z", { input: 99 })]);
-    const agentDirs = [join(home, "agentSessionData")];
-    const peer = `ahp-chat://8f678541-9117-4969-8876-650a7d52749a/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`;
+  /** the parent's VS Code store, naming its default chat's SDK session and its other chats' */
+  function parentStore(agentDirs: readonly string[], peers: { uri: string; sdk: string; origin?: unknown }[]): void {
     mkdirSync(join(agentDirs[0]!, CHAT), { recursive: true });
     const db = new Database(join(agentDirs[0]!, CHAT, "session.db"));
     db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
     db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: OTHER })]);
     db.run("INSERT INTO session_metadata (key, value) VALUES ('peerChats', ?)", [JSON.stringify([
       { uri: "ahp-chat://another/x", isRead: true, providerData: JSON.stringify({ sdkSessionId: OTHER }) },
-      { uri: peer, isRead: true, providerData: JSON.stringify({ sdkSessionId: UUID }) },
+      ...peers.map((peer) => ({ uri: peer.uri, isRead: true, providerData: JSON.stringify({ sdkSessionId: peer.sdk, model: "m" }), origin: peer.origin ?? { kind: "user" } })),
     ])]);
     db.close();
+  }
+
+  test("maps a peer chat (ahp-chat://<id>/<parent>) to the SDK session its parent's store names", () => {
+    // the parent runs on OTHER, its peer chat on UUID: each answers its own log
+    log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 4242 })]);
+    log(OTHER, [usage("2026-10-29T13:00:00.000Z", { input: 99 })]);
+    const agentDirs = [join(home, "agentSessionData")];
+    // as live on the Mac: the host lists it under the parent's ahp-session URI, the store keeps the copilotcli one
+    const tail = (uri: string) => Buffer.from(uri).toString("base64url");
+    const peer = `ahp-chat://8f678541-9117-4969-8876-650a7d52749a/${tail(`ahp-session:/${CHAT}`)}`;
+    parentStore(agentDirs, [{ uri: `ahp-chat://8f678541-9117-4969-8876-650a7d52749a/${tail(`copilotcli:/${CHAT}`)}`, sdk: UUID }]);
     const costs = index(agentDirs);
     const cost = costs.costOf(peer);
     expect(cost?.session).toBe(peer);
     expect(cost?.context).toBe(4242);
     expect(costs.calls(peer)).toHaveLength(1);
     // a peer the parent's store does not name has no log
-    expect(costs.costOf(`ahp-chat://unknown-id/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`)).toBeNull();
+    expect(costs.costOf(`ahp-chat://unknown-id/${tail(`copilotcli:/${CHAT}`)}`)).toBeNull();
+  });
+
+  test("maps a fork listed as ahp-chat:/<uuid> through its parent (the row's fork_of)", () => {
+    const FORK = "5a8cf5df-6b4e-4d32-bcf6-afd945c9eec4";
+    log(UUID, [usage("2026-10-29T13:00:00.000Z", { input: 777 })]);
+    const agentDirs = [join(home, "agentSessionData")];
+    parentStore(agentDirs, [{ uri: `ahp-chat:/${FORK}`, sdk: UUID, origin: { kind: "fork", chat: "ahp-chat:/x", turnId: "t" } }]);
+    const costs = index(agentDirs);
+    // its id names no parent: without the row's fork_of there is nothing to read
+    expect(costs.costOf(`ahp-chat:/${FORK}`)).toBeNull();
+    expect(costs.costOf(`ahp-chat:/${FORK}`, `copilotcli:/${CHAT}`)?.context).toBe(777);
+  });
+
+  test("a fork's log counts only its own calls, not the source's it copies before its start", () => {
+    // VS Code's Fork Conversation: the fork's log opens with its own session.start, then the source's
+    // events up to the fork point verbatim (same ids, their earlier timestamps), then its own
+    const start = (at: string) => `${JSON.stringify({ type: "session.start", id: "s", timestamp: at, parentId: null, data: { sessionId: UUID, startTime: at } })}\n`;
+    const source = [
+      userMessage("2026-10-29T09:00:00.000Z"),
+      usage("2026-10-29T09:00:01.000Z", { input: 100_000, cacheWrite: 100_000, output: 50 }, { apiCallId: "src-1" }),
+      usage("2026-10-29T09:00:02.000Z", { input: 101_000, cacheRead: 100_000, output: 50 }, { apiCallId: "src-2" }),
+    ];
+    log(OTHER, source);
+    log(UUID, [start("2026-10-29T12:00:00.000Z"), ...source,
+      userMessage("2026-10-29T12:00:05.000Z"),
+      usage("2026-10-29T12:00:06.000Z", { input: 103_000, cacheRead: 101_000, output: 40 }, { apiCallId: "fork-1" }),
+    ]);
+    const costs = index();
+    const fork = costs.costOf(`copilotcli:/${UUID}`)!;
+    // one call of its own; its cache read continues the source's chain: 101K read, nothing inferred written yet
+    expect(fork.models).toEqual([{ model: "cc/claude-opus-5-5", input: 103_000, cacheRead: 101_000, cacheWrite: 0, coldWrite: 0, output: 40, calls: 1 }]);
+    expect(fork.lastCallAt).toBe("2026-10-29T12:00:06.000Z");
+    expect(fork.context).toBe(103_000);
+    expect(fork.rewrites).toBe(0);
+    expect(costs.calls(`copilotcli:/${UUID}`)).toHaveLength(1);
+    // the PC's totals: the source's two calls once, the fork's one
+    const all = costs.all().chats.reduce((sum, chat) => sum + chat.models.reduce((n, each) => n + each.calls, 0), 0);
+    expect(all).toBe(3);
   });
 
   test("refuses a session id that is not a uuid", () => {

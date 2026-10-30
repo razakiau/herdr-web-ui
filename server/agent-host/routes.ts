@@ -698,8 +698,8 @@ export function setCostIndexForTests(index: CostIndex | null, agentDirs: readonl
 }
 
 /** The SDK session a host row runs on: a CLI chat's own uuid, a VS Code chat's through its store. */
-function sdkOfRow(session: string, agentDirs: readonly string[]): string | null {
-  if (session.startsWith("ahp-chat://")) return peerChatSdkOf(session, agentDirs);
+function sdkOfRow(session: string, agentDirs: readonly string[], parent: string | null = null): string | null {
+  if (session.startsWith("ahp-chat:")) return peerChatSdkOf(session, agentDirs, parent);
   const at = session.indexOf(":/");
   if (at < 0) return null;
   const uuid = session.slice(at + 2);
@@ -720,7 +720,9 @@ async function readCosts(call: Call): Promise<Response> {
     if (session === "") return badRequest("missing_session", "session is required");
     let chat: HostChatCost | null = null;
     let calls: HostCostCall[] = [];
-    try { chat = index.costOf(session); calls = chat === null ? [] : index.calls(session); } catch { chat = null; calls = []; }
+    // a fork or peer chat whose id names no parent: the host's row says whose it is
+    const parent = call.host.state().state === "connected" ? rowsFrom(call.host.summaries()).find((row) => row.session === session)?.fork_of ?? null : null;
+    try { chat = index.costOf(session, parent); calls = chat === null ? [] : index.calls(session, parent); } catch { chat = null; calls = []; }
     return jsonResponse({ chat, calls });
   }
   let answer: { chats: HostChatCost[]; complete: boolean };
@@ -729,7 +731,7 @@ async function readCosts(call: Call): Promise<Response> {
   const rowBySdk = new Map<string, string>();
   const rows = call.host.state().state === "connected" ? rowsFrom(call.host.summaries()) : [];
   for (const row of rows) {
-    const sdk = sdkOfRow(row.session, agentDirs);
+    const sdk = sdkOfRow(row.session, agentDirs, row.fork_of ?? null);
     // the first row wins: one log is never answered twice
     if (sdk !== null && !rowBySdk.has(sdk)) rowBySdk.set(sdk, row.session);
   }

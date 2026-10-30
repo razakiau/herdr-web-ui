@@ -51,6 +51,7 @@ const CHUNK = 8 * 1024 * 1024;
  */
 const SIDE_CALL = 0.1;
 const USAGE_MARK = '"session.usage_record"';
+const START_SESSION_MARK = '"session.start"';
 const MESSAGE_MARK = '"user.message"';
 /**
  * The owner's answers in an agent-driven chat come back as these tools' results, not as user
@@ -93,6 +94,12 @@ interface LogState {
   agents: Map<string, number>;
   /** stopped on the scan's byte budget with lines left to read */
   partial: boolean;
+  /**
+   * when the session was created (its first `session.start`): a fork's log (VS Code's Fork
+   * Conversation) copies its source's events up to the fork point verbatim, with their own earlier
+   * timestamps, after it (see `inherited`)
+   */
+  startedAt: number | null;
 }
 
 const record = (value: unknown): Row => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -119,17 +126,31 @@ function addModel(models: Map<string, Model>, model: string, tokens: Tokens): Mo
 const rewrote = (write: number, cacheRead: number): boolean => write > 0.5 * (cacheRead + write);
 
 const fresh = (path: string): LogState => ({
-  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, chains: new Map(), asks: new Set(), agents: new Map(),
+  path, offset: 0, size: 0, mtime: 0, seenIds: new Set(), partial: false, startedAt: null, chains: new Map(), asks: new Set(), agents: new Map(),
   sums: { models: new Map(), days: new Map(), lastCallAt: null, context: null, peak: 0, rewrites: 0, messages: [] },
 });
 
 /** a line worth parsing: a call, a user message, an ask tool's start, or an answer to one being waited for */
 function wanted(state: LogState, line: string): boolean {
   if (line.includes(USAGE_MARK) || line.includes(MESSAGE_MARK)) return true;
+  if (state.startedAt === null && line.includes(START_SESSION_MARK)) return true;
   if (line.includes(START_MARK)) return ASK_MARKS.some((mark) => line.includes(mark));
   if (state.asks.size === 0 || !line.includes(COMPLETE_MARK)) return false;
   const id = CALL_ID.exec(line)?.[1];
   return id !== undefined && state.asks.has(id);
+}
+
+/**
+ * A fork's copy of its source's event (ZAC-260): dated before the session's own start. Live on the
+ * Mac, 2026-10-30: of 275 logs exactly the two forks hold such records (680a74b5: 429 of 762,
+ * b96e530f: 29 of 36), each with the same event id and apiCallId as in the source's log, which
+ * already counts them; peer chats share none. Counting them made each fork cost its source's
+ * history again, and the PC totals count it twice.
+ */
+function isInherited(state: LogState, entry: Row): boolean {
+  if (state.startedAt === null || typeof entry.timestamp !== "string") return false;
+  const at = Date.parse(entry.timestamp);
+  return Number.isFinite(at) && at < state.startedAt;
 }
 
 /** One complete line of the log into the sums. */
@@ -139,6 +160,16 @@ function take(state: LogState, line: string): void {
   try { entry = record(JSON.parse(line)); } catch { return; }
   const sums = state.sums;
   const main = !fromSubagent(entry);
+  if (entry.type === "session.start") {
+    if (state.startedAt === null) {
+      const data = record(entry.data);
+      const at = Date.parse(typeof data.startTime === "string" ? data.startTime : typeof entry.timestamp === "string" ? entry.timestamp : "");
+      if (Number.isFinite(at)) state.startedAt = at;
+    }
+    return;
+  }
+  const inherited = isInherited(state, entry);
+  if (inherited && entry.type !== "session.usage_record") return;
   if (entry.type === "user.message") {
     // a sub-agent's prompt is part of the message that started it
     if (main) sums.messages.push({ main: null, sub: null });
@@ -168,6 +199,11 @@ function take(state: LogState, line: string): void {
   const chain = `${main ? "" : String(entry.agentId)}\n${model}`;
   const before = state.chains.get(chain);
   const sideCall = before !== undefined && tokens.input < SIDE_CALL * before.input && tokens.cacheRead < SIDE_CALL * before.cacheRead;
+  if (inherited) {
+    // the source chat's call, counted in its own log: it only tells the fork's first call what the cache held
+    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0 }, logged: tokens.cacheWrite > 0 });
+    return;
+  }
   if (before && !before.logged && !sideCall) {
     const write = Math.max(0, tokens.cacheRead - before.cacheRead);
     if (write > 0) {
@@ -279,10 +315,10 @@ export class CostIndex {
   ) {}
 
   /** The SDK session a chat id names: a CLI chat's own folder, a VS Code chat's through its store. */
-  private sdkOf(session: string): string | null {
-    // a session's other chat (`ahp-chat://<id>/<parent>`): its SDK session is in the parent's store
-    if (session.startsWith("ahp-chat://")) {
-      const peer = peerChatSdkOf(session, this.agentDirs);
+  private sdkOf(session: string, parent: string | null = null): string | null {
+    // a session's other chat (a peer chat or a fork): its SDK session is in the parent's store
+    if (session.startsWith("ahp-chat:")) {
+      const peer = peerChatSdkOf(session, this.agentDirs, parent);
       return peer !== null && (this.logs.has(peer) || this.pathOf(peer) !== null) ? peer : null;
     }
     const at = session.indexOf(":/");
@@ -312,8 +348,9 @@ export class CostIndex {
     return state;
   }
 
-  costOf(session: string): HostChatCost | null {
-    const uuid = this.sdkOf(session);
+  /** `parent`: the session a chat id without one (`ahp-chat:/<uuid>`) belongs to, the host row's `fork_of` */
+  costOf(session: string, parent: string | null = null): HostChatCost | null {
+    const uuid = this.sdkOf(session, parent);
     const state = uuid === null ? null : this.read(uuid, this.bytesPerRequest);
     return state === null ? null : answer(session, state);
   }
@@ -322,8 +359,8 @@ export class CostIndex {
    * Per message, the main agent's calls and its sub-agents', in the log's order: as far as `costOf`
    * read (the route asks both, the chart matching the sums), a log not opened yet up to the budget.
    */
-  calls(session: string): HostCostCall[] {
-    const uuid = this.sdkOf(session);
+  calls(session: string, parent: string | null = null): HostCostCall[] {
+    const uuid = this.sdkOf(session, parent);
     const state = uuid === null ? null : this.logs.get(uuid) ?? this.read(uuid, this.bytesPerRequest);
     if (state === null) return [];
     return state.sums.messages.flatMap((message) => [message.main, message.sub].filter((call) => call !== null).map((call) => ({ ...call })));
