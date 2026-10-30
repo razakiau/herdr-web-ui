@@ -1,8 +1,10 @@
 /**
  * The handoff nudge over a host chat's composer (ZAC-260, owner's "tinted pill + nudge banner"):
  * one line in the cache's tint while the advice is to hand off, "Cache cold · free moment to hand
- * off", with Hand off (when the session has a handoff command and is idle) and ✕. ✕ hides it for
- * that chat until the cache's state changes; kept in memory only, so a reload shows it again.
+ * off", with Hand off & continue (when the session has a handoff command and is idle) and ✕. ✕ hides
+ * it for that chat until the cache's state changes; kept in memory only, so a reload shows it again.
+ * It also says why a hand-off did not go (ZAC-262: busy, an old bridge, no /resume line…), whatever
+ * the advice: the tap was the user's, so the answer shows even where the advice would not.
  */
 import { useState } from "react";
 import { X } from "lucide-react";
@@ -40,27 +42,41 @@ export interface HandoffBannerProps {
   prices: CachePrices | null;
   /** the minute clock, given by a test */
   now?: number;
-  /** sends /handoff; absent while the chat works or when the session lists no handoff command */
+  /** starts Hand off & continue; absent while the chat works or when the session lists no handoff command */
   onHandoff?: (() => void) | undefined;
+  /** the hand-off job runs: the button says so and waits */
+  handingOff?: boolean;
+  /** why the last hand-off did not open a new chat (handOffAndContinue's line) */
+  note?: string | null;
+  onCloseNote?: () => void;
 }
 
-export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff }: HandoffBannerProps) {
+export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, note = null, onCloseNote }: HandoffBannerProps) {
   const t = useT();
   const locale = useLocale();
   const clock = useMinuteClock();
   const [, setHidden] = useState(0);
-  if (read === null || !settings.trackCosts || !log) return null;
+  const noteOnly = note === null ? null : <div className="checkpoint-bar handoff-bar handoff-note" role="status">
+    <span className="checkpoint-bar-text">{note}</span>
+    <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={onCloseNote}>
+      <X aria-hidden="true" />
+    </button>
+  </div>;
+  if (read === null || !settings.trackCosts || !log) return noteOnly;
   const { cache, advised } = cacheMeter(read, log, settings, now ?? clock, prices);
-  if (cache === null || advised === "keep" || isDismissed(dismissKey, cache.state)) return null;
+  if (cache === null || advised === "keep" || isDismissed(dismissKey, cache.state)) return noteOnly;
   const { state } = cache;
   const headline = t(state === "warm" ? "Hand off if work remains" : state === "cooling" ? "Hand off before it goes cold" : "Free moment to hand off");
   // the advice card's headline, run on after the state as the owner's mock has it
   const rest = headline.charAt(0).toLocaleLowerCase(locale) + headline.slice(1);
   return <div className={`checkpoint-bar handoff-bar is-${state}`} role="status">
     <span className="checkpoint-bar-text"><strong>{t(state === "warm" ? "Cache warm" : state === "cooling" ? "Cache cooling" : "Cache cold")}</strong> · {rest}</span>
-    {onHandoff && <button type="button" className="btn btn-ghost checkpoint-bar-redo" onClick={onHandoff}>{t("Hand off")}</button>}
+    {note !== null && <span className="checkpoint-bar-error" role="alert">{note}</span>}
+    {(onHandoff || handingOff) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={onHandoff}>
+      {t(handingOff ? "Handing off…" : "Hand off & continue")}
+    </button>}
     <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")}
-      onClick={() => { dismissHandoff(dismissKey, state); setHidden((n) => n + 1); }}>
+      onClick={() => { dismissHandoff(dismissKey, state); onCloseNote?.(); setHidden((n) => n + 1); }}>
       <X aria-hidden="true" />
     </button>
   </div>;

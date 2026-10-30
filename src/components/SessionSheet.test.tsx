@@ -122,7 +122,7 @@ describe("SessionSheet", () => {
     expect(words).not.toContain("after expiry");
     // three warm calls (shared/cache-cost.ts handoffUsd): what the cold alert quotes too
     expect(words).toMatch(/Hand off now ~\$0\.47 /);
-    expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
+    expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off &amp; continue</);
     // the last call's own hit, not its message's sum
     expect(words).toContain("Last call read from cache 50%");
   });
@@ -157,11 +157,17 @@ describe("SessionSheet", () => {
     expect(words).toMatch(/In a fresh chat ~\$0\.0[89] per call/);
   });
 
+  it("says Handing off… on a disabled button while the job runs", () => {
+    const html = sheet({ handingOff: true });
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Handing off…</);
+    expect(html).not.toMatch(/>Hand off &amp; continue</);
+  });
+
   it("has no Hand off button when the session does not list /handoff", () => {
     expect(handoffCommandText([{ name: "handoff", description: "", kind: "skill" }])).toBe("/handoff");
     expect(handoffCommandText([{ name: "review", description: "", kind: "skill" }])).toBeNull();
     const html = sheet({ onHandoff: undefined });
-    expect(html).not.toMatch(/>Hand off</);
+    expect(html).not.toMatch(/>Hand off( &amp; continue)?</);
   });
 
   it("Cost: the total card, its rows in plain words, and pills for what happened", () => {
@@ -292,7 +298,7 @@ describe("SessionSheet", () => {
     expect(pressed(html)).toBe("Cache");
     expect(text(html)).toContain("Hand off if work remains");
     expect(text(html)).toContain("155.0K is re-read on every call.");
-    expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off</);
+    expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off &amp; continue</);
   });
 
   it("Cost: a floor's cents are rounded down", () => {

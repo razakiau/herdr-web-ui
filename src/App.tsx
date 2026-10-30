@@ -829,6 +829,7 @@ export function App() {
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
                     <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle}
                       onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session }, "tab", openHostRow?.cwd ?? hostMadeIn)}
+                      machineName={machine?.name ?? machineId}
                       // a look: Keep open makes it a tab, and so does a message sent in it
                       look={hostLook ? () => keepHostTabRef.current(selectedHostChat, hostMadeIn) : undefined}
                       onOpenFile={(path) => openFile({ path, paneId: null, machineId: selectedHostChat.machineId })} />

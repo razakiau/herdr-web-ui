@@ -24,7 +24,7 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource, keepContext } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
+  agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, handOffAndContinue, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
 } from "../lib/hostChats.ts";
 import { settingsTone, type HostSendPick } from "../lib/compose.ts";
@@ -56,8 +56,10 @@ export interface HostChatViewProps {
   machineId: string; session: string;
   /** the chat's title as its reads give it: the header's, before the PC's list has the chat */
   onTitle?(title: string): void;
-  /** opens another chat of this PC: a fork just made */
+  /** opens another chat of this PC: a fork just made, or the chat a hand-off continued in */
   onOpenChat?(session: string): void;
+  /** the PC's name as the app shows it, for "Update the bridge on <PC>" */
+  machineName?: string;
   /** set while the chat is a look (opened from Agents, All agents or an alert, not a tab): keeps it open as a tab */
   look?(): void;
   /** opens a file of this PC in herdr's viewer: an edit's file, a session's file artifact */
@@ -116,7 +118,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
 /** a price request that answered with neither table */
 const NO_PRICES: ChatPrices = { prices: null, fallback: null };
 
-export function HostChatView({ machineId, session, onTitle, onOpenChat, look, onOpenFile }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle, onOpenChat, machineName, look, onOpenFile }: HostChatViewProps) {
   const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
@@ -189,6 +191,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
     return () => clearTimeout(timer);
   }, [askedAt, stallTick]);
   const [putBack, setPutBack] = useState<string | null>(null);
+  // Hand off & continue's job runs, and why the last one opened no new chat
+  const [handingOff, setHandingOff] = useState(false);
+  const [handoffNote, setHandoffNote] = useState<string | null>(null);
   const mounted = useRef(true);
   // the transcript's handle: the "N running" sheet takes the reader to a subagent's row
   const revealSubagent = useRef<((target: SubagentTarget) => boolean) | null>(null);
@@ -354,8 +359,16 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
   };
   const costSettings = { trackCosts, coldRestartAlertUsd, cacheLifetimeMin };
   const sheetPrices = prices ?? (pricesAnswered ? NO_PRICES : null);
-  // VS Code's /handoff, from the Session sheet and the banner: only while idle, and only when the session lists the command
-  const onHandoff = chat && !chat.busy && handoffCommandText(chat.commands) ? () => { void sendAs("send", "/handoff"); } : undefined;
+  // Hand off & continue (ZAC-262), from the Session sheet and the banner: only while idle, and only when the session lists the command.
+  // The bridge's job sends /handoff, starts the next chat with its /resume line and archives this one; the new chat opens here
+  const onHandoff = chat && !chat.busy && !handingOff && handoffCommandText(chat.commands) ? () => {
+    setHandingOff(true); setHandoffNote(null);
+    // a chat left mid-job stops following it: its PC's bridge goes on, and the chat list shows the new chat
+    const poll = async (ms: number): Promise<void> => { await new Promise((done) => setTimeout(done, ms)); if (!mounted.current) throw new Error("left"); };
+    void handOffAndContinue(machineId, session, { pc: machineName ?? machineId, t, poll, onState: () => {}, onOpen: (next) => { if (mounted.current) onOpenChat?.(next); } })
+      .then((note) => { if (mounted.current) setHandoffNote(note); }, () => undefined)
+      .finally(() => { if (mounted.current) { setHandingOff(false); reread(); } });
+  } : undefined;
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
   const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
   const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
@@ -423,7 +436,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
-    <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff} />
+    <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}
+      handingOff={handingOff} note={handoffNote} onCloseNote={() => setHandoffNote(null)} />
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
@@ -433,7 +447,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, look, on
         sheet={trackCosts && cacheRead ? <SessionSheet read={cacheRead} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}
           settings={costSettings} onClose={() => setContextOpen(false)}
           onCompact={!cacheRead.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-          onHandoff={onHandoff} /> : undefined} />}
+          onHandoff={onHandoff} handingOff={handingOff} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}

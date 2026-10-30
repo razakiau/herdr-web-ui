@@ -120,12 +120,12 @@ describe("HostContextMeter with costs tracked", () => {
 describe("HandoffBanner", () => {
   // advice by the cache's age: 4 min warm, 48 min cooling, 120 min cold; 210K is over the threshold
   const AGE = { "handoff-warm": 4, "handoff-cooling": 48, "handoff-cold": 120, keep: 120 } as const;
-  const banner = (key: string, advised: keyof typeof AGE, onHandoff?: () => void): string =>
-    render(createElement(HandoffBanner, { dismissKey: key, read: read(advised === "keep" ? 40_000 : 210_000), log: log(AGE[advised]), settings: SETTINGS, prices: PRICES, now: NOW, onHandoff }));
+  const banner = (key: string, advised: keyof typeof AGE, onHandoff?: () => void, over: { handingOff?: boolean; note?: string | null } = {}): string =>
+    render(createElement(HandoffBanner, { dismissKey: key, read: read(advised === "keep" ? 40_000 : 210_000), log: log(AGE[advised]), settings: SETTINGS, prices: PRICES, now: NOW, onHandoff, ...over }));
 
-  it("says the cache is cold and offers Hand off", () => {
+  it("says the cache is cold and offers Hand off & continue", () => {
     const html = banner("pc\nchat-a", "handoff-cold", () => {});
-    expect(text(html)).toBe("Cache cold · free moment to hand off Hand off");
+    expect(text(html)).toBe("Cache cold · free moment to hand off Hand off &amp; continue");
     expect(html).toContain("is-cold");
     expect(html).toContain('aria-label="Dismiss"');
   });
@@ -147,6 +147,20 @@ describe("HandoffBanner", () => {
   it("has no Hand off button without a handoff command, but still shows", () => {
     const html = banner("pc\nchat-d", "handoff-cold");
     expect(text(html)).toBe("Cache cold · free moment to hand off");
+  });
+
+  it("says Handing off… on a disabled button while the job runs", () => {
+    const html = banner("pc\nchat-h", "handoff-cold", () => {}, { handingOff: true });
+    expect(text(html)).toBe("Cache cold · free moment to hand off Handing off…");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Handing off…</);
+  });
+
+  it("says why a hand-off did not go, even when the advice is to keep going or it was dismissed", () => {
+    const words = "Update the bridge on Desk to hand off from here";
+    expect(text(banner("pc\nchat-i", "handoff-cold", () => {}, { note: words }))).toContain(words);
+    expect(text(banner("pc\nchat-i", "keep", () => {}, { note: words }))).toBe(words);
+    dismissHandoff("pc\nchat-j", "cold");
+    expect(text(banner("pc\nchat-j", "handoff-cold", () => {}, { note: "It's working: try again when it's done" }))).toBe("It&#x27;s working: try again when it&#x27;s done");
   });
 
   it("stays hidden after ✕ until the cache's state changes", () => {

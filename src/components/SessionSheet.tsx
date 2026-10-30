@@ -49,8 +49,10 @@ export interface SessionSheetProps {
   onClose(): void;
   /** sends /compact; absent while the chat works */
   onCompact?: (() => void) | undefined;
-  /** sends /handoff; absent while the chat works or when the session lists no handoff command */
+  /** starts Hand off & continue; absent while the chat works or when the session lists no handoff command */
   onHandoff?: (() => void) | undefined;
+  /** the hand-off job runs: the button says so and waits */
+  handingOff?: boolean;
 }
 
 const storedTab = (): Tab | null => {
@@ -209,7 +211,7 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
 }
 
 function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: KeepWarmKey; kept: boolean } | null; keepWarm: KeepWarmAnswer | null; now: number }) {
-  const { read, session, settings, onClose, onCompact, onHandoff, keep, keepWarm, now } = props;
+  const { read, session, settings, onClose, onCompact, onHandoff, handingOff, keep, keepWarm, now } = props;
   const kept = keep?.kept === true;
   const t = useT();
   const { cache, advised, switched, next, fresh, handoff, context } = session;
@@ -275,8 +277,9 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
       </div>
       {!next && props.prices && <p className="host-context-note">{t("No price for {models}.", { models: session.model || "?" })}</p>}
     </section>
-    {(onHandoff || onCompact) && <div className="session-sheet-actions">
-      {onHandoff && <button type="button" className={`btn${advised !== "keep" ? " btn-primary" : ""}`} onClick={() => { onHandoff(); onClose(); }}>{t("Hand off")}</button>}
+    {(onHandoff || handingOff || onCompact) && <div className="session-sheet-actions">
+      {handingOff ? <button type="button" className="btn" disabled>{t("Handing off…")}</button>
+        : onHandoff && <button type="button" className={`btn${advised !== "keep" ? " btn-primary" : ""}`} onClick={() => { onHandoff(); onClose(); }}>{t("Hand off & continue")}</button>}
       {onCompact && <button type="button" className="btn" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
     </div>}
   </>;
