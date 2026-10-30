@@ -75,8 +75,12 @@ export class KeepWarmActions {
     return (this.secret = secret);
   }
 
-  private sign(payload: string): string {
-    return createHmac("sha256", this.key()).update(`keepwarm-act:${payload}`).digest("base64url");
+  /**
+   * A hand-off starts model calls on a PC, so it is signed in a domain of its own: a window
+   * button's signature never vouches for a hand-off's payload, nor the other way (ZAC-262).
+   */
+  private sign(payload: string, domain: "keepwarm-act" | "keepwarm-handoff"): string {
+    return createHmac("sha256", this.key()).update(`${domain}:${payload}`).digest("base64url");
   }
 
   /** The button's path, `/api/keepwarm/act/...`: prefix it with the app's public address for ntfy. */
@@ -85,7 +89,7 @@ export class KeepWarmActions {
       ? ["h", act.machineId, act.session, Array.from(act.title).slice(0, HANDOFF_TITLE_CHARS).join(""), act.expires]
       : [act.key, act.from, act.announced, act.how];
     const payload = Buffer.from(JSON.stringify(fields)).toString("base64url");
-    return `/api/keepwarm/act/${payload}.${this.sign(payload)}`;
+    return `/api/keepwarm/act/${payload}.${this.sign(payload, act.how === "handoff" ? "keepwarm-handoff" : "keepwarm-act")}`;
   }
 
   /** The act a path stands for, or null: not one of ours, altered, or past its grace. */
@@ -93,12 +97,15 @@ export class KeepWarmActions {
     const match = KEEP_WARM_ACT_ROUTE.exec(pathname);
     if (!match) return null;
     const [, payload, signature] = match as unknown as [string, string, string];
-    const expected = Buffer.from(this.sign(payload));
-    const given = Buffer.from(signature);
-    if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
     let value: unknown;
     try { value = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")); } catch { return null; }
-    if (Array.isArray(value) && value.length === 5 && value[0] === "h") {
+    // the domain the payload's shape names: one signed for the other shape fails here
+    const handoff = Array.isArray(value) && value[0] === "h";
+    const expected = Buffer.from(this.sign(payload, handoff ? "keepwarm-handoff" : "keepwarm-act"));
+    const given = Buffer.from(signature);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+    if (handoff) {
+      if ((value as unknown[]).length !== 5) return null;
       const [, machineId, session, title, expires] = value as unknown[];
       if (typeof machineId !== "string" || typeof session !== "string" || typeof title !== "string" || typeof expires !== "number") return null;
       if (this.now() > expires) return null;
@@ -256,5 +263,32 @@ export function createHandoffFollower(options: HandoffFollowerOptions) {
       while (following.size > 0) await Promise.all([...following.values()]);
     },
     stop(): void { stopped = true; },
+  };
+}
+
+const HANDOFF_PATH = "/api/host-chats/chat/handoff";
+
+/**
+ * The follower's `bridge` (ZAC-262): the chat's PC asked as the app asks it, a remote one through
+ * its bridge's address and token (server/machines.ts pollCosts), this one in process
+ * (agent-host/routes.ts hostChatsRoute). Null: not connected, or no agent host here.
+ */
+export function bridgeHandoff(deps: {
+  endpoint: (machineId: string) => { url: string; token: string } | undefined;
+  /** hostChatsRoute bound to this PC's agent host; null without one */
+  local: ((request: Request, pathname: string) => Promise<Response> | null) | null;
+  fetch: (url: string, init: RequestInit) => Promise<Response>;
+}): HandoffFollowerOptions["bridge"] {
+  return async (machineId, method, session) => {
+    const init: RequestInit = method === "POST"
+      ? { method, headers: { "content-type": "application/json" }, body: JSON.stringify({ session }) }
+      : { method };
+    const query = method === "GET" ? `?session=${encodeURIComponent(session)}` : "";
+    if (machineId === "local") return deps.local ? deps.local(new Request(`http://local${HANDOFF_PATH}${query}`, init), HANDOFF_PATH) : null;
+    const endpoint = deps.endpoint(machineId);
+    if (!endpoint) return null;
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${endpoint.token}`);
+    return deps.fetch(`${endpoint.url}${HANDOFF_PATH}${query}`, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(15_000) });
   };
 }

@@ -50,7 +50,7 @@ import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
 import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
-import { coolArchivedChat, createHandoffFollower, handleKeepWarmAct, type HandoffAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { bridgeHandoff, coolArchivedChat, createHandoffFollower, handleKeepWarmAct, type HandoffAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -323,26 +323,15 @@ export function createServer(
   agentHostConnection?.start();
 
   /**
-   * "Hand off now" on an alert (ZAC-262): the chat's PC is asked as the app asks it, a remote one
-   * through its bridge's address and token (server/machines.ts pollCosts), this one in process;
-   * the outcome goes to the ntfy topic, as the alert did.
+   * "Hand off now" on an alert (ZAC-262): the chat's PC is asked through its bridge
+   * (keep-warm-actions.ts bridgeHandoff); the outcome goes to the ntfy topic, as the alert did.
    */
-  const handoffPath = "/api/host-chats/chat/handoff";
   const handoffs = createHandoffFollower({
-    bridge: async (machineId, method, session) => {
-      const init: RequestInit = method === "POST"
-        ? { method, headers: { "content-type": "application/json" }, body: JSON.stringify({ session }) }
-        : { method };
-      const query = method === "GET" ? `?session=${encodeURIComponent(session)}` : "";
-      if (machineId === "local") {
-        return agentHostConnection ? hostChatsRoute(new Request(`http://local${handoffPath}${query}`, init), handoffPath, agentHostConnection) : null;
-      }
-      const endpoint = machines?.endpoint(machineId);
-      if (!endpoint) return null;
-      const headers = new Headers(init.headers);
-      headers.set("authorization", `Bearer ${endpoint.token}`);
-      return fetch(`${endpoint.url}${handoffPath}${query}`, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(15_000) });
-    },
+    bridge: bridgeHandoff({
+      endpoint: (machineId) => machines?.endpoint(machineId),
+      local: agentHostConnection ? (request, pathname) => hostChatsRoute(request, pathname, agentHostConnection) : null,
+      fetch,
+    }),
     tell: (outcome) => push.ntfy({ ...outcome, status: "handoff" }),
     pcName: (machineId) => machines?.list().find((machine) => machine.id === machineId)?.name ?? "this PC",
   });

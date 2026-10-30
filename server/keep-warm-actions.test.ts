@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { createHmac } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type KeepWarmAnswer, type KeepWarmKey, type KeepWarmSettings, keepWarmSettingsFrom, withWindow } from "../shared/keep-warm.ts";
 import { requiresAuth } from "./auth.ts";
 import type { HandoffJob } from "../shared/host-chats.ts";
-import { coolArchivedChat, createHandoffFollower, type HandoffAct, HANDOFF_ACT_TTL_MS, handleKeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { bridgeHandoff, coolArchivedChat, createHandoffFollower, type HandoffAct, HANDOFF_ACT_TTL_MS, handleKeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 
 const H = 3_600_000;
 const FROM = Date.parse("2026-10-30T08:00:00Z");
@@ -142,6 +143,22 @@ describe("the alerts' \"Hand off now\" (ZAC-262)", () => {
     expect(new KeepWarmActions(stateDir, () => SENT + HANDOFF_ACT_TTL_MS + 1).read(path)).toBeNull();
   });
 
+  it("is signed in its own domain: neither shape reads under the other's signature", () => {
+    const actions = new KeepWarmActions(stateDir, () => SENT);
+    actions.path(handoff()); // makes the key
+    const secret = Buffer.from((JSON.parse(readFileSync(join(stateDir, "keepwarm-actions.json"), "utf8")) as { secret: string }).secret, "base64url");
+    const signed = (domain: string, fields: unknown[]) => {
+      const payload = Buffer.from(JSON.stringify(fields)).toString("base64url");
+      return `/api/keepwarm/act/${payload}.${createHmac("sha256", secret).update(`${domain}:${payload}`).digest("base64url")}`;
+    };
+    const h = ["h", "mac", SESSION, "T", SENT + HANDOFF_ACT_TTL_MS];
+    const act = ["k1", FROM, UNTIL, "extend"];
+    expect(actions.read(signed("keepwarm-handoff", h))).not.toBeNull();
+    expect(actions.read(signed("keepwarm-act", act))).not.toBeNull();
+    expect(actions.read(signed("keepwarm-act", h))).toBeNull();
+    expect(actions.read(signed("keepwarm-handoff", act))).toBeNull();
+  });
+
   it("refuses an altered one", () => {
     const actions = new KeepWarmActions(stateDir, () => SENT);
     const path = actions.path(handoff());
@@ -258,5 +275,38 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
     await handoffs.settled();
     expect(calls).toEqual(["POST", "GET"]);
     expect(told).toEqual(["Handed off \"T\" → new chat"]);
+  });
+});
+
+describe("asking a PC's bridge for a hand-off (ZAC-262)", () => {
+  it("calls a remote bridge with its token, never following a redirect", async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const bridge = bridgeHandoff({
+      endpoint: (id) => id === "mac" ? { url: "https://mac.example:8443", token: "t0k" } : undefined,
+      local: null,
+      fetch: async (url, init) => { seen.push({ url: String(url), init: init! }); return Response.json({ job: null }); },
+    });
+    await bridge("mac", "GET", "copilotcli:/a b");
+    await bridge("mac", "POST", "copilotcli:/a b");
+    expect(seen.map((each) => each.url)).toEqual([
+      "https://mac.example:8443/api/host-chats/chat/handoff?session=copilotcli%3A%2Fa%20b",
+      "https://mac.example:8443/api/host-chats/chat/handoff",
+    ]);
+    for (const { init } of seen) {
+      expect(new Headers(init.headers).get("authorization")).toBe("Bearer t0k");
+      expect(init.redirect).toBe("error");
+    }
+    expect(seen[1]?.init.method).toBe("POST");
+    expect(JSON.parse(String(seen[1]?.init.body))).toEqual({ session: "copilotcli:/a b" });
+  });
+
+  it("answers null for a PC not connected, or this PC without an agent host; calls this one's in process", async () => {
+    const none = bridgeHandoff({ endpoint: () => undefined, local: null, fetch: async () => { throw new Error("no fetch"); } });
+    expect(await none("mac", "POST", "s1")).toBeNull();
+    expect(await none("local", "POST", "s1")).toBeNull();
+    const asked: string[] = [];
+    const here = bridgeHandoff({ endpoint: () => undefined, local: async (request, pathname) => { asked.push(`${request.method} ${pathname} ${new URL(request.url).search}`); return Response.json({ job: null }); }, fetch: async () => { throw new Error("no fetch"); } });
+    expect((await here("local", "GET", "s 1"))?.status).toBe(200);
+    expect(asked).toEqual(["GET /api/host-chats/chat/handoff ?session=s%201"]);
   });
 });
