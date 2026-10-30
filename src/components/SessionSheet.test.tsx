@@ -338,6 +338,10 @@ describe("SessionSheet", () => {
     expect(words).toContain("Cold");
     expect(words).toContain("Model changed");
     expect(words).toContain("the next call stores 40.0K again");
+    // the chat's last call and its cache hit were the other model's: not shown as this one's (round 8)
+    expect(words).toContain("No call on this model yet");
+    expect(words).not.toContain("expired");
+    expect(words).not.toContain("Last call read from cache");
     // back on the chat's own model, five minutes after its last call: warm
     const back = text(sheet({ read: read({ context: { currentTokens: 40_000, tokenLimit: 400_000 }, model: { id: chat().models[0]!.model, effort: null } }), cost: { chat: log, calls: CALLS } }));
     expect(back).toContain("Warm");

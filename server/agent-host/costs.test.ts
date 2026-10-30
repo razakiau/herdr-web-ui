@@ -58,7 +58,11 @@ describe("CostIndex", () => {
       call(4, 20_000, 5_000, { agentId: "a1" }),
       event("session.compaction_complete", 5, { systemTokens: 999 }, "a1"),
     ]);
-    expect(index().costOf(`copilotcli:/${UUID}`)!.split).toEqual({ currentTokens: 162_000, tokenLimit: 400_000, toolDefinitionsTokens: 29_986, systemTokens: 25_724, conversationTokens: 162_000 - 25_724 - 29_986 });
+    expect(index().costOf(`copilotcli:/${UUID}`)!.split).toEqual({
+      currentTokens: 162_000, tokenLimit: 400_000, toolDefinitionsTokens: 29_986, systemTokens: 25_724, conversationTokens: 162_000 - 25_724 - 29_986,
+      // to one decimal: whole percents (16, 19, 66) would leave the popup a 1% "Other" of nothing
+      parts: [{ category: "system", label: "System prompt", share: 15.9 }, { category: "system", label: "Tool Definitions", share: 18.5 }, { category: "user", label: "Messages", share: 65.6 }],
+    });
     // no system prompt counted yet (no compaction, no shutdown): the tool definitions alone, no guess at the rest
     log(OTHER, [call(0, 50_000, 29_986)]);
     expect(index().costOf(`copilotcli:/${OTHER}`)!.split).toEqual({ currentTokens: 50_000, tokenLimit: 400_000, toolDefinitionsTokens: 29_986 });

@@ -583,6 +583,7 @@ const BASE: Record<string, string> = {
   "{calls} calls · 1 reply": "{calls} 次调用 · 1 次回复",
   "{calls} calls · {replies} replies": "{calls} 次调用 · {replies} 次回复",
   "{size} tokens; no breakdown reported while this turn runs.": "{size} token；此轮运行期间不报告明细。",
+  "No call on this model yet": "此模型尚无调用",
   "Model changed": "已更换模型",
   "the next call stores {size} again": "下一次调用会重新存储 {size}",
   "Breakdown from this chat's log, as of its last call.": "明细来自聊天日志，截至最后一次调用。",

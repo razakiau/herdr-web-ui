@@ -336,6 +336,15 @@ function splitOf(sums: LogState["sums"]): HostContextUsage | null {
     usage.systemTokens = sums.system;
     if (usage.toolDefinitionsTokens !== undefined) usage.conversationTokens = sums.context - sums.system - usage.toolDefinitionsTokens;
   }
+  // the popup's rows to one decimal, as attributedParts gives them: whole percents left a 0.5% "Other" (round 8)
+  if (usage.conversationTokens !== undefined) {
+    const share = (tokens: number): number => Math.round((tokens / sums.context!) * 1000) / 10;
+    usage.parts = [
+      { category: "system", label: "System prompt", share: share(usage.systemTokens!) },
+      { category: "system", label: "Tool Definitions", share: share(usage.toolDefinitionsTokens!) },
+      { category: "user", label: "Messages", share: share(usage.conversationTokens) },
+    ];
+  }
   return usage;
 }
 

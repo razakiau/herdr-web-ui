@@ -170,7 +170,10 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
   const why = advised === "handoff-cold" ? t("The next call stores {size} again whatever you do. If work remains, a fresh chat is cheaper from the next reply on.", { size })
     : advised === "handoff-cooling" && cache ? [t("{size} is re-read on every call.", { size }), ratio ? t("The cache expires in {n} min; after that the next call costs about {ratio} warm ones.", { n: cache.leftMin, ratio }) : t("The cache expires in {n} min.", { n: cache.leftMin })].join(" ")
     : t("{size} is re-read on every call.", { size });
+  // the composer's model has never been called in this chat: the chat's last call and its hit are another model's
+  const unused = switched && modelLastCall(session.chat, session.model).lastCallAt === null;
   const when = cache === null ? null
+    : unused ? t("No call on this model yet")
     : cache.state === "cold" ? `${agoText(cache.ageMin, t)} · ${t("expired")}`
     : `${agoText(cache.ageMin, t)} · ${t("{n} min left", { n: cache.leftMin })}`;
   // a chat working now keeps its cache warm: its countdown has not started (cacheState gives 0 left)
@@ -194,7 +197,7 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
           <span className="session-state"><span className={`session-dot is-${cache.state}`} aria-hidden="true" />{t(cache.state === "warm" ? "Warm" : cache.state === "cooling" ? "Cooling" : "Cold")}</span>
           <span className="session-value">{busy ? t("Working now") : when}</span>
         </div>}
-        {cache && <div className="host-context-row session-countdown">
+        {cache && !unused && <div className="host-context-row session-countdown">
           <div className="session-cache-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(left)} aria-label={t("Cache time left")}>
             <span className={`is-${cache.state}`} style={{ width: `${left}%` }} />
           </div>
@@ -203,7 +206,7 @@ function CacheTab(props: SessionSheetProps & { session: Session }) {
             <span>{t("Expires {n} min after the last call", { n: settings.cacheLifetimeMin })}</span>
           </div>
         </div>}
-        {hit !== null && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
+        {hit !== null && !unused && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
         {/* cold: no warm price to have, the next call stores it all again; it is weighed against a fresh chat */}
         {/* the composer's model has no warm cache of this chat: the next call stores it all again on it, priced on it */}
         {next && cold && <div className="host-context-row">
