@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Pin, PinOff, Terminal } from "lucide-react";
 
 import type { Machine } from "../../shared/machines.ts";
@@ -101,7 +101,7 @@ export function AgentRowBody({ mark, markKind, title, name, context, tokens, bac
           {[
             place ? <span className="agent-pc" key="pc">{place}</span> : null,
             name ? <span className="agent-name" key="name">{name}</span> : null,
-            context || null,
+            context ? <Fragment key="context">{context}</Fragment> : null,
             now ? <span className={`agent-now${now.tone === "ask" ? " is-ask" : ""}`} key="now">{now.text}</span> : null,
           ].filter((part) => part !== null).flatMap((part, index) => index === 0 ? [part] : [" · ", part])}
         </span>}
