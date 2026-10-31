@@ -69,14 +69,14 @@ function manualClock(): LeaseClock & { advance(ms: number): void } {
 
 interface Rig { fake: FakeAgentHost; conn: AgentHostConnection; clock: ReturnType<typeof manualClock> }
 
-async function rig(chat: Record<string, unknown> = {}, skills?: unknown[]): Promise<Rig> {
+async function rig(chat: Record<string, unknown> = {}, skills?: unknown[], seed: { sessions?: SessionSummary[]; chats?: Record<string, ChatState> } = {}): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "herdr-handoff-"));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const config = join(home, "cfg");
   const entries = join(config, "Code", "agent-host", "local-endpoint", "entries");
   mkdirSync(entries, { recursive: true });
   const fake = await fakeAgentHost({
-    sessions: [summary(1)], states: { [sessionUri(1)]: sessionState(1, skills) }, chats: { [chatUri(1)]: chatState(1, chat) }, models: [MODEL], entryDir: entries,
+    sessions: seed.sessions ?? [summary(1)], states: { [sessionUri(1)]: sessionState(1, skills) }, chats: { [chatUri(1)]: chatState(1, chat), ...seed.chats }, models: [MODEL], entryDir: entries,
   });
   cleanups.push(() => fake.stop());
   const conn = new AgentHostConnection({ home, env: { XDG_CONFIG_HOME: config }, platform: "linux", startHost: false, onChange: () => {}, clientId: "herdr-web-0000test", deps: { sleep: (ms) => Bun.sleep(Math.min(ms, 10)) } });
@@ -408,7 +408,7 @@ describe("chat/continue", () => {
       responseParts: [{ kind: "inputRequest", request: { id: "req-1", message: "FICTIONAL which way?", questions: [{ id: "q", kind: "text", title: "Q", message: "FICTIONAL which?", required: true }] } }] },
   });
   /** A temp COPILOT_HOME and HOME (VS Code's agentSessionData under it), restored after the test. */
-  function home(): { copilot: string; agentDir: string; record(id: string): void; vscode(chat: string, sdk: string): void } {
+  function home(): { copilot: string; agentDir: string; record(id: string): void; vscode(chat: string, sdk: string): void; peers(session: string, peers: { uri: string; sdk: string }[]): void } {
     const root = mkdtempSync(join(tmpdir(), "herdr-continue-"));
     const was = { COPILOT_HOME: process.env["COPILOT_HOME"], HOME: process.env["HOME"] };
     process.env["COPILOT_HOME"] = join(root, "copilot");
@@ -427,6 +427,14 @@ describe("chat/continue", () => {
         const db = new Database(join(agentDir, chat, "session.db"));
         db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
         db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: sdk })]);
+        db.close();
+      },
+      // the parent session's own store listing its other chats (a peer chat, a fork) and the SDK session each runs on
+      peers(session, peers) {
+        mkdirSync(join(agentDir, session), { recursive: true });
+        const db = new Database(join(agentDir, session, "session.db"));
+        db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+        db.run("INSERT INTO session_metadata (key, value) VALUES ('peerChats', ?)", [JSON.stringify(peers.map((peer) => ({ uri: peer.uri, isRead: true, providerData: JSON.stringify({ sdkSessionId: peer.sdk }), origin: { kind: "user" } })))]);
         db.close();
       },
     };
@@ -513,6 +521,28 @@ describe("chat/continue", () => {
     expect((await go(r)).status).toBe(200);
     expect(await settled(r)).toMatchObject({ state: "done", mode: "fresh" });
     expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${other}` } });
+  });
+
+  it("continue resolves a peer chat or fork to the sdkSessionId its parent's store names, and archives nothing", async () => {
+    const other = "22222222-3333-4444-8555-666666666666";
+    const peer = `ahp-chat://${uuid(77)}/${Buffer.from(sessionUri(1)).toString("base64url")}`;
+    home().peers(uuid(1), [{ uri: peer, sdk: other }]);
+    const listed = { ...summary(1), chats: [
+      { resource: chatUri(1), title: "FICTIONAL_chat_1", status: 1 },
+      { resource: peer, title: "FICTIONAL peer", status: 1, origin: { kind: "user" } },
+    ] } as SessionSummary;
+    const r = await rig({}, RESUME, { sessions: [listed], chats: { [peer]: { ...chatState(1), resource: peer, title: "FICTIONAL peer" } as ChatState } });
+    const answer = await call(r, "/api/host-chats/chat/continue", { session: peer });
+    expect(answer.status).toBe(200);
+    let now: any = null;
+    await until("the peer's continue job to end", () => {
+      void call(r, `/api/host-chats/chat/handoff?session=${encodeURIComponent(peer)}`).then((each) => { now = each.json.job; });
+      return now?.endedAt != null;
+    });
+    expect(now).toMatchObject({ state: "done", mode: "fresh", error: null });
+    const first = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1) && each.channel !== peer);
+    expect((first!.action as any).message.text).toBe(`/harness:resume ${other}`);
+    expect(archived(r.fake)).toEqual([]);
   });
 
   it("GET chat/handoff reads the continue job", async () => {

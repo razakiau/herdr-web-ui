@@ -1463,7 +1463,9 @@ async function continueChat(call: Call): Promise<Response> {
   const customized = commandsFrom(call.host.mirror().getSession(ownerOf(call.host, session)));
   const resume = resumeCommand(customized) ?? resumeCommand(await sessionSkills(call.host, session));
   if (resume === null) return conflictResponse("no_resume", "this chat has no /resume");
-  const cliSession = cliSessionOf(session);
+  // a fork or peer chat whose id names no parent: the host's row says whose it is (as GET costs reads it)
+  const parent = rowsFrom(call.host.summaries()).find((row) => row.session === session)?.fork_of ?? null;
+  const cliSession = cliSessionOf(session, undefined, undefined, parent);
   if (cliSession === null) return conflictResponse("no_record", "this chat has no CLI record on its PC to resume from");
   const cwd = folderOf(call.host, session);
   if (cwd === null) return conflictResponse("no_folder", "this chat has no folder on its PC to start the next chat in");

@@ -71,13 +71,21 @@ export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | nu
  * The CLI session-state id a chat runs on (ZAC-266: what `/resume <id>` takes): the chat's own uuid
  * when `<home>/session-state/<uuid>/events.jsonl` exists (a CLI chat), else the SDK session its VS
  * Code store names (sdkSessionOf: a VS Code Agent Host chat's id is not its folder, live 2026-10-31
- * 721d7464-… → e148cd57-…), else null.
+ * 721d7464-… → e148cd57-…), else, for a session's other chat (a peer chat or a fork,
+ * `ahp-chat://<id>/<b64 parent>` or `ahp-chat:/<uuid>`), the SDK session its parent's store names
+ * (peerChatSdkOf, as GET costs maps it; `parent`: the host row's `fork_of`), else null. A session's
+ * default chat (`ahp-chat://default/…`) is never asked for: the routes name it by its session's id.
+ * As the sdkSessionOf step does, the store's word is taken without looking for its events.jsonl:
+ * only the chat's own uuid is checked against session-state, since that is the one guessed.
  */
-export function cliSessionOf(session: string, home: string = defaultCopilotHome(), dirs: readonly string[] = defaultAgentSessionDirs()): string | null {
+export function cliSessionOf(session: string, home: string = defaultCopilotHome(), dirs: readonly string[] = defaultAgentSessionDirs(), parent: string | null = null): string | null {
   const uuid = session.slice(session.indexOf(":/") + 2);
-  if (!session.includes(":/") || !UUID.test(uuid)) return null;
-  if (existsSync(join(home, "session-state", uuid, "events.jsonl"))) return uuid;
-  return sdkSessionOf(uuid, dirs);
+  if (session.includes(":/") && UUID.test(uuid)) {
+    if (existsSync(join(home, "session-state", uuid, "events.jsonl"))) return uuid;
+    const sdk = sdkSessionOf(uuid, dirs);
+    if (sdk !== null) return sdk;
+  }
+  return session.startsWith("ahp-chat:") ? peerChatSdkOf(session, dirs, parent) : null;
 }
 
 /** per peer chat: the SDK session its parent's store names for it, by the stamp of that store */

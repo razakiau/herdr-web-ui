@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { HostTodo } from "../../shared/host-chats.ts";
-import { forgetSessionTodos, readSessionTodos, todosSince, type StoredTodo } from "./todos.ts";
+import { cliSessionOf, forgetSessionTodos, readSessionTodos, todosSince, type StoredTodo } from "./todos.ts";
 
 const UUID = "1da5c4f1-451b-4845-953f-52a960f82afa";
 const SCHEMA = `CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT,
@@ -102,6 +102,43 @@ describe("readSessionTodos", () => {
     rmSync(join(agentDirs[0]!, CHAT), { recursive: true });
     vscodeStore(agentDirs[0]!, CHAT, "not json");
     expect(readSessionTodos(`ahp-session:/${CHAT}`, home, agentDirs)).toBeNull();
+  });
+});
+
+describe("cliSessionOf", () => {
+  const SDK = "7c0b5a1e-2d3f-4a5b-8c6d-9e0f1a2b3c4d";
+  const PEER = "4b1d2c3e-5f60-4718-892a-0b1c2d3e4f50";
+  /** the parent session's VS Code store listing its other chats (`peerChats`) and the SDK session each runs on */
+  function parentStore(dir: string, session: string, uri: string, sdk: string): void {
+    mkdirSync(join(dir, session), { recursive: true });
+    const db = new Database(join(dir, session, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('peerChats', ?)", [JSON.stringify([{ uri, providerData: JSON.stringify({ sdkSessionId: sdk }), origin: { kind: "fork" } }])]);
+    db.close();
+  }
+
+  test("a CLI chat's own uuid, a VS Code chat's sdkSessionId", () => {
+    const agentDirs = [join(home, "agentSessionData")];
+    expect(cliSessionOf(`copilotcli:/${UUID}`, home, agentDirs)).toBeNull();
+    mkdirSync(join(home, "session-state", UUID), { recursive: true });
+    writeFileSync(join(home, "session-state", UUID, "events.jsonl"), "{}\n");
+    expect(cliSessionOf(`copilotcli:/${UUID}`, home, agentDirs)).toBe(UUID);
+    vscodeStore(agentDirs[0]!, CHAT, JSON.stringify({ sdkSessionId: SDK }));
+    expect(cliSessionOf(`ahp-session:/${CHAT}`, home, agentDirs)).toBe(SDK);
+  });
+
+  test("a peer chat (ahp-chat://<id>/<b64 parent>) or a fork (ahp-chat:/<uuid>) through its parent's store", () => {
+    const agentDirs = [join(home, "agentSessionData")];
+    const nested = `ahp-chat://${PEER}/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`;
+    expect(cliSessionOf(nested, home, agentDirs)).toBeNull();
+    parentStore(agentDirs[0]!, CHAT, nested, SDK);
+    expect(cliSessionOf(nested, home, agentDirs)).toBe(SDK);
+    forgetSessionTodos();
+    rmSync(join(agentDirs[0]!, CHAT), { recursive: true });
+    parentStore(agentDirs[0]!, CHAT, `ahp-chat:/${PEER}`, SDK);
+    expect(cliSessionOf(`ahp-chat:/${PEER}`, home, agentDirs, `copilotcli:/${CHAT}`)).toBe(SDK);
+    // a session's default chat names no chat of its own: the session's id is what resolves it
+    expect(cliSessionOf(`ahp-chat://default/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`, home, agentDirs)).toBeNull();
   });
 });
 
