@@ -251,6 +251,16 @@ export interface HandoffJob {
   error: string | null;
 }
 
+/**
+ * How one chat came to continue another on the same PC (ZAC-265, GET /api/host-chats/links): a
+ * hand-off job ended `done` (`job`), a chat started with `/resume <topic>` the other's last reply
+ * named (`resume`), an agent's `create_session` call (`spawn`), a chat started with `/resume <its
+ * CLI session id>` (`continue`), or VS Code's Fork Conversation (`fork`, made by the server).
+ */
+export type LinkKind = "job" | "resume" | "spawn" | "continue" | "fork";
+/** `to` continues `from`; both host row session ids once answered (a log no row runs on keeps its SDK id), `at` when it was seen. */
+export interface HostLink { from: string; to: string; kind: LinkKind; at: string }
+
 /** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */
 /** One row of a Copilot session's `todos` table. */
 export interface HostTodo {
