@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, Turn } from "@microsoft/agent-host-protocol";
@@ -100,6 +101,9 @@ const job = async (r: Rig) => (await call(r, `/api/host-chats/chat/handoff?sessi
 const sent = (fake: FakeAgentHost, type: string) => fake.dispatched.filter((each) => each.action.type === type);
 /** What a refusal must not have done: no message, no archive (a watch's own session/activeClientSet is not one). */
 const wrote = (fake: FakeAgentHost) => fake.dispatched.filter((each) => each.action.type !== "session/activeClientSet");
+
+/** Any archive of the old chat, on its session or on a chat channel. */
+const archived = (fake: FakeAgentHost) => fake.dispatched.filter((each) => each.action.type === "session/isArchivedChanged" || each.action.type === "chat/isArchivedChanged");
 
 /** The `/handoff` turn the job started, once it is in the mirror. */
 async function handoffTurn(r: Rig, text = "/handoff"): Promise<string> {
@@ -203,7 +207,7 @@ describe("chat/handoff", () => {
     expect(answer.json.error.code).toBe("job_not_found");
   });
 
-  it("happy path: /resume <topic> starts a new chat in the old folder on the old model, then the old one is archived", async () => {
+  it("happy path: /resume <topic> starts a new chat in the old folder on the old model; the note hand-off no longer archives", async () => {
     const r = await rig();
     const answer = await start(r);
     expect(answer.json.job).toMatchObject({ session: sessionUri(1), endedAt: null, newSession: null });
@@ -211,19 +215,16 @@ describe("chat/handoff", () => {
     expect(sent(r.fake, "chat/turnStarted")[0]!.action).toMatchObject({ message: { text: "/handoff", model: SELECTION } });
     expect((await job(r)).state).toBe("waiting");
     reply(r, turnId, "FICTIONAL note written.\nStart the next chat with: /resume zac-262");
-    await until("the archive", () => r.fake.dispatched.some((each) => each.action.type === "session/isArchivedChanged"));
-    for (let i = 0; i < 100 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
+    for (let i = 0; i < 200 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
     const done = await job(r);
-    expect(done).toMatchObject({ state: "done", topic: "zac-262", error: null });
+    expect(done).toMatchObject({ state: "done", mode: "note", topic: "zac-262", error: null });
     expect(typeof done.newSession).toBe("string");
     const create = r.fake.requests.findIndex((each) => each.method === "createSession");
     expect(r.fake.requests[create]!.params).toMatchObject({ channel: done.newSession, workingDirectories: [`file://${FOLDER}`] });
     const resumed = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1))!;
     expect(resumed.action).toMatchObject({ message: { text: "/resume zac-262", model: SELECTION } });
-    // created (and its message sent) before the archive
-    const order: string[] = r.fake.dispatched.map((each) => each.action.type);
-    expect(order.lastIndexOf("chat/turnStarted")).toBeLessThan(order.indexOf("session/isArchivedChanged"));
-    expect(sent(r.fake, "session/isArchivedChanged")).toEqual([{ channel: sessionUri(1), action: { type: "session/isArchivedChanged", isArchived: true } as StateAction }]);
+    // the note hand-off no longer archives (ZAC-266): the old chat stays where it is
+    expect(archived(r.fake)).toEqual([]);
   });
 
   it("no_resume archives nothing and creates nothing", async () => {
@@ -282,7 +283,7 @@ describe("chat/handoff", () => {
       await until(`the job to be ${state}`, () => { void job(r).then((each) => { now = each.state; }); return now === state; });
     };
 
-    it("answers the question with the hand-off words; the resume line in the final reply starts the next chat, then archives", async () => {
+    it("answers the question with the hand-off words; the resume line in the final reply starts the next chat, archives nothing", async () => {
       const r = await rig(asking(), HARNESS);
       const answer = await start(r);
       expect(answer.status).toBe(200);
@@ -298,10 +299,10 @@ describe("chat/handoff", () => {
       expect(resumed.action).toMatchObject({ message: { text: "/harness:resume t", model: SELECTION } });
       // the turn ended by itself: nothing left to stop
       expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
-      expect(sent(r.fake, "session/isArchivedChanged").length).toBe(1);
+      expect(archived(r.fake)).toEqual([]);
     });
 
-    it("takes the resume line from the agent's next question without waiting for the turn to end: stops the turn, then archives", async () => {
+    it("takes the resume line from the agent's next question without waiting for the turn to end: stops the turn, archives nothing", async () => {
       const r = await rig(asking(), HARNESS);
       await start(r);
       await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
@@ -312,10 +313,10 @@ describe("chat/handoff", () => {
       const resumed = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1))!;
       expect(resumed.action).toMatchObject({ message: { text: "/harness:resume t" } });
       expect(sent(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId: "turn-live", duration: 0 } as StateAction }]);
-      // made, then stopped, then archived
+      // made, then stopped; nothing archived
       const order: string[] = r.fake.dispatched.map((each) => each.action.type);
       expect(order.lastIndexOf("chat/turnStarted")).toBeLessThan(order.indexOf("chat/turnCancelled"));
-      expect(order.indexOf("chat/turnCancelled")).toBeLessThan(order.indexOf("session/isArchivedChanged"));
+      expect(archived(r.fake)).toEqual([]);
     });
 
     it("a resume line written before the answer does not count", async () => {
@@ -397,5 +398,127 @@ describe("chat/handoff", () => {
       expect(answer.json.error.code).toBe("busy");
       expect(wrote(r.fake)).toEqual([]);
     });
+  });
+});
+
+describe("chat/continue", () => {
+  const RESUME = [pluginSkill("harness:resume")];
+  const asking = () => ({
+    status: 24, activeTurn: { id: "turn-live", startedAt: AT, message: { text: "FICTIONAL keep going", origin: { kind: "user" }, model: SELECTION }, usage: undefined,
+      responseParts: [{ kind: "inputRequest", request: { id: "req-1", message: "FICTIONAL which way?", questions: [{ id: "q", kind: "text", title: "Q", message: "FICTIONAL which?", required: true }] } }] },
+  });
+  /** A temp COPILOT_HOME and HOME (VS Code's agentSessionData under it), restored after the test. */
+  function home(): { copilot: string; agentDir: string; record(id: string): void; vscode(chat: string, sdk: string): void } {
+    const root = mkdtempSync(join(tmpdir(), "herdr-continue-"));
+    const was = { COPILOT_HOME: process.env["COPILOT_HOME"], HOME: process.env["HOME"] };
+    process.env["COPILOT_HOME"] = join(root, "copilot");
+    process.env["HOME"] = root;
+    cleanups.push(() => {
+      for (const [key, value] of Object.entries(was)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+      rmSync(root, { recursive: true, force: true });
+    });
+    const copilot = join(root, "copilot");
+    const agentDir = join(root, ".vscode-server", "data", "agentSessionData");
+    return {
+      copilot, agentDir,
+      record(id) { mkdirSync(join(copilot, "session-state", id), { recursive: true }); writeFileSync(join(copilot, "session-state", id, "events.jsonl"), "{}\n"); },
+      vscode(chat, sdk) {
+        mkdirSync(join(agentDir, chat), { recursive: true });
+        const db = new Database(join(agentDir, chat, "session.db"));
+        db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+        db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: sdk })]);
+        db.close();
+      },
+    };
+  }
+  const go = (r: Rig) => call(r, "/api/host-chats/chat/continue", { session: sessionUri(1) });
+  const settled = async (r: Rig) => {
+    let now: any = null;
+    await until("the continue job to end", () => { void job(r).then((each) => { now = each; }); return now?.endedAt != null; });
+    return now;
+  };
+  const opened = (r: Rig) => sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1));
+
+  it("continue on an idle chat opens \"/harness:resume <uuid>\" and archives nothing", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, RESUME);
+    const answer = await go(r);
+    expect(answer.status).toBe(200);
+    expect(answer.json.job).toMatchObject({ session: sessionUri(1), mode: "fresh" });
+    const done = await settled(r);
+    expect(done).toMatchObject({ state: "done", mode: "fresh", error: null, topic: null });
+    expect(typeof done.newSession).toBe("string");
+    const create = r.fake.requests.find((each) => each.method === "createSession")!;
+    expect(create.params).toMatchObject({ channel: done.newSession, workingDirectories: [`file://${FOLDER}`] });
+    expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${uuid(1)}`, model: SELECTION } });
+    expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
+    expect(archived(r.fake)).toEqual([]);
+  });
+
+  it("continue on a chat asking a question cancels the turn and does not answer it", async () => {
+    home().record(uuid(1));
+    const r = await rig(asking(), RESUME);
+    expect((await go(r)).status).toBe(200);
+    expect(await settled(r)).toMatchObject({ state: "done", mode: "fresh" });
+    expect(sent(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId: "turn-live", duration: 0 } as StateAction }]);
+    expect(sent(r.fake, "chat/inputCompleted")).toEqual([]);
+    expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${uuid(1)}` } });
+    // stopped before the new chat was made
+    const order: string[] = r.fake.dispatched.map((each) => each.action.type);
+    expect(order.indexOf("chat/turnCancelled")).toBeLessThan(order.lastIndexOf("chat/turnStarted"));
+    expect(archived(r.fake)).toEqual([]);
+  });
+
+  it("continue on a chat working without a question is refused busy", async () => {
+    home().record(uuid(1));
+    const r = await rig({ activeTurn: { id: "turn-live", startedAt: AT, message: { text: "FICTIONAL working", origin: { kind: "user" } }, usage: undefined, responseParts: [] } }, RESUME);
+    const answer = await go(r);
+    expect(answer.status).toBe(409);
+    expect(answer.json.error.code).toBe("busy");
+    expect(wrote(r.fake)).toEqual([]);
+    expect(r.fake.requests.some((each) => each.method === "createSession")).toBe(false);
+  });
+
+  it("continue without a record is refused no_record before anything stops", async () => {
+    home();
+    const r = await rig(asking(), RESUME);
+    const answer = await go(r);
+    expect(answer.status).toBe(409);
+    expect(answer.json.error.code).toBe("no_record");
+    expect(wrote(r.fake)).toEqual([]);
+    expect(r.fake.requests.some((each) => each.method === "createSession")).toBe(false);
+  });
+
+  it("continue without a resume skill is refused no_resume", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, [pluginSkill("mattpocock-skills:resume")]);
+    const answer = await go(r);
+    expect(answer.status).toBe(409);
+    expect(answer.json.error.code).toBe("no_resume");
+    expect(wrote(r.fake)).toEqual([]);
+  });
+
+  it("continue takes the plain resume skill, and needs no handoff skill", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, [{ ...HANDOFF_SKILL, id: "resume", name: "resume" }]);
+    expect((await go(r)).status).toBe(200);
+    await settled(r);
+    expect(opened(r)!.action).toMatchObject({ message: { text: `/resume ${uuid(1)}` } });
+  });
+
+  it("continue resolves a VS Code chat to its sdkSessionId", async () => {
+    const other = "11111111-2222-4333-8444-555555555555";
+    home().vscode(uuid(1), other);
+    const r = await rig({}, RESUME);
+    expect((await go(r)).status).toBe(200);
+    expect(await settled(r)).toMatchObject({ state: "done", mode: "fresh" });
+    expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${other}` } });
+  });
+
+  it("GET chat/handoff reads the continue job", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, RESUME);
+    await go(r);
+    expect(await settled(r)).toMatchObject({ session: sessionUri(1), mode: "fresh" });
   });
 });

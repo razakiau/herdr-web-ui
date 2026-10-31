@@ -231,18 +231,21 @@ export interface HostCommand { name: string; description: string; kind: "skill" 
 /**
  * Where a "Hand off & continue" job is (POST/GET /api/host-chats/chat/handoff): `/handoff` being sent,
  * its turn awaited, the next chat being started, or how it ended (`no_resume`: the reply named no
- * `/resume` line; `timeout`: no end within 20 min; `failed`: the host failed a step).
+ * `/resume` line; `timeout`: no end within 20 min; `failed`: the host failed a step). A continue job
+ * (POST chat/continue, ZAC-266) is only ever `starting`, then `done` or `failed`.
  */
 export type HandoffState = "sending" | "waiting" | "starting" | "done" | "no_resume" | "timeout" | "failed";
 /** One chat's hand-off job, held in the bridge's memory until an hour after it ends. */
 export interface HandoffJob {
   session: string;
+  /** `note`: `/handoff` wrote a note the next chat resumes (chat/handoff); `fresh`: the next chat resumes the old one's CLI record, no note (chat/continue) */
+  mode: "note" | "fresh";
   state: HandoffState;
   startedAt: number;
   endedAt: number | null;
-  /** the `/resume <topic>` the reply named */
+  /** the `/resume <topic>` the reply named; null for a `fresh` job */
   topic: string | null;
-  /** the chat started with `/resume <topic>` */
+  /** the chat started with `/resume <topic>` (`fresh`: `/resume <cli session id>`) */
   newSession: string | null;
   /** a code, never a transport's message */
   error: string | null;

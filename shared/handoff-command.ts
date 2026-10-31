@@ -15,3 +15,13 @@ export function handoffCommand(commands: readonly { name: string }[]): { handoff
   const resume = names.has(`${form}resume`) ? `${form}resume` : names.has("resume") ? "resume" : names.has("harness:resume") ? "harness:resume" : `${form}resume`;
   return { handoff: `/${form}handoff`, resume: `/${resume}` };
 }
+
+/**
+ * The resume skill's "/" command alone (ZAC-266, chat/continue: no note, so no `/handoff` needed),
+ * or null when the chat lists none: the plain `resume` first, else the harness plugin's
+ * `harness:resume`; another plugin's `<plugin>:resume` never counts.
+ */
+export function resumeCommand(commands: readonly { name: string }[]): string | null {
+  const names = new Set(commands.map((each) => each.name));
+  return names.has("resume") ? "/resume" : names.has("harness:resume") ? "/harness:resume" : null;
+}

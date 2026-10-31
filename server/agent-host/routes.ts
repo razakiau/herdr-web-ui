@@ -51,7 +51,7 @@ import {
   type StateAction,
 } from "@microsoft/agent-host-protocol";
 import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall } from "../../shared/host-chats.ts";
-import { defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
+import { cliSessionOf, defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
 import { CostIndex, POLL_BYTES_PER_SCAN, POLL_READS_PER_TICK } from "./costs.ts";
 import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
@@ -59,12 +59,12 @@ import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
-import { handoffCommand } from "../../shared/handoff-command.ts";
+import { handoffCommand, resumeCommand } from "../../shared/handoff-command.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { workOf } from "./artifacts.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
-import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startHandoff } from "./handoff.ts";
+import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff } from "./handoff.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
 export interface AgentHost {
@@ -300,6 +300,7 @@ const POSTS: Record<string, Handler> = {
   "chat/delete": deleteChat,
   "chat/discard": discardChat,
   "chat/handoff": handOff,
+  "chat/continue": continueChat,
   "session/config": writeConfig,
 };
 
@@ -1431,15 +1432,63 @@ async function handOff(call: Call): Promise<Response> {
       const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`));
       return { session: made.session, sent: made.sent !== false };
     },
-    archive: async () => {
-      const now = await watched(call, session);
-      archive(call.host, session, now.channel, true);
-    },
     // as Stop does (stopTurn), on the job's channel; a turn the user started since is theirs. The
     // lease is taken again first: the chat must be in the mirror to know which turn runs
     cancel: async () => {
       const now = await watched(call, session);
       if (now.chat.activeTurn?.id === turnId) call.host.dispatch(now.channel, { type: ActionType.ChatTurnCancelled, turnId, duration: 0 } as StateAction);
+    },
+  }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));
+  return jsonResponse({ job });
+}
+
+/**
+ * Continue in a new chat (ZAC-266, handoff.ts startContinue): the next chat starts with
+ * `<resume> <cli session id>`, the old chat's CLI record read whole by the resume skill; no
+ * `/handoff`, so no model call on the old side, and nothing archived. Answers at once with the job;
+ * a job already running for the chat (either mode) is that job. A chat whose turn waits on a
+ * question is stopped (as stopTurn), its question left unanswered. Refused (409), all before
+ * anything is stopped: `busy` (a turn runs that asks nothing), `no_resume` (no `resume` or
+ * `harness:resume` listed), `no_record` (no CLI session-state for the chat: cliSessionOf),
+ * `no_folder`.
+ */
+async function continueChat(call: Call): Promise<Response> {
+  const session = sessionOf(call.body);
+  const running = handoffJob(call.host, session);
+  if (handoffRunning(running)) return jsonResponse({ job: running });
+  const { chat: watchedChat } = await watched(call, session);
+  const busy = (chat: ChatState): boolean => chat.activeTurn !== undefined && openRequests(chat).length === 0;
+  if (busy(watchedChat)) return conflictResponse("busy", "the chat is working: continue when it asks or stops");
+  // as handOff names its commands: the customizations first, then the plugins' skills in the "/" completions
+  const customized = commandsFrom(call.host.mirror().getSession(ownerOf(call.host, session)));
+  const resume = resumeCommand(customized) ?? resumeCommand(await sessionSkills(call.host, session));
+  if (resume === null) return conflictResponse("no_resume", "this chat has no /resume");
+  const cliSession = cliSessionOf(session);
+  if (cliSession === null) return conflictResponse("no_record", "this chat has no CLI record on its PC to resume from");
+  const cwd = folderOf(call.host, session);
+  if (cwd === null) return conflictResponse("no_folder", "this chat has no folder on its PC to start the next chat in");
+  // the chat's current model, effort included, and its agent, as handOff takes them
+  const latest = (watchedChat.activeTurn ?? watchedChat.turns.at(-1))?.message;
+  const model = latest?.model ?? watchedChat.draft?.model;
+  const agent = latest?.agent;
+  // the checks above awaited: a second tap may have started a job, or a turn begun, meanwhile.
+  // Nothing awaits from here to startContinue, which holds the job at once
+  const again = handoffJob(call.host, session);
+  if (handoffRunning(again)) return jsonResponse({ job: again });
+  const chat = call.host.chat(session) ?? missing();
+  if (busy(chat)) return conflictResponse("busy", "the chat is working: continue when it asks or stops");
+  const turnId = chat.activeTurn?.id;
+  const job = startContinue(call.host, call.clock, session, {
+    // as Stop does (stopTurn): a cancel on a turn waiting on ask_user is no model call (verified 2026-10-31)
+    stop: async () => {
+      if (turnId === undefined) return;
+      const now = await watched(call, session);
+      if (now.chat.activeTurn?.id === turnId) call.host.dispatch(now.channel, { type: ActionType.ChatTurnCancelled, turnId, duration: 0 } as StateAction);
+    },
+    start: async () => {
+      const first: Message = { text: `${resume} ${cliSession}`, origin: { kind: MessageKind.User }, ...(model ? { model } : {}), ...(agent ? { agent } : {}) };
+      const made = await createChatWith(call, randomUUID(), cwd, first);
+      return { session: made.session, sent: made.sent !== false };
     },
   }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));
   return jsonResponse({ job });

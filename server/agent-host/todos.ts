@@ -8,7 +8,7 @@
  * (591b2f3f → 1da5c4f1, 5 todos).
  */
 import { Database } from "bun:sqlite";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -65,6 +65,19 @@ export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | nu
     return sdk;
   }
   return null;
+}
+
+/**
+ * The CLI session-state id a chat runs on (ZAC-266: what `/resume <id>` takes): the chat's own uuid
+ * when `<home>/session-state/<uuid>/events.jsonl` exists (a CLI chat), else the SDK session its VS
+ * Code store names (sdkSessionOf: a VS Code Agent Host chat's id is not its folder, live 2026-10-31
+ * 721d7464-… → e148cd57-…), else null.
+ */
+export function cliSessionOf(session: string, home: string = defaultCopilotHome(), dirs: readonly string[] = defaultAgentSessionDirs()): string | null {
+  const uuid = session.slice(session.indexOf(":/") + 2);
+  if (!session.includes(":/") || !UUID.test(uuid)) return null;
+  if (existsSync(join(home, "session-state", uuid, "events.jsonl"))) return uuid;
+  return sdkSessionOf(uuid, dirs);
 }
 
 /** per peer chat: the SDK session its parent's store names for it, by the stamp of that store */

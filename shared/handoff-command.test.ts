@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { handoffCommand } from "./handoff-command.ts";
+import { handoffCommand, resumeCommand } from "./handoff-command.ts";
 
 const named = (...names: string[]) => names.map((name) => ({ name }));
 
@@ -31,5 +31,18 @@ describe("handoffCommand", () => {
     expect(handoffCommand(named("mattpocock-skills:handoff", "mattpocock-skills:resume"))).toBeNull();
     expect(handoffCommand(named("handoffs", "review"))).toBeNull();
     expect(handoffCommand([])).toBeNull();
+  });
+});
+
+describe("resumeCommand", () => {
+  it("takes the plain skill first, else the harness plugin's, without a handoff skill", () => {
+    expect(resumeCommand(named("resume"))).toBe("/resume");
+    expect(resumeCommand(named("harness:resume"))).toBe("/harness:resume");
+    expect(resumeCommand(named("harness:resume", "resume"))).toBe("/resume");
+  });
+
+  it("refuses another plugin's resume, and none at all", () => {
+    expect(resumeCommand(named("mattpocock-skills:resume", "handoff"))).toBeNull();
+    expect(resumeCommand([])).toBeNull();
   });
 });

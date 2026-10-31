@@ -5,7 +5,7 @@ import { fetchHandoff, followHandoff, handOffAndContinue, startHandoff } from ".
 
 const t = (key: string, vars?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? `{${name}}`));
 const job = (state: HandoffState, over: Partial<HandoffJob> = {}): HandoffJob => ({
-  session: "old", state, startedAt: 1, endedAt: null, topic: null, newSession: null, error: null, ...over,
+  session: "old", mode: "note", state, startedAt: 1, endedAt: null, topic: null, newSession: null, error: null, ...over,
 });
 
 const realFetch = globalThis.fetch;

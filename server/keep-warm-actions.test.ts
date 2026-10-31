@@ -189,7 +189,7 @@ describe("the alerts' \"Hand off now\" (ZAC-262)", () => {
 });
 
 describe("following a hand-off from an alert (ZAC-262)", () => {
-  const job = (state: HandoffJob["state"], over: Partial<HandoffJob> = {}): HandoffJob => ({ session: "s1", state, startedAt: 0, endedAt: null, topic: null, newSession: null, error: null, ...over });
+  const job = (state: HandoffJob["state"], over: Partial<HandoffJob> = {}): HandoffJob => ({ session: "s1", mode: "note", state, startedAt: 0, endedAt: null, topic: null, newSession: null, error: null, ...over });
   const json = (value: unknown, status = 200) => Response.json(value, { status });
 
   /** a bridge that answers the POST with `post`, then each GET with the next of `gets` */

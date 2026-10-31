@@ -1,14 +1,16 @@
 /**
  * "Hand off & continue" (ZAC-262): `/handoff` is sent to a chat, its turn awaited, and the
  * `/resume <topic>` line its reply ends with starts the next chat in the same folder on the same
- * model; the old chat is archived only once the new one exists. A chat waiting on its own
+ * model. The old chat is never archived (ZAC-266): it stays listed, to open by hand. A chat waiting on its own
  * ask_user question is asked through that question instead (ASK_HANDOFF), and its next question
  * may carry the line as well as its last reply. The steps that touch the host are
  * the route's (routes.ts, handoffChat); this file holds the jobs and their order.
  *
  * Invariants:
  * - One job per chat at a time: a second start while one runs is that job.
- * - Nothing is archived unless a new chat was made and its `/resume` message went.
+ * - Nothing is ever archived (ZAC-266).
+ * - A continue job (startContinue, chat/continue) sends no `/handoff`: it stops the old chat's
+ *   asking turn, then starts the next chat with `/resume <cli session id>`.
  * - A timeout stops the job's own turn (its `/handoff` turn, or the turn whose question it answered),
  *   never another one; so does a new chat made while that turn still runs (it asks again).
  * - A job is forgotten HANDOFF_FORGET_MS after it ends; the bridge's restart forgets them all.
@@ -55,23 +57,26 @@ export interface HandoffSteps {
   ended(): Promise<string | null>;
   /** Starts the next chat with `/resume <topic>`: its session, and whether that message went. */
   start(topic: string): Promise<{ session: string; sent: boolean }>;
-  /** Archives the old chat. */
-  archive(): Promise<void>;
   /** Stops the job's turn if it still runs (a timeout, or a new chat made while it asks again), so the old chat stops spending. */
   cancel(): Promise<void>;
 }
 
-/** Starts `session`'s job; the caller has checked none runs. The job runs on after this returns. */
-export function startHandoff(host: AgentHost, clock: LeaseClock, session: string, steps: HandoffSteps, errorCode: (error: unknown) => string): HandoffJob {
-  const job: HandoffJob = { session, state: "sending", startedAt: Date.now(), endedAt: null, topic: null, newSession: null, error: null };
+/** Holds `job` as its chat's; the returned end() settles it and forgets it HANDOFF_FORGET_MS later. */
+function hold(host: AgentHost, clock: LeaseClock, job: HandoffJob): (state: HandoffJob["state"], error?: string | null) => void {
   const jobs = jobsOf(host);
-  jobs.set(session, job);
-  const end = (state: HandoffJob["state"], error: string | null = null): void => {
+  jobs.set(job.session, job);
+  return (state, error = null) => {
     job.state = state;
     job.error = error;
     job.endedAt = Date.now();
-    clock.setTimeout(() => { if (jobs.get(session) === job) jobs.delete(session); }, HANDOFF_FORGET_MS);
+    clock.setTimeout(() => { if (jobs.get(job.session) === job) jobs.delete(job.session); }, HANDOFF_FORGET_MS);
   };
+}
+
+/** Starts `session`'s job; the caller has checked none runs. The job runs on after this returns. */
+export function startHandoff(host: AgentHost, clock: LeaseClock, session: string, steps: HandoffSteps, errorCode: (error: unknown) => string): HandoffJob {
+  const job: HandoffJob = { session, mode: "note", state: "sending", startedAt: Date.now(), endedAt: null, topic: null, newSession: null, error: null };
+  const end = hold(host, clock, job);
   void (async () => {
     try {
       await steps.send();
@@ -90,7 +95,36 @@ export function startHandoff(host: AgentHost, clock: LeaseClock, session: string
       if (!made.sent) return end("failed", "resume_not_sent");
       // a line taken from the agent's next question leaves its turn waiting on it: stopped first
       await steps.cancel();
-      await steps.archive();
+      end("done");
+    } catch (error) {
+      end("failed", errorCode(error));
+    }
+  })();
+  return job;
+}
+
+/** What a continue job does to the host, in order; each throws when the host fails it. */
+export interface ContinueSteps {
+  /** Stops the old chat's turn while it waits on a question, without answering it; nothing when idle. */
+  stop(): Promise<void>;
+  /** Starts the next chat with `/resume <cli session id>`: its session, and whether that message went. */
+  start(): Promise<{ session: string; sent: boolean }>;
+}
+
+/**
+ * Starts `session`'s continue job (ZAC-266, mode `fresh`): `starting`, then `done` once the next chat
+ * is made and its message went, else `failed` (`resume_not_sent`, or the step's error code). The
+ * caller has checked none runs. Nothing is archived; no `/handoff` is sent.
+ */
+export function startContinue(host: AgentHost, clock: LeaseClock, session: string, steps: ContinueSteps, errorCode: (error: unknown) => string): HandoffJob {
+  const job: HandoffJob = { session, mode: "fresh", state: "starting", startedAt: Date.now(), endedAt: null, topic: null, newSession: null, error: null };
+  const end = hold(host, clock, job);
+  void (async () => {
+    try {
+      await steps.stop();
+      const made = await steps.start();
+      job.newSession = made.session;
+      if (!made.sent) return end("failed", "resume_not_sent");
       end("done");
     } catch (error) {
       end("failed", errorCode(error));
