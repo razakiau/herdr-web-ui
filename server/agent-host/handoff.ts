@@ -14,6 +14,7 @@
  * - A timeout stops the job's own turn (its `/handoff` turn, or the turn whose question it answered),
  *   never another one; so does a new chat made while that turn still runs (it asks again).
  * - A job is forgotten HANDOFF_FORGET_MS after it ends; the bridge's restart forgets them all.
+ * - A job of either mode that ends `done` with a new chat is told to `onDone` (the link index, ZAC-265).
  */
 import type { HandoffJob } from "../../shared/host-chats.ts";
 import type { AgentHost, LeaseClock } from "./routes.ts";
@@ -61,22 +62,31 @@ export interface HandoffSteps {
   cancel(): Promise<void>;
 }
 
-/** Holds `job` as its chat's; the returned end() settles it and forgets it HANDOFF_FORGET_MS later. */
-function hold(host: AgentHost, clock: LeaseClock, job: HandoffJob): (state: HandoffJob["state"], error?: string | null) => void {
+/** Called once a job of either mode ends `done` with its new chat: the bridge's link index records it (ZAC-265). */
+export type HandoffDone = (job: HandoffJob & { newSession: string; endedAt: number }) => void;
+
+/**
+ * Holds `job` as its chat's; the returned end() settles it, tells `onDone` when it is `done` with a
+ * new chat, and forgets it HANDOFF_FORGET_MS later. A hook that throws never fails the job.
+ */
+function hold(host: AgentHost, clock: LeaseClock, job: HandoffJob, onDone?: HandoffDone): (state: HandoffJob["state"], error?: string | null) => void {
   const jobs = jobsOf(host);
   jobs.set(job.session, job);
   return (state, error = null) => {
     job.state = state;
     job.error = error;
     job.endedAt = Date.now();
+    if (state === "done" && job.newSession !== null && onDone) {
+      try { onDone(job as HandoffJob & { newSession: string; endedAt: number }); } catch { /* the link is also in the chats' logs */ }
+    }
     clock.setTimeout(() => { if (jobs.get(job.session) === job) jobs.delete(job.session); }, HANDOFF_FORGET_MS);
   };
 }
 
 /** Starts `session`'s job; the caller has checked none runs. The job runs on after this returns. */
-export function startHandoff(host: AgentHost, clock: LeaseClock, session: string, steps: HandoffSteps, errorCode: (error: unknown) => string): HandoffJob {
+export function startHandoff(host: AgentHost, clock: LeaseClock, session: string, steps: HandoffSteps, errorCode: (error: unknown) => string, onDone?: HandoffDone): HandoffJob {
   const job: HandoffJob = { session, mode: "note", state: "sending", startedAt: Date.now(), endedAt: null, topic: null, newSession: null, error: null };
-  const end = hold(host, clock, job);
+  const end = hold(host, clock, job, onDone);
   void (async () => {
     try {
       await steps.send();
@@ -116,9 +126,9 @@ export interface ContinueSteps {
  * is made and its message went, else `failed` (`resume_not_sent`, or the step's error code). The
  * caller has checked none runs. Nothing is archived; no `/handoff` is sent.
  */
-export function startContinue(host: AgentHost, clock: LeaseClock, session: string, steps: ContinueSteps, errorCode: (error: unknown) => string): HandoffJob {
+export function startContinue(host: AgentHost, clock: LeaseClock, session: string, steps: ContinueSteps, errorCode: (error: unknown) => string, onDone?: HandoffDone): HandoffJob {
   const job: HandoffJob = { session, mode: "fresh", state: "starting", startedAt: Date.now(), endedAt: null, topic: null, newSession: null, error: null };
-  const end = hold(host, clock, job);
+  const end = hold(host, clock, job, onDone);
   void (async () => {
     try {
       await steps.stop();

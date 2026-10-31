@@ -50,9 +50,10 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall } from "../../shared/host-chats.ts";
+import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall, HostLink, LinkKind } from "../../shared/host-chats.ts";
 import { cliSessionOf, defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
 import { CostIndex, POLL_BYTES_PER_SCAN, POLL_READS_PER_TICK } from "./costs.ts";
+import { LinkIndex } from "./links.ts";
 import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
@@ -65,7 +66,7 @@ import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse
 import { workOf } from "./artifacts.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
-import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff } from "./handoff.ts";
+import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff, type HandoffDone } from "./handoff.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
 export interface AgentHost {
@@ -278,6 +279,7 @@ const GETS: Record<string, Handler> = {
   "session/config": readConfig,
   "files": listFiles,
   "chat/handoff": readHandoff,
+  "links": readLinks,
 };
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
@@ -773,6 +775,18 @@ export async function hostCostsPolled(host: Pick<AgentHost, "state" | "summaries
   return answer;
 }
 
+/** The host's rows by the SDK session they run on; a host that is down has none to name. */
+function rowsBySdk(host: Pick<AgentHost, "state" | "summaries">, agentDirs: readonly string[], hasLog: (uuid: string) => boolean = () => true): Map<string, string> {
+  const rowBySdk = new Map<string, string>();
+  const rows = host.state().state === "connected" ? rowsFrom(host.summaries()) : [];
+  for (const row of rows) {
+    const sdk = sdkOfRow(row.session, agentDirs, row.fork_of ?? null, hasLog);
+    // the first row wins: one log is never answered twice
+    if (sdk !== null && !rowBySdk.has(sdk)) rowBySdk.set(sdk, row.session);
+  }
+  return rowBySdk;
+}
+
 /**
  * Every chat this PC's index has read, under its host row's session id (what GET costs answers):
  * the local PC's cold-cache alert reads it directly (server/index.ts, ZAC-260).
@@ -781,21 +795,86 @@ export function hostCosts(host: Pick<AgentHost, "state" | "summaries">, bytes?: 
   const { index, agentDirs } = costsOf();
   let answer: { chats: HostChatCost[]; complete: boolean };
   try { answer = index.all(bytes); } catch { return { chats: [], complete: false }; }
-  // the host's rows by the SDK session they run on; a host that is down has none to name
-  const rowBySdk = new Map<string, string>();
-  const rows = host.state().state === "connected" ? rowsFrom(host.summaries()) : [];
   const logged = new Set(answer.chats.map((chat) => chat.session.slice(chat.session.indexOf(":/") + 2)));
-  for (const row of rows) {
-    const sdk = sdkOfRow(row.session, agentDirs, row.fork_of ?? null, (uuid) => logged.has(uuid));
-    // the first row wins: one log is never answered twice
-    if (sdk !== null && !rowBySdk.has(sdk)) rowBySdk.set(sdk, row.session);
-  }
+  const rowBySdk = rowsBySdk(host, agentDirs, (uuid) => logged.has(uuid));
   const chats = answer.chats.map((chat) => {
     const sdk = chat.session.slice(chat.session.indexOf(":/") + 2);
     const row = rowBySdk.get(sdk);
     return row === undefined ? chat : { ...chat, session: row };
   });
   return { chats, complete: answer.complete };
+}
+
+// ─── Links ───────────────────────────────────────────────────────────────────
+
+/** One index per process, as the costs index: it keeps each log's offset and the jobs seen to end. */
+let linkIndex: { index: LinkIndex; agentDirs: readonly string[] } | null = null;
+function linksOf(): { index: LinkIndex; agentDirs: readonly string[] } {
+  if (!linkIndex) { const agentDirs = defaultAgentSessionDirs(); linkIndex = { index: new LinkIndex(defaultCopilotHome(), agentDirs), agentDirs }; }
+  return linkIndex;
+}
+/** Tests: the index (and the VS Code stores it maps chats through) the route reads; null for this PC's own. */
+export function setLinkIndexForTests(index: LinkIndex | null, agentDirs: readonly string[] = []): void {
+  linkIndex = index === null ? null : { index, agentDirs };
+}
+
+/** when two kinds name the same chats once mapped to rows, the first in this order wins (as LinkIndex's) */
+const LINK_ORDER: readonly LinkKind[] = ["job", "spawn", "continue", "resume", "fork"];
+
+/**
+ * A hand-off job of either mode ended `done` (handoff.ts): its two chats into the link index, by
+ * the SDK session each runs on where the stores already name it (a new VS Code chat's may not be
+ * written yet: its row id stays, and the route matches it to the row the log's own link maps to).
+ */
+const linkJob: HandoffDone = (job) => {
+  try {
+    const { index, agentDirs } = linksOf();
+    const sdk = (session: string): string => {
+      if (session.startsWith(`${PROVIDER}:/`)) return session.slice(PROVIDER.length + 2);
+      return sdkOfRow(session, agentDirs) ?? session;
+    };
+    index.addJob(sdk(job.session), sdk(job.newSession), new Date(job.endedAt).toISOString());
+  } catch { /* the chats' logs give the same link */ }
+};
+
+/**
+ * GET links (ZAC-265): which chat continues which on this PC, as LinkIndex reads them from the
+ * Copilot logs plus the hand-off jobs this bridge saw end, read POLL_BYTES_PER_SCAN at a time as
+ * the server's cost poll is (hostCostsPolled): the server polls it, nobody waits on it. Each end is
+ * named by its host row's session id, as GET costs names a chat; a log no listed row runs on keeps
+ * its `copilotcli:/<uuid>` id, and an end already a row id stays. `?since=<iso>`: links seen after
+ * it. A log that fails to read answers no links, not complete.
+ */
+async function readLinks(call: Call): Promise<Response> {
+  const raw = call.url.searchParams.get("since");
+  const since = raw === null || raw === "" ? null : Date.parse(raw);
+  if (since !== null && !Number.isFinite(since)) return badRequest("invalid_since", "since must be an ISO time");
+  return jsonResponse(await hostLinks(call.host, since));
+}
+
+export async function hostLinks(host: Pick<AgentHost, "state" | "summaries">, since: number | null = null): Promise<{ links: HostLink[]; complete: boolean }> {
+  const { index, agentDirs } = linksOf();
+  let answer: { links: HostLink[]; complete: boolean };
+  try {
+    answer = index.all(POLL_BYTES_PER_SCAN);
+    for (let reads = 1; !answer.complete && reads < POLL_READS_PER_TICK; reads++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      answer = index.all(POLL_BYTES_PER_SCAN);
+    }
+  } catch { return { links: [], complete: false }; }
+  const rowBySdk = rowsBySdk(host, agentDirs);
+  const named = (end: string): string => UUID.test(end) ? rowBySdk.get(end.toLowerCase()) ?? `${PROVIDER}:/${end}` : end;
+  const kept = new Map<string, HostLink>();
+  const ordered = answer.links.map((link) => ({ ...link, from: named(link.from), to: named(link.to) }))
+    .sort((a, b) => LINK_ORDER.indexOf(a.kind) - LINK_ORDER.indexOf(b.kind));
+  for (const link of ordered) {
+    if (link.from === link.to) continue;
+    if (since !== null && Date.parse(link.at) <= since) continue;
+    const key = `${link.from}\n${link.to}`;
+    if (!kept.has(key)) kept.set(key, link);
+  }
+  const links = [...kept.values()].sort((a, b) => a.at.localeCompare(b.at) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+  return { links, complete: answer.complete };
 }
 
 async function readChanges(call: Call): Promise<Response> {
@@ -1473,7 +1552,7 @@ async function handOff(call: Call): Promise<Response> {
       const now = await watched(call, session);
       if (now.chat.activeTurn?.id === turnId) call.host.dispatch(now.channel, { type: ActionType.ChatTurnCancelled, turnId, duration: 0 } as StateAction);
     },
-  }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));
+  }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error), linkJob);
   return jsonResponse({ job });
 }
 
@@ -1530,7 +1609,7 @@ async function continueChat(call: Call): Promise<Response> {
       const made = await createChatWith(call, randomUUID(), cwd, first, approvals, title);
       return { session: made.session, sent: made.sent !== false };
     },
-  }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));
+  }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error), linkJob);
   return jsonResponse({ job });
 }
 

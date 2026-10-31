@@ -6,8 +6,9 @@ import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, Turn } from "@microsoft/agent-host-protocol";
 import { AgentHostConnection } from "./connection.ts";
 import { fakeAgentHost, type FakeAgentHost } from "./fake-host.ts";
-import { HANDOFF_WAIT_MS, resumeTopic } from "./handoff.ts";
-import { hostChatsRoute, type LeaseClock } from "./routes.ts";
+import { HANDOFF_WAIT_MS, resumeTopic, startContinue, startHandoff } from "./handoff.ts";
+import { LinkIndex } from "./links.ts";
+import { hostChatsRoute, setLinkIndexForTests, type AgentHost, type LeaseClock } from "./routes.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -128,6 +129,31 @@ describe("resumeTopic", () => {
     expect(resumeTopic("**Start the next chat with: /resume zac-262**")).toBe("zac-262");
     expect(resumeTopic("Start the next chat with: `/resume two words`")).toBeNull();
     expect(resumeTopic("Start the next chat with: `/resume zac-262")).toBeNull();
+  });
+});
+
+describe("a job's end tells onDone (the link index, ZAC-265)", () => {
+  const host = {} as AgentHost;
+  const settle = async (job: { endedAt: number | null }) => until("the job to end", () => job.endedAt !== null);
+
+  it("a note job that reaches done tells it once, with its new chat", async () => {
+    const done: string[] = [];
+    const job = startHandoff(host, manualClock(), "copilotcli:/FICTIONAL-a", {
+      send: async () => {}, ended: async () => "Start the next chat with: /resume t", start: async () => ({ session: "copilotcli:/FICTIONAL-b", sent: true }), cancel: async () => {},
+    }, () => "x", (each) => done.push(`${each.session}>${each.newSession}`));
+    await settle(job);
+    expect(job.state).toBe("done");
+    expect(done).toEqual(["copilotcli:/FICTIONAL-a>copilotcli:/FICTIONAL-b"]);
+  });
+
+  it("a continue job that reaches done tells it; one that fails does not, and a hook that throws fails nothing", async () => {
+    const done: string[] = [];
+    const ok = startContinue(host, manualClock(), "copilotcli:/FICTIONAL-c", { stop: async () => {}, start: async () => ({ session: "copilotcli:/FICTIONAL-d", sent: true }) }, () => "x", (each) => done.push(each.newSession));
+    const unsent = startContinue(host, manualClock(), "copilotcli:/FICTIONAL-e", { stop: async () => {}, start: async () => ({ session: "copilotcli:/FICTIONAL-f", sent: false }) }, () => "x", (each) => done.push(each.newSession));
+    const thrown = startContinue(host, manualClock(), "copilotcli:/FICTIONAL-g", { stop: async () => {}, start: async () => ({ session: "copilotcli:/FICTIONAL-h", sent: true }) }, () => "x", () => { throw new Error("FICTIONAL"); });
+    await settle(ok); await settle(unsent); await settle(thrown);
+    expect(done).toEqual(["copilotcli:/FICTIONAL-d"]);
+    expect([unsent.state, thrown.state]).toEqual(["failed", "done"]);
   });
 });
 
@@ -460,7 +486,11 @@ describe("chat/continue", () => {
   const opened = (r: Rig) => sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1));
 
   it("continue on an idle chat opens \"/harness:resume <uuid>\" and archives nothing", async () => {
-    home().record(uuid(1));
+    const store = home();
+    store.record(uuid(1));
+    const links = new LinkIndex(store.copilot, []);
+    setLinkIndexForTests(links, []);
+    cleanups.push(() => setLinkIndexForTests(null));
     const r = await rig({}, RESUME);
     const answer = await go(r);
     expect(answer.status).toBe(200);
@@ -472,6 +502,8 @@ describe("chat/continue", () => {
     expect(create.params).toMatchObject({ channel: done.newSession, workingDirectories: [`file://${FOLDER}`] });
     expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${uuid(1)}`, model: SELECTION } });
     expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
+    // the bridge's link index has the job, each end by its SDK session (a CLI chat's own uuid)
+    expect(links.all().links).toMatchObject([{ from: uuid(1), to: done.newSession.slice("copilotcli:/".length), kind: "job" }]);
     expect(archived(r.fake)).toEqual([]);
     // ZAC-267: titled after the old chat, before "/harness:resume <uuid>" goes
     const titled = sent(r.fake, "session/titleChanged").filter((each) => each.channel === done.newSession);

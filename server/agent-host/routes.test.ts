@@ -12,8 +12,9 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, setCostIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
+import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
 import { CostIndex } from "./costs.ts";
+import { LinkIndex } from "./links.ts";
 import { forgetSessionTodos } from "./todos.ts";
 import { Database } from "bun:sqlite";
 
@@ -410,6 +411,68 @@ describe("host chat costs", () => {
     const r = await rig();
     expect(await call(r, "/api/host-chats/costs")).toEqual({ status: 200, json: { chats: [], complete: false } });
     expect(await call(r, `/api/host-chats/costs?session=${encodeURIComponent(sessionUri(1))}`)).toEqual({ status: 200, json: { chat: null, calls: [] } });
+  });
+});
+
+describe("host chat links", () => {
+  const CHAT = "591b2f3f-e34c-4671-a7b8-e46c47c0b43b";
+  const SDK = "1da5c4f1-451b-4845-953f-52a960f82afa";
+  const CLI = "7c0e2b1a-3f4d-4e5a-9b6c-0d1e2f3a4b5c";
+  afterEach(() => { setLinkIndexForTests(null); forgetSessionTodos(); });
+  const now = Date.now();
+  const at = (hoursAgo: number) => new Date(now - hoursAgo * 3_600_000).toISOString();
+  const event = (type: string, when: string, content: string) => `${JSON.stringify({ type, id: `e-${type}-${when}`, timestamp: when, parentId: "p", data: { content } })}\n`;
+
+  it("\"links\" answers the logs' links under the host rows' ids, a log no row runs on under its copilotcli id, and filters by since", async () => {
+    const home = temp();
+    const logs: Record<string, string[]> = {
+      // the VS Code chat (row ahp-session:/CHAT, SDK session SDK) hands off; the host's CLI chat 1 resumes it
+      [SDK]: [event("user.message", at(80), "FICTIONAL work"), event("assistant.message", at(72), "Start the next chat with: /resume fictional-topic")],
+      [uuid(1)]: [event("user.message", at(48), "/resume fictional-topic")],
+      // a CLI chat the host does not list, continued by the host's chat 2
+      [CLI]: [event("user.message", at(30), "FICTIONAL other work")],
+      [uuid(2)]: [event("user.message", at(2), `/resume ${CLI}`)],
+    };
+    for (const [id, lines] of Object.entries(logs)) {
+      mkdirSync(join(home, "session-state", id), { recursive: true });
+      writeFileSync(join(home, "session-state", id, "events.jsonl"), lines.join(""));
+    }
+    const agentDirs = [join(home, "agentSessionData")];
+    mkdirSync(join(agentDirs[0]!, CHAT), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, CHAT, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: SDK })]);
+    db.close();
+    setLinkIndexForTests(new LinkIndex(home, agentDirs), agentDirs);
+    const vscode = `ahp-session:/${CHAT}`;
+    const r = await rig({ sessions: [summary(1), summary(2), { ...summary(3), resource: vscode }] });
+    const all = await call(r, "/api/host-chats/links");
+    expect(all).toEqual({ status: 200, json: { complete: true, links: [
+      { from: vscode, to: sessionUri(1), kind: "resume", at: at(48) },
+      { from: `copilotcli:/${CLI}`, to: sessionUri(2), kind: "continue", at: at(2) },
+    ] } });
+    const recent = await call(r, `/api/host-chats/links?since=${encodeURIComponent(at(24))}`);
+    expect(recent.json.links).toEqual([{ from: `copilotcli:/${CLI}`, to: sessionUri(2), kind: "continue", at: at(2) }]);
+    expect((await call(r, "/api/host-chats/links?since=yesterday")).status).toBe(400);
+  });
+
+  it("a job link given by host row ids is answered once, over the log's own link for the same chats", async () => {
+    const home = temp();
+    for (const [id, lines] of Object.entries({ [uuid(1)]: [event("assistant.message", at(3), "Start the next chat with: /resume t")], [uuid(2)]: [event("user.message", at(2), "/resume t")] })) {
+      mkdirSync(join(home, "session-state", id), { recursive: true });
+      writeFileSync(join(home, "session-state", id, "events.jsonl"), lines.join(""));
+    }
+    const index = new LinkIndex(home, []);
+    setLinkIndexForTests(index, []);
+    index.addJob(sessionUri(1), sessionUri(2), at(2));
+    const r = await rig();
+    expect((await call(r, "/api/host-chats/links")).json.links).toEqual([{ from: sessionUri(1), to: sessionUri(2), kind: "job", at: at(2) }]);
+  });
+
+  it("a log that fails to read answers no links, not a 500", async () => {
+    setLinkIndexForTests({ all: () => { throw new Error("EIO"); } } as unknown as LinkIndex, []);
+    const r = await rig();
+    expect(await call(r, "/api/host-chats/links")).toEqual({ status: 200, json: { links: [], complete: false } });
   });
 });
 
