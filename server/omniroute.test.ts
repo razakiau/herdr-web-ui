@@ -108,11 +108,43 @@ describe("OmniRouteUsage", () => {
     expect(service.status()).toEqual({ configured: true, url: "http://omniroute.test:20128", ok: true, problem: null, checked_at: new Date(NOW).toISOString() });
   });
 
-  it("never sends a refresh to the providers: only GETs", async () => {
+  it("without a write token, never asks OmniRoute to re-check the providers: only GETs", async () => {
     const methods: string[] = [];
     const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, async (url, init) => { methods.push(init.method ?? "GET"); return fetcher(ok)(url, init); }, () => NOW);
     await service.report(true);
     expect(methods.every((method) => method === "GET")).toBe(true);
+  });
+
+  it("with a write token, a refresh asks OmniRoute to re-check first (POST, write token), then reads", async () => {
+    let now = NOW;
+    const calls: string[] = [];
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: "oma_FICTIONAL_write" }, async (url, init) => {
+      calls.push(`${init.method ?? "GET"} ${new URL(url).pathname} ${new Headers(init.headers).get("authorization")}`);
+      return init.method === "POST" ? Response.json({ total: 1 }) : fetcher(ok)(url, init);
+    }, () => now);
+    await service.report();
+    expect(calls.some((call) => call.startsWith("POST"))).toBe(false);
+    now += 60_000;
+    calls.length = 0;
+    await service.report(true);
+    expect(calls[0]).toBe("POST /api/usage/provider-limits Bearer " + "oma_FICTIONAL_write");
+    expect(calls.slice(1).every((call) => call.startsWith("GET") && call.endsWith("Bearer " + TOKEN))).toBe(true);
+    expect(calls.length).toBe(3);
+    // a second press within MIN_REFRESH_MS asks nobody
+    now += 5_000;
+    calls.length = 0;
+    await service.report(true);
+    expect(calls).toEqual([]);
+  });
+
+  it("a re-check OmniRoute refuses or fails still reads its last numbers", async () => {
+    let now = NOW;
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: "oma_FICTIONAL_write" },
+      async (url, init) => init.method === "POST" ? new Response("no", { status: 403 }) : fetcher(ok)(url, init), () => now);
+    await service.report();
+    now += 60_000;
+    expect((await service.report(true)).length).toBe(3);
+    expect(service.status()).toMatchObject({ ok: true, problem: null, checked_at: new Date(now).toISOString() });
   });
 
   it("a refused token keeps the last numbers and says so, without the token in the words", async () => {

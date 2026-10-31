@@ -84,7 +84,7 @@ export const USAGE_JA: Record<string, string> = {
   "Plan limits of the accounts in an OmniRoute gateway": "OmniRoute ゲートウェイ内のアカウントのプラン上限",
   "Connect OmniRoute": "OmniRoute に接続",
   "Accounts of one provider": "同じプロバイダーのアカウント",
-  "Combined averages them by plan size: a Max 20x counts 20 times a Pro.": "まとめると、プランの大きさで平均します: Max 20x は Pro の 20 倍として数えます。",
+  "Combined averages them by plan size: an Ultra counts 10 times a Pro, a Max 5 times.": "まとめると、プランの大きさで平均します: Ultra は Pro の 10 倍、Max は 5 倍として数えます。",
   "Combined": "まとめる",
   "Each its own": "アカウントごと",
   "Remove OmniRoute?": "OmniRoute を削除しますか？",

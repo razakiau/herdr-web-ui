@@ -1,9 +1,10 @@
 /**
  * The plan limits an OmniRoute gateway already holds for the accounts connected to it: Claude,
  * Copilot, OpenCode Go, GLM, Kimi… one account per connection, read from OmniRoute's own cache
- * (GET /api/usage/provider-limits, which it refreshes on its own schedule) and never refreshed
- * from here. A `read` scope access token (oma_…) is all it needs: OmniRoute grants GETs to it and
- * nothing else. The token comes from the server's environment, else from Settings (OmniRouteLink),
+ * (GET /api/usage/provider-limits, which it refreshes on its own schedule). A `read` scope access
+ * token (oma_…) is all reading needs: OmniRoute grants GETs to it and nothing else. With a write
+ * token as well, the Refresh button first asks OmniRoute to re-check every account (POST, ZAC-267):
+ * that reads each provider's usage endpoint, sends no model a message and spends no quota. The token comes from the server's environment, else from Settings (OmniRouteLink),
  * and never leaves this file: errors are fixed words.
  */
 
@@ -24,6 +25,9 @@ const percent = (value: number): number => Math.round(Math.min(100, Math.max(0, 
 const HOUR_MS = 3600_000;
 const DAY_MS = 24 * HOUR_MS;
 const REQUEST_TIMEOUT_MS = 8_000;
+/** OmniRoute re-checks OAuth accounts one at a time, 1.5 s apart: a dozen take ~20 s */
+const RECHECK_TIMEOUT_MS = 30_000;
+const LIMITS_PATH = "/api/usage/provider-limits";
 const MAX_ANSWER_BYTES = 1024 * 1024;
 
 /** OmniRoute's provider ids for the providers herdr reads itself; any other keeps OmniRoute's id */
@@ -165,14 +169,15 @@ export class OmniRouteUsage {
     const now = this.now();
     const sooner = refresh && this.readAt !== null && now - this.readAt >= MIN_REFRESH_MS;
     if (now < this.nextAt && !sooner) return Promise.resolve(this.entries);
-    const pass = this.collect(now).finally(() => { if (this.pending === pass) this.pending = null; });
+    const pass = this.collect(now, sooner).finally(() => { if (this.pending === pass) this.pending = null; });
     this.pending = pass;
     return pass;
   }
 
-  private async collect(now: number): Promise<readonly ProviderUsage[]> {
+  private async collect(now: number, recheck: boolean): Promise<readonly ProviderUsage[]> {
+    if (recheck) await this.recheck();
     try {
-      const [limits, providers] = await Promise.all([this.get("/api/usage/provider-limits"), this.get("/api/providers")]);
+      const [limits, providers] = await Promise.all([this.get(LIMITS_PATH), this.get("/api/providers")]);
       this.entries = omniRouteUsages(limits, providers);
       this.problem = null; this.readAt = now; this.nextAt = now + FRESH_MS;
     } catch (error) {
@@ -180,6 +185,16 @@ export class OmniRouteUsage {
       this.nextAt = now + RETRY_MS;
     }
     return this.entries;
+  }
+
+  /** Asks OmniRoute to re-check every account now; any failure leaves its last numbers to be read. */
+  private async recheck(): Promise<void> {
+    if (!this.config.writeToken) return;
+    const response = await this.fetcher(`${this.url}${LIMITS_PATH}`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(RECHECK_TIMEOUT_MS),
+      headers: { accept: "application/json", authorization: `Bearer ${this.config.writeToken}` },
+    }).catch(() => null);
+    await response?.body?.cancel().catch(() => undefined);
   }
 
   /**

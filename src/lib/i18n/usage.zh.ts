@@ -84,7 +84,7 @@ export const USAGE_ZH: Record<string, string> = {
   "Plan limits of the accounts in an OmniRoute gateway": "OmniRoute 网关中各账户的套餐限额",
   "Connect OmniRoute": "连接 OmniRoute",
   "Accounts of one provider": "同一提供商的账户",
-  "Combined averages them by plan size: a Max 20x counts 20 times a Pro.": "合并按套餐大小取平均：Max 20x 计为 Pro 的 20 倍。",
+  "Combined averages them by plan size: an Ultra counts 10 times a Pro, a Max 5 times.": "合并按套餐大小取平均：Ultra 计为 Pro 的 10 倍，Max 计为 5 倍。",
   "Combined": "合并",
   "Each its own": "各自单独",
   "Remove OmniRoute?": "移除 OmniRoute？",

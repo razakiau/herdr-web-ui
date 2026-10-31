@@ -42,11 +42,13 @@ export function providerMark(id: UsageProviderName): string {
 }
 
 /**
- * A plan as a pill can hold it: providers report ids ("default_claude_max_20x", "OpenCode Go"),
+ * A plan as a pill can hold it: providers report ids ("default_claude_max_5x", "OpenCode Go"),
  * so the words that only repeat the provider or say "default" go, and the rest is title-cased.
+ * Claude's Max 20x is sold as Ultra now, and its OAuth answer still says max_20x (ZAC-267).
  * Null when nothing is left: the pill would only repeat the name next to it.
  */
 export function planLabel(plan: string | null, id: UsageProviderName): string | null {
+  if (id === "claude" && /max[\s_-]*20x/i.test(plan ?? "")) return "Ultra";
   const repeats = new Set(["default", id.toLowerCase(), ...providerName(id).toLowerCase().split(/\s+/)]);
   const words = (plan ?? "").toLowerCase().split(/[\s_-]+/).filter((word) => word && !repeats.has(word));
   return words.length ? words.map((word) => word[0]!.toUpperCase() + word.slice(1)).join(" ") : null;
@@ -227,14 +229,15 @@ export function providerGroups(providers: readonly ProviderUsage[], by: UsageGro
 
 /**
  * How big an account's plan is next to its provider's others, for a chip that averages them: a
- * percentage alone does not say how much it is of. Claude's Max states its multiple of Pro (5x,
- * 20x); Copilot's plans are their monthly premium requests (Free 50, Pro 300, Pro+ 1500, Business
+ * percentage alone does not say how much it is of. Claude's plans by their weekly limit as
+ * claude.com/pricing put it (2026-10-31): Max 5 Pro, Ultra (once "Max 20x", still max_20x in the
+ * OAuth answer) 10 Pro, not 20; Copilot's plans are their monthly premium requests (Free 50, Pro 300, Pro+ 1500, Business
  * 300, Enterprise 1000); Codex's Pro is about 10 Plus. Anything else counts as 1, so accounts on
  * plans not known here average plainly.
  */
 export function planWeight(usage: Pick<ProviderUsage, "id" | "plan">): number {
   const plan = (usage.plan ?? "").toLowerCase();
-  if (usage.id === "claude") return /max[\s_-]*20x/.test(plan) ? 20 : /max/.test(plan) ? 5 : 1;
+  if (usage.id === "claude") return /max[\s_-]*20x|ultra/.test(plan) ? 10 : /max/.test(plan) ? 5 : 1;
   if (usage.id === "copilot") {
     return /pro\s*\+|pro[\s_-]*plus/.test(plan) ? 1500 : /enterprise/.test(plan) ? 1000 : /pro|business/.test(plan) ? 300 : /free/.test(plan) ? 50 : 1;
   }

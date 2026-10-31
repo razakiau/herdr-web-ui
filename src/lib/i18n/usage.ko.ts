@@ -84,7 +84,7 @@ export const USAGE_KO: Record<string, string> = {
   "Plan limits of the accounts in an OmniRoute gateway": "OmniRoute 게이트웨이 계정의 요금제 한도",
   "Connect OmniRoute": "OmniRoute 연결",
   "Accounts of one provider": "한 제공자의 계정",
-  "Combined averages them by plan size: a Max 20x counts 20 times a Pro.": "합산은 요금제 크기로 평균합니다: Max 20x는 Pro의 20배로 셉니다.",
+  "Combined averages them by plan size: an Ultra counts 10 times a Pro, a Max 5 times.": "합산은 요금제 크기로 평균합니다: Ultra는 Pro의 10배, Max는 5배로 셉니다.",
   "Combined": "합산",
   "Each its own": "계정별",
   "Remove OmniRoute?": "OmniRoute를 제거할까요?",
