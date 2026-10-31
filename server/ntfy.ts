@@ -83,7 +83,8 @@ export interface NtfyAlert {
 }
 
 const PRIORITY: Partial<Record<string, number>> = { blocked: 4 };
-const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake", kept: "fire", handoff: "handshake", digest: "bar_chart" };
+const TAGS: Partial<Record<string, string>> = { blocked: "question", done: "white_check_mark", ended: "stop_sign", error: "x", cold: "snowflake", kept: "fire", handoff: "handshake" };
+// no tag for the digest: its title already starts with 📊, and ntfy would show the tag's icon before it (two charts, owner 2026-10-31)
 
 /** The app's address for the pane or the chat, as a tapped web push opens it (public/sw.js, src/lib/deepLink.ts). */
 function clickFor(base: string, alert: NtfyAlert): string {

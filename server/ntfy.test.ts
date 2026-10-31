@@ -308,10 +308,10 @@ describe("the keep-warm window-end alert on ntfy (ZAC-260)", () => {
     expect(posted[0]?.body.click).toBe("https://herdr.example/?machine=mac&chat=ahp%3A%2Fs2");
   });
 
-  it("tells the weekly digest with a bar chart, its tap opening the week's page (ZAC-262)", async () => {
+  it("tells the weekly digest with no tag (its title carries 📊), its tap opening the week's page (ZAC-262)", async () => {
     const config = ntfyFromEnv({ HERDR_WEB_NTFY_URL: `http://127.0.0.1:${server.port}`, HERDR_WEB_NTFY_TOPIC: "herdr-agents", HERDR_WEB_NTFY_CLICK_URL: "https://herdr.example" })!;
     await postNtfy(config, { title: "📊 $184 this week", status: "digest", body: "4 hand-offs", machineId: "local", digest: "2026-10-26" });
-    expect(posted[0]?.body.tags).toEqual(["bar_chart"]);
+    expect(posted[0]?.body.tags).toBeUndefined();
     expect(posted[0]?.body.click).toBe("https://herdr.example/?digest=2026-10-26");
   });
 });
