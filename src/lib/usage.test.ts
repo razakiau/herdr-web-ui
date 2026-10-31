@@ -133,7 +133,8 @@ describe("OmniRoute accounts", () => {
 
 describe("planLabel", () => {
   it("names a plan the way its provider sells it, short enough for a pill", () => {
-    expect(planLabel("default_claude_max_20x", "claude")).toBe("Max 20x");
+    expect(planLabel("default_claude_max_20x", "claude")).toBe("Ultra");
+    expect(planLabel("default_claude_max_5x", "claude")).toBe("Max 5x");
     expect(planLabel("claude_pro", "claude")).toBe("Pro");
     expect(planLabel("default_raven", "claude")).toBe("Raven");
     expect(planLabel("OpenCode Go", "opencode")).toBe("Go");
@@ -155,12 +156,14 @@ describe("one chip per provider", () => {
     expect(providerGroups([a, b, c])).toEqual([[a, c], [b]]);
     expect(providerGroups([a, b, c], "account")).toEqual([[a], [b], [c]]);
   });
-  it("weighs each account by its plan's size: a Max 20x counts four times a Max 5x", () => {
+  it("weighs each account by its plan's weekly size (claude.com/pricing): Ultra, once Max 20x, is 10 Pro, Max 5", () => {
     const big = plan(provider("claude", [window(10)], "a"), "default_claude_max_20x");
     const small = plan(provider("claude", [window(90)], "b"), "default_claude_max_5x");
-    expect(planWeight(big)).toBe(20);
+    expect(planWeight(big)).toBe(10);
+    expect(planWeight(plan(provider("claude", []), "default_claude_ultra"))).toBe(10);
     expect(planWeight(small)).toBe(5);
-    expect(groupWindow([big, small], "week")?.used_percent).toBe(26);
+    expect(planWeight(plan(provider("claude", []), "claude_pro"))).toBe(1);
+    expect(groupWindow([big, small], "week")?.used_percent).toBe(36.7);
   });
   it("weighs Copilot by its monthly premium requests, and an unknown plan as 1", () => {
     expect(planWeight(plan(provider("copilot", []), "Copilot Pro"))).toBe(300);

@@ -92,7 +92,7 @@ export function UsageSettings({ onLocalLogin }: { readonly onLocalLogin: (paneId
         <SettingsRow label={t("Limit shown")} description={t("Session is the 5-hour limit. Without it, the closest limit is shown.")} wide>
           <Segmented label={t("Limit shown")} value={settings.usageGlance} onChange={(usageGlance) => update({ usageGlance })} options={[{ value: "week", label: t("Weekly") }, { value: "session", label: t("Session") }]} />
         </SettingsRow>
-        <SettingsRow label={t("Accounts of one provider")} description={t("Combined averages them by plan size: a Max 20x counts 20 times a Pro.")} wide>
+        <SettingsRow label={t("Accounts of one provider")} description={t("Combined averages them by plan size: an Ultra counts 10 times a Pro, a Max 5 times.")} wide>
           <Segmented label={t("Accounts of one provider")} value={settings.usageGroup} onChange={(usageGroup) => update({ usageGroup })} options={[{ value: "provider", label: t("Combined") }, { value: "account", label: t("Each its own") }]} />
         </SettingsRow>
       </>}
