@@ -39,6 +39,12 @@ describe("priceWithFallback (ZAC-224)", () => {
     expect(priceWithFallback("opencode-go/glm-5.3-flash", PRICES, FALLBACK)).toBeNull();
     expect(priceWithFallback("deepseek-v4.1-flash", PRICES, null)).toBeNull();
   });
+  it("a point release of a size with no price of its own, nor its base size, takes the base model's (owner, ZAC-267)", () => {
+    const fallback = { "minimax-m3": { input: 0.3, output: 1.2, cached: 0.06 } };
+    expect(priceWithFallback("omniroute/opencode-go-minimax-m3.1-flash", PRICES, fallback)).toEqual({ price: { input: 0.3, output: 1.2, cached: 0.06 }, via: "litellm", base: "minimax-m3" });
+    // only from a point release: a size of its own is still no price
+    expect(priceWithFallback("opencode-go/minimax-m3-flash", PRICES, fallback)).toBeNull();
+  });
   it("the picker's OmniRoute id of an OpenCode Go model is priced as the turn names it (ZAC-267)", () => {
     expect(priceWithFallback("omniroute/opencode-go-glm-5.3", PRICES, FALLBACK)).toEqual(priceWithFallback("opencode-go/glm-5.3", PRICES, FALLBACK));
     expect(priceWithFallback("omniroute/opencode-go-deepseek-v4.1-flash", PRICES, FALLBACK)).toEqual({ price: { input: 0.3, output: 1.2, cached: 0.006 }, via: "litellm", base: "deepseek-v4-flash" });
