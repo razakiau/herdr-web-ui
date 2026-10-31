@@ -2,7 +2,7 @@ import type { HostChatCost, HostCostsAnswer, HostTokenTotal } from "../../shared
 import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { addSplit, cacheModel, coldRestartUsd, costSplit, type CostSplit, emptySplit, isBigChat, modelLastCall } from "../../shared/cache-cost.ts";
 
-export { addSplit, avgOutput, cacheModel, chatModel, coldRestartUsd, costSplit, type CostSplit, emptySplit, handoffUsd, isBigChat, modelLastCall, nextCall, writePrice } from "../../shared/cache-cost.ts";
+export { addSplit, avgOutput, cacheModel, chatModel, coldRestartUsd, costSplit, type CostSplit, emptySplit, FRESH_CHAT_CONTEXT, freshHandoffUsd, handoffUsd, isBigChat, modelLastCall, nextCall, writePrice } from "../../shared/cache-cost.ts";
 
 export type CacheState = "warm" | "cooling" | "cold";
 

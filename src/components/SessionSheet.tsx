@@ -17,7 +17,7 @@ import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, modelLastCall, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
+import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, FRESH_CHAT_CONTEXT, freshHandoffUsd, modelLastCall, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { keepWarmFeed, keepWarmFor, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
 import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
@@ -73,13 +73,6 @@ const agoText = (minutes: number, t: Translate): string => minutes >= 60 ? t("{n
 /** a price as an estimate ("~$0.11") or, when something is not counted, a floor rounded down like the lists print it ("≥ $149") */
 const usd = (value: number, floor: boolean): string => floor ? listUsd(value, true) : `~${formatUsd(value)}`;
 
-/**
- * A new chat's prompt at its first call: the system prompt and the tool definitions. Measured on the
- * owner's chats (ZAC-260, 2026-10-30): they start at ~65-75K. "In a fresh chat" prices one call at
- * it, read warm, plus the chat's average output.
- */
-const FRESH_CHAT_CONTEXT = 70_000;
-
 /** what the chat's sums say, the live turn folded in, for both cost tabs */
 function figures(props: SessionSheetProps, now: number) {
   const { read, cost, prices, settings } = props;
@@ -94,8 +87,9 @@ function figures(props: SessionSheetProps, now: number) {
   const avg = avgOutput(chat);
   const next = prices ? nextCall(context, model, avg, table, fallback) : null;
   const fresh = prices ? nextCall(FRESH_CHAT_CONTEXT, model, avg, table, fallback)?.warm ?? null : null;
-  // what /handoff costs now, warm: the server's cold alert quotes the same (shared/cache-cost.ts)
-  const handoff = prices ? handoffUsd(context, model, avg, table, fallback) : null;
+  // what handing off costs now (shared/cache-cost.ts): by a note while warm (the window-end alert
+  // quotes the same), by the old chat's record once cold, as the cold alert does (ZAC-266)
+  const handoff = prices ? (cache?.state === "cold" ? freshHandoffUsd(model, avg, table, fallback) : handoffUsd(context, model, avg, table, fallback)) : null;
   const split = prices ? costSplit(chat.models, table, fallback) : null;
   const price = prices ? priceWithFallback(model, table, fallback)?.price ?? null : null;
   return { chat, context, cache, advised, switched, next, fresh, handoff, split, model, price, calls: cost.calls };
@@ -274,8 +268,8 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
         {/* warm or cooling: now, and past the deadline; a working chat has none yet */}
         {next && !cold && <div className="host-context-row"><span>{t("Next call now")}</span><span className="session-value">{usd(next.warm, false)}</span></div>}
         {next && !cold && <div className="host-context-row"><span>{kept ? (logDeadline ? t("Without keep-warm, after {time}", { time: logDeadline }) : t("Without keep-warm")) : deadline ? t("If you wait past {time}", { time: deadline }) : t("After the cache expires")}</span><span className="session-value">{usd(next.cold, false)}</span></div>}
-        {/* a big chat's way out while it is warm: the price the cold alert quotes too */}
-        {handoff !== null && advised !== "keep" && !cold && <div className="host-context-row"><span>{t("Hand off now")}</span><span className="session-value">{usd(handoff, false)}</span></div>}
+        {/* a big chat's way out: by a note while warm, from its record once cold (the cold alert's price, ZAC-266) */}
+        {handoff !== null && advised !== "keep" && <div className="host-context-row"><span>{t("Hand off now")}</span><span className="session-value">{usd(handoff, false)}</span></div>}
       </div>
       {!next && props.prices && <p className="host-context-note">{t("No price for {models}.", { models: session.model || "?" })}</p>}
     </section>

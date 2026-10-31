@@ -921,7 +921,7 @@ describe("the cold-cache alert (ZAC-260)", () => {
     await push.settled();
     expect(fake.received.map((received) => received.payload)).toEqual([{
       pane_id: null, host_session: "ahp:/s1", machine_id: "mac", title: "Mac · fix the build",
-      body: "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68", tag: "herdr-chat-mac-ahp%3A%2Fs1",
+      body: "268K goes cold in 1 min: hand off now ~$0.81, or the next call costs ~$2.68", tag: "herdr-chat-mac-ahp%3A%2Fs1",
     }]);
     // the same last call read again on the next poll: once per idle period
     push.onHostChatCosts([log(last)], PRICES, "mac", "Mac");
@@ -940,7 +940,8 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(fake.received).toEqual([]);
     await arrived(1);
     await push.settled();
-    expect(bodies()).toEqual(["300K goes cold in 1 min: hand off now ~$0.52, or the next call costs ~$3.00"]);
+    // the fresh hand-off is the new chat's first reply (70K + an 8K digest at $10/M, 1K out): the same whatever the old chat's size (ZAC-266)
+    expect(bodies()).toEqual(["300K goes cold in 1 min: hand off now ~$0.81, or the next call costs ~$3.00"]);
   });
 
   it("warns about a chat waiting on the owner: it calls nothing while it asks, so its cache drains", async () => {
@@ -951,7 +952,7 @@ describe("the cold-cache alert (ZAC-260)", () => {
     await arrived(2);
     await push.settled();
     // the question's own alert, then the cold one
-    expect(bodies()).toEqual(["waiting for your input", "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68"]);
+    expect(bodies()).toEqual(["waiting for your input", "268K goes cold in 1 min: hand off now ~$0.81, or the next call costs ~$2.68"]);
   });
 
   it("carries \"Hand off now\", good for 2 h after it went (ZAC-262)", async () => {

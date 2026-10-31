@@ -105,13 +105,46 @@ export function isBigChat(restartUsd: number | null, thresholdUsd: number): bool
 export const HANDOFF_CALLS = 3;
 
 /**
- * What handing off costs now, while the cache is warm (ZAC-260): HANDOFF_CALLS warm calls at the
- * chat's context. The Cache tab's "Hand off now" and the server's cold-cache alert both quote it.
- * Null when the model has no price.
+ * A new chat's prompt at its first call: the system prompt and the tool definitions. Measured on the
+ * owner's chats (ZAC-260, 2026-10-30): they start at ~65-75K (ZAC-263: ~74K). Its first reply
+ * stores it in the cache, at the write price: no new chat starts warm.
+ */
+export const FRESH_CHAT_CONTEXT = 70_000;
+
+/** What `/harness:resume <topic>` reads: a /handoff note, ~2K tokens. */
+export const HANDOFF_NOTE_TOKENS = 2_000;
+
+/**
+ * What `/harness:resume <session-id>` reads: the old chat's digest, capped at 32,000 bytes (about
+ * 8K tokens; ZAC-266 digest.py CAP_BYTES). Priced at the cap: the quote never undercounts.
+ */
+export const RESUME_DIGEST_TOKENS = 8_000;
+
+/** The new chat's first reply: its prompt plus what it read, stored at the write price, and the chat's average output. */
+function firstReplyUsd(read: number, model: string, avg: number, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): number | null {
+  const next = nextCall(FRESH_CHAT_CONTEXT + read, model, avg, prices, fallback);
+  return next ? next.cold : null;
+}
+
+/**
+ * What handing off by a note costs now, while the cache is warm (ZAC-260): HANDOFF_CALLS warm calls
+ * at the chat's context, plus the new chat's first reply storing its prompt and the note (ZAC-266:
+ * left out before, it was most of a small chat's hand-off). The Cache tab's "Hand off now" and the
+ * window-end alert quote it. Null when the model has no price.
  */
 export function handoffUsd(context: number, model: string, avg: number, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): number | null {
   const next = nextCall(context, model, avg, prices, fallback);
-  return next ? HANDOFF_CALLS * next.warm : null;
+  const first = firstReplyUsd(HANDOFF_NOTE_TOKENS, model, avg, prices, fallback);
+  return next && first !== null ? HANDOFF_CALLS * next.warm + first : null;
+}
+
+/**
+ * What the fresh hand-off costs (ZAC-266, the cold alert's button): the old chat is stopped and
+ * never called, so only the new chat's first reply, storing its prompt and the old chat's digest.
+ * The same whatever the old chat's size. Null when the model has no price.
+ */
+export function freshHandoffUsd(model: string, avg: number, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): number | null {
+  return firstReplyUsd(RESUME_DIGEST_TOKENS, model, avg, prices, fallback);
 }
 
 /**

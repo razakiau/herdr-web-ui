@@ -120,8 +120,8 @@ describe("SessionSheet", () => {
     expect(words).toMatch(/Next call now ~\$0\.16 /);
     expect(words).toContain(`If you wait past ${deadline} ~$2.15`);
     expect(words).not.toContain("after expiry");
-    // three warm calls (shared/cache-cost.ts handoffUsd): what the cold alert quotes too
-    expect(words).toMatch(/Hand off now ~\$0\.47 /);
+    // three warm calls ($0.47) and the new chat's first reply storing 70K + a 2K note ($0.77) (shared/cache-cost.ts handoffUsd)
+    expect(words).toMatch(/Hand off now ~\$1\.24 /);
     expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off &amp; continue</);
     // the last call's own hit, not its message's sum
     expect(words).toContain("Last call read from cache 50%");
@@ -155,6 +155,8 @@ describe("SessionSheet", () => {
     expect(words).toContain("Next call stores 210.4K again ~$2.15");
     // 70K read warm ($0.035) and the average 2,000 output tokens ($0.05)
     expect(words).toMatch(/In a fresh chat ~\$0\.0[89] per call/);
+    // the fresh hand-off, the cold alert's price: the old chat is never called, the new one stores 70K + an 8K digest (ZAC-266)
+    expect(words).toMatch(/Hand off now ~\$0\.83 /);
   });
 
   it("says Handing off… on a disabled button while the job runs", () => {

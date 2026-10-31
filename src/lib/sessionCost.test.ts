@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatCost, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
-import { advice, cacheMeter, cacheState, coldRestartUsd, costSplit, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, switchCost, writePrice } from "./sessionCost.ts";
+import { advice, cacheMeter, cacheState, coldRestartUsd, costSplit, freshHandoffUsd, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, switchCost, writePrice } from "./sessionCost.ts";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -125,10 +125,20 @@ describe("switchCost: the model picker's warning (phase 2)", () => {
 });
 
 describe("handoffUsd", () => {
-  it("is three warm calls at the chat's context", () => {
+  it("is three warm calls at the chat's context, plus the new chat's first reply storing its prompt and the note", () => {
     const next = nextCall(268_000, "cc/claude-opus-5-5", 2_000, PRICES, null)!;
-    expect(handoffUsd(268_000, "cc/claude-opus-5-5", 2_000, PRICES, null)).toBeCloseTo(3 * next.warm, 9);
+    // the new chat: 70K of system prompt and tools plus a ~2K note, written at $10/M, and 2K out at $25/M
+    const first = (72_000 * 10 + 2_000 * 25) / 1e6;
+    expect(handoffUsd(268_000, "cc/claude-opus-5-5", 2_000, PRICES, null)).toBeCloseTo(3 * next.warm + first, 9);
     expect(handoffUsd(268_000, "mystery-1", 2_000, PRICES, null)).toBeNull();
+  });
+});
+
+describe("freshHandoffUsd", () => {
+  it("is only the new chat's first reply, storing its prompt and the old chat's digest: the old chat is never called", () => {
+    // 70K + an 8K digest written at $10/M, and 2K out at $25/M, whatever the old chat's size
+    expect(freshHandoffUsd("cc/claude-opus-5-5", 2_000, PRICES, null)).toBeCloseTo((78_000 * 10 + 2_000 * 25) / 1e6, 9);
+    expect(freshHandoffUsd("mystery-1", 2_000, PRICES, null)).toBeNull();
   });
 });
 

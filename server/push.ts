@@ -67,7 +67,7 @@ import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, PushPayload } from "../shared/protocol.ts";
 import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../shared/protocol.ts";
-import { avgOutput, cacheModel, coldRestartUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
+import { avgOutput, cacheModel, coldRestartUsd, freshHandoffUsd, handoffUsd, isBigChat } from "../shared/cache-cost.ts";
 import { formatUsd } from "../shared/model-price.ts";
 import { KEEP_WARM_EXTEND_HOURS, KEEP_WARM_WINDOW_LEAD_MS, type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
 import { HANDOFF_ACT_TTL_MS, type HandoffAct, type KeepWarmAct } from "./keep-warm-actions.ts";
@@ -246,8 +246,8 @@ export function coldFromEnv(env: Readonly<Record<string, string | undefined>>): 
 
 /**
  * What a cold-cache alert says (owner-approved, ZAC-260): "268K goes cold in 10 min: hand off now
- * ~$0.65, or the next call costs ~$2.50". Without a hand-off price (none for the model) only the
- * next call's.
+ * ~$0.88, or the next call costs ~$2.50", the hand-off's the fresh path's (freshHandoffUsd, ZAC-266).
+ * Without a hand-off price (none for the model) only the next call's.
  */
 export function coldAlertBody(context: number, leadMin: number, handoff: number | null, restart: number): string {
   const size = context >= 1_000_000 ? `${(context / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `${Math.round(context / 1000)}K`;
@@ -969,7 +969,8 @@ export function createPushService(options: PushServiceOptions): PushService {
         const expires = Date.parse(chat.lastCallAt) + coldRule.lifetimeMs;
         // already cold, or a log read late: an alert after the expiry says nothing true
         if (!Number.isFinite(at) || now() >= expires) { coldArmed.set(key, { lastCallAt: chat.lastCallAt, cancel: () => {} }); continue; }
-        const handoff = handoffUsd(context, model, avgOutput(chat), table, prices.fallback);
+        // its button takes the fresh path (ZAC-266): the old chat is never called, the new one pays its first reply
+        const handoff = freshHandoffUsd(model, avgOutput(chat), table, prices.fallback);
         const leadMin = Math.max(1, Math.round((expires - Math.max(now(), at)) / 60_000));
         const title = `${machineName ? machineName + " · " : ""}${row.title}`;
         const body = coldAlertBody(context, leadMin, handoff, restart);
