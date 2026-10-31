@@ -83,12 +83,22 @@ type Row = Record<string, unknown>;
 type Tokens = { input: number; cacheRead: number; cacheWrite: number; coldWrite: number; firstWrite: number; output: number };
 type Model = HostCostModel & Tokens;
 type Call = HostCostCall & Tokens & { calls: number; restarts: number };
-/** one message's calls: the main agent's and its sub-agents', apart */
-interface Message { main: Call | null; sub: Call | null }
+/** an hour of a reply's calls (`HostCostCall.hours`), the main agent's and its sub-agents' apart */
+interface Slice { main: Call | null; sub: Call | null }
+/**
+ * one message's calls: the main agent's and its sub-agents', apart; and the same sums per 60-minute
+ * window from the reply's first call (`start`, its last `end`), for the chart's hourly bars (ZAC-262)
+ */
+interface Message { main: Call | null; sub: Call | null; start: number | null; end: number | null; slices: Map<number, Slice> }
+/** a reply that ran longer than this is drawn one bar per hour (owner, 2026-10-31) */
+const HOUR = 3_600_000;
+const newMessage = (): Message => ({ main: null, sub: null, start: null, end: null, slices: new Map() });
 /** a chain's last call that is not a side call, and the sums its inferred write goes into */
 interface Last {
   cacheRead: number; input: number; main: boolean;
   model: Model; day: Model | null; call: Call;
+  /** its hour of the reply's (Message.slices): an inferred write lands in it too */
+  slice: Call | null;
   /** the log gave its write: none is inferred */
   logged: boolean;
   /** its UTC day, for `dayCounts`; and whether it was the log's first main-agent call of its own (its write a first write) */
@@ -212,7 +222,7 @@ function take(state: LogState, line: string): void {
   if (entry.type === "user.message") {
     // a sub-agent's prompt is part of the message that started it
     if (!main) return;
-    sums.messages.push({ main: null, sub: null });
+    sums.messages.push(newMessage());
     const content = record(entry.data).content;
     if (typeof content === "string" && HANDOFF.test(content.trim()) && typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp))) countDay(sums, dayOf(entry.timestamp), "handoffs");
     return;
@@ -224,7 +234,7 @@ function take(state: LogState, line: string): void {
     if (entry.type === "tool.execution_start") { if (typeof data.toolName === "string" && ASK_TOOLS.has(data.toolName)) state.asks.add(id); return; }
     if (!state.asks.delete(id)) return;
     // the owner's answer: a reply of its own, as a user message is
-    if (main) sums.messages.push({ main: null, sub: null });
+    if (main) sums.messages.push(newMessage());
     return;
   }
   if (entry.type !== "session.usage_record") return;
@@ -243,7 +253,7 @@ function take(state: LogState, line: string): void {
   const sideCall = before !== undefined && tokens.input < SIDE_CALL * before.input && tokens.cacheRead < SIDE_CALL * before.cacheRead;
   if (inherited) {
     // the source chat's call, counted in its own log: it only tells the fork's first call what the cache held
-    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 }, logged: tokens.cacheWrite > 0, dayKey: null, first: false });
+    if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: { model, ...zero(), calls: 0 }, day: null, call: { at: "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 }, slice: null, logged: tokens.cacheWrite > 0, dayKey: null, first: false });
     return;
   }
   if (before && !before.logged && !sideCall) {
@@ -252,13 +262,13 @@ function take(state: LogState, line: string): void {
       const whole = before.main && rewrote(write, before.cacheRead);
       const cold = whole && !before.first ? write : 0;
       const first = whole && before.first ? write : 0;
-      for (const sum of [before.model, before.day, before.call]) {
+      for (const sum of [before.model, before.day, before.call, before.slice]) {
         if (!sum) continue;
         sum.cacheWrite += write;
         sum.coldWrite += cold;
         sum.firstWrite += first;
       }
-      if (cold > 0) { sums.rewrites += 1; before.call.restarts += 1; countDay(sums, before.dayKey, "restarts"); }
+      if (cold > 0) { sums.rewrites += 1; before.call.restarts += 1; if (before.slice) before.slice.restarts += 1; countDay(sums, before.dayKey, "restarts"); }
       if (first > 0) { sums.firstWrites += 1; countDay(sums, before.dayKey, "firstWrites"); }
     }
   }
@@ -289,7 +299,7 @@ function take(state: LogState, line: string): void {
       if (count(usage.maxPromptTokens) > 0) sums.limit = count(usage.maxPromptTokens);
     }
   }
-  if (sums.messages.length === 0) sums.messages.push({ main: null, sub: null });
+  if (sums.messages.length === 0) sums.messages.push(newMessage());
   let reply = sums.messages.length - 1;
   if (!main) {
     const agent = String(entry.agentId);
@@ -297,10 +307,29 @@ function take(state: LogState, line: string): void {
     if (started === undefined) state.agents.set(agent, reply);
     else reply = started;
   }
-  const message = sums.messages[reply]!;
+  const held = sums.messages[reply]!;
   const side = main ? "main" : "sub";
-  const call = message[side] ?? (message[side] = { at: at ?? "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 });
+  const call = held[side] ?? (held[side] = { at: at ?? "", ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 });
   if (call.at === "" && at !== null) call.at = at;
+  tally(call, tokens);
+  // its hour of the reply: 60-minute windows from the reply's first call (a call without a time, or before it, in the first)
+  const time = at === null ? null : Date.parse(at);
+  if (time !== null) {
+    // the reply's first call is its main agent's (a sub-agent starts from one); the windows never move once set
+    if (held.start === null) held.start = time;
+    held.end = Math.max(held.end ?? time, time);
+  }
+  const hour = time === null || held.start === null ? 0 : Math.max(0, Math.floor((time - held.start) / HOUR));
+  let window = held.slices.get(hour);
+  if (!window) { window = { main: null, sub: null }; held.slices.set(hour, window); }
+  const slice = window[side] ?? (window[side] = { at: new Date((held.start ?? time ?? 0) + hour * HOUR).toISOString(), ...zero(), main, context: 0, lastCacheRead: 0, calls: 0, restarts: 0 });
+  tally(slice, tokens);
+  // a write the log gives is used as is, never added to an inferred one
+  if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call, slice, logged: tokens.cacheWrite > 0, dayKey, first });
+}
+
+/** One call into a reply's sums, or an hour's of them. */
+function tally(call: Call, tokens: Tokens): void {
   add(call, tokens);
   // the chart's card: "Reply 11 · … · 37 calls", and a day's "Cold restarts (2)"
   call.calls += 1;
@@ -308,8 +337,6 @@ function take(state: LogState, line: string): void {
   // the sums would read a 10-call tool loop at 200K as 2M: the last call's own prompt is the context
   call.context = tokens.input;
   call.lastCacheRead = tokens.cacheRead;
-  // a write the log gives is used as is, never added to an inferred one
-  if (!sideCall) state.chains.set(chain, { cacheRead: tokens.cacheRead, input: tokens.input, main, model: modelSum, day: daySum, call, logged: tokens.cacheWrite > 0, dayKey, first });
 }
 
 /**
@@ -451,7 +478,17 @@ export class CostIndex {
     const uuid = this.sdkOf(session, parent);
     const state = uuid === null ? null : this.logs.get(uuid) ?? this.read(uuid, this.bytesPerRequest);
     if (state === null) return [];
-    return state.sums.messages.flatMap((message) => [message.main, message.sub].filter((call) => call !== null).map((call) => ({ ...call })));
+    return state.sums.messages.flatMap((message) => {
+      // a reply that ran over an hour: its calls by hour too, each side on the same windows (the chart's hourly bars)
+      const long = message.start !== null && message.end !== null && message.end - message.start > HOUR;
+      const hours = long ? [...message.slices.entries()].sort(([a], [b]) => a - b).map(([, slice]) => slice) : [];
+      return (["main", "sub"] as const).flatMap((side) => {
+        const call = message[side];
+        if (call === null) return [];
+        if (!long) return [{ ...call }];
+        return [{ ...call, hours: hours.flatMap((slice) => slice[side] === null ? [] : [{ ...slice[side] }]) }];
+      });
+    });
   }
 
   /**

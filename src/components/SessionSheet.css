@@ -485,6 +485,17 @@
   pointer-events: none;
 }
 
+/* the bars of one reply drawn in hours (ZAC-262): a thin bracket under them, so they read as one reply in parts */
+.session-sheet .session-chart-brackets { position: relative; height: 5px; margin-top: 2px; }
+.session-sheet .session-chart-bracket {
+  position: absolute;
+  top: 0;
+  height: 4px;
+  border: 1px solid var(--text-dim);
+  border-top: 0;
+  border-radius: 0 0 2px 2px;
+  opacity: 0.7;
+}
 .session-sheet .session-chart-axis {
   display: flex;
   justify-content: space-between;

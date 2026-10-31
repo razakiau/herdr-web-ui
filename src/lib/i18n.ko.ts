@@ -567,6 +567,7 @@ const BASE: Record<string, string> = {
   "1 reply": "답장 1개",
   "{n} replies": "답장 {n}개",
   "Reply {n}": "답장 {n}",
+  "part {n} of {total}": "{total}개 중 {n}번째",
   "Cold restarts ({n})": "콜드 재시작 ({n})",
   "Largest context": "가장 큰 컨텍스트",
   "Context at the end": "끝난 시점의 컨텍스트",

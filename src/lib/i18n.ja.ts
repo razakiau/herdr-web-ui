@@ -569,6 +569,7 @@ const BASE: Record<string, string> = {
   "1 reply": "1 件の返答",
   "{n} replies": "{n} 件の返答",
   "Reply {n}": "返答 {n}",
+  "part {n} of {total}": "パート {n}/{total}",
   "Cold restarts ({n})": "コールドリスタート（{n}）",
   "Largest context": "最大のコンテキスト",
   "Context at the end": "終了時のコンテキスト",

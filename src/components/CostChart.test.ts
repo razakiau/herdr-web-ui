@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { HostCostCall } from "../../shared/host-chats.ts";
 import { translate } from "../lib/i18n.ts";
-import { chartCard, chartMode, chartTicks, dayCosts, dayTicks, messageCosts, niceTicks, tickTokens, tickUsd, type ChartBar, type MessageCost } from "./CostChart.tsx";
+import { chartCard, chartMode, chartTicks, dayCosts, dayTicks, messageCosts, niceTicks, replyBars, replyBrackets, tickTokens, tickUsd, type ChartBar, type MessageCost } from "./CostChart.tsx";
 
 const OPUS = { input: 4, output: 20, cached: 0.2 };
 const call = (over: Partial<HostCostCall>): HostCostCall => ({ at: "2026-10-29T12:00:00.000Z", input: 0, cacheRead: 0, cacheWrite: 0, output: 0, main: true, context: 0, lastCacheRead: 0, ...over });
@@ -128,7 +128,7 @@ describe("dayTicks", () => {
 
 describe("chartCard", () => {
   const t = (key: string, vars?: Record<string, string | number>): string => translate("en", key, vars);
-  const bar = (over: Partial<ChartBar>): ChartBar => ({ ...message("2026-10-29T20:22:00Z"), index: 10, replies: 1, ...over });
+  const bar = (over: Partial<ChartBar>): ChartBar => ({ ...message("2026-10-29T20:22:00Z"), index: 10, replies: 1, reply: 10, part: 0, parts: 1, ...over });
   it("a reply: its number, date and time, calls; Cost; Context at the end; no cold restart row when there was none", () => {
     const card = chartCard(bar({ rest: 1.92, context: 214_000, calls: 37 }), "replies", t, "UTC");
     expect(card.title).toMatch(/^Reply 11 · Oct 29, (08:22 PM|20:22) · 37 calls$/);
@@ -148,5 +148,60 @@ describe("chartCard", () => {
   });
   it("an old bridge's reply: no call count in the title", () => {
     expect(chartCard(bar({ calls: null }), "replies", t, "UTC").title).toMatch(/^Reply 11 · Oct 29, [^·]+$/);
+  });
+});
+
+describe("a reply over an hour long, one bar per hour (ZAC-262)", () => {
+  const H = (hour: number, min = 36): string => `2026-10-30T${String(20 + hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:00.000Z`;
+  // the bridge's sums for chat 74ceb9b3's 21:36 reply, shrunk: three windows from its first call, a sub-agent in the second
+  const long: HostCostCall[] = [
+    call({ at: H(1), output: 3_000, cacheWrite: 500_000, coldWrite: 500_000, context: 210_000, calls: 6, restarts: 1, hours: [
+      call({ at: H(1), output: 1_000, context: 190_000, calls: 2 }),
+      call({ at: H(2), output: 1_000, cacheWrite: 500_000, coldWrite: 500_000, context: 200_000, calls: 2, restarts: 1 }),
+      call({ at: H(3), output: 1_000, context: 210_000, calls: 2 }),
+    ] }),
+    call({ at: H(2, 50), main: false, output: 1_000, context: 9_000, calls: 1, hours: [call({ at: H(2), main: false, output: 1_000, context: 9_000, calls: 1 })] }),
+  ];
+
+  it("messageCosts: the reply's sums as before, its hours priced alike, a sub-agent's hour joined to the main agent's", () => {
+    const [reply] = messageCosts([call({ at: H(0), output: 1_000, context: 50_000, calls: 3 }), ...long], "cc/claude-opus-5-5", OPUS).slice(1);
+    expect(reply).toMatchObject({ at: H(1), context: 210_000, calls: 7, restarts: 1 });
+    expect(reply!.rest).toBeCloseTo(4_000 * 20 / 1e6, 12);
+    expect(reply!.hours!.map((hour) => [hour.at, hour.calls, hour.context, hour.restarts])).toEqual([[H(1), 2, 190_000, 0], [H(2), 3, 200_000, 1], [H(3), 2, 210_000, 0]]);
+    expect(reply!.hours!.map((hour) => hour.rest)).toEqual([1_000 * 20 / 1e6, 2_000 * 20 / 1e6, 1_000 * 20 / 1e6]);
+  });
+
+  it("messageCosts: a reply without hours (an hour or less, or a bridge before 1076) has none", () => {
+    const [reply] = messageCosts([call({ output: 1_000 })], "cc/claude-opus-5-5", OPUS);
+    expect(reply!.hours).toBeUndefined();
+  });
+
+  it("replyBars: one bar per hour, each its own start, the reply's place and part of parts; a reply without hours one bar", () => {
+    const messages = messageCosts([call({ at: H(0), output: 1_000, context: 50_000, calls: 3 }), ...long, call({ at: H(4), output: 500 })], "cc/claude-opus-5-5", OPUS);
+    const bars = replyBars(messages);
+    expect(bars.map((bar) => [bar.index, bar.at, bar.reply, bar.part, bar.parts, bar.calls])).toEqual([
+      [0, H(0), 0, 0, 1, 3], [1, H(1), 1, 0, 3, 2], [2, H(2), 1, 1, 3, 3], [3, H(3), 1, 2, 3, 2], [4, H(4), 2, 0, 1, null],
+    ]);
+    expect(bars.every((bar) => bar.hours === undefined)).toBe(true);
+    expect(replyBrackets(bars)).toEqual([{ reply: 1, from: 1, to: 3 }]);
+  });
+
+  it("chartCard: an hour's card says its reply, part of parts and its own start; its cost, cold restart, context", () => {
+    const bars = replyBars(messageCosts([call({ at: H(0), output: 1_000, calls: 3 }), ...long], "cc/claude-opus-5-5", OPUS));
+    const t = (key: string, vars?: Record<string, string | number>): string => translate("en", key, vars);
+    const card = chartCard(bars[2]!, "replies", t, "UTC");
+    expect(card.title).toMatch(/^Reply 2 · part 2 of 3 · Oct 30, (22:36|10:36\sPM) · 3 calls$/);
+    expect(card.rows).toEqual([
+      { kind: "cost", label: "Cost", value: "$4.04" },
+      { kind: "restart", label: "Cold restart", value: "$4.00" },
+      { kind: "context", label: "Context at the end", value: "200K" },
+    ]);
+  });
+
+  it("dayCosts: the Days view sums whole replies, never their hours", () => {
+    const messages = messageCosts(long, "cc/claude-opus-5-5", OPUS);
+    const [day] = dayCosts(messages, "UTC");
+    expect(day).toMatchObject({ calls: 7, replies: 1, parts: 1 });
+    expect(day!.hours).toBeUndefined();
   });
 });

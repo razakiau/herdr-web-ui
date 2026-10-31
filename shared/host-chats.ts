@@ -100,6 +100,13 @@ export interface HostCostCall {
   firstWrite?: number;
   /** how many calls these sums hold, and how many of them were cold restarts (the chart's card); absent from a bridge before bundle 1071 */
   calls?: number; restarts?: number;
+  /**
+   * a reply whose calls span more than an hour: the same sums per 60-minute window from the reply's
+   * first call (`at` the window's start), windows without a call left out, the main agent's and the
+   * sub-agents' on the same windows; the chart draws one bar per hour (ZAC-262). Absent for a reply
+   * of an hour or less, and from a bridge before bundle 1076.
+   */
+  hours?: HostCostCall[];
 }
 /** GET /api/host-chats/costs: what a chat's log says it spent. */
 export interface HostChatCost {

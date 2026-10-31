@@ -12,6 +12,12 @@
  *
  * Tap or click a bar, or use the arrow keys and Enter, to see its card above the plot: what it
  * cost, its cold restarts, its context. Escape, or a tap outside, clears it.
+ *
+ * In agent-driven chats one reply can be hours of the agent's work (ZAC-262: 539 calls over ~3 h
+ * after one answer, one $30 bar that read like a cold restart). A reply whose calls span more than
+ * an hour is drawn one bar per hour of work, from the bridge's `hours`: 60-minute windows from the
+ * reply's first call, empty ones left out, each bar labelled with its own start, a thin bracket under
+ * the bars of one reply. The average and the replies counted stay per reply; the days are unchanged.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
@@ -26,7 +32,11 @@ import { writePrice } from "../lib/sessionCost.ts";
  * prompt. `calls` and `restarts` count the calls and cold restarts; they are null from a bridge
  * before bundle 1071, which does not count them.
  */
-export interface MessageCost { at: string; restart: number; rest: number; context: number; calls: number | null; restarts: number }
+export interface MessageCost {
+  at: string; restart: number; rest: number; context: number; calls: number | null; restarts: number;
+  /** a reply over an hour long: the same per 60-minute window, in order (absent from a bridge before bundle 1076) */
+  hours?: MessageCost[];
+}
 
 /** relative weights when the model has no price: the shape still reads, the scale is not dollars */
 const UNPRICED: ModelPrice = { input: 1, cached: 0.1, output: 5 };
@@ -40,33 +50,92 @@ const UNPRICED: ModelPrice = { input: 1, cached: 0.1, output: 5 };
 export function messageCosts(calls: readonly HostCostCall[], model: string, price: ModelPrice | null): MessageCost[] {
   const each = price ?? UNPRICED;
   const write = price ? writePrice(model, price.input) : 2;
-  const groups: MessageCost[] = [];
-  let previousMain = false;
-  for (const call of calls) {
-    const joins = !call.main && previousMain && groups.length > 0;
-    previousMain = call.main;
+  const cost = (call: HostCostCall): MessageCost => {
     const fresh = Math.max(0, call.input - call.cacheRead);
     const cold = Math.min(call.coldWrite ?? 0, call.cacheWrite);
     const restart = cold * write / 1e6;
     const rest = (fresh * each.input + call.cacheRead * (each.cached ?? each.input) + (call.cacheWrite - cold) * write + call.output * each.output) / 1e6;
-    const counted = call.calls ?? null;
-    const restarts = call.restarts ?? (cold > 0 ? 1 : 0);
-    if (joins) {
-      const last = groups[groups.length - 1]!;
-      last.restart += restart;
-      last.rest += rest;
-      last.calls = last.calls === null || counted === null ? null : last.calls + counted;
-      last.restarts += restarts;
+    // the reply's last main call's own prompt: `input` sums its whole tool loop
+    return { at: call.at, restart, rest, context: call.main ? call.context : 0, calls: call.calls ?? null, restarts: call.restarts ?? (cold > 0 ? 1 : 0) };
+  };
+  const groups: MessageCost[] = [];
+  /** per group, whether each hour holds a main-agent call: one that does not keeps the context the hour before it ended at */
+  const mainHours = new Map<MessageCost, Set<string>>();
+  let previousMain = false;
+  for (const call of calls) {
+    const joins = !call.main && previousMain && groups.length > 0;
+    previousMain = call.main;
+    const own = cost(call);
+    const hours = (call.hours ?? []).map(cost);
+    if (!joins) {
+      if (hours.length > 0) { own.hours = hours; mainHours.set(own, new Set(call.main ? hours.map((hour) => hour.at) : [])); }
+      groups.push(own);
       continue;
     }
-    // the reply's last main call's own prompt: `input` sums its whole tool loop
-    groups.push({ at: call.at, restart, rest, context: call.main ? call.context : 0, calls: counted, restarts });
+    const last = groups[groups.length - 1]!;
+    join(last, own);
+    if (hours.length === 0) continue;
+    // the sub-agents' hours are on the main agent's windows: the same start is the same hour
+    const into = last.hours ?? (last.hours = []);
+    for (const hour of hours) {
+      const same = into.find((each) => each.at === hour.at);
+      if (same) join(same, hour);
+      else into.push(hour);
+    }
+    into.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  }
+  for (const group of groups) {
+    const withMain = mainHours.get(group);
+    if (!group.hours || !withMain) continue;
+    let context = 0;
+    for (const hour of group.hours) {
+      if (withMain.has(hour.at)) context = hour.context;
+      else hour.context = context;
+    }
   }
   return groups;
 }
 
-/** One bar: a reply, or a day of them. `replies` is 1 for a reply; `index` is its place from 0. */
-export interface ChartBar extends MessageCost { index: number; replies: number }
+/** a sub-agent's sums into its reply's (or hour's): the cost, the calls and the cold restarts; the context stays the main agent's */
+function join(into: MessageCost, other: MessageCost): void {
+  into.restart += other.restart;
+  into.rest += other.rest;
+  into.calls = into.calls === null || other.calls === null ? null : into.calls + other.calls;
+  into.restarts += other.restarts;
+}
+
+/**
+ * One bar: a reply, an hour of one, or a day of them. `replies` is 1 for a reply; `index` is the
+ * bar's place from 0. `reply` is the reply's place from 0 (a day's first), `part` the hour's from 0
+ * of the reply's `parts` (1 for a reply drawn whole).
+ */
+export interface ChartBar extends MessageCost { index: number; replies: number; reply: number; part: number; parts: number }
+
+/**
+ * The Replies view's bars: one per reply, or one per hour of a reply that has `hours` (a bridge from
+ * bundle 1076, a reply over an hour long).
+ */
+export function replyBars(messages: readonly MessageCost[]): ChartBar[] {
+  const bars: ChartBar[] = [];
+  messages.forEach((message, reply) => {
+    const { hours, ...whole } = message;
+    if (!hours || hours.length < 2) { bars.push({ ...whole, index: bars.length, replies: 1, reply, part: 0, parts: 1 }); return; }
+    hours.forEach((hour, part) => bars.push({ ...hour, index: bars.length, replies: 1, reply, part, parts: hours.length }));
+  });
+  return bars;
+}
+
+/** The brackets under the bars of a reply drawn in hours: its reply and its first and last bar. */
+export function replyBrackets(bars: readonly ChartBar[]): { reply: number; from: number; to: number }[] {
+  const brackets: { reply: number; from: number; to: number }[] = [];
+  for (const bar of bars) {
+    if (bar.parts < 2) continue;
+    const last = brackets[brackets.length - 1];
+    if (last && last.reply === bar.reply) last.to = bar.index;
+    else brackets.push({ reply: bar.reply, from: bar.index, to: bar.index });
+  }
+  return brackets;
+}
 
 /** Past this many replies the chart opens on days (owner, option B). */
 export const DAYS_OVER = 40;
@@ -106,7 +175,8 @@ export function dayCosts(messages: readonly MessageCost[], timeZone?: string): C
       continue;
     }
     last = key;
-    days.push({ ...message, index: days.length, replies: 1 });
+    const { hours: _hours, ...whole } = message;
+    days.push({ ...whole, index: days.length, replies: 1, reply: days.length, part: 0, parts: 1 });
   }
   return days;
 }
@@ -175,7 +245,7 @@ export function chartCard(bar: ChartBar, mode: ChartMode, t: Translate, timeZone
   const calls = bar.calls === null ? null : t(bar.calls === 1 ? "1 call" : "{n} calls", { n: count(bar.calls) });
   const head = mode === "days"
     ? [valid ? at.toLocaleDateString(undefined, { timeZone, weekday: "short", month: "short", day: "numeric" }) : "", t(bar.replies === 1 ? "1 reply" : "{n} replies", { n: count(bar.replies) }), calls]
-    : [t("Reply {n}", { n: bar.index + 1 }), valid ? `${at.toLocaleDateString(undefined, { timeZone, month: "short", day: "numeric" })}, ${at.toLocaleTimeString(undefined, { timeZone, hour: "2-digit", minute: "2-digit" })}` : "", calls];
+    : [t("Reply {n}", { n: bar.reply + 1 }), bar.parts > 1 ? t("part {n} of {total}", { n: bar.part + 1, total: bar.parts }) : null, valid ? `${at.toLocaleDateString(undefined, { timeZone, month: "short", day: "numeric" })}, ${at.toLocaleTimeString(undefined, { timeZone, hour: "2-digit", minute: "2-digit" })}` : "", calls];
   const rows: ChartCard["rows"] = [{ kind: "cost", label: t("Cost"), value: formatUsd(bar.rest + bar.restart) }];
   if (bar.restart > 0) {
     const label = mode === "days" && bar.restarts > 1 ? t("Cold restarts ({n})", { n: bar.restarts }) : t("Cold restart");
@@ -209,7 +279,7 @@ export function CostChart({ messages, priced, timeZone }: { messages: readonly M
   const many = messages.length > DAYS_OVER;
   const mode = many ? chosen ?? chartMode(messages.length, storedMode()) : "replies";
   const scrolls = mode === "replies" && many;
-  const bars: ChartBar[] = mode === "days" ? dayCosts(messages, timeZone) : messages.map((each, index) => ({ ...each, index, replies: 1 }));
+  const bars: ChartBar[] = mode === "days" ? dayCosts(messages, timeZone) : replyBars(messages);
   const last = bars.length - 1;
   const pick = selected !== null && selected <= last ? selected : null;
   // a tap anywhere outside the chart clears the card
@@ -233,7 +303,9 @@ export function CostChart({ messages, priced, timeZone }: { messages: readonly M
   const contextTicks = niceTicks(Math.max(...bars.map((each) => each.context)));
   const top = usdTicks[usdTicks.length - 1]!;
   const peak = contextTicks[contextTicks.length - 1]!;
-  const average = totals.reduce((sum, each) => sum + each, 0) / bars.length;
+  // per reply, not per hour: an hour's bar is part of its reply
+  const average = totals.reduce((sum, each) => sum + each, 0) / (mode === "days" ? bars.length : messages.length);
+  const brackets = mode === "days" ? [] : replyBrackets(bars);
   const width = scrolls ? bars.length * SCROLL_SLOT : WIDTH;
   const slot = width / bars.length;
   const bar = Math.max(1, Math.min(8.5, slot * 0.62));
@@ -324,6 +396,10 @@ export function CostChart({ messages, priced, timeZone }: { messages: readonly M
               onClick={() => select(pick === index ? null : index)} />)}
           </div>
         </div>
+        {brackets.length > 0 && <div className="session-chart-brackets" aria-hidden="true" style={scrolls ? { width: `${width}px` } : undefined}>
+          {brackets.map((each) => <span key={each.reply} className="session-chart-bracket" data-reply={each.reply}
+            style={{ left: `${(x(each.from) / width) * 100}%`, width: `${((x(each.to) + bar - x(each.from)) / width) * 100}%` }} />)}
+        </div>}
         <div className="session-chart-axis" aria-hidden="true" style={scrolls ? { width: `${width}px` } : undefined}>{ticks.map((tick, index) => <span key={index}>{tick}</span>)}</div>
       </div>
       <div className="session-chart-yaxis is-context" aria-hidden="true">

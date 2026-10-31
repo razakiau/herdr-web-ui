@@ -152,6 +152,55 @@ describe("CostChart (option B)", () => {
   });
 });
 
+describe("CostChart: a reply over an hour long (ZAC-262)", () => {
+  // 3 replies; the second ran 3 hours: $3 in its first hour, none in its second (left out by the bridge), $6 and $9 after
+  const SPLIT = [
+    reply("2026-10-30T19:00:00Z", { rest: 2, calls: 4 }),
+    reply("2026-10-30T20:36:00Z", { rest: 18, calls: 30, context: 220_000, hours: [
+      reply("2026-10-30T20:36:00Z", { rest: 3, calls: 5, context: 190_000 }),
+      reply("2026-10-30T22:36:00Z", { rest: 6, calls: 10, context: 205_000 }),
+      reply("2026-10-30T23:36:00Z", { rest: 9, calls: 15, context: 220_000 }),
+    ] }),
+    reply("2026-10-31T00:50:00Z", { rest: 1, calls: 2 }),
+  ];
+
+  it("one bar per hour, a bracket under the reply's bars, the hour's card; avg still per reply", async () => {
+    const root = await mount(SPLIT);
+    expect(hits(root)).toHaveLength(5);
+    const brackets = classed(root.root, "session-chart-bracket");
+    expect(brackets.map((each) => each.props["data-reply"])).toEqual([1]);
+    // from the second bar's left edge to the fourth's right edge (5 slots of 60 in the 300-wide plot, bars 8.5 wide)
+    const style = brackets[0]!.props["style"] as { left: string; width: string };
+    expect(parseFloat(style.left)).toBeCloseTo(((60 + (60 - 8.5) / 2) / 300) * 100, 6);
+    expect(parseFloat(style.width)).toBeCloseTo(((2 * 60 + 8.5) / 300) * 100, 6);
+    await act(async () => { (hits(root)[3]!.props["onClick"] as () => void)(); });
+    expect(card(root)).toMatch(/^Reply 2 · part 3 of 3 · Oct 30, (23:36|11:36 PM) · 15 callsCost\$9\.00Context at the end220K$/);
+    await act(async () => { (hits(root)[4]!.props["onClick"] as () => void)(); });
+    expect(card(root)).toMatch(/^Reply 3 · Oct 31,/);
+    // (2 + 18 + 1) / 3 replies, not / 5 bars
+    expect(textOf(classed(root.root, "session-chart-avg")[0]!)).toBe("avg $7.00");
+    // each hour's tick its own start
+    expect(classed(root.root, "session-chart-axis")[0]!.children.map(textOf)[0]).toMatch(/^(19:00|07:00 PM)$/);
+  });
+
+  it("a reply without hours (an old bridge): one bar, no bracket", async () => {
+    const root = await mount(SPLIT.map(({ hours: _hours, ...each }) => each));
+    expect(hits(root)).toHaveLength(3);
+    expect(classed(root.root, "session-chart-bracket")).toHaveLength(0);
+  });
+
+  it("the Days view sums whole replies: no hours, no bracket", async () => {
+    const many = [...LONG.slice(0, 41), ...SPLIT];
+    const root = await mount(many);
+    expect(textOf(classed(root.root, "session-kicker")[0]!)).toBe("Per day · 44 replies");
+    expect(hits(root)).toHaveLength(5);
+    expect(classed(root.root, "session-chart-bracket")).toHaveLength(0);
+    await act(async () => { (modeButtons(root)[0]!.props["onClick"] as () => void)(); });
+    expect(hits(root)).toHaveLength(46);
+    expect(classed(root.root, "session-chart-bracket")).toHaveLength(1);
+  });
+});
+
 describe("messageCosts", () => {
   it("a reply holding the chat's first write draws no cold restart: the write is in the rest (ZAC-262)", () => {
     const [first] = messageCosts([{ at: "2026-10-29T10:00:00Z", input: 0, cacheRead: 0, cacheWrite: 73_961, firstWrite: 73_961, output: 0, main: true, context: 73_961, lastCacheRead: 0, calls: 1, restarts: 0 }], "claude-fictional-4", { input: 5, output: 25, cached: 0.5 });

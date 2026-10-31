@@ -571,6 +571,7 @@ const BASE: Record<string, string> = {
   "1 reply": "1 条回复",
   "{n} replies": "{n} 条回复",
   "Reply {n}": "回复 {n}",
+  "part {n} of {total}": "第 {n} 部分，共 {total} 部分",
   "Cold restarts ({n})": "冷启动（{n}）",
   "Largest context": "最大上下文",
   "Context at the end": "结束时的上下文",

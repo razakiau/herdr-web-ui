@@ -499,6 +499,54 @@ describe("CostIndex", () => {
     ]);
   });
 
+  test("calls: a reply over an hour long holds its calls per 60-minute window from its first call, a sub-agent's in its time's window (ZAC-262)", () => {
+    const at = (min: number): string => new Date(Date.parse("2026-10-29T20:00:00.000Z") + min * 60_000).toISOString();
+    log(UUID, [
+      userMessage(at(0)),
+      // the first window: two main calls and a sub-agent's
+      usage(at(1), { input: 100, cacheRead: 0, cacheWrite: 100, output: 1 }),
+      usage(at(30), { input: 200, cacheRead: 100, output: 2 }),
+      usage(at(45), { input: 50, output: 5 }, { agentId: "sub-1" }),
+      // 61:00 is past the first window's end (1:00 + 60 min): the second
+      usage(at(61), { input: 300, cacheRead: 200, output: 3 }),
+      // the sub-agent started in this reply: its later call lands in its time's window
+      usage(at(100), { input: 60, output: 6 }, { agentId: "sub-1" }),
+      // no call between 2:01 and 3:01; the third window
+      usage(at(151), { input: 400, cacheRead: 300, output: 4 }),
+      userMessage(at(200)),
+      usage(at(201), { input: 500, cacheRead: 400, output: 5 }),
+      usage(at(260), { input: 600, cacheRead: 500, output: 6 }),
+    ]);
+    const [main, sub, short] = index().calls(`copilotcli:/${UUID}`);
+    // the reply's own sums are unchanged
+    expect(main).toMatchObject({ at: at(1), input: 1000, cacheRead: 600, output: 10, calls: 4, context: 400 });
+    expect(sub).toMatchObject({ at: at(45), input: 110, output: 11, calls: 2 });
+    expect(main?.hours?.map((hour) => [hour.at, hour.input, hour.cacheRead, hour.cacheWrite, hour.output, hour.calls, hour.context, hour.main])).toEqual([
+      // each write inferred from the next main call's read lands in the hour of the call that wrote it
+      [at(1), 300, 100, 200, 3, 2, 200, true], [at(61), 300, 200, 100, 3, 1, 300, true], [at(121), 400, 300, 100, 4, 1, 400, true],
+    ]);
+    expect(sub?.hours?.map((hour) => [hour.at, hour.input, hour.calls, hour.main])).toEqual([[at(1), 50, 1, false], [at(61), 60, 1, false]]);
+    // 59 minutes from first to last call: one bar, no hours
+    expect(short).toMatchObject({ at: at(201), calls: 2 });
+    expect(short?.hours).toBeUndefined();
+  });
+
+  test("calls: an hour's sums take the write the next call reveals, and its cold restart (ZAC-262)", () => {
+    const at = (min: number): string => new Date(Date.parse("2026-10-29T20:00:00.000Z") + min * 60_000).toISOString();
+    log(UUID, [
+      userMessage(at(0)),
+      usage(at(1), { input: 1000, cacheRead: 0, cacheWrite: 1000, output: 1 }),
+      // the cache expired: this call's write is inferred from the next call's read
+      usage(at(80), { input: 100_100, cacheRead: 0, output: 1 }),
+      usage(at(81), { input: 101_000, cacheRead: 100_000, output: 1 }),
+    ]);
+    const [main] = index().calls(`copilotcli:/${UUID}`);
+    expect(main).toMatchObject({ cacheWrite: 101_000, coldWrite: 100_000, restarts: 1 });
+    expect(main?.hours?.map((hour) => [hour.at, hour.cacheWrite, hour.coldWrite, hour.firstWrite, hour.restarts, hour.calls])).toEqual([
+      [at(1), 1000, 0, 1000, 0, 1], [at(61), 100_000, 100_000, 0, 1, 2],
+    ]);
+  });
+
   test("costOf reads a big log over several requests, a floor until it is through", () => {
     const lines = [userMessage("2026-10-29T08:00:00.000Z"), ...Array.from({ length: 40 }, (_, i) => usage(`2026-10-29T08:00:${String(i).padStart(2, "0")}.000Z`, { input: 1000 + i * 100, cacheRead: i * 100, output: 3 }))];
     log(UUID, lines);
