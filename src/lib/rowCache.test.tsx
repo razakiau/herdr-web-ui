@@ -34,9 +34,14 @@ describe("rowCacheMark", () => {
     expect(rowCacheMark({ status: "asks" }, log(48, 300_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "cooling", leftMin: 12 });
     expect(rowCacheMark({ status: "asks" }, log(150, 300_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "cold", fraction: 0 });
   });
-  it("is absent for a working chat, a small one, an unpriced or local one, and without a log or prices", () => {
+  it("marks a small chat too, as small: every chat says warm or cold (owner, ZAC-267)", () => {
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "warm", leftMin: 50, context: 40_000, small: true });
+    expect(rowCacheMark(idle, log(90, 40_000), PRICES, SETTINGS, NOW)).toMatchObject({ state: "cold", fraction: 0, small: true });
+    expect(rowCacheMark(idle, log(10, 300_000), PRICES, SETTINGS, NOW)!.small).toBeUndefined();
+  });
+  it("is absent for a working chat, an unpriced or local one, and without a log or prices", () => {
     expect(rowCacheMark({ status: "working" }, log(10, 300_000), PRICES, SETTINGS, NOW)).toBeNull();
-    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW)).toBeNull();
+    expect(rowCacheMark({ status: "working" }, log(10, 40_000), PRICES, SETTINGS, NOW)).toBeNull();
     expect(rowCacheMark(idle, log(10, 900_000, "mystery-1"), PRICES, SETTINGS, NOW)).toBeNull();
     expect(rowCacheMark(idle, log(10, 900_000, "desktop-coder"), PRICES, SETTINGS, NOW)).toBeNull();
     expect(rowCacheMark(idle, undefined, PRICES, SETTINGS, NOW)).toBeNull();
@@ -88,8 +93,11 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(body(mark(15))).not.toContain("kept-warm");
     // a small chat the owner turned on (ZAC-267) is kept like a big one: ring and flame too
     expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null })).toMatchObject({ state: "warm", leftMin: 50, kept: true, context: 40_000 });
-    // not kept, it stays unmarked as before
-    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null)).toBeNull();
+    // not kept, its own small ring, no flame
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null)).toMatchObject({ state: "warm", small: true });
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null)!.kept).toBeUndefined();
+    expect(body(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null))).toContain('class="cache-ring is-warm is-small"');
+    expect(body(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null }))).toContain('class="cache-ring is-warm is-kept is-small"');
     // still nothing for a chat with no price (local, unknown) even if kept
     expect(rowCacheMark(idle, log(10, 900_000, "mystery-1"), PRICES, SETTINGS, NOW, { lastPingAt: null })).toBeNull();
   });
@@ -121,7 +129,7 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(rule).toContain("width: 14px; height: 14px;");
   });
 
-  it("is absent with no mark (a small or busy chat): the row is today's", () => {
+  it("is absent with no mark (a busy or unpriced chat): the row is today's", () => {
     const html = body(null);
     expect(html).not.toContain("cache-ring");
     expect(html).not.toContain("cache warm");

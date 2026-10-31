@@ -449,6 +449,11 @@
 .cache-ring.is-warm circle { stroke: var(--cache-warm); }
 .cache-ring.is-cooling circle { stroke: var(--cache-cooling); }
 .cache-ring.is-cold .cache-ring-stroke { stroke: var(--cache-cold); stroke-width: 1.5; }
+/* a chat under the cold-restart mark (ZAC-267, owner: a ring on every chat): the same states and
+   colours, a thinner arc, so the big ones still stand out and a small cold one still reads as cold */
+.cache-ring.is-small { opacity: 0.8; }
+.cache-ring.is-small .cache-ring-stroke { stroke-width: 1.5; }
+.cache-ring.is-small.is-cold .cache-ring-stroke { stroke-width: 1.25; }
 /* kept warm by OmniRoute (ZAC-260 phase 2): the ring stays full, a small flame badge on its top
    right (owner's pick A: on the lower right it sat over the subtitle's first letters). The cell is
    34px with the 24px ring centred, so right 1px puts the badge's centre over the ring's 1:30 point,

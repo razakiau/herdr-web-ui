@@ -76,7 +76,7 @@ export function CacheRing({ mark }: { mark: RowCacheMark }) {
   // thick arc from 12 o'clock, clockwise, over a thin track in the same colour, so a ring with
   // minutes left still reads in its colour (a dark track hid the cooling one)
   const shape = { cx: 12, cy: 12, r: 11, fill: "none" } as const;
-  return <><svg className={`cache-ring is-${mark.state}${mark.kept ? " is-kept" : ""}`} viewBox="0 0 24 24" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
+  return <><svg className={`cache-ring is-${mark.state}${mark.kept ? " is-kept" : ""}${mark.small ? " is-small" : ""}`} viewBox="0 0 24 24" aria-hidden="true" data-fraction={mark.fraction.toFixed(3)}>
     {mark.state === "cold"
       ? <circle {...shape} className="cache-ring-stroke" strokeDasharray="2 2.6" />
       : <>
