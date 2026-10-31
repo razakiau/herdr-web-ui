@@ -393,9 +393,13 @@ export async function forkHostChat(machineId: string, session: string, turn: str
 
 // ─── Hand off & continue (ZAC-262) ───────────────────────────────────────────
 
-/** Starts the bridge's hand-off job: `/handoff`, then `/resume` in a new chat, then the old one archived. A second tap gets the running job. */
-export async function startHandoff(machineId: string, session: string): Promise<HandoffJob> {
-  return (await post<{ job: HandoffJob }>(machineId, "host-chats/chat/handoff", { session })).job;
+/**
+ * Starts the bridge's hand-off job (a second tap gets the running job). `fresh` (a cold or
+ * archived chat, ZAC-266): chat/continue stops the chat and opens a new one that reads this one's
+ * record, no note. Else chat/handoff: `/handoff`, then `/resume` in a new chat. Neither archives.
+ */
+export async function startHandoff(machineId: string, session: string, fresh: boolean): Promise<HandoffJob> {
+  return (await post<{ job: HandoffJob }>(machineId, fresh ? "host-chats/chat/continue" : "host-chats/chat/handoff", { session })).job;
 }
 
 /** The chat's hand-off job; null when its bridge has none (it restarted, or forgot the job an hour after it ended). */
@@ -426,34 +430,39 @@ export async function followHandoff(machineId: string, session: string, opts: { 
 }
 
 /**
- * The "Hand off & continue" button: starts the job, follows it, and opens the new chat when there
- * is one (`done`, or `failed` with `resume_not_sent`, whose chat exists without its /resume).
- * Answers the banner's line, or null when the new chat was opened.
+ * The "Hand off & continue" button: starts the job (chat/continue when `fresh`, else chat/handoff),
+ * follows it, and answers the new chat when there is one (`done`, or `failed` with
+ * `resume_not_sent`, whose chat exists without its /resume), with the job's mode for the outcome
+ * line; else the banner's line saying why. It opens nothing itself: the owner taps Open new chat
+ * (ZAC-266). A refused fresh request never falls back to a note.
  */
 export async function handOffAndContinue(machineId: string, session: string, opts: {
-  pc: string; t: Translate; poll(ms: number): Promise<void>; onState(job: HandoffJob): void; onOpen(session: string): void;
-}): Promise<string | null> {
+  pc: string; t: Translate; fresh: boolean; poll(ms: number): Promise<void>; onState(job: HandoffJob): void;
+}): Promise<{ note: string } | { opened: string; mode: "note" | "fresh" }> {
   const { t } = opts;
+  const note = (text: string) => ({ note: text });
   let job: HandoffJob;
-  try { job = await startHandoff(machineId, session); }
+  try { job = await startHandoff(machineId, session, opts.fresh); }
   catch (error) {
-    if (!(error instanceof ApiError)) return errorText(error);
-    // a bridge before ZAC-262 knows no such route
-    if (error.status === 404) return t("Update the bridge on {pc} to hand off from here", { pc: opts.pc });
+    if (!(error instanceof ApiError)) return note(errorText(error));
+    // the host won't open that chat; any other 404 is a bridge that knows no such route
+    if (error.status === 404 && error.code === "host_chat_missing") return note(t("This chat can't hand off from here"));
+    if (error.status === 404) return note(t("Update the bridge on {pc} to hand off from here", { pc: opts.pc }));
     switch (error.code) {
-      case "busy": return t("It's working: try again when it's done");
-      case "no_handoff": case "no_folder": return t("This chat can't hand off from here");
-      case "recent_handoff": return t("A hand-off was just written: open the chat");
-      default: return errorText(error);
+      case "busy": return note(t("It's working: try again when it's done"));
+      case "no_handoff": case "no_resume": case "no_folder": return note(t("This chat can't hand off from here"));
+      case "no_record": return note(t("This chat's record isn't on its PC"));
+      case "recent_handoff": return note(t("A hand-off was just written: open the chat"));
+      default: return note(errorText(error));
     }
   }
   opts.onState(job);
   const end = handoffEnded(job.state) ? job : await followHandoff(machineId, session, opts);
-  if (end === null) return t("Lost track of the hand-off: open the chat");
-  if (end.newSession !== null && (end.state === "done" || end.state === "failed")) { opts.onOpen(end.newSession); return null; }
-  if (end.state === "no_resume") return t("Hand-off note written, but no /resume line: open the chat");
-  // timeout, or a step the host failed before the new chat existed: nothing was archived
-  return t("Hand-off didn't finish: open the chat");
+  if (end === null) return note(t("Lost track of the hand-off: open the chat"));
+  if (end.newSession !== null && (end.state === "done" || end.state === "failed")) return { opened: end.newSession, mode: end.mode ?? (opts.fresh ? "fresh" : "note") };
+  if (end.state === "no_resume") return note(t("Hand-off note written, but no /resume line: open the chat"));
+  // timeout, or a step the host failed before the new chat existed
+  return note(t("Hand-off didn't finish: open the chat"));
 }
 
 /** Redo: puts back the edits a restore undid. */

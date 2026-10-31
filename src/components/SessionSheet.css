@@ -514,3 +514,19 @@
 /* the Cache tab's keep-warm row (ZAC-260 phase 2): a small flame before its label, in the warm colour */
 .session-sheet .session-keep-flame { width: 14px; height: 14px; margin-inline-end: 4px; vertical-align: -2px; color: var(--cache-warm); fill: currentColor; }
 .session-sheet .session-keep-warm .settings-toggle { flex: none; }
+
+/* the outcome line after a hand-off (ZAC-266, owner's mock): the words on their own row, Open new
+   chat and Archive this one under them, ✕ at the row's end; a phone has no room for all on one line */
+.handoff-bar.handoff-outcome {
+  --cache: var(--status-done);
+  --cache-tint: var(--status-done-tint);
+  flex-wrap: wrap;
+}
+
+.handoff-outcome .checkpoint-bar-text {
+  flex: 1 1 100%;
+}
+
+.handoff-outcome .handoff-bar-close {
+  margin-left: auto;
+}

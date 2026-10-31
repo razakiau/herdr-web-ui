@@ -6,6 +6,9 @@
  * it for that chat until the cache's state changes; kept in memory only, so a reload shows it again.
  * It also says why a hand-off did not go (ZAC-262: busy, an old bridge, no /resume line…), whatever
  * the advice: the tap was the user's, so the answer shows even where the advice would not.
+ * On a cold chat a grey second line says the new chat reads this one's record (ZAC-266), and once
+ * a hand-off opened a new chat its outcome line offers Open new chat and Archive this one: the old
+ * chat neither jumps nor archives by itself.
  */
 import { useState } from "react";
 import { X } from "lucide-react";
@@ -52,15 +55,30 @@ export interface HandoffBannerProps {
   /** why the last hand-off did not open a new chat (handOffAndContinue's line) */
   note?: string | null;
   onCloseNote?: () => void;
+  /** the chat hands off from its record (cold, or archived): the grey second line under the advice */
+  cold?: boolean;
+  /** a hand-off opened a new chat: the outcome line, whatever the advice; ✕ is onCloseNote */
+  outcome?: { mode: "note" | "fresh"; onOpen(): void; onArchive?: (() => void) | undefined } | null;
 }
 
-export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, handoffWaiting = false, note = null, onCloseNote }: HandoffBannerProps) {
+export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, handoffWaiting = false, note = null, onCloseNote, cold = false, outcome = null }: HandoffBannerProps) {
   const t = useT();
   const locale = useLocale();
   const clock = useMinuteClock();
   const [, setHidden] = useState(0);
   const noteOnly = note === null ? null : <div className="checkpoint-bar handoff-bar handoff-note" role="status">
     <span className="checkpoint-bar-text">{note}</span>
+    <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={onCloseNote}>
+      <X aria-hidden="true" />
+    </button>
+  </div>;
+  if (outcome) return <div className="checkpoint-bar handoff-bar handoff-outcome" role="status">
+    <span className="checkpoint-bar-text">{t(outcome.mode === "fresh"
+      ? "Continued in a new chat from this chat's record. This one is stopped, not archived."
+      : "Continued in a new chat from a hand-off note. This one is not archived.")}</span>
+    <button type="button" className="btn btn-primary checkpoint-bar-redo" onClick={outcome.onOpen}>{t("Open new chat")}</button>
+    {/* absent on a chat already archived */}
+    {outcome.onArchive && <button type="button" className="btn btn-ghost checkpoint-bar-redo" onClick={outcome.onArchive}>{t("Archive this one")}</button>}
     <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={onCloseNote}>
       <X aria-hidden="true" />
     </button>
@@ -74,6 +92,7 @@ export function HandoffBanner({ dismissKey, read, log, settings, prices, now, on
   const rest = headline.charAt(0).toLocaleLowerCase(locale) + headline.slice(1);
   return <div className={`checkpoint-bar handoff-bar is-${state}`} role="status">
     <span className="checkpoint-bar-text"><strong>{t(state === "warm" ? "Cache warm" : state === "cooling" ? "Cache cooling" : "Cache cold")}</strong> · {rest}
+      {cold && <span className="handoff-bar-wait">{t("The new chat reads this one's record; nothing to re-read here")}</span>}
       {/* its own muted line: as a disabled button it squeezed the advice into a narrow column on a phone */}
       {handoffWaiting && !onHandoff && !handingOff && <span className="handoff-bar-wait">{t("Working: hand off when it asks or stops")}</span>}
     </span>

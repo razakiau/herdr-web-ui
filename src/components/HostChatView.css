@@ -783,3 +783,22 @@ code.session-sheet-detail { font-family: var(--font-mono); }
 .session-sheet-row[aria-expanded="true"] .session-sheet-chevron { transform: rotate(90deg); }
 .session-sheet-item > .edit-diff { margin: 0 0 var(--space-2) var(--space-2); }
 @media (prefers-reduced-motion: reduce) { .session-sheet-chevron { transition: none; } }
+
+/* an archived chat's bar (ZAC-266, owner's mock): "Archived · continue it in a new chat…" in full,
+   wrapping on a phone, with Continue in a new chat at its end */
+.archived-bar {
+  flex-wrap: wrap;
+}
+
+.archived-bar .checkpoint-bar-text {
+  white-space: normal;
+}
+
+.archived-bar strong {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+.archived-bar .checkpoint-bar-redo {
+  margin-left: auto;
+}

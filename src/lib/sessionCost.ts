@@ -80,6 +80,17 @@ export function cacheMeter(
   return { context, cache, restartUsd, switched, advised: cache ? advice(cache.state, isBigChat(restartUsd, settings.coldRestartAlertUsd)) : "keep" };
 }
 
+/** The cache's state as the handoff banner reads it (cacheMeter's), null without a log: a cold chat hands off from its record (ZAC-266). */
+export function cacheStateOf(
+  read: Parameters<typeof cacheMeter>[0],
+  log: HostChatCost | null | undefined,
+  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
+  now: number,
+  prices: CachePrices | null,
+): CacheState | null {
+  return cacheMeter(read, log, settings, now, prices).cache?.state ?? null;
+}
+
 /**
  * What switching the chat to `target` costs in the model picker (ZAC-260 phase 2, owner-approved):
  * a prompt cache is one model's, so the next call on another model stores the whole context again,

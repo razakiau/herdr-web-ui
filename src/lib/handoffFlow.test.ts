@@ -26,7 +26,7 @@ const NOT_FOUND: [number, unknown] = [404, { error: { code: "job_not_found", mes
 describe("the hand-off job's routes", () => {
   it("starts the job on the chat's own PC and reads it back", async () => {
     const calls = answer([200, { job: job("sending") }], [200, { job: job("waiting") }]);
-    expect((await startHandoff("desk", "old")).state).toBe("sending");
+    expect((await startHandoff("desk", "old", false)).state).toBe("sending");
     expect((await fetchHandoff("local", "old"))?.state).toBe("waiting");
     expect(calls).toEqual([
       'POST /api/machines/desk/host-chats/chat/handoff {"session":"old"}',
@@ -71,25 +71,63 @@ describe("followHandoff", () => {
 });
 
 describe("handOffAndContinue", () => {
-  const run = (pc = "Desk") => {
-    const opened: string[] = [];
+  const run = (pc = "Desk", fresh = false) => {
     const states: HandoffState[] = [];
-    const done = handOffAndContinue("desk", "old", { pc, t, poll: async () => {}, onState: (each) => states.push(each.state), onOpen: (session) => opened.push(session) });
-    return { opened, states, done };
+    const done = handOffAndContinue("desk", "old", { pc, t, fresh, poll: async () => {}, onState: (each) => states.push(each.state) });
+    return { states, done };
   };
 
-  it("opens the new chat when the job is done, with nothing to say", async () => {
-    answer([200, { job: job("sending") }], [200, { job: job("done", { newSession: "new" }) }]);
-    const { opened, done } = run();
-    expect(await done).toBeNull();
-    expect(opened).toEqual(["new"]);
+  it("fresh POSTs chat/continue", async () => {
+    const calls = answer([200, { job: job("starting", { mode: "fresh" }) }], [200, { job: job("done", { mode: "fresh", newSession: "new" }) }]);
+    await run("Desk", true).done;
+    expect(calls[0]).toBe('POST /api/machines/desk/host-chats/chat/continue {"session":"old"}');
   });
 
-  it("opens the new chat whose /resume did not go", async () => {
+  it("note POSTs chat/handoff", async () => {
+    const calls = answer([200, { job: job("sending") }], [200, { job: job("done", { newSession: "new" }) }]);
+    await run("Desk", false).done;
+    expect(calls[0]).toBe('POST /api/machines/desk/host-chats/chat/handoff {"session":"old"}');
+  });
+
+  it("a done job answers opened with its mode", async () => {
+    answer([200, { job: job("starting", { mode: "fresh" }) }], [200, { job: job("done", { mode: "fresh", newSession: "new" }) }]);
+    expect(await run("Desk", true).done).toEqual({ opened: "new", mode: "fresh" });
+  });
+
+  it("answers the new chat when the job is done, opening nothing itself", async () => {
+    answer([200, { job: job("sending") }], [200, { job: job("done", { newSession: "new" }) }]);
+    expect(await run().done).toEqual({ opened: "new", mode: "note" });
+  });
+
+  it("answers the new chat whose /resume did not go", async () => {
     answer([200, { job: job("sending") }], [200, { job: job("failed", { error: "resume_not_sent", newSession: "new" }) }]);
-    const { opened, done } = run();
-    await done;
-    expect(opened).toEqual(["new"]);
+    expect(await run().done).toEqual({ opened: "new", mode: "note" });
+  });
+
+  it("an old bridge's 404 on continue says update the bridge and makes no second call", async () => {
+    const calls = answer([404, { error: { code: "not_found", message: "unknown endpoint" } }]);
+    expect(await run("Desk", true).done).toEqual({ note: "Update the bridge on Desk to hand off from here" });
+    expect(calls.length).toBe(1);
+  });
+
+  it("no_record says the record isn't on its PC", async () => {
+    answer(conflict("no_record"));
+    expect(await run("Desk", true).done).toEqual({ note: "This chat's record isn't on its PC" });
+  });
+
+  it("says why a fresh hand-off did not go", async () => {
+    const cases: Array<[[number, unknown][], string]> = [
+      [[conflict("busy")], "It's working: try again when it's done"],
+      [[conflict("no_resume")], "This chat can't hand off from here"],
+      [[conflict("no_folder")], "This chat can't hand off from here"],
+      [[[404, { error: { code: "host_chat_missing", message: "no such host chat on this PC" } }]], "This chat can't hand off from here"],
+      [[[200, { job: job("starting", { mode: "fresh" }) }], [200, { job: job("failed", { mode: "fresh", error: "host" }) }]], "Hand-off didn't finish: open the chat"],
+    ];
+    for (const [answers, words] of cases) {
+      const calls = answer(...answers);
+      expect(await run("Desk", true).done).toEqual({ note: words });
+      expect(calls.every((each) => !each.includes("chat/handoff {"))).toBe(true);
+    }
   });
 
   it("says why it did not hand off, in the banner's words", async () => {
@@ -105,17 +143,13 @@ describe("handOffAndContinue", () => {
     ];
     for (const [answers, words] of cases) {
       answer(...answers);
-      const { opened, done } = run();
-      expect(await done).toBe(words);
-      expect(opened).toEqual([]);
+      expect(await run().done).toEqual({ note: words });
     }
   });
 
   it("follows nothing when the POST answers a job that already ended", async () => {
     const calls = answer([200, { job: job("done", { newSession: "new" }) }]);
-    const { opened, done } = run();
-    await done;
-    expect(opened).toEqual(["new"]);
+    expect(await run().done).toEqual({ opened: "new", mode: "note" });
     expect(calls).toHaveLength(1);
   });
 });

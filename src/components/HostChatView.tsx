@@ -24,8 +24,8 @@ import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../.
 import { useT } from "../lib/i18n.ts";
 import { hostSource, keepContext } from "../lib/chatSource.ts";
 import {
-  agentName, answerHost, answerHostForm, choose, discardHostChat, forkHostChat, handOffAndContinue, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
-  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, type HostChoice,
+  agentName, answerHost, archiveHostChat, answerHostForm, choose, discardHostChat, forkHostChat, handOffAndContinue, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
+  sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, useMinuteClock, type HostChoice,
 } from "../lib/hostChats.ts";
 import { settingsTone, type HostSendPick } from "../lib/compose.ts";
 import { Composer, type AttachApi, type SentAttachment } from "./Composer.tsx";
@@ -37,7 +37,7 @@ import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
-import { callingModel, switchCost as switchCostOf } from "../lib/sessionCost.ts";
+import { cacheStateOf, callingModel, switchCost as switchCostOf } from "../lib/sessionCost.ts";
 import { handoffOffer } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
@@ -64,6 +64,8 @@ export interface HostChatViewProps {
   look?(): void;
   /** opens a file of this PC in herdr's viewer: an edit's file, a session's file artifact */
   onOpenFile?(path: string): void;
+  /** the chat is archived on its PC (its row's IsArchived; a read does not say): a bar offers Continue in a new chat (ZAC-266) */
+  archived?: boolean;
 }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
@@ -118,7 +120,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
 /** a price request that answered with neither table */
 const NO_PRICES: ChatPrices = { prices: null, fallback: null };
 
-export function HostChatView({ machineId, session, onTitle, onOpenChat, machineName, look, onOpenFile }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle, onOpenChat, machineName, look, onOpenFile, archived = false }: HostChatViewProps) {
   const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
@@ -194,6 +196,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   // Hand off & continue's job runs, and why the last one opened no new chat
   const [handingOff, setHandingOff] = useState(false);
   const [handoffNote, setHandoffNote] = useState<string | null>(null);
+  // the new chat a hand-off opened (ZAC-266): the outcome line offers it, and archiving this one
+  const [handoffOutcome, setHandoffOutcome] = useState<{ opened: string; mode: "note" | "fresh" } | null>(null);
+  const minute = useMinuteClock();
   const mounted = useRef(true);
   // the transcript's handle: the "N running" sheet takes the reader to a subagent's row
   const revealSubagent = useRef<((target: SubagentTarget) => boolean) | null>(null);
@@ -361,17 +366,33 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const sheetPrices = prices ?? (pricesAnswered ? NO_PRICES : null);
   // Hand off & continue (ZAC-262), from the Session sheet and the banner: while idle or waiting on its own question, and only when
   // the session lists the command; working without asking, the button shows disabled (handoffWaiting).
-  // The bridge's job sends /handoff (or answers the question with it), starts the next chat with its /resume line and archives this one; the new chat opens here
+  // A cold or archived chat (ZAC-266) goes by chat/continue: the new chat reads this one's record, no note; else
+  // chat/handoff writes the note. Neither archives, and nothing opens by itself: the outcome line offers both
   const offer = chat ? handoffOffer(chat) : null;
   const handoffWaiting = offer === "working";
-  const onHandoff = offer === "ready" && !handingOff ? () => {
-    setHandingOff(true); setHandoffNote(null);
+  const fresh = archived || (cacheRead !== null && trackCosts && chatCostLog?.chat
+    ? cacheStateOf(cacheRead, chatCostLog.chat, costSettings, minute, sheetPrices) === "cold" : false);
+  const runHandoff = (asFresh: boolean): void => {
+    setHandingOff(true); setHandoffNote(null); setHandoffOutcome(null);
     // a chat left mid-job stops following it: its PC's bridge goes on, and the chat list shows the new chat
     const poll = async (ms: number): Promise<void> => { await new Promise((done) => setTimeout(done, ms)); if (!mounted.current) throw new Error("left"); };
-    void handOffAndContinue(machineId, session, { pc: machineName ?? machineId, t, poll, onState: () => {}, onOpen: (next) => { if (mounted.current) onOpenChat?.(next); } })
-      .then((note) => { if (mounted.current) setHandoffNote(note); }, () => undefined)
+    void handOffAndContinue(machineId, session, { pc: machineName ?? machineId, t, fresh: asFresh, poll, onState: () => {} })
+      .then((answer) => {
+        if (!mounted.current) return;
+        if ("note" in answer) setHandoffNote(answer.note); else setHandoffOutcome(answer);
+      }, () => undefined)
       .finally(() => { if (mounted.current) { setHandingOff(false); reread(); } });
-  } : undefined;
+  };
+  const onHandoff = offer === "ready" && !handingOff ? () => runHandoff(fresh) : undefined;
+  const outcome = handoffOutcome === null ? null : {
+    mode: handoffOutcome.mode,
+    onOpen: () => { const next = handoffOutcome.opened; setHandoffOutcome(null); onOpenChat?.(next); },
+    // an archived chat continued has nothing left to archive
+    onArchive: archived ? undefined : () => {
+      void archiveHostChat(machineId, session, true).then(() => { if (mounted.current) setHandoffOutcome(null); },
+        (cause: unknown) => { if (mounted.current) { setHandoffOutcome(null); setHandoffNote(errorText(cause)); } }).finally(reread);
+    },
+  };
   const label = t("Copilot chat {title}", { title: chat?.title ?? "" });
   const modeLabel = config?.mode ? t(MODE_LABEL[config.mode] ?? config.mode) : null;
   const approvalsLabel = config?.approvals ? t(APPROVALS_LABEL[config.approvals] ?? config.approvals) : null;
@@ -439,8 +460,17 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
       if (mounted.current) { setPutBack(null); reread(); }
     }} />}
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
-    <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}
-      handingOff={handingOff} handoffWaiting={handoffWaiting} note={handoffNote} onCloseNote={() => setHandoffNote(null)} />
+    {/* an archived chat (ZAC-266): the host still opens it, so it can go on in a new chat that reads its record */}
+    {archived && outcome === null && <div className="checkpoint-bar archived-bar" role="status">
+      <span className="checkpoint-bar-text"><strong>{t("Archived")}</strong>{t(" · continue it in a new chat; it reads this one's record")}</span>
+      <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={() => runHandoff(true)}>
+        {t(handingOff ? "Handing off…" : "Continue in a new chat")}
+      </button>
+    </div>}
+    {/* an archived chat's bar stands for the advice (owner's mock); a hand-off's note or outcome still shows */}
+    {(!archived || outcome !== null || handoffNote !== null) && <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}
+      handingOff={handingOff} handoffWaiting={handoffWaiting} note={handoffNote} cold={fresh} outcome={outcome}
+      onCloseNote={() => { setHandoffNote(null); setHandoffOutcome(null); }} />}
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}

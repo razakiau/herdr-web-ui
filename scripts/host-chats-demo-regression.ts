@@ -30,6 +30,9 @@ const patch = `(() => {
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const SIX = new URLSearchParams(location.search).get("pcs") === "6";
   const NO_PANES = new URLSearchParams(location.search).get("panes") === "0";
+  // the cold hand-off fixture (ZAC-266): the build chat idle, its cache cold two hours, its session
+  // listing /handoff and /resume; chat/continue answers a fresh job done at once
+  const COLD = sessionStorage.getItem("fictional-cold") === "1";
   const ids = SIX ? ["local", "remote", "pc-c", "pc-d", "pc-e", "pc-f"] : ["local", "remote"];
   const NAMES = { local: "Laptop", remote: "Build PC", "pc-c": "FICTIONAL PC C", "pc-d": "FICTIONAL PC D", "pc-e": "FICTIONAL PC E", "pc-f": "FICTIONAL PC F" };
   const roster = (original) => ids.map((id) => {
@@ -131,7 +134,7 @@ const patch = `(() => {
     ] }, { host: { ...prompt.host, form: [{ question_id: "q-1", option_ids: prompt.host.option_ids }, { question_id: "q-2", option_ids: ["slow", "quick", ""] }] } });
     return { session: SESSION, title: "FICTIONAL build chat", status: prompt ? "asks" : state.busy ? "working" : "idle", turns, cursor: state.older ? null : "c-older", prompt,
       model: state.model, agent: state.agent, busy: state.busy || prompt !== null, pending: state.pending,
-      commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }], message_ids: ids,
+      commands: [{ name: "fictional-skill", description: "FICTIONAL does a thing", kind: "skill" }, ...(COLD ? [{ name: "handoff", description: "FICTIONAL hand off", kind: "skill" }, { name: "resume", description: "FICTIONAL resume", kind: "skill" }] : [])], message_ids: ids,
       // VS Code's checkpoints, one per host turn: h1 edited build.ts (+28 -3), h1b and h2 nothing
       checkpoints: ids.map((id) => ({ turn: id, files: id === "h1" ? [{ path: "/tmp/fictional-repo/src/build.ts", added: 28, removed: 3 }] : [] })),
       restored: state.restored ?? null,
@@ -229,6 +232,12 @@ const patch = `(() => {
         return json({ path: "/tmp/fictional-repo/.herdr-web-ui/" + body.name });
       }
       if (path === "/api/host-chats/chat/resume") { state.resumed = true; return json({ ok: true }); }
+      if (COLD && path === "/api/host-chats/costs") {
+        const log = (session) => ({ session, models: [{ model: "cc/fictional-opus", input: 84000, cacheRead: 0, cacheWrite: 84000, output: 100, calls: 1, lastCallAt: at(120) }], lastCallAt: at(120), lastModel: "cc/fictional-opus", context: 84000, peak: 84000, rewrites: 0, days: {}, partial: false });
+        const session = url.searchParams.get("session");
+        return json(session ? { chat: log(session), calls: [] } : { chats: [log(SESSION), log("fictional-session-done")], complete: true });
+      }
+      if (COLD && path === "/api/host-chats/chat/continue") return json({ job: { session: body.session, mode: "fresh", state: "done", startedAt: Date.now(), endedAt: Date.now(), topic: null, newSession: "fictional-continued", error: null } });
       // VS Code's Fork Conversation: a chat in the same folder with the turns before the request
       if (path === "/api/host-chats/chat/fork") {
         if (state.failFork) return json({ error: { code: "first_turn", message: "FICTIONAL nothing to fork" } }, 409);
@@ -2853,6 +2862,73 @@ try {
         assert.deepEqual(errors, [], "no render errors");
         console.log("PASS a PC with no panes opens its first agent host workspace's chat");
       } finally { await bareContext.close(); }
+      // ZAC-266: a cold chat's banner says the new chat reads its record, the hand-off answers the outcome
+      // line (Open new chat, Archive this one), and an archived chat offers Continue in a new chat
+      const coldContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
+      try {
+        await coldContext.addInitScript(() => {
+          sessionStorage.setItem("fictional-cold", "1");
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", trackCosts: true, coldRestartAlertUsd: 0.01 }));
+        });
+        const cold = await coldContext.newPage();
+        const fits = async (what: string) => {
+          const width = await cold.evaluate(() => document.documentElement.scrollWidth);
+          assert.ok(width <= 390, `${what}: no horizontal overflow at 390 px (scrollWidth ${width})`);
+        };
+        const errors: string[] = [];
+        cold.on("pageerror", (error) => errors.push(error.message));
+        const coldPosts = async (end: string) => (await cold.evaluate(() => (window as unknown as { hostCalls: { posts: { path: string; body: Record<string, unknown> }[] } }).hostCalls.posts)).filter((post) => post.path.endsWith(end));
+        await cold.goto(`http://127.0.0.1:${server.port}/?machine=remote&chat=${encodeURIComponent(SESSION)}`);
+        const view = cold.locator(`.host-chat[data-host-session="${SESSION}"]`);
+        await view.waitFor({ timeout: 10_000 });
+        await cold.evaluate(() => { const host = window as unknown as { hostState: { answered: boolean; model: unknown }; rereadHost(): void }; host.hostState.answered = true; host.hostState.model = { id: "cc/fictional-opus", effort: null }; host.rereadHost(); });
+        const banner = view.locator(".handoff-bar.is-cold");
+        await banner.waitFor({ timeout: 10_000 }).catch(() => assert.fail("a cold chat shows the hand-off banner"));
+        assert.match(await banner.innerText(), /The new chat reads this one's record; nothing to re-read here/, "the cold banner's grey second line");
+        await fits("the cold banner");
+        if (shots) await cold.screenshot({ path: join(shots, "zac266-cold-banner-390.png") });
+        await banner.getByRole("button", { name: "Hand off & continue" }).click();
+        const outcome = view.locator(".handoff-outcome");
+        await outcome.waitFor({ timeout: 10_000 }).catch(() => assert.fail("the outcome line shows"));
+        assert.match(await outcome.innerText(), /Continued in a new chat from this chat's record\. This one is stopped, not archived\./, "the fresh outcome's words");
+        assert.equal((await coldPosts("/chat/continue")).length, 1, "a cold chat goes by chat/continue");
+        assert.equal((await coldPosts("/chat/handoff")).length, 0, "and writes no note");
+        assert.equal(await cold.locator('.host-chat[data-host-session="fictional-continued"]').count(), 0, "the old chat stays on screen");
+        const buttons = await outcome.evaluate((bar) => [...bar.querySelectorAll("button")].map((b) => { const r = b.getBoundingClientRect(); const o = bar.getBoundingClientRect(); return r.left >= o.left - 1 && r.right <= o.right + 1; }));
+        assert.ok(buttons.every(Boolean), "Open new chat, Archive this one and ✕ fit in the line");
+        await fits("the outcome line");
+        if (shots) await cold.screenshot({ path: join(shots, "zac266-outcome-390.png") });
+        await outcome.getByRole("button", { name: "Archive this one" }).click();
+        await outcome.waitFor({ state: "detached" });
+        assert.deepEqual((await coldPosts("/chat/archive")).map((post) => post.body), [{ session: SESSION, archived: true }], "Archive this one archives this chat");
+        // an archived chat opened from All agents' Archived (a link to it closes, as a chat marked done does):
+        // the host still reads it, and the bar continues it
+        await cold.getByRole("button", { name: "Open workspace list", exact: true }).click();
+        await lens(cold, "pcs");
+        await cold.getByRole("region", { name: "PC Build PC", exact: true }).getByRole("button", { name: "More for Build PC", exact: true }).click();
+        await cold.getByRole("button", { name: "All agents on Build PC…", exact: true }).click();
+        const all = cold.getByRole("dialog", { name: "All agents on Build PC", exact: true });
+        await all.locator(".all-agents-archived").click();
+        await all.locator('[data-host-session="fictional-session-done"]').click();
+        await all.waitFor({ state: "detached" });
+        if (await cold.locator("#workspace-drawer.is-open").count() > 0) await cold.getByRole("button", { name: "Close workspace list", exact: true }).click();
+        await cold.waitForFunction(() => document.querySelector("#workspace-drawer.is-open") === null);
+        await settled(cold);
+        const done = cold.locator('.host-chat[data-host-session="fictional-session-done"]');
+        await done.waitFor({ timeout: 10_000 });
+        const bar = done.locator(".archived-bar");
+        await bar.waitFor({ timeout: 10_000 }).catch(() => assert.fail("an archived chat shows its bar"));
+        assert.equal((await bar.innerText()).replace(/\s+/g, " ").trim(), "Archived · continue it in a new chat; it reads this one's record Continue in a new chat", "the archived bar's words");
+        assert.equal(await done.locator(".handoff-bar").count(), 0, "the archived bar stands for the cold advice");
+        await fits("the archived bar");
+        if (shots) await cold.screenshot({ path: join(shots, "zac266-archived-390.png") });
+        await bar.getByRole("button", { name: "Continue in a new chat" }).click();
+        await done.locator(".handoff-outcome").waitFor({ timeout: 10_000 });
+        assert.equal((await coldPosts("/chat/continue")).at(-1)?.body["session"], "fictional-session-done", "Continue in a new chat goes by chat/continue");
+        assert.equal(await done.locator(".handoff-outcome").getByRole("button", { name: "Archive this one" }).count(), 0, "an archived chat has nothing to archive");
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS a cold chat hands off from its record, the outcome line leaves archiving to the owner, and an archived chat continues");
+      } finally { await coldContext.close(); }
       // a wide window (desktop audit, 2026-10-23): what sits between the transcript and the composer
       // stands on the chat's column, the meter is by Send, and the turn rail sits beside the column
       const wideContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
