@@ -452,6 +452,29 @@ describe("SessionSheet", () => {
       expect(words).toContain("Hand off before it goes cold");
     });
 
+    it("a small chat (under the mark) shows the switch off, with why and what a ping costs (ZAC-267)", () => {
+      keepWarmFeed.set(answer({ big: false, forced: false, kept: false, restartUsd: 0.78, pingUsd: 0.0194, nextPingAt: null }));
+      const html = sheet();
+      expect(text(html)).toContain("Keep warm Off: restart ~$0.78 &lt; $1.00 · a ping ~$0.02");
+      expect(html).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);
+    });
+
+    it("a small chat forced on: on, until when, and says the owner turned it on", () => {
+      keepWarmFeed.set(answer({ big: false, forced: true, restartUsd: 0.78, pingUsd: 0.0194 }));
+      const html = sheet();
+      expect(text(html)).toContain(`Keep warm until ${clock(lastAt + 8 * 3_600_000)} (8 h after the last call) · on by you, under $1.00`);
+      expect(html).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
+    });
+
+    it("a big chat turned off says so; a plugin without `big` is taken as big (before ZAC-267)", () => {
+      keepWarmFeed.set(answer({ big: true, disabled: true, kept: false }));
+      expect(text(sheet())).toContain("Keep warm Off by you");
+      keepWarmFeed.set(answer({ disabled: true, kept: false }));
+      expect(sheet()).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);
+      keepWarmFeed.set(answer());
+      expect(sheet()).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
+    });
+
     it("turned off for this chat, or no plugin: phase 1's tab", () => {
       keepWarmFeed.set(answer({ disabled: true, kept: false }));
       expect(sheet()).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);

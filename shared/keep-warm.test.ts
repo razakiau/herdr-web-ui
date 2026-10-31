@@ -67,4 +67,9 @@ describe("wire shapes", () => {
       .toEqual({ enabled: false, windowHours: 24, fusePerDay: 1000, disabled: ["x"] });
     expect(keepWarmSettingsFrom({ windowHours: -1, fusePerDay: "200" })).toEqual({});
   });
+
+  it("keeps the owner's forced chats (ZAC-267) as it keeps the disabled ones", () => {
+    expect(keepWarmSettingsFrom({ forced: ["k", "k", 7, "x".repeat(65)] })).toEqual({ forced: ["k"] });
+    expect(keepWarmSettingsFrom({ forced: "k" })).toEqual({});
+  });
 });

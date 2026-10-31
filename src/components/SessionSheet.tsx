@@ -171,32 +171,40 @@ const clockTime = (ms: number): string => new Date(ms).toLocaleTimeString(undefi
 
 /**
  * The Cache tab's keep-warm row (phase 2): its switch, until when and today's pings; why it stopped
- * (a ping missed, past its window, the day's cap). Only for a chat the plugin tracks.
+ * (a ping missed, past its window, the day's cap). On every chat the plugin knows (ZAC-267): a chat
+ * under the mark is off by default and says why and what a ping costs; turned on, it says the owner did.
  */
 function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: boolean }; answer: KeepWarmAnswer; now: number }) {
   const t = useT();
   const [saving, setSaving] = useState(false);
   const { key } = keep;
   const state = answer.state!;
-  const on = state.enabled && !key.disabled;
+  // a plugin before ZAC-267 listed big chats only, without the field
+  const big = key.big !== false;
+  const chosen = big ? !key.disabled : key.forced === true && !key.disabled;
+  const on = state.enabled && chosen;
+  const mark = formatUsd(state.thresholdUsd);
   // the chat's own window: one extended from the window-end alert ends later than the setting's hours
   const hours = Math.round((key.until - key.lastRealAt) / 3_600_000) || state.windowHours;
   const why = !state.enabled ? t("Off in Settings")
     : key.missed ? t("Stopped: a ping found the cache gone")
     : now >= key.until ? t("Stopped {n} h after the last call", { n: hours })
     : state.today.fuseHit && !keep.kept ? t("Daily cap reached")
+    : !chosen && big ? t("Off by you")
+    : !chosen ? [t("Off: restart ~{usd} < {mark}", { usd: formatUsd(key.restartUsd), mark }), key.pingUsd ? t("a ping ~{usd}", { usd: formatUsd(key.pingUsd) }) : null].filter(Boolean).join(" · ")
     : null;
   const sub = [
     on && !why ? t("until {time} ({n} h after the last call)", { time: clockTime(key.until), n: hours }) : why,
+    on && !why && !big ? t("on by you, under {mark}", { mark }) : null,
     key.pings > 0 ? t("{n} pings today, ~{usd}", { n: key.pings, usd: formatUsd(key.usd) }) : null,
   ].filter(Boolean).join(" · ");
   const toggle = (next: boolean): void => {
     setSaving(true);
-    void saveKeepWarm(withChat(answer.settings, key.key, next)).then((saved) => keepWarmFeed.set(saved), () => {}).finally(() => setSaving(false));
+    void saveKeepWarm(withChat(answer.settings, key.key, next, big)).then((saved) => keepWarmFeed.set(saved), () => {}).finally(() => setSaving(false));
   };
   return <div className="host-context-row session-keep-warm">
     <span className="session-row-label"><span><Flame className="session-keep-flame" aria-hidden="true" />{t("Keep warm")}</span>{sub && <small className="session-row-sub">{sub}</small>}</span>
-    <Toggle label={t("Keep warm")} checked={!key.disabled} disabled={!answer.writable || !state.enabled || saving} onChange={toggle} />
+    <Toggle label={t("Keep warm")} checked={chosen} disabled={!answer.writable || !state.enabled || saving} onChange={toggle} />
   </div>;
 }
 

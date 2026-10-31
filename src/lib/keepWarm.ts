@@ -79,9 +79,17 @@ export function keptWarmOf(found: { key: KeepWarmKey; kept: boolean } | null | u
   return found?.kept ? { lastPingAt: found.key.lastPingAt } : null;
 }
 
-/** The settings with one chat turned on or off (its key in `disabled`). */
-export function withChat(settings: KeepWarmSettings, key: string, on: boolean): KeepWarmSettings {
+/**
+ * The settings with one chat turned on or off. A big chat (kept by default) is turned off by its key
+ * in `disabled`; a small one is turned on by its key in `forced` (ZAC-267). Either way the key leaves
+ * the other list, so it is never in both.
+ */
+export function withChat(settings: KeepWarmSettings, key: string, on: boolean, big = true): KeepWarmSettings {
   const disabled = new Set(settings.disabled ?? []);
-  if (on) disabled.delete(key); else disabled.add(key);
-  return { ...settings, disabled: [...disabled] };
+  const forced = new Set(settings.forced ?? []);
+  disabled.delete(key);
+  forced.delete(key);
+  if (big && !on) disabled.add(key);
+  if (!big && on) forced.add(key);
+  return { ...settings, disabled: [...disabled], forced: [...forced] };
 }

@@ -9,7 +9,7 @@
  * call: its prompt size and its time.
  */
 
-/** One conversation the plugin tracks: only a big one (cold restart at least its threshold). */
+/** One conversation the plugin tracks: every sized main-agent chat since ZAC-267 (only big ones before). */
 export interface KeepWarmKey {
   key: string; model: string; apiKey: string;
   /** what the cache holds after the last real call (prompt, or read + write) */
@@ -33,6 +33,12 @@ export interface KeepWarmKey {
   disabled: boolean;
   /** kept warm now */
   kept: boolean;
+  /** its restart costs at least the threshold, so it is kept by default; absent from a plugin before ZAC-267 (all keys were big) */
+  big?: boolean;
+  /** under the threshold, turned on by the owner (settings.forced, ZAC-267) */
+  forced?: boolean;
+  /** what a ping reading the whole cache costs (0: no price known) */
+  pingUsd?: number;
 }
 
 export interface KeepWarmToday { day: string; pings: number; usd: number; avoided: number; avoidedUsd: number; fuseHit: boolean }
@@ -58,7 +64,12 @@ export interface KeepWarmState {
 export interface KeepWarmWindow { from: number; until: number }
 
 /** What the owner sets, from Ovis: the plugin reads it at its next sync (within a minute). */
-export interface KeepWarmSettings { enabled?: boolean; windowHours?: number; fusePerDay?: number; disabled?: string[]; extend?: Record<string, KeepWarmWindow> }
+export interface KeepWarmSettings {
+  enabled?: boolean; windowHours?: number; fusePerDay?: number; disabled?: string[];
+  /** chats under the threshold the owner keeps warm anyway (ZAC-267); `disabled` wins */
+  forced?: string[];
+  extend?: Record<string, KeepWarmWindow>;
+}
 
 /** What GET /api/keepwarm answers: the plugin's state, or why there is none (keep-warm unavailable). */
 export interface KeepWarmAnswer {
@@ -96,7 +107,11 @@ export function keepWarmSettingsFrom(raw: unknown): KeepWarmSettings {
   if (typeof value["enabled"] === "boolean") settings.enabled = value["enabled"];
   if (num(value["windowHours"]) && value["windowHours"] > 0) settings.windowHours = Math.min(KEEP_WARM_WINDOW_HOURS_MAX, value["windowHours"]);
   if (num(value["fusePerDay"]) && value["fusePerDay"] > 0) settings.fusePerDay = Math.min(KEEP_WARM_FUSE_MAX, Math.floor(value["fusePerDay"]));
-  if (Array.isArray(value["disabled"])) settings.disabled = [...new Set(value["disabled"].filter((each): each is string => typeof each === "string" && each.length <= 64))].slice(0, 500);
+  const keys = (raw: unknown): string[] | undefined => Array.isArray(raw) ? [...new Set(raw.filter((each): each is string => typeof each === "string" && each.length <= 64))].slice(0, 500) : undefined;
+  const disabled = keys(value["disabled"]);
+  if (disabled) settings.disabled = disabled;
+  const forced = keys(value["forced"]);
+  if (forced) settings.forced = forced;
   const extend = value["extend"];
   if (extend && typeof extend === "object" && !Array.isArray(extend)) {
     const windows = Object.entries(extend as Record<string, unknown>).flatMap(([key, each]): [string, KeepWarmWindow][] => {
