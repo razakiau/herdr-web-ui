@@ -86,8 +86,12 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(html).toContain('data-testid="kept-warm"');
     expect(html).toContain(", cache kept warm</span>");
     expect(body(mark(15))).not.toContain("kept-warm");
-    // a small chat is not marked even if kept
-    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null })).toBeNull();
+    // a small chat the owner turned on (ZAC-267) is kept like a big one: ring and flame too
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null })).toMatchObject({ state: "warm", leftMin: 50, kept: true, context: 40_000 });
+    // not kept, it stays unmarked as before
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null)).toBeNull();
+    // still nothing for a chat with no price (local, unknown) even if kept
+    expect(rowCacheMark(idle, log(10, 900_000, "mystery-1"), PRICES, SETTINGS, NOW, { lastPingAt: null })).toBeNull();
   });
 
   it("is dashed all round once cold, with no track, and says cache cold", () => {

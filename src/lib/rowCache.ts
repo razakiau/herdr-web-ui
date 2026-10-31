@@ -189,7 +189,8 @@ export interface RowCacheMark {
 
 /**
  * A row's cache mark (ZAC-260): only for a big chat (its cold restart costs at least the threshold;
- * an unpriced or local one never is) that is not working (one asking waits on the owner: its cache drains), whose log has a last call.
+ * an unpriced or local one never is), or one OmniRoute keeps warm whatever its size (ZAC-267: a small
+ * chat is kept only because the owner turned it on), that is not working (one asking waits on the owner: its cache drains), whose log has a last call.
  * `fraction` drains from 1 right after the last call to 0 at expiry (0 when cold).
  */
 export function rowCacheMark(
@@ -200,7 +201,8 @@ export function rowCacheMark(
   if (!log || !prices || row.status === "working") return null;
   const context = log.context ?? 0;
   const restartUsd = coldRestartUsd(context, cacheModel(log), prices.prices ?? {}, prices.fallback);
-  if (restartUsd === null || !isBigChat(restartUsd, settings.coldRestartAlertUsd)) return null;
+  // a kept chat is marked whatever its size: a small one is kept only because the owner turned it on (ZAC-267)
+  if (restartUsd === null || (!kept && !isBigChat(restartUsd, settings.coldRestartAlertUsd))) return null;
   const lifetime = settings.cacheLifetimeMin * 60_000;
   // kept warm (ZAC-266): warm, draining from its last renewal (a call or a ping); the next ping refills it
   if (kept) {
