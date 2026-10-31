@@ -181,7 +181,12 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
   const state = answer.state!;
   // a plugin before ZAC-267 listed big chats only, without the field
   const big = key.big !== false;
-  const chosen = big ? !key.disabled : key.forced === true && !key.disabled;
+  // the saved settings, not the plugin's state: the plugin writes its state before it reads the
+  // settings, so the state says the old choice for a sync or two and the switch snapped back (owner's
+  // phone, ZAC-267: "I click, nothing happens"). The state's fields cover a settings answer without lists.
+  const disabledNow = answer.settings.disabled ? answer.settings.disabled.includes(key.key) : key.disabled;
+  const forcedNow = answer.settings.forced ? answer.settings.forced.includes(key.key) : key.forced === true;
+  const chosen = big ? !disabledNow : forcedNow && !disabledNow;
   const on = state.enabled && chosen;
   const mark = formatUsd(state.thresholdUsd);
   // the chat's own window: one extended from the window-end alert ends later than the setting's hours
