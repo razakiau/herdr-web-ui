@@ -425,7 +425,7 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
         nextPingAt: NOW + 40 * 60_000, until: NOW + 6 * 3_600_000, pings: 1, usd: 0.01, restartUsd: 0.4, missed: false, disabled: false, kept: true }],
     } } };
     const sheet = await open(true, { chats: [row("copilotcli:/small", 0)] });
-    expect(cacheText(sheet, "copilotcli:/small")).toBe("all-agents-cache is-warm is-kept is-small: 40K · kept warm");
+    expect(cacheText(sheet, "copilotcli:/small")).toBe("all-agents-cache is-warm is-kept: 40K · kept warm");
     expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").length).toBe(0);
   });
 
