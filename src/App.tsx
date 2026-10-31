@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, Ellipsis, FolderOpen, Layers, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { HerdrPane } from "../shared/protocol.ts";
 import { authenticate, createTab, pairDevice, shareSeen, signOut, splitPane, zoomPane } from "./lib/api.ts";
@@ -30,6 +30,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar, hostChatFolders, hostFolderItems } from "./components/MachineSidebar.tsx";
 import { HostChatView } from "./components/HostChatView.tsx";
 import { basename, hostChatLive } from "./lib/hostChats.ts";
+import { groupsView } from "./lib/groups.ts";
 import { HostChatActionsContext, RenameHostChatSheet, hostChatTitle } from "./components/HostChatActions.tsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.tsx";
 import { currentHostWorkspaces, openWorkspace, tabsOf, setHostWorkspaces } from "./lib/hostWorkspaces.ts";
@@ -83,6 +84,7 @@ import { useNotificationState, useNotificationSwitch, useServerAlertChannels } f
 import { alertsBell } from "./lib/alertsBell.ts";
 import { Droplet } from "./components/Droplet.tsx";
 import { WeekDigestHost } from "./components/WeekSheet.tsx";
+import { GroupsHost } from "./components/GroupsHost.tsx";
 import { paneDragData, PANE_DRAG_TYPE, slotSide, type SplitSlot } from "./lib/split.ts";
 import { useLayoutNotice, useLayoutRefused } from "./lib/useLayoutNotice.ts";
 import { PaneFollowContext } from "./lib/paneSubmitContext.ts";
@@ -522,7 +524,11 @@ export function App() {
     onClose: () => closeHostWorkspace(selectedHostChat.machineId, hostFolder.cwd),
     onCopyPath: (cwd) => void copyText(cwd).then((ok) => { if (ok) setHeaderNote("copied"); }),
   }, t) : null;
-  const moreItems: RowMenuItem[] = hostFolderMenu ?? [
+  // chat groups (ZAC-265): the open chat's "Add to group…", here too, since a look has no tab to hold it
+  const groupItem: RowMenuItem[] = settings.chatGroups && hostShown
+    ? [{ id: "add-to-group", label: t("Add to group…"), icon: Layers, divider: true, run: () => groupsView.openAddTo({ pc: selectedHostChat.machineId, session: selectedHostChat.session }) }]
+    : [];
+  const moreItems: RowMenuItem[] = hostFolderMenu ? [...hostFolderMenu, ...groupItem] : [
     // first at every width: a phone's header has no palette button, and a touch screen no shortcut
     { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
@@ -531,6 +537,7 @@ export function App() {
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
+    ...groupItem,
   ];
 
   // the chat's surface is what the pane column shows: the header's pane zone and the tab strip
@@ -830,7 +837,7 @@ export function App() {
                   {active && selectedHostChat !== null && selectedHostChat.machineId === machineId ? (
                     <HostChatView key={`${selectedHostChat.machineId}\n${selectedHostChat.session}`} machineId={selectedHostChat.machineId} session={selectedHostChat.session} onTitle={setHostReadTitle}
                       onOpenChat={(session) => selectHostChat({ machineId: selectedHostChat.machineId, session }, "tab", openHostRow?.cwd ?? hostMadeIn)}
-                      machineName={machine?.name ?? machineId} archived={openHostRow?.archived === true}
+                      machineName={machine?.name ?? machineId} archived={openHostRow?.archived === true} pcChats={hostChats.get(selectedHostChat.machineId)?.chats}
                       // a look: Keep open makes it a tab, and so does a message sent in it
                       look={hostLook ? () => keepHostTabRef.current(selectedHostChat, hostMadeIn) : undefined}
                       onOpenFile={(path) => openFile({ path, paneId: null, machineId: selectedHostChat.machineId })} />
@@ -993,6 +1000,7 @@ export function App() {
       </MachineContext.Provider>}
       {/* the weekly digest's "This week" page (ZAC-262): its tap, `?digest=`, the Costs sheet's link */}
       <WeekDigestHost onOpenChat={(target) => { setDrawerOpen(false); selectHostChatRef.current(target); }} />
+      <GroupsHost machines={machines} hostChats={hostChats} onOpenChat={(target) => { setDrawerOpen(false); selectHostChatRef.current(target); }} />
       {hostRename && <RenameHostChatSheet title={hostRename.chat.title} onClose={() => setHostRename(null)}
         onSave={(title) => hostActions.rename(hostRename.machineId, hostRename.chat.session, title)} />}
       {/* the one place the product's name is said: it names where else the chat goes */}

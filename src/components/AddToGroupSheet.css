@@ -1,0 +1,41 @@
+/* Chat groups (ZAC-265): "Add to group", a sheet of radio rows on a phone */
+.add-to-group-body { display: flex; flex-direction: column; padding-inline: 0; }
+.add-to-group-hint { margin: 0 var(--space-4) var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); line-height: 1.45; }
+.add-to-group-list { display: flex; flex-direction: column; }
+.add-to-group-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px var(--space-4);
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: start;
+  cursor: pointer;
+}
+.add-to-group-row:hover:not(:disabled) { background: var(--bg-hover); }
+.add-to-group-row.is-on { background: var(--accent-tint); }
+.add-to-group-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.add-to-group-row:disabled { opacity: 0.6; cursor: default; }
+.add-to-group-text { flex: 1 1 auto; min-width: 0; }
+.add-to-group-text small { display: block; margin-top: 2px; color: var(--text-dim); font-size: var(--fs-xs); }
+.add-to-group-check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+}
+.add-to-group-row.is-on .add-to-group-check { border-color: var(--accent); background: var(--accent); color: var(--primary-text); }
+.add-to-group-check svg { width: 13px; height: 13px; }
+.add-to-group-icon { flex: none; width: 20px; height: 20px; color: var(--text-dim); }
+.add-to-group-icon.is-accent { color: var(--accent); }
+.add-to-group-divider { width: 100%; margin: var(--space-1) 0; border: 0; border-top: var(--hairline) solid var(--border); }
+.add-to-group-body .confirm-error { margin-inline: var(--space-4); }
+.add-to-group-footer .add-to-group-go { flex: 1 1 auto; }

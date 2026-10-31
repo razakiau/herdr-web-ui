@@ -18,6 +18,7 @@ import { currentSidebarPins, hostChatPinKey, pinnedHostFolders, setSidebarPins, 
 import { lastViewedPane } from "./lastViewedPane.ts";
 import { hostChatFromSearch } from "./notificationTarget.ts";
 import { digestFromSearch, weekDigest } from "./weekDigest.ts";
+import { groupsView } from "./groups.ts";
 
 /** How a host chat is picked (App.tsx selectHostChat): "tab" makes it a tab of its agent host workspace for good. */
 export type HostChatPick = (target: HostChatTarget, how?: "tab" | "look", cwd?: string | null) => void;
@@ -200,8 +201,10 @@ export function useHostChats({ t, settings, machines, machinesRef, alertsRef, al
         if (pc && next !== pc) setHostWorkspaces({ ...state, [machineId]: next! });
       },
       asking: hostRename !== null || hostDelete !== null,
+      // chat groups (ZAC-265): the item shows only with the switch on
+      ...(settings.chatGroups ? { addToGroup: (machineId: string, session: string) => groupsView.openAddTo({ pc: machineId, session }) } : {}),
     };
-  }, [hostTracker, hostPins, t, hostRename, hostDelete, hostWorkspaces]);
+  }, [hostTracker, hostPins, t, hostRename, hostDelete, hostWorkspaces, settings.chatGroups]);
   // the open chat marked done (archived chats are not placed) or deleted, here or on the PC: it is
   // let go as a closed pane is, and the PC's first pane is opened in its place. Only that change
   // does it: a chat just made (not listed yet) or opened from Archived stays open

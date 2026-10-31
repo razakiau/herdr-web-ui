@@ -20,7 +20,7 @@ import "./ChatTimeline.css";
 import "./Composer.css";
 import "./HostChatView.css";
 
-import type { HostAgent, HostChatRead, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { hostSource, keepContext } from "../lib/chatSource.ts";
 import {
@@ -35,6 +35,7 @@ import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
 import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
+import { GroupTrail } from "./GroupTrail.tsx";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
 import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
@@ -67,6 +68,8 @@ export interface HostChatViewProps {
   onOpenFile?(path: string): void;
   /** the chat is archived on its PC (its row's IsArchived; a read does not say): a bar offers Continue in a new chat (ZAC-266) */
   archived?: boolean;
+  /** the PC's chats as its list has them: the group trail's names (GroupTrail.tsx) */
+  pcChats?: readonly HostChatRow[];
 }
 
 type HostPrompt = NonNullable<HostChatRead["prompt"]>;
@@ -121,7 +124,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
 /** a price request that answered with neither table */
 const NO_PRICES: ChatPrices = { prices: null, fallback: null };
 
-export function HostChatView({ machineId, session, onTitle, onOpenChat, machineName, look, onOpenFile, archived = false }: HostChatViewProps) {
+export function HostChatView({ machineId, session, onTitle, onOpenChat, machineName, look, onOpenFile, archived = false, pcChats }: HostChatViewProps) {
   const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
@@ -426,6 +429,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   </span>;
 
   return <div className="terminal-stack is-chat host-chat" data-host-session={session}>
+    {/* chat groups (ZAC-265): the trail to this chat, only when it is in a group */}
+    <GroupTrail machineId={machineId} session={session} title={chat?.title ?? ""} chats={pcChats} onOpenChat={onOpenChat} />
     <div className="terminal-surface">
       {/* the app's chat, read from the host: no pane, no terminal, no scrollback (ChatView's source) */}
       <OpenFileContext.Provider value={onOpenFile ?? null}>

@@ -95,4 +95,6 @@ export const MACHINES_ZH: Record<string, string> = {
   "Search workspaces and agents": "搜索工作区和代理",
   "Clear filter": "清除筛选",
   "Sidebar view": "侧边栏视图",
+  // chat groups (ZAC-265)
+  "Groups…": "分组…",
 };

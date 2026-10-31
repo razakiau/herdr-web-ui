@@ -95,4 +95,6 @@ export const MACHINES_KO: Record<string, string> = {
   "Search workspaces and agents": "워크스페이스와 에이전트 검색",
   "Clear filter": "필터 지우기",
   "Sidebar view": "사이드바 보기",
+  // chat groups (ZAC-265)
+  "Groups…": "그룹…",
 };

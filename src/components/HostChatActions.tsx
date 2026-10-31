@@ -11,7 +11,7 @@
  */
 import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArchiveRestore, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Layers, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
@@ -45,6 +45,8 @@ export interface HostChatActions {
   askDelete(target: HostChatRef): void;
   /** the rename sheet or the delete confirm is up: a sheet under it leaves Back to it (lib/sheetHistory.ts) */
   asking: boolean;
+  /** the "Add to group" sheet for the chat (lib/groups.ts), only while Settings → Chat groups is on */
+  addToGroup?(machineId: string, session: string): void;
 }
 
 export const HostChatActionsContext = createContext<HostChatActions | null>(null);
@@ -73,6 +75,7 @@ export function hostChatItems(actions: HostChatActions, target: HostChatRef, t: 
     chat.archived
       ? { id: "restore", label: t("Restore"), icon: ArchiveRestore, run: () => actions.setArchived(machineId, chat.session, false) }
       : { id: "mark-done", label: t("Mark as done"), icon: Archive, run: () => actions.setArchived(machineId, chat.session, true) },
+    ...(actions.addToGroup ? [{ id: "add-to-group", label: t("Add to group…"), icon: Layers, run: () => actions.addToGroup?.(machineId, chat.session) }] : []),
     { id: "delete-chat", label: t("Delete…"), icon: Trash2, danger: true, divider: true, run: () => actions.askDelete(target) },
   ];
 }
