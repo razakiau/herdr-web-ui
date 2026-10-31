@@ -249,6 +249,14 @@ export function composerStatusCompact(cardWidth: number): boolean {
   return cardWidth > 0 && cardWidth < COMPOSER_STATUS_COMPACT_BELOW;
 }
 
+/**
+ * Whether the composer rests with Stop: a working agent, and a host chat waiting on a question
+ * (stopping it cancels the question without a model call). A blocked terminal agent keeps Send.
+ */
+export function stopOffered(status: AgentStatus | undefined, host: boolean): boolean {
+  return status === "working" || (status === "blocked" && host);
+}
+
 /** The working agent rests with Stop; writing a message replaces it with Send. */
 export function composerSendShown(state: { working: boolean; text: string }): boolean {
   return !state.working || state.text.trim().length > 0;

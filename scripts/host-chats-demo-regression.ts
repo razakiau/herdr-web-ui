@@ -749,6 +749,17 @@ try {
         assert.ok(footRow.bottomAir >= 20, `and clear of the phone's navigation bar (${footRow.bottomAir} px from the screen's foot)`);
         if (!footRow.overflows) assert.ok(Math.abs(footRow.centre) <= 2, `centred under the box (${footRow.centre} px off)`);
         if (shots) await page.screenshot({ path: join(shots, "ask-pills-390.png") });
+        // a chat waiting on a question rests with the round Stop, which cancels the question without
+        // a model call; typing swaps in Send (ZAC-266)
+        await view.locator(".composer-stop").waitFor();
+        assert.equal(await view.locator(".composer-send").count(), 0, "a waiting chat with an empty box shows Stop, not Send");
+        if (shots) await page.screenshot({ path: join(shots, "zac266-ask-stop-390.png") });
+        await view.locator(".composer-text").fill("yes");
+        await view.locator(".composer-send").waitFor();
+        assert.equal(await view.locator(".composer-stop").count(), 0, "typing in a waiting chat swaps Stop for Send");
+        if (shots) await page.screenshot({ path: join(shots, "zac266-ask-send-390.png") });
+        await view.locator(".composer-text").fill("");
+        await view.locator(".composer-stop").waitFor();
         // the card stands clear of what comes under it (the todo tab, else the box): with no status
         // line between them, three bordered surfaces touched (owner's phone screenshot, ZAC-228)
         const cardAir = await view.evaluate((root) => {

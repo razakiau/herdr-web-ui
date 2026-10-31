@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { agentDisplayLabel, composerDelivery, composerMessage, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, insertNote, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage, pendingActionUncertain, HOST_SEND_MENU, hostSendKey } from "./compose.ts";
 import { briefDescription, COMMAND_GROUPS, commandGroup, commandsForTrigger, slashCommandReplacement, terminalCommand, typedTerminalCommand } from "./compose.ts";
-import { roundButton, settingsTone } from "./compose.ts";
+import { roundButton, settingsTone, stopOffered } from "./compose.ts";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "./mentions.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -602,6 +602,21 @@ describe("roundButton", () => {
   it("is stop on a busy chat with nothing typed, send once something is", () => {
     expect(roundButton({ working: true, text: "", attachments: 0, voice: true })).toBe("stop");
     expect(roundButton({ working: true, text: "steer", attachments: 0, voice: true })).toBe("send");
+  });
+});
+
+describe("stopOffered", () => {
+  it("offers Stop on a working chat, and on a host chat waiting on a question", () => {
+    expect(stopOffered("working", false)).toBe(true);
+    expect(stopOffered("blocked", true)).toBe(true);
+  });
+  it("keeps Stop off a blocked terminal agent and an idle chat", () => {
+    expect(stopOffered("blocked", false)).toBe(false);
+    expect(stopOffered("idle", true)).toBe(false);
+  });
+  it("gives a waiting host chat the round Stop until something is typed", () => {
+    expect(roundButton({ working: stopOffered("blocked", true), text: "", attachments: 0, voice: true })).toBe("stop");
+    expect(roundButton({ working: stopOffered("blocked", true), text: "yes", attachments: 0, voice: true })).toBe("send");
   });
 });
 

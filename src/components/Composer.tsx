@@ -49,6 +49,7 @@ import {
   HOST_SEND_MENU,
   type HostSendPick,
   roundButton,
+  stopOffered,
 } from "../lib/compose.ts";
 import type { HostSlashItem } from "../lib/hostSlash.ts";
 import { compactCommandText } from "../lib/compactContext.ts";
@@ -1128,8 +1129,10 @@ export function Composer({
   );
 
   const isWorking = agentStatus === "working";
+  // Stop rests on a working chat, and on a host chat waiting on a question (ZAC-266)
+  const stopShown = stopOffered(agentStatus, pills !== undefined);
   // a host chat's one round button (ZAC-207): voice on an empty box, Send once anything would go
-  const round = pills === undefined ? null : roundButton({ working: isWorking, text, attachments: attachments.length, voice: dictation.shown });
+  const round = pills === undefined ? null : roundButton({ working: stopShown, text, attachments: attachments.length, voice: dictation.shown });
   // an explicit click sends /compact the way a typed message goes; only where the agent lists it, never while it works
   const compactText = compactCommandText(commands);
   const compactNow = compactText !== null && connected && !sending && !isWorking && agentStatus !== "blocked" ? () => sendQuick(compactText) : undefined;
@@ -1138,7 +1141,7 @@ export function Composer({
   const statusCompact = composerStatusCompact(cardWidth);
   // a host chat's chip alone is a message (the bridge sends attachments without words), so it turns
   // Stop into Send as words do
-  const sendShown = sending || composerSendShown({ working: isWorking, text: hasContent ? "x" : "" });
+  const sendShown = sending || composerSendShown({ working: stopShown, text: hasContent ? "x" : "" });
   // VS Code offers its send menu while the chat works and the box has something to send
   const hostMenuShown = sendMenu !== undefined && isWorking && hasContent;
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
