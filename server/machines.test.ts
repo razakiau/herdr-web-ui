@@ -355,8 +355,8 @@ describe("machine boundaries", () => {
   it("MACHINE_PROXY_PATH proxies host-chats routes and nothing past them", () => {
     for (const path of ["host-chats/state", "host-chats/chats", "host-chats/chat", "host-chats/chat/watch", "host-chats/chat/send", "host-chats/chat/answer", "host-chats/chat/confirm", "host-chats/chat/draft", "host-chats/chat/new", "host-chats/models", "host-chats/image", "host-chats/tool-output",
       "host-chats/chat/rename", "host-chats/chat/read", "host-chats/chat/archive", "host-chats/chat/delete", "host-chats/chat/stop", "host-chats/chat/pending/remove", "host-chats/chat/pending/send_now", "host-chats/chat/upload",
-      "host-chats/session/config", "host-chats/files"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
-    for (const path of ["vscode/state", "vscode/chat/send", "host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth", "host-chats/image/extra", "host-chats/tool-output/x", "host-chats/chat/pending", "host-chats/chat/pending/remove/x", "host-chats/chat/pending/send_now/x", "host-chats/session", "host-chats/files/x", "host-chats/chat/upload/x"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+      "host-chats/chat/handoff", "host-chats/chat/continue", "host-chats/session/config", "host-chats/files"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["vscode/state", "vscode/chat/send", "host-chats/chat/send/extra", "host-chats/../auth", "host-chats/token", "host-chats", "host-chats/", "host-chats/state/extra", "host-chats/chat/../../auth", "host-chats/image/extra", "host-chats/tool-output/x", "host-chats/chat/pending", "host-chats/chat/pending/remove/x", "host-chats/chat/pending/send_now/x", "host-chats/session", "host-chats/files/x", "host-chats/chat/upload/x", "host-chats/chat/continue/x"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
   });
 });
 
