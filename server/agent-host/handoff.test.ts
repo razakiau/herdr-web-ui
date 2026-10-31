@@ -324,6 +324,49 @@ describe("chat/handoff", () => {
       expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
     });
 
+    it("a timeout cancels the turn whose question it answered, and archives nothing", async () => {
+      const r = await rig(asking(), HARNESS);
+      await start(r);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      expect((await job(r)).state).toBe("waiting");
+      r.clock.advance(HANDOFF_WAIT_MS);
+      await ended(r, "timeout");
+      expect(await job(r)).toMatchObject({ state: "timeout", newSession: null });
+      await until("the cancel", () => sent(r.fake, "chat/turnCancelled").length > 0);
+      expect(sent(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId: "turn-live", duration: 0 } as StateAction }]);
+      expect(r.fake.requests.some((each) => each.method === "createSession")).toBe(false);
+      expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
+    });
+
+    it("a form of several questions: the current one takes the hand-off words, an answered one stays, the rest go as skipped", async () => {
+      const first = { ...QUESTION, id: "q-first" };
+      const last = { ...QUESTION, id: "q-last", required: false };
+      const kept = { state: "submitted", value: { kind: "selected", value: "a" } };
+      const r = await rig(asking([{ kind: "inputRequest", request: { id: "req-1", message: "FICTIONAL which way?", questions: [first, QUESTION, last], answers: { "q-first": kept } } }]), HARNESS);
+      await start(r);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      expect(sent(r.fake, "chat/inputCompleted").map((each) => each.action)).toEqual([{
+        type: "chat/inputCompleted", requestId: "req-1", response: "accept",
+        answers: {
+          "q-first": kept,
+          "q-next": { state: "submitted", value: { kind: "selected", value: "", freeformValues: [words("/harness:handoff")] } },
+          "q-last": { state: "skipped" },
+        },
+      } as unknown as StateAction]);
+    });
+
+    it("the agent's next question without a resume line: no_resume at once, no cancel, nothing archived", async () => {
+      const r = await rig(asking(), HARNESS);
+      await start(r);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      r.fake.push(chatUri(1), { type: "chat/responsePart", turnId: "turn-live", part: { kind: "inputRequest", request: { id: "req-2", message: "FICTIONAL which file first?", questions: [{ ...QUESTION, id: "q-again" }] } } } as unknown as StateAction);
+      await ended(r, "no_resume");
+      expect(await job(r)).toMatchObject({ state: "no_resume", topic: null, newSession: null });
+      expect(r.fake.requests.some((each) => each.method === "createSession")).toBe(false);
+      expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
+      expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
+    });
+
     it("says /handoff where the plain skill is listed", async () => {
       const r = await rig(asking());
       await start(r);
