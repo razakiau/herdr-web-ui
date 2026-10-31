@@ -4,7 +4,7 @@
  * groups is off. Costs come from the page's costs feed (lib/rowCache.ts), asked of the PCs that
  * are connected while costs are tracked and a view is open. A chat opened from a view closes them all.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import type { Machine } from "../../shared/machines.ts";
 import { chatCosts, groupsView, useGroups, useGroupsView } from "../lib/groups.ts";
@@ -28,8 +28,11 @@ export function GroupsHost({ machines, hostChats, onOpenChat }: {
   const machineIds = useMemo(() => machines.filter((machine) => machine.state === "connected").map((machine) => machine.id), [machines]);
   const feed = useCostsFeed(machineIds, open && settings.trackCosts);
   const costs = useMemo(() => chatCosts(feed), [feed]);
-  if (!open) return null;
   const answer = groups?.answer ?? null;
+  // the open group deleted (here or elsewhere): its page goes, back to what was under it
+  const gone = view.group !== null && answer !== null && !answer.groups.some((each) => each.id === view.group);
+  useEffect(() => { if (gone) groupsView.closeGroup(); }, [gone]);
+  if (!open) return null;
   const group = view.group === null ? null : answer?.groups.find((each) => each.id === view.group) ?? null;
   const openChat = (target: { machineId: string; session: string }): void => {
     groupsView.closeAll();

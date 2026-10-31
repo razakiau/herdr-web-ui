@@ -60,23 +60,58 @@ const KINDS: { type: HostArtifactType; icon: ComponentType<LucideProps>; label(n
 /** What a group shows of a chat's artifacts: what it made, and the PRs and issues it names (the session pills' rule, lib/artifacts.ts). */
 const shownArtifact = (artifact: HostArtifact): boolean => artifact.isArtifact || artifact.type === "pullRequest" || artifact.type === "issue";
 
-/** Each member's artifacts, read once as the page opens from its chat's read; a PC that is not connected is not asked, and a failed read is none. */
+/** How many chat reads the page has in flight at once: each is a full read of a chat. */
+export const ARTIFACT_READS = 3;
+
+/**
+ * Each member's artifacts, read from its chat's read as the page opens, at most ARTIFACT_READS at a
+ * time. A member read once is not read again (a nudge or a PC reconnecting re-renders, it does not
+ * re-read); a chat that joins is read, one that leaves takes its artifacts with it. A PC that is not
+ * connected is not asked, and a failed read is none.
+ */
 function useMemberArtifacts(group: ChatGroup, machines: readonly Machine[]): Map<string, HostArtifact[]> {
   const [found, setFound] = useState<Map<string, HostArtifact[]>>(() => new Map());
+  const reads = useRef({ asked: new Set<string>(), queue: [] as string[], active: 0, live: true });
   const online = (pc: string): boolean => machines.find((machine) => machine.id === pc)?.state === "connected";
   const members = group.members.filter((member) => online(member.pc)).map((member) => chatKey(member.pc, member.session)).join("\n");
+  const all = group.members.map((member) => chatKey(member.pc, member.session)).join("\n");
   useEffect(() => {
-    let live = true;
+    const state = reads.current;
+    state.live = true;
+    return () => { state.live = false; };
+  }, []);
+  useEffect(() => {
+    const state = reads.current;
+    const now = new Set(all === "" ? [] : all.split("\n"));
+    // a chat that left: forgotten, so that it is read again should it come back
+    for (const key of [...state.asked]) if (!now.has(key)) state.asked.delete(key);
+    state.queue = state.queue.filter((key) => now.has(key));
+    setFound((current) => [...current.keys()].every((key) => now.has(key)) ? current : new Map([...current].filter(([key]) => now.has(key))));
     for (const key of members === "" ? [] : members.split("\n")) {
-      const [pc, session] = [key.slice(0, key.indexOf(" ")), key.slice(key.indexOf(" ") + 1)];
-      fetchHostChat(pc, session).then((read) => {
-        if (!live) return;
-        setFound((current) => new Map(current).set(key, (read.artifacts ?? []).filter(shownArtifact)));
-      }, () => { /* the chat is still drawn; it shows no artifacts */ });
+      if (state.asked.has(key)) continue;
+      state.asked.add(key);
+      state.queue.push(key);
     }
-    return () => { live = false; };
-  }, [members]);
-  return found;
+    const pump = (): void => {
+      while (state.live && state.active < ARTIFACT_READS && state.queue.length > 0) {
+        const key = state.queue.shift()!;
+        const at = key.indexOf(" ");
+        state.active += 1;
+        fetchHostChat(key.slice(0, at), key.slice(at + 1)).then((read) => {
+          if (state.live && state.asked.has(key)) setFound((current) => new Map(current).set(key, (read.artifacts ?? []).filter(shownArtifact)));
+        }, () => { /* the chat is still drawn; it shows no artifacts */ }).finally(() => {
+          state.active -= 1;
+          pump();
+        });
+      }
+    };
+    pump();
+  }, [members, all]);
+  // a read that lands after its chat left is not shown either
+  return useMemo(() => {
+    const now = new Set(all === "" ? [] : all.split("\n"));
+    return new Map([...found].filter(([key]) => now.has(key)));
+  }, [found, all]);
 }
 
 /** A chat's day as the timeline says it: "today", "Oct 29". */

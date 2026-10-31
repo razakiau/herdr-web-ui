@@ -128,4 +128,54 @@ describe("the group page", () => {
     const page = await open();
     expect(classed(page.root, "group-digest-slot")).toHaveLength(0);
   });
+
+  it("drops the artifacts of a chat that leaves the group while the page is open", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://x");
+      urls.push(url.toString());
+      const session = url.searchParams.get("session");
+      const artifacts = session === "s-old" ? [{ id: "p1", type: "pullRequest", label: "FICTIONAL#1", isArtifact: true, link: "https://example.invalid/pull/1" }]
+        : session === "s-new" ? [{ id: "f1", type: "file", label: "notes.md", isArtifact: true, uri: "file:///w/notes.md" }] : [];
+      return new Response(JSON.stringify({ session, busy: false, title: "", turns: [], artifacts }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const page = await open();
+    const chips = () => classed(page.root, "group-artifact-chip").map(textOf);
+    expect(chips()).toEqual(["1 pull request", "1 file"]);
+    // a nudge moved s-old out of the group
+    const left: ChatGroup = { ...GROUP, members: GROUP.members.filter((member) => member.session !== "s-old") };
+    await act(async () => { page.update(createElement(SettingsProvider, { children: createElement(GroupPage, { group: left, answer: { ...ANSWER, groups: [left] }, machines: MACHINES, hostChats: HOST_CHATS, onOpenChat: () => {}, onClose: () => {} }) })); });
+    for (let turn = 0; turn < 5; turn++) await act(async () => { await Promise.resolve(); });
+    expect(chips()).toEqual(["1 file"]);
+  });
+
+  it("reads at most three chats at a time, and does not read them again on a re-render", async () => {
+    const pending: (() => void)[] = [];
+    let inFlight = 0;
+    let most = 0;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      urls.push(String(input));
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      return new Promise<Response>((resolve) => pending.push(() => {
+        inFlight -= 1;
+        resolve(new Response(JSON.stringify({ session: "x", busy: false, title: "", turns: [], artifacts: [] }), { status: 200, headers: { "content-type": "application/json" } }));
+      }));
+    }) as typeof fetch;
+    const many: ChatGroup = { ...GROUP, members: Array.from({ length: 7 }, (_, at) => ({ pc: "local", session: `s-${at}`, joined: "manual" as const, addedAt: `2026-10-29T0${at}:00:00Z` })) };
+    const props = { group: many, answer: { ...ANSWER, groups: [many], links: [] }, machines: MACHINES, hostChats: HOST_CHATS, onOpenChat: () => {}, onClose: () => {} };
+    await act(async () => { renderer = create(createElement(SettingsProvider, { children: createElement(GroupPage, props) }), { createNodeMock: nodeMock }); });
+    expect(urls).toHaveLength(3);
+    // every read answered, one by one: the rest follow, never more than three at once
+    const deadline = Date.now() + 5_000;
+    while (urls.length < 7 || pending.length > 0) {
+      if (Date.now() > deadline) throw new Error("the reads did not all run");
+      await act(async () => { pending.shift()?.(); await Promise.resolve(); await Promise.resolve(); });
+    }
+    expect(most).toBe(3);
+    expect(urls).toHaveLength(7);
+    // the same members again (a nudge, a PC reconnecting): no new reads
+    await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(GroupPage, { ...props, group: { ...many }, machines: [...MACHINES] }) })); });
+    for (let turn = 0; turn < 5; turn++) await act(async () => { await Promise.resolve(); });
+    expect(urls).toHaveLength(7);
+  });
 });
