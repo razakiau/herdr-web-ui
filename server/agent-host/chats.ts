@@ -82,12 +82,16 @@ export function pathOf(uri: string | undefined): string | null {
  * deferred until the first send") and lists none of them; there is nothing to read. Its default
  * chat has no title, it is idle and never read, and it has not changed since it was made. A blank
  * default chat title alone is not one: real chats on the Mac's host had it, read and hours old
- * (2026-10-21: "MCP integration with Sentry", status 33, 8620 s; the draft: status 1, 0 s).
+ * (2026-10-21: "MCP integration with Sentry", status 33, 8620 s; the draft: status 1, 0 s). Nor
+ * are unmoved times alone: a chat stopped on its first question kept them 34 ms apart, but the host
+ * had titled it from its first message, where a draft keeps VS Code's "Session" (ZAC-266, 2026-10-31).
  */
 const DRAFT_AGE_MS = 1_000;
+const DRAFT_TITLE = "Session";
 function neverSent(summary: SessionSummary): boolean {
   const own = summary.chats?.find((chat) => chat.resource === summary.defaultChat);
   if (!own || own.title !== "") return false;
+  if (summary.title && summary.title !== DRAFT_TITLE) return false;
   const status = own.status ?? summary.status;
   if (status !== SessionStatus.Idle || summary.status !== SessionStatus.Idle) return false;
   const age = Date.parse(String(summary.modifiedAt)) - Date.parse(String(summary.createdAt));

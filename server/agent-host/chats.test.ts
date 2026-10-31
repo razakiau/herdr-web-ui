@@ -458,6 +458,18 @@ describe("host chat mappers", () => {
     expect(rows.map((row) => row.session).sort()).toEqual(["copilotcli:/2", "copilotcli:/3", "copilotcli:/4", "copilotcli:/5"]);
   });
 
+  it("rowsFrom_keeps_a_chat_stopped_on_its_first_question_though_its_times_never_moved", () => {
+    // live on the Mac's host (2026-10-31, ZAC-266): a chat made through the bridge, stopped while its
+    // first turn asked, kept modifiedAt 34 ms after createdAt and an untitled default chat; only its
+    // own title (the host's summary of the first message) says it was sent. It vanished from the list
+    const stopped = {
+      resource: "copilotcli:/6", provider: "copilotcli", title: "FICTIONAL cost check", status: 1, createdAt: AT, modifiedAt: AT,
+      workingDirectories: ["file:///tmp/fictional"], defaultChat: "ahp-chat://default/6",
+      chats: [{ resource: "ahp-chat://default/6", title: "", interactivity: "full", status: 1 }],
+    } as SessionSummary;
+    expect(rowsFrom([stopped]).map((row) => row.session)).toEqual(["copilotcli:/6"]);
+  });
+
   it("rowsFrom_keeps_a_sent_chat_whose_default_chat_has_no_title", () => {
     // live on the Mac's host (2026-10-21): "MCP integration with Sentry" and "Netbird installation
     // issues" had a blank default chat title, read (33) and hours of turns; they went missing
