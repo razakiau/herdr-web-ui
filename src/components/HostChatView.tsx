@@ -474,7 +474,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
-      toolbarEnd={<HostContextMeter read={cacheRead} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
+      toolbarEnd={<HostContextMeter read={cacheRead} window={lastContext?.usage.tokenLimit ?? modelEntry?.context ?? null} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
         costs={{ log: chatCostLog?.chat ?? (chatCostLog === undefined ? undefined : null), settings: costSettings, prices: sheetPrices }}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
         sheet={trackCosts && cacheRead ? <SessionSheet read={cacheRead} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}

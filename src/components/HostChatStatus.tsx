@@ -80,6 +80,8 @@ interface MeterProps {
   sheet?: ReactNode;
   /** the chat's cost log (fetchChatCost's `.chat`: undefined while asked, null without one) and the cost settings; `now` given by a test */
   costs?: { log: HostChatCost | null | undefined; settings: Pick<Settings, "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">; prices: CachePrices | null; now?: number };
+  /** the chat's context window (its last read's limit, else the model's in the catalog): the ring's whole while the read has no context */
+  window?: number | null;
 }
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
@@ -99,7 +101,7 @@ export function HostChatStatus({ read, workShown = false }: { read: HostChatRead
  * " · 12m" in the cache's colour while cooling and " · cold" once expired, and wears the cache's
  * tint when the advice is to hand off. Without the log (a bridge before costs): the tokens alone.
  */
-export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet, costs }: MeterProps) {
+export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet, costs, window = null }: MeterProps) {
   const t = useT();
   const clock = useMinuteClock();
   const meter = contextMeter(read?.context ?? null);
@@ -107,20 +109,23 @@ export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact,
   if (read === null || (meter === null && (tracked === null || tracked.context <= 0))) return null;
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
-  const percent = meter?.percent ?? 0;
+  // the ring fills from the tokens the label shows: the read has no context while the chat works,
+  // and an empty ring beside "314K" read as a wrong count (owner, ZAC-266)
+  const shown = tracked && read.context == null && window !== null && window > 0 ? contextMeter({ currentTokens: tracked.context, tokenLimit: window }) : meter;
+  const percent = shown?.percent ?? 0;
   const state = tracked?.cache?.state ?? null;
   // a chat working now is warm with nothing to count down: no " · 0m"
   const suffix = state === "cold" ? t("cold") : state === "cooling" ? t("{n}m", { n: tracked!.cache!.leftMin }) : null;
-  const usage = tracked ? [meter?.label ?? tokens(tracked.context), suffix].filter(Boolean).join(" · ") : meter!.label;
+  const usage = tracked ? [shown?.label ?? tokens(tracked.context), suffix].filter(Boolean).join(" · ") : meter!.label;
   const classes = ["host-chat-meter", percent >= 80 ? "is-high" : "", tracked ? "is-tracked" : "", state ? `is-${state}` : "", tracked && tracked.advised !== "keep" ? "is-advised" : ""].filter(Boolean).join(" ");
   return <>
     <button type="button" className={classes} aria-haspopup="dialog" aria-expanded={open}
       aria-label={t("Context window: {usage}", { usage })} title={t("Context window: {usage}", { usage })} onClick={onOpen}>
-      <svg className="host-chat-meter-ring" viewBox="0 0 16 16" aria-hidden="true">
+      {shown !== null && <svg className="host-chat-meter-ring" viewBox="0 0 16 16" aria-hidden="true">
         <circle className="host-chat-meter-track" cx="8" cy="8" r={radius} />
         <circle className="host-chat-meter-used" cx="8" cy="8" r={radius}
           strokeDasharray={`${circumference * percent / 100} ${circumference}`} transform="rotate(-90 8 8)" />
-      </svg>
+      </svg>}
       <span className="host-chat-meter-label" aria-hidden="true">{tracked
         ? <>{tokens(tracked.context)}{suffix && <> · <span className="host-chat-meter-cache">{suffix}</span></>}</>
         : meter!.label.split(" · ")[0]}</span>
