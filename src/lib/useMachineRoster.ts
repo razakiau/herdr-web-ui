@@ -8,6 +8,7 @@ import { takeAuthTokenFromUrl } from "./authLink.ts";
 import { applyPaneStatus } from "./snapshot.ts";
 import { setAgentRowTokens } from "./agentRowTokens.ts";
 import { noteHostChatStreamOpen, takeHostChatEvent } from "./hostChats.ts";
+import { noteGroupsChanged } from "./groups.ts";
 import { SnapshotRequests } from "./snapshotRequests.ts";
 import { ReorderCoordinator } from "./workspaceOrder.ts";
 import type { AppLink } from "./deepLink.ts";
@@ -188,8 +189,8 @@ export function useRosterEvents({ locked, receivePreferencesRef, snapshotRequest
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
       if (payload.type === "herdr-sidebar") { setAgentRowTokens(payload.agents); return; }
       if (payload.type === "seen") { receiveSeen(payload.finishes); return; }
-      // the chat groups changed: their own reader takes it (ZAC-265); no pane snapshot is touched
-      if (payload.type === "groups") return;
+      // the chat groups changed: their own reader reads them again (lib/groups.ts, ZAC-265); no pane snapshot is touched
+      if (payload.type === "groups") { noteGroupsChanged(); return; }
       // a PC's agent host or host chats changed: its sidebar group and an open chat read them again;
       // no pane snapshot is touched, so a streaming chat never voids the roster's polls
       if (takeHostChatEvent(payload, (id) => machinesRef.current.some((m) => m.id === id))) return;

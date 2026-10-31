@@ -1068,6 +1068,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   // Connection breadcrumbs stay inside the fictional demo; never send them to a real endpoint.
   if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
   // the demo is one browser: a finish read here is kept in its own storage, with no other browser to tell
+  // chat groups (ZAC-265): the demo has none; a change to one is refused as the server refuses a group it has not got
+  if (path === "/api/groups") return method === "POST" ? json({ error: { code: "invalid_body", message: "The demo keeps no groups." } }, 400) : json({ groups: [], links: [], summaries: [], digests: [], digestDefaults: { model: "opencode-go-claude-haiku-5-5", effort: "low" } }, 200, { "cache-control": "no-store" });
+  if (path.startsWith("/api/groups/")) return json({ error: { code: "group_not_found", message: "The demo keeps no groups." } }, 404);
   if (path === "/api/seen") return method === "POST" ? new Response(null, { status: 204 }) : json({ finishes: [] }, 200, { "cache-control": "no-store" });
   if (path === "/api/preferences") {
     if (method === "GET") return json(preferences, 200, { "cache-control": "no-store" });
