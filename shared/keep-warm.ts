@@ -39,6 +39,8 @@ export interface KeepWarmKey {
   forced?: boolean;
   /** what a ping reading the whole cache costs (0: no price known) */
   pingUsd?: number;
+  /** over an hour since its last call or ping: the cache is gone, and it is not kept until its next call (ZAC-267) */
+  expired?: boolean;
 }
 
 export interface KeepWarmToday { day: string; pings: number; usd: number; avoided: number; avoidedUsd: number; fuseHit: boolean }

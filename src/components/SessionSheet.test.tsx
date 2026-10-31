@@ -466,6 +466,19 @@ describe("SessionSheet", () => {
       expect(html).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
     });
 
+    it("a chat turned on after its cache had gone: expired, not warm, says it starts at the next call (owner's phone, ZAC-267)", () => {
+      // Module 1b: forced on 92 min after its last call; the plugin said kept and Ovis drew it
+      // "Warm · kept warm", next call ~$0.03, "1 pings today", two hours after the cache went
+      stored.set("ovis:session-tab", "cache");
+      keepWarmFeed.set(answer({ big: false, forced: true, kept: false, expired: true, restartUsd: 0.78, pings: 1, usd: 0, lastRealAt: NOW - 150 * 60_000 + 20_000, lastPingAt: NOW - 120 * 60_000 }));
+      const words = text(sheet({ cost: { chat: chat({ lastCallAt: ago(150) }), calls: CALLS } }));
+      expect(words).not.toContain("kept warm");
+      expect(words).toContain("expired");
+      expect(words).toContain("Keep warm Cache already gone: kept from its next call");
+      expect(words).toContain("1 ping today");
+      expect(words).not.toContain("1 pings");
+    });
+
     it("the switch follows the saved settings at once, not the plugin's state a sync behind (owner's phone, ZAC-267)", () => {
       // the plugin writes its state before it reads the settings: a click saved `forced` but the state
       // still said off for a minute or two, so the switch snapped back and "nothing happened"

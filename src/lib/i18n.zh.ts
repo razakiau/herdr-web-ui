@@ -628,6 +628,8 @@ const BASE: Record<string, string> = {
   "kept warm · next ping {time}": "保持预热中 · 下次 ping {time}",
   "until {time} ({n} h after the last call)": "至 {time}（最后一次调用后 {n} 小时）",
   "{n} pings today, ~{usd}": "今天 ping {n} 次，~{usd}",
+  "1 ping today, ~{usd}": "今天 ping 1 次，~{usd}",
+  "Cache already gone: kept from its next call": "缓存已失效：从下一次调用起保温",
   "Without keep-warm": "不保持预热时",
   "Without keep-warm, after {time}": "不保持预热时，{time} 之后",
   "Off in Settings": "已在设置中关闭",
