@@ -61,7 +61,8 @@ const EFFORT = /-(?:minimal|low|medium|high|xhigh|max)$/;
 /**
  * A model's price: $0 for a local model; OmniRoute's row first, then LiteLLM's maker price by the
  * bare name (owner, ZAC-224), then the same two for a point release's base model (owner: v4.1 is
- * priced as v4), named in `base`; a name with an effort suffix with none of those is priced as its
+ * priced as v4), then for a point release of an unlisted size its family (minimax-m3.1-flash as
+ * minimax-m3, owner ZAC-267), named in `base`; a name with an effort suffix with none of those is priced as its
  * name without it.
  */
 export function priceWithFallback(model: string, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): FoundPrice | null {
@@ -90,7 +91,11 @@ function listedPrice(model: string, prices: ModelPrices, fallback: Record<string
     return other ? { price: other, via: "litellm", ...(base ? { base } : {}) } : null;
   };
   const base = baseModel(name);
-  return at(name) ?? (base ? at(base, base) : null);
+  if (!base) return at(name);
+  // the owner (ZAC-267): a point release of a size nobody lists (minimax-m3.1-flash) is priced as
+  // its base model (minimax-m3), an estimate that says so, rather than no price at all
+  const family = base.replace(/-(?:flash|mini|lite|nano|turbo|air)$/, "");
+  return at(name) ?? at(base, base) ?? (family !== base ? at(family, family) : null);
 }
 
 /** Dollars as a person reads a running cost: cents under $100, whole dollars above, "<$0.01" for a crumb. */
