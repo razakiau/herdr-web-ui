@@ -11,7 +11,7 @@ export const SHARED_SETTING_KEYS = [
   "theme", "palette", "darkTheme", "lightTheme", "language", "sidebarRows", "agentOrder", "agentMarks", "autoSendQueued",
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
   "usageGlance", "usageOrder", "usageHidden", "usageShown", "usageKnown", "usageSort", "claudeLaunchMode", "codexLaunchMode",
-  "usageGroup", "hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "smoothMotion",
+  "usageGroup", "hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "chatGroups", "smoothMotion",
   "voiceInput", "voiceLanguage", "voicePolishChat", "voicePolishTerminal",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];

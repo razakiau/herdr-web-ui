@@ -820,6 +820,9 @@ function AgentHostGroup() {
         <SettingsRow label={t("Show archived chats")} description={t("In All agents and Chats in a folder, folded at the end.")}>
           <Toggle label={t("Show archived chats")} checked={settings.hostShowArchived} onChange={(hostShowArchived) => update({ hostShowArchived })} />
         </SettingsRow>
+        <SettingsRow label={t("Chat groups")} description={t("Groups chats that hand off to each other, with a digest. Chats don't change.")}>
+          <Toggle label={t("Chat groups")} checked={settings.chatGroups} onChange={(chatGroups) => update({ chatGroups })} />
+        </SettingsRow>
         <SettingsRow label={t("New chat model")} description={models !== null && listed.length === 0 ? t("This PC's agent host lists no models: its own default is used.") : undefined} htmlFor="settings-host-new-model" wide>
           <select id="settings-host-new-model" className="select settings-select" value={chosen?.id ?? ""} onChange={(event) => update({ hostNewModel: event.target.value === "" ? null : { id: event.target.value } })}>
             <option value="">{t("Host default")}</option>

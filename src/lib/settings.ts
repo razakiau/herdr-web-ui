@@ -202,6 +202,8 @@ export interface Settings {
   hostNewApprovals: string | null;
   /** archived chats in All agents and Chats in <folder> (folded at the end); off leaves them out */
   hostShowArchived: boolean;
+  /** chats that hand off to each other kept in groups with a digest (ZAC-265); off is the app without groups */
+  chatGroups: boolean;
   /** endless animations draw every frame instead of stepping (src/styles.css [data-motion="smooth"]) */
   smoothMotion: boolean;
   /** a Copilot chat's cache timer, Session sheet (Cache, Cost) and costs in All agents; off is the app without them */
@@ -228,7 +230,7 @@ type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden" | "usageShown" | "usageKnown" | "usageSort" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton"
-  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "smoothMotion"
+  | "usageGroup" | "hostChatsShown" | "hostAutoOpen" | "hostNewModel" | "hostNewApprovals" | "hostShowArchived" | "chatGroups" | "smoothMotion"
   | "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin" | "alertCold">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
@@ -320,7 +322,7 @@ export const SETTING_SCOPE = {
   // a new agent starts the same way whichever device opened it
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
   usageGroup: "shared", hostChatsShown: "shared", hostAutoOpen: "shared", hostNewModel: "shared", hostNewApprovals: "shared", hostShowArchived: "shared",
-  smoothMotion: "shared",
+  chatGroups: "shared", smoothMotion: "shared",
   // this device's until shared/preferences.ts carries them
   trackCosts: "device", coldRestartAlertUsd: "device", cacheLifetimeMin: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
@@ -397,6 +399,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hostNewModel: null,
   hostNewApprovals: null,
   hostShowArchived: true,
+  chatGroups: false,
   smoothMotion: false,
   trackCosts: false,
   coldRestartAlertUsd: 1,
@@ -613,6 +616,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     hostNewModel: hostModelChoice(record["hostNewModel"]),
     hostNewApprovals: typeof record["hostNewApprovals"] === "string" && record["hostNewApprovals"] !== "" && record["hostNewApprovals"].length <= 64 ? record["hostNewApprovals"] : DEFAULT_SETTINGS.hostNewApprovals,
     hostShowArchived: typeof record["hostShowArchived"] === "boolean" ? record["hostShowArchived"] : DEFAULT_SETTINGS.hostShowArchived,
+    chatGroups: typeof record["chatGroups"] === "boolean" ? record["chatGroups"] : DEFAULT_SETTINGS.chatGroups,
     smoothMotion: typeof record["smoothMotion"] === "boolean" ? record["smoothMotion"] : DEFAULT_SETTINGS.smoothMotion,
     trackCosts: typeof record["trackCosts"] === "boolean" ? record["trackCosts"] : DEFAULT_SETTINGS.trackCosts,
     coldRestartAlertUsd: clampStep(record["coldRestartAlertUsd"], COLD_RESTART_USD_MIN, COLD_RESTART_USD_MAX, COLD_RESTART_USD_STEP, DEFAULT_SETTINGS.coldRestartAlertUsd),

@@ -306,6 +306,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "None": "없음",
   "Show archived chats": "보관된 채팅 표시",
   "In All agents and Chats in a folder, folded at the end.": "모든 에이전트와 폴더의 채팅에서, 끝에 접혀 있습니다.",
+  "Chat groups": "채팅 그룹",
+  "Groups chats that hand off to each other, with a digest. Chats don't change.": "서로 인계하는 채팅을 묶고 요약을 붙입니다. 채팅은 바뀌지 않습니다.",
   "New chat model": "새 채팅 모델",
   "This PC's agent host lists no models: its own default is used.": "이 PC의 에이전트 호스트에 모델 목록이 없습니다: 호스트 기본값을 씁니다.",
   "Host default": "호스트 기본값",

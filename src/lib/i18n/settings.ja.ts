@@ -306,6 +306,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "None": "なし",
   "Show archived chats": "アーカイブ済みチャットを表示",
   "In All agents and Chats in a folder, folded at the end.": "すべてのエージェントとフォルダーのチャットで、末尾に折りたたまれます。",
+  "Chat groups": "チャットグループ",
+  "Groups chats that hand off to each other, with a digest. Chats don't change.": "互いに引き継ぐチャットをまとめ、ダイジェストを付けます。チャット自体は変わりません。",
   "New chat model": "新しいチャットのモデル",
   "This PC's agent host lists no models: its own default is used.": "この PC のエージェントホストはモデルを返しません: ホストの既定を使います。",
   "Host default": "ホストの既定",

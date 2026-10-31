@@ -1116,7 +1116,14 @@ describe("agent host settings", () => {
   });
 
   it("are the same on every device", () => {
-    for (const key of ["hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "usageGroup"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+    for (const key of ["hostChatsShown", "hostAutoOpen", "hostNewModel", "hostNewApprovals", "hostShowArchived", "chatGroups", "usageGroup"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+  });
+
+  it("keep chat groups off unless turned on with a boolean", () => {
+    expect(sanitizeSettings({}).chatGroups).toBe(false);
+    expect(DEFAULT_SETTINGS.chatGroups).toBe(false);
+    expect(sanitizeSettings({ chatGroups: true }).chatGroups).toBe(true);
+    for (const bad of ["yes", "true", 1, null]) expect(sanitizeSettings({ chatGroups: bad }).chatGroups).toBe(false);
   });
 });
 

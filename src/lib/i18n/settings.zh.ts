@@ -306,6 +306,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "None": "无",
   "Show archived chats": "显示已归档聊天",
   "In All agents and Chats in a folder, folded at the end.": "在所有智能体和文件夹的聊天中，折叠在末尾。",
+  "Chat groups": "聊天分组",
+  "Groups chats that hand off to each other, with a digest. Chats don't change.": "将相互交接的聊天归为一组，并附上摘要。聊天本身不变。",
   "New chat model": "新聊天的模型",
   "This PC's agent host lists no models: its own default is used.": "此 PC 的智能体主机未列出模型：使用其默认值。",
   "Host default": "主机默认",
