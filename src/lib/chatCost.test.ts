@@ -39,6 +39,13 @@ describe("priceWithFallback (ZAC-224)", () => {
     expect(priceWithFallback("opencode-go/glm-5.3-flash", PRICES, FALLBACK)).toBeNull();
     expect(priceWithFallback("deepseek-v4.1-flash", PRICES, null)).toBeNull();
   });
+  it("the picker's OmniRoute id of an OpenCode Go model is priced as the turn names it (ZAC-267)", () => {
+    expect(priceWithFallback("omniroute/opencode-go-glm-5.3", PRICES, FALLBACK)).toEqual(priceWithFallback("opencode-go/glm-5.3", PRICES, FALLBACK));
+    expect(priceWithFallback("omniroute/opencode-go-deepseek-v4.1-flash", PRICES, FALLBACK)).toEqual({ price: { input: 0.3, output: 1.2, cached: 0.006 }, via: "litellm", base: "deepseek-v4-flash" });
+    expect(priceWithFallback("omniroute/opencode-go-claude-opus-5-5", PRICES, FALLBACK)).toEqual({ price: { input: 9, output: 9 }, via: "litellm" });
+    // an OmniRoute model with no connector prefix still goes by its name
+    expect(priceWithFallback("omniroute/claude-opus-5-5", PRICES, FALLBACK)).toEqual({ price: { input: 9, output: 9 }, via: "litellm" });
+  });
 });
 
 describe("priceWithFallback: effort and local models (ZAC-260)", () => {

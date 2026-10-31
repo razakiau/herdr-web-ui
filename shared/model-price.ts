@@ -71,8 +71,14 @@ export function priceWithFallback(model: string, prices: ModelPrices, fallback: 
   return listedPrice(model.replace(EFFORT, ""), prices, fallback);
 }
 
+/**
+ * The picker names an OpenCode Go model by its OmniRoute alias (`omniroute/opencode-go-glm-5.3`),
+ * a turn by its route (`opencode-go/glm-5.3`): both are the same model at the same price (ZAC-267).
+ */
+const OPENCODE_GO_ALIAS = /^omniroute\/opencode-go-/;
+
 function listedPrice(model: string, prices: ModelPrices, fallback: Record<string, ModelPrice> | null): FoundPrice | null {
-  const lower = model.toLowerCase();
+  const lower = model.toLowerCase().replace(OPENCODE_GO_ALIAS, "opencode-go/");
   const slash = lower.lastIndexOf("/");
   const prefix = slash > 0 ? lower.slice(0, slash + 1) : "";
   const name = lower.slice(slash + 1);
