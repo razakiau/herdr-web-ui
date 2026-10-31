@@ -213,7 +213,9 @@ export function rowCacheMark(
     const at = renewedAt(log.lastCallAt, kept);
     const cache = keptCacheState(log.lastCallAt, kept, now, settings.cacheLifetimeMin);
     if (at === null || !cache) return null;
-    return { ...cache, fraction: Math.max(0, Math.min(1, 1 - (now - at) / lifetime)), context, restartUsd, kept: true, ...size };
+    // a kept chat is drawn at full weight whatever its size: the owner turned it on, so it matters
+    // (phone, ZAC-267: forced chats' thinner rings read as broken next to the big kept ones)
+    return { ...cache, fraction: Math.max(0, Math.min(1, 1 - (now - at) / lifetime)), context, restartUsd, kept: true };
   }
   const cache = cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, false);
   if (!cache) return null;

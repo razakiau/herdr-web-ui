@@ -97,7 +97,8 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null)).toMatchObject({ state: "warm", small: true });
     expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null)!.kept).toBeUndefined();
     expect(body(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, null))).toContain('class="cache-ring is-warm is-small"');
-    expect(body(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null }))).toContain('class="cache-ring is-warm is-kept is-small"');
+    // kept, a small chat's ring is a kept one's, full weight: the owner saw forced chats' rings thinner (phone, ZAC-267)
+    expect(body(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null }))).toContain('class="cache-ring is-warm is-kept"');
     // still nothing for a chat with no price (local, unknown) even if kept
     expect(rowCacheMark(idle, log(10, 900_000, "mystery-1"), PRICES, SETTINGS, NOW, { lastPingAt: null })).toBeNull();
   });
