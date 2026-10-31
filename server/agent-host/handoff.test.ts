@@ -228,7 +228,7 @@ describe("chat/handoff", () => {
   });
 
   it("the note hand-off's new chat takes the old one's approvals too", async () => {
-    const r = await rig({}, undefined, { states: { [sessionUri(1)]: { ...sessionState(1), config: { schema: { properties: {} }, values: { autoApprove: "assisted" } } } as unknown as SessionState } });
+    const r = await rig({}, undefined, { states: { [sessionUri(1)]: { ...sessionState(1), config: { schema: { properties: {} }, values: { autoApprove: "assisted", availableApprovalModes: ["default", "assisted", "autoApprove"] } } } as unknown as SessionState } });
     await start(r);
     reply(r, await handoffTurn(r), "FICTIONAL note written.\nStart the next chat with: /resume zac-262");
     for (let i = 0; i < 200 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
@@ -475,11 +475,19 @@ describe("chat/continue", () => {
     // live (2026-10-31): the new chat came up on Manual permissions while the old one allowed all,
     // and stopped on "Run in terminal?" before digest.py read anything
     home().record(uuid(1));
-    const r = await rig({}, RESUME, { states: { [sessionUri(1)]: { ...sessionState(1, RESUME), config: { schema: { properties: {} }, values: { autoApprove: "autoApprove", mode: "interactive", isolation: "folder" } } } as unknown as SessionState } });
+    const r = await rig({}, RESUME, { states: { [sessionUri(1)]: { ...sessionState(1, RESUME), config: { schema: { properties: {} }, values: { autoApprove: "autoApprove", availableApprovalModes: ["default", "assisted", "autoApprove"], mode: "interactive", isolation: "folder" } } } as unknown as SessionState } });
     expect((await go(r)).status).toBe(200);
     await settled(r);
     const create = r.fake.requests.find((each) => each.method === "createSession")!;
     expect(create.params).toMatchObject({ config: { isolation: "folder", autoApprove: "autoApprove" } });
+  });
+
+  it("continue passes no approvals the host does not offer", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, RESUME, { states: { [sessionUri(1)]: { ...sessionState(1, RESUME), config: { schema: { properties: {} }, values: { autoApprove: "yolo", availableApprovalModes: ["default"] } } } as unknown as SessionState } });
+    expect((await go(r)).status).toBe(200);
+    await settled(r);
+    expect((r.fake.requests.find((each) => each.method === "createSession")!.params as { config: Record<string, unknown> }).config).toEqual({ isolation: "folder" });
   });
 
   it("continue leaves the new chat's approvals to the host when the old one has none", async () => {

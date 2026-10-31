@@ -1034,6 +1034,12 @@ const configOf = (host: AgentHost, session: string): SessionConfig | undefined =
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
 
 /** What the chat's mode and approvals can be, and are: approvals the host offers this session (availableApprovalModes), else its schema's. */
+/** The chat's approvals for a new chat to start on (a hand-off's): only a value the host offers, else none (its default). */
+function inheritedApprovals(host: AgentHost, session: string): string | null {
+  const { approvals, approvalModes } = configChoices(configOf(host, session));
+  return approvals !== null && approvalModes.includes(approvals) ? approvals : null;
+}
+
 function configChoices(config: SessionConfig | undefined): { mode: string | null; approvals: string | null; modes: string[]; approvalModes: string[] } {
   const value = (key: string): string | null => typeof config?.values[key] === "string" ? config.values[key] as string : null;
   const offered = strings(config?.values[APPROVAL_MODES_KEY]);
@@ -1434,7 +1440,7 @@ async function handOff(call: Call): Promise<Response> {
     },
     ended: () => handoffEnded(call, session, turnId, asked ? from : null),
     start: async (topic) => {
-      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), configChoices(configOf(call.host, session)).approvals);
+      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), inheritedApprovals(call.host, session));
       return { session: made.session, sent: made.sent !== false };
     },
     // as Stop does (stopTurn), on the job's channel; a turn the user started since is theirs. The
@@ -1485,7 +1491,7 @@ async function continueChat(call: Call): Promise<Response> {
   const chat = call.host.chat(session) ?? missing();
   if (busy(chat)) return conflictResponse("busy", "the chat is working: continue when it asks or stops");
   const turnId = chat.activeTurn?.id;
-  const approvals = configChoices(configOf(call.host, session)).approvals;
+  const approvals = inheritedApprovals(call.host, session);
   const job = startContinue(call.host, call.clock, session, {
     // as Stop does (stopTurn): a cancel on a turn waiting on ask_user is no model call (verified 2026-10-31)
     stop: async () => {

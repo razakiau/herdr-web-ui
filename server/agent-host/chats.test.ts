@@ -468,6 +468,9 @@ describe("host chat mappers", () => {
       chats: [{ resource: "ahp-chat://default/6", title: "", interactivity: "full", status: 1 }],
     } as SessionSummary;
     expect(rowsFrom([stopped]).map((row) => row.session)).toEqual(["copilotcli:/6"]);
+    // a draft whose title is empty or missing is still a draft
+    const untitled = (n: number, title: string | undefined) => ({ ...stopped, resource: `copilotcli:/${n}`, title } as SessionSummary);
+    expect(rowsFrom([untitled(7, ""), untitled(8, undefined)])).toEqual([]);
   });
 
   it("rowsFrom_keeps_a_sent_chat_whose_default_chat_has_no_title", () => {
