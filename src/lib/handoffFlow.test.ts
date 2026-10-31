@@ -89,6 +89,15 @@ describe("handOffAndContinue", () => {
     expect(calls[0]).toBe('POST /api/machines/desk/host-chats/chat/handoff {"session":"old"}');
   });
 
+  it("sends the owner's message with the hand-off, trimmed; a blank one is not sent (ZAC-267)", async () => {
+    const calls = answer([200, { job: job("sending") }], [200, { job: job("done", { newSession: "new" }) }]);
+    await handOffAndContinue("desk", "old", { pc: "Desk", t, fresh: false, message: "  FICTIONAL go on \n", poll: async () => {}, onState: () => {} });
+    expect(calls[0]).toBe('POST /api/machines/desk/host-chats/chat/handoff {"session":"old","message":"FICTIONAL go on"}');
+    const blank = answer([200, { job: job("starting", { mode: "fresh" }) }], [200, { job: job("done", { mode: "fresh", newSession: "new" }) }]);
+    await handOffAndContinue("desk", "old", { pc: "Desk", t, fresh: true, message: "   ", poll: async () => {}, onState: () => {} });
+    expect(blank[0]).toBe('POST /api/machines/desk/host-chats/chat/continue {"session":"old"}');
+  });
+
   it("a done job answers opened with its mode", async () => {
     answer([200, { job: job("starting", { mode: "fresh" }) }], [200, { job: job("done", { mode: "fresh", newSession: "new" }) }]);
     expect(await run("Desk", true).done).toEqual({ opened: "new", mode: "fresh" });
