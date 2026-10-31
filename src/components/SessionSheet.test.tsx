@@ -466,6 +466,19 @@ describe("SessionSheet", () => {
       expect(html).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
     });
 
+    it("the switch follows the saved settings at once, not the plugin's state a sync behind (owner's phone, ZAC-267)", () => {
+      // the plugin writes its state before it reads the settings: a click saved `forced` but the state
+      // still said off for a minute or two, so the switch snapped back and "nothing happened"
+      const k = "f".repeat(40);
+      keepWarmFeed.set({ ...answer({ big: false, forced: false, kept: false, restartUsd: 0.78, pingUsd: 0.0194 }), settings: { forced: [k] } });
+      expect(sheet()).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
+      keepWarmFeed.set({ ...answer({ big: true, disabled: false }), settings: { disabled: [k] } });
+      expect(sheet()).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);
+      // turned back on: off the list, on again before the state catches up
+      keepWarmFeed.set({ ...answer({ big: false, forced: true, restartUsd: 0.78 }), settings: { forced: [] } });
+      expect(sheet()).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);
+    });
+
     it("a big chat turned off says so; a plugin without `big` is taken as big (before ZAC-267)", () => {
       keepWarmFeed.set(answer({ big: true, disabled: true, kept: false }));
       expect(text(sheet())).toContain("Keep warm Off by you");
