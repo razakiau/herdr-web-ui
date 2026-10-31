@@ -257,6 +257,28 @@ describe("chat/handoff", () => {
     expect(r.fake.dispatched.indexOf(titled[0]!)).toBeLessThan(r.fake.dispatched.indexOf(resumed));
   });
 
+  it("a message given with the hand-off is queued in the new chat behind its /resume, on the same model (ZAC-267)", async () => {
+    const r = await rig();
+    await call(r, "/api/host-chats/chat/handoff", { session: sessionUri(1), message: "  FICTIONAL now run the deploy \n" });
+    reply(r, await handoffTurn(r), "FICTIONAL note written.\nStart the next chat with: /resume zac-262");
+    for (let i = 0; i < 200 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
+    const done = await job(r);
+    const resumed = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1))!;
+    expect(resumed.action).toMatchObject({ message: { text: "/resume zac-262" } });
+    const queued = sent(r.fake, "chat/pendingMessageSet").filter((each) => each.channel === resumed.channel);
+    expect(queued.map((each) => each.action)).toMatchObject([{ kind: "queued", message: { text: "FICTIONAL now run the deploy", model: SELECTION } }]);
+    expect(r.fake.dispatched.indexOf(resumed)).toBeLessThan(r.fake.dispatched.indexOf(queued[0]!));
+    expect(done.state).toBe("done");
+  });
+
+  it("no message, or only spaces, queues nothing (ZAC-267)", async () => {
+    const r = await rig();
+    await call(r, "/api/host-chats/chat/handoff", { session: sessionUri(1), message: "   " });
+    reply(r, await handoffTurn(r), "FICTIONAL note written.\nStart the next chat with: /resume zac-262");
+    for (let i = 0; i < 200 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
+    expect(sent(r.fake, "chat/pendingMessageSet")).toEqual([]);
+  });
+
   it("the note hand-off's new chat takes the old one's approvals too", async () => {
     const r = await rig({}, undefined, { states: { [sessionUri(1)]: { ...sessionState(1), config: { schema: { properties: {} }, values: { autoApprove: "assisted", availableApprovalModes: ["default", "assisted", "autoApprove"] } } } as unknown as SessionState } });
     await start(r);
@@ -509,6 +531,17 @@ describe("chat/continue", () => {
     const titled = sent(r.fake, "session/titleChanged").filter((each) => each.channel === done.newSession);
     expect(titled.map((each) => (each.action as unknown as { title: string }).title)).toEqual(["FICTIONAL_chat_1 → 2"]);
     expect(r.fake.dispatched.indexOf(titled[0]!)).toBeLessThan(r.fake.dispatched.indexOf(opened(r)!));
+  });
+
+  it("continue queues the message given with it behind \"/harness:resume <uuid>\" (ZAC-267)", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, RESUME);
+    expect((await call(r, "/api/host-chats/chat/continue", { session: sessionUri(1), message: "FICTIONAL then check the logs" })).status).toBe(200);
+    const done = await settled(r);
+    const queued = sent(r.fake, "chat/pendingMessageSet").filter((each) => each.channel !== chatUri(1));
+    expect(queued.map((each) => each.action)).toMatchObject([{ kind: "queued", message: { text: "FICTIONAL then check the logs", model: SELECTION } }]);
+    expect(r.fake.dispatched.indexOf(opened(r)!)).toBeLessThan(r.fake.dispatched.indexOf(queued[0]!));
+    expect(done.state).toBe("done");
   });
 
   it("continue from a chat already titled \"X → 2\" names the next \"X → 3\"", async () => {

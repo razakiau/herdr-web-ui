@@ -15,6 +15,7 @@ import { X } from "lucide-react";
 
 import type { HostChatCost, HostChatRead } from "../../shared/host-chats.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
+import { HandoffStep } from "./HandoffStep.tsx";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { cacheMeter, type CachePrices, type CacheState, type KeptWarm } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
@@ -47,7 +48,7 @@ export interface HandoffBannerProps {
   /** the minute clock, given by a test */
   now?: number;
   /** starts Hand off & continue; absent while the chat works without asking or when the session lists no handoff command */
-  onHandoff?: (() => void) | undefined;
+  onHandoff?: ((message?: string) => void) | undefined;
   /** the hand-off job runs: the button says so and waits */
   handingOff?: boolean;
   /** the chat works without asking (the bridge would answer busy): the button shows, disabled, saying so */
@@ -65,6 +66,7 @@ export interface HandoffBannerProps {
 
 export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, handoffWaiting = false, note = null, onCloseNote, cold = false, outcome = null, kept = null }: HandoffBannerProps) {
   const t = useT();
+  const [step, setStep] = useState(false);
   const locale = useLocale();
   const clock = useMinuteClock();
   const [, setHidden] = useState(0);
@@ -92,19 +94,22 @@ export function HandoffBanner({ dismissKey, read, log, settings, prices, now, on
   const headline = t(state === "warm" ? "Hand off if work remains" : state === "cooling" ? "Hand off before it goes cold" : "Free moment to hand off");
   // the advice card's headline, run on after the state as the owner's mock has it
   const rest = headline.charAt(0).toLocaleLowerCase(locale) + headline.slice(1);
-  return <div className={`checkpoint-bar handoff-bar is-${state}`} role="status">
+  // the message step (ZAC-267) opens under the advice, full width; Hand off and ✕ give it the room
+  const stepping = step && onHandoff !== undefined;
+  return <div className={`checkpoint-bar handoff-bar is-${state}${stepping ? " is-step" : ""}`} role="status">
     <span className="checkpoint-bar-text"><strong>{t(state === "warm" ? "Cache warm" : state === "cooling" ? "Cache cooling" : "Cache cold")}</strong> · {rest}
       {cold && <span className="handoff-bar-wait">{t("The new chat reads this one's record; nothing to re-read here")}</span>}
       {/* its own muted line: as a disabled button it squeezed the advice into a narrow column on a phone */}
       {handoffWaiting && !onHandoff && !handingOff && <span className="handoff-bar-wait">{t("Working: hand off when it asks or stops")}</span>}
     </span>
     {note !== null && <span className="checkpoint-bar-error" role="alert">{note}</span>}
-    {(onHandoff || handingOff) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={onHandoff}>
+    {!stepping && (onHandoff || handingOff) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={() => setStep(true)}>
       {t(handingOff ? "Handing off…" : "Hand off & continue")}
     </button>}
-    <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")}
+    {!stepping && <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")}
       onClick={() => { dismissHandoff(dismissKey, state); onCloseNote?.(); setHidden((n) => n + 1); }}>
       <X aria-hidden="true" />
-    </button>
+    </button>}
+    {stepping && <HandoffStep onSend={(message) => { setStep(false); onHandoff(message); }} onCancel={() => setStep(false)} />}
   </div>;
 }

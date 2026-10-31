@@ -358,6 +358,14 @@ function sessionOf(body: Record<string, unknown>): string {
   return text(session) && session !== "" ? session : refuse(badRequest("missing_session", "session is required"));
 }
 
+/** The owner's optional message for a hand-off's new chat (ZAC-267), trimmed; null when absent or blank. */
+function handoffMessageOf(body: Record<string, unknown>): string | null {
+  const value = body["message"];
+  if (value === undefined || value === null) return null;
+  if (!text(value)) return refuse(badRequest("bad_message", "message must be a string"));
+  return value.trim() === "" ? null : value.trim();
+}
+
 function modelOf(value: unknown): { id: string; effort?: string } | undefined {
   if (value === undefined) return undefined;
   if (!isJsonObject(value) || !text(value["id"]) || value["id"] === "" || (value["effort"] !== undefined && !text(value["effort"]))) {
@@ -1368,7 +1376,7 @@ async function newChat(call: Call): Promise<Response> {
  * the host starts the chat on Manual permissions, and the next chat's first command (digest.py,
  * `git log`) waited on "Run in terminal?" while the owner thought it was reading (ZAC-266, 2026-10-31).
  */
-async function createChatWith(call: Call, id: string, cwd: string, message: Message | null, approvals: string | null = null, title: string | null = null): Promise<{ session: string; sent?: false }> {
+async function createChatWith(call: Call, id: string, cwd: string, message: Message | null, approvals: string | null = null, title: string | null = null, then: Message | null = null): Promise<{ session: string; sent?: false }> {
   const session = `${PROVIDER}:/${id}`;
   if (known(call.host, session)) return message === null ? { session } : await madeBefore(call, session);
   await call.host.request("createSession", {
@@ -1392,7 +1400,20 @@ async function createChatWith(call: Call, id: string, cwd: string, message: Mess
     console.warn(`agent-host: chat/new made ${session} but its first message did not go (${errorName(error)})`);
     return { session, sent: false };
   }
+  // a hand-off's message (ZAC-267): queued behind the first, so it runs once /resume has read the old
+  // chat. Losing it leaves the new chat working on its /resume: the hand-off itself went
+  if (then !== null) queueAfterFirst(call, session, then);
   return { session };
+}
+
+function queueAfterFirst(call: Call, session: string, message: Message): void {
+  try {
+    const channel = call.host.mirror().getSession(session)?.defaultChat;
+    if (!channel) throw new Error("no chat");
+    call.host.dispatch(channel, { type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Queued, id: randomUUID(), message } as StateAction);
+  } catch (error) {
+    console.warn(`agent-host: ${session}'s hand-off message was not queued (${errorName(error)})`);
+  }
 }
 
 /**
@@ -1513,6 +1534,7 @@ function recentHandoff(chat: ChatState): boolean {
  */
 async function handOff(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
+  const then = handoffMessageOf(call.body);
   const running = handoffJob(call.host, session);
   if (handoffRunning(running)) return jsonResponse({ job: running });
   const { channel, chat: watchedChat } = await watched(call, session);
@@ -1550,7 +1572,8 @@ async function handOff(call: Call): Promise<Response> {
     },
     ended: () => handoffEnded(call, session, turnId, asked ? from : null),
     start: async (topic) => {
-      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), inheritedApprovals(call.host, session), nextHandoffTitle(titleOf(call.host, session)));
+      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), inheritedApprovals(call.host, session), nextHandoffTitle(titleOf(call.host, session)),
+        then === null ? null : { ...message(then), ...(agent ? { agent } : {}) });
       return { session: made.session, sent: made.sent !== false };
     },
     // as Stop does (stopTurn), on the job's channel; a turn the user started since is theirs. The
@@ -1575,6 +1598,7 @@ async function handOff(call: Call): Promise<Response> {
  */
 async function continueChat(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
+  const then = handoffMessageOf(call.body);
   const running = handoffJob(call.host, session);
   if (handoffRunning(running)) return jsonResponse({ job: running });
   const { chat: watchedChat } = await watched(call, session);
@@ -1613,7 +1637,7 @@ async function continueChat(call: Call): Promise<Response> {
     },
     start: async () => {
       const first: Message = { text: `${resume} ${cliSession}`, origin: { kind: MessageKind.User }, ...(model ? { model } : {}), ...(agent ? { agent } : {}) };
-      const made = await createChatWith(call, randomUUID(), cwd, first, approvals, title);
+      const made = await createChatWith(call, randomUUID(), cwd, first, approvals, title, then === null ? null : { ...first, text: then });
       return { session: made.session, sent: made.sent !== false };
     },
   }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error), linkJob);

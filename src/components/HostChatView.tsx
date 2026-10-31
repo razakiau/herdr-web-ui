@@ -33,6 +33,7 @@ import { AttachSheet, rememberAttached } from "./AttachSheet.tsx";
 import "./AttachSheet.css";
 import { HostChatStatus, HostContextMeter } from "./HostChatStatus.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
+import { HandoffStep } from "./HandoffStep.tsx";
 import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { GroupTrail } from "./GroupTrail.tsx";
@@ -380,18 +381,19 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const handoffWaiting = offer === "working";
   const fresh = archived || (cacheRead !== null && trackCosts && chatCostLog?.chat
     ? cacheStateOf(cacheRead, chatCostLog.chat, costSettings, minute, sheetPrices, kept) === "cold" : false);
-  const runHandoff = (asFresh: boolean): void => {
+  const [archivedStep, setArchivedStep] = useState(false);
+  const runHandoff = (asFresh: boolean, message?: string): void => {
     setHandingOff(true); setHandoffNote(null); setHandoffOutcome(null);
     // a chat left mid-job stops following it: its PC's bridge goes on, and the chat list shows the new chat
     const poll = async (ms: number): Promise<void> => { await new Promise((done) => setTimeout(done, ms)); if (!mounted.current) throw new Error("left"); };
-    void handOffAndContinue(machineId, session, { pc: machineName ?? machineId, t, fresh: asFresh, poll, onState: () => {} })
+    void handOffAndContinue(machineId, session, { pc: machineName ?? machineId, t, fresh: asFresh, message: message ?? null, poll, onState: () => {} })
       .then((answer) => {
         if (!mounted.current) return;
         if ("note" in answer) setHandoffNote(answer.note); else setHandoffOutcome(answer);
       }, () => undefined)
       .finally(() => { if (mounted.current) { setHandingOff(false); reread(); } });
   };
-  const onHandoff = offer === "ready" && !handingOff ? () => runHandoff(fresh) : undefined;
+  const onHandoff = offer === "ready" && !handingOff ? (message?: string) => runHandoff(fresh, message) : undefined;
   const outcome = handoffOutcome === null ? null : {
     mode: handoffOutcome.mode,
     onOpen: () => { const next = handoffOutcome.opened; setHandoffOutcome(null); onOpenChat?.(next); },
@@ -471,11 +473,14 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     }} />}
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
     {/* an archived chat (ZAC-266): the host still opens it, so it can go on in a new chat that reads its record */}
-    {archived && outcome === null && <div className="checkpoint-bar archived-bar" role="status">
+    {archived && outcome === null && <div className={`checkpoint-bar archived-bar${archivedStep ? " is-step" : ""}`} role="status">
       <span className="checkpoint-bar-text"><strong>{t("Archived")}</strong>{t(" · continue it in a new chat; it reads this one's record")}</span>
-      <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={() => runHandoff(true)}>
-        {t(handingOff ? "Handing off…" : "Continue in a new chat")}
-      </button>
+      {/* the same message step as Hand off (ZAC-267) */}
+      {archivedStep && !handingOff
+        ? <HandoffStep onSend={(message) => { setArchivedStep(false); runHandoff(true, message); }} onCancel={() => setArchivedStep(false)} />
+        : <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={() => setArchivedStep(true)}>
+          {t(handingOff ? "Handing off…" : "Continue in a new chat")}
+        </button>}
     </div>}
     {/* an archived chat's bar stands for the advice (owner's mock); a hand-off's note or outcome still shows */}
     {(!archived || outcome !== null || handoffNote !== null) && <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}

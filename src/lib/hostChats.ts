@@ -401,8 +401,10 @@ export async function forkHostChat(machineId: string, session: string, turn: str
  * archived chat, ZAC-266): chat/continue stops the chat and opens a new one that reads this one's
  * record, no note. Else chat/handoff: `/handoff`, then `/resume` in a new chat. Neither archives.
  */
-export async function startHandoff(machineId: string, session: string, fresh: boolean): Promise<HandoffJob> {
-  return (await post<{ job: HandoffJob }>(machineId, fresh ? "host-chats/chat/continue" : "host-chats/chat/handoff", { session })).job;
+export async function startHandoff(machineId: string, session: string, fresh: boolean, message: string | null = null): Promise<HandoffJob> {
+  // the owner's message for the new chat (ZAC-267): queued there behind its /resume; blank is none
+  const then = message?.trim() ?? "";
+  return (await post<{ job: HandoffJob }>(machineId, fresh ? "host-chats/chat/continue" : "host-chats/chat/handoff", then === "" ? { session } : { session, message: then })).job;
 }
 
 /** The chat's hand-off job; null when its bridge has none (it restarted, or forgot the job an hour after it ended). */
@@ -440,12 +442,12 @@ export async function followHandoff(machineId: string, session: string, opts: { 
  * (ZAC-266). A refused fresh request never falls back to a note.
  */
 export async function handOffAndContinue(machineId: string, session: string, opts: {
-  pc: string; t: Translate; fresh: boolean; poll(ms: number): Promise<void>; onState(job: HandoffJob): void;
+  pc: string; t: Translate; fresh: boolean; message?: string | null; poll(ms: number): Promise<void>; onState(job: HandoffJob): void;
 }): Promise<{ note: string } | { opened: string; mode: "note" | "fresh" }> {
   const { t } = opts;
   const note = (text: string) => ({ note: text });
   let job: HandoffJob;
-  try { job = await startHandoff(machineId, session, opts.fresh); }
+  try { job = await startHandoff(machineId, session, opts.fresh, opts.message ?? null); }
   catch (error) {
     if (!(error instanceof ApiError)) return note(errorText(error));
     // the host won't open that chat; any other 404 is a bridge that knows no such route

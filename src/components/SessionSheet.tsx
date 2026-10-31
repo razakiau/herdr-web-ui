@@ -8,6 +8,8 @@
  * otherwise on Context. With tracking off it is the context window sheet, as before.
  */
 import { useState } from "react";
+
+import { HandoffStep } from "./HandoffStep.tsx";
 import { Flame } from "lucide-react";
 
 import "./SessionSheet.css";
@@ -50,7 +52,7 @@ export interface SessionSheetProps {
   /** sends /compact; absent while the chat works */
   onCompact?: (() => void) | undefined;
   /** starts Hand off & continue; absent while the chat works without asking or when the session lists no handoff command */
-  onHandoff?: (() => void) | undefined;
+  onHandoff?: ((message?: string) => void) | undefined;
   /** the hand-off job runs: the button says so and waits */
   handingOff?: boolean;
   /** the chat works without asking (the bridge would answer busy): the button shows, disabled, saying so */
@@ -216,6 +218,7 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
 
 function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: KeepWarmKey; kept: boolean } | null; keepWarm: KeepWarmAnswer | null; now: number }) {
   const { read, session, settings, onClose, onCompact, onHandoff, handingOff, handoffWaiting, keep, keepWarm, now } = props;
+  const [step, setStep] = useState(false);
   const kept = keep?.kept === true;
   const t = useT();
   const { cache, advised, switched, next, fresh, handoff, context } = session;
@@ -282,10 +285,12 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
       </div>
       {!next && props.prices && <p className="host-context-note">{t("No price for {models}.", { models: session.model || "?" })}</p>}
     </section>
-    {(onHandoff || handingOff || handoffWaiting || onCompact) && <div className="session-sheet-actions">
+    {/* Hand off opens the message step in place of the actions (ZAC-267); its arrow hands off */}
+    {step && onHandoff ? <HandoffStep onSend={(message) => { onHandoff(message); onClose(); }} onCancel={() => setStep(false)} />
+    : (onHandoff || handingOff || handoffWaiting || onCompact) && <div className="session-sheet-actions">
       {handingOff ? <button type="button" className="btn" disabled>{t("Handing off…")}</button>
         : !onHandoff && handoffWaiting ? <button type="button" className="btn" disabled>{t("Working: hand off when it asks or stops")}</button>
-        : onHandoff && <button type="button" className={`btn${advised !== "keep" ? " btn-primary" : ""}`} onClick={() => { onHandoff(); onClose(); }}>{t("Hand off & continue")}</button>}
+        : onHandoff && <button type="button" className={`btn${advised !== "keep" ? " btn-primary" : ""}`} onClick={() => setStep(true)}>{t("Hand off & continue")}</button>}
       {onCompact && <button type="button" className="btn" onClick={() => { onCompact(); onClose(); }}>{t("Compact Conversation")}</button>}
     </div>}
   </>;
