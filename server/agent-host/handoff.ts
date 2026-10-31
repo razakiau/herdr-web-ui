@@ -16,8 +16,12 @@
 import type { HandoffJob } from "../../shared/host-chats.ts";
 import type { AgentHost, LeaseClock } from "./routes.ts";
 
-/** The harness skill's fixed last line (plugins/harness handoff): the topic the next chat resumes. */
-export const RESUME_LINE = /^Start the next chat with: \/resume (\S+)$/m;
+/**
+ * The harness skill's fixed last line (plugins/harness handoff): the topic the next chat resumes. The
+ * skill writes it in backticks, so a model may keep them, round the command or the whole line, or bold it
+ * (seen live 2026-10-31: "Start the next chat with: `/resume handoff-feature-test`"); only balanced pairs.
+ */
+export const RESUME_LINE = /^(\*\*|`)?Start the next chat with: (`?)\/resume ([^\s`*]+)\2\1$/m;
 /** How long the `/handoff` turn may run before the job gives up (owner-approved, spec 2b). */
 export const HANDOFF_WAIT_MS = 20 * 60_000;
 /** What a chat waiting on its own question is answered with (owner-approved), `{handoff}` the skill's "/" name. */
@@ -29,7 +33,7 @@ export const HANDOFF_FORGET_MS = 60 * 60_000;
 /** The topic of the last `/resume` line in `text`, else null. */
 export function resumeTopic(text: string): string | null {
   let topic: string | null = null;
-  for (const match of text.matchAll(new RegExp(RESUME_LINE.source, "gm"))) topic = match[1]!;
+  for (const match of text.matchAll(new RegExp(RESUME_LINE.source, "gm"))) topic = match[3]!;
   return topic;
 }
 

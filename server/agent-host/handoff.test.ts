@@ -118,6 +118,13 @@ describe("resumeTopic", () => {
     expect(resumeTopic("Start the next chat with: /resume  two words")).toBeNull();
     expect(resumeTopic("no line here")).toBeNull();
   });
+  it("takes the line with the command written as code or in bold (seen live: `/resume handoff-feature-test`)", () => {
+    expect(resumeTopic("Start the next chat with: `/resume handoff-feature-test`")).toBe("handoff-feature-test");
+    expect(resumeTopic("`Start the next chat with: /resume zac-262`")).toBe("zac-262");
+    expect(resumeTopic("**Start the next chat with: /resume zac-262**")).toBe("zac-262");
+    expect(resumeTopic("Start the next chat with: `/resume two words`")).toBeNull();
+    expect(resumeTopic("Start the next chat with: `/resume zac-262")).toBeNull();
+  });
 });
 
 describe("chat/handoff", () => {
