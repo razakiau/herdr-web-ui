@@ -356,6 +356,16 @@ describe("host chat costs", () => {
     expect(answer.json.chats.find((chat: { session: string }) => chat.session === vscode)).toMatchObject({ context: 4242, models: [{ model: "cc/claude-fictional", input: 4242, calls: 1 }] });
   });
 
+  it("\"costs\" finds a copilotcli:/ row's log through its VS Code store when its own id has none (ZAC-267, the Mac's host)", async () => {
+    // live 2026-10-31: row copilotcli:/a2f6c49b-… runs on 17fea190-…; 43 logs were answered under no row, so no ring
+    const { home, agentDirs } = store({ [SDK]: [usage(at(5), 4242, "f")] });
+    setCostIndexForTests(new CostIndex(home, agentDirs), agentDirs);
+    const row = `copilotcli:/${CHAT}`;
+    const r = await rig({ sessions: [{ ...summary(1), resource: row }] });
+    const answer = await call(r, "/api/host-chats/costs");
+    expect(answer.json.chats.map((chat: { session: string }) => chat.session)).toEqual([row]);
+  });
+
   it("\"costs\" names a CLI chat the host lists by its own id, once", async () => {
     const { home, agentDirs } = store({ [uuid(1)]: [usage(at(5), 300, "c")] });
     setCostIndexForTests(new CostIndex(home, agentDirs), agentDirs);

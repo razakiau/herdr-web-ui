@@ -705,14 +705,21 @@ export function setCostIndexForTests(index: CostIndex | null, agentDirs: readonl
   costIndex = index === null ? null : { index, agentDirs };
 }
 
-/** The SDK session a host row runs on: a CLI chat's own uuid, a VS Code chat's through its store. */
-function sdkOfRow(session: string, agentDirs: readonly string[], parent: string | null = null): string | null {
+/**
+ * The SDK session a host row runs on: a CLI chat's own uuid, a VS Code chat's through its store. A
+ * `copilotcli:/` row is a VS Code Agent Host chat too on the Mac's host: its uuid is not its log's
+ * folder (ZAC-267, live 2026-10-31: copilotcli:/a2f6c49b-… runs on 17fea190-…, and 43 of the Mac's
+ * 78 logs were answered under no row, so no ring and no kept-warm flame), so its store is asked when
+ * no log carries its own uuid, as the index's costOf and cliSessionOf already do.
+ */
+function sdkOfRow(session: string, agentDirs: readonly string[], parent: string | null = null, hasLog: (uuid: string) => boolean = () => true): string | null {
   if (session.startsWith("ahp-chat:")) return peerChatSdkOf(session, agentDirs, parent);
   const at = session.indexOf(":/");
   if (at < 0) return null;
   const uuid = session.slice(at + 2);
   if (!UUID.test(uuid)) return null;
-  return session.startsWith(`${PROVIDER}:/`) ? uuid : sdkSessionOf(uuid, agentDirs);
+  if (session.startsWith(`${PROVIDER}:/`) && hasLog(uuid)) return uuid;
+  return sdkSessionOf(uuid, agentDirs) ?? (session.startsWith(`${PROVIDER}:/`) ? uuid : null);
 }
 
 /**
@@ -777,8 +784,9 @@ export function hostCosts(host: Pick<AgentHost, "state" | "summaries">, bytes?: 
   // the host's rows by the SDK session they run on; a host that is down has none to name
   const rowBySdk = new Map<string, string>();
   const rows = host.state().state === "connected" ? rowsFrom(host.summaries()) : [];
+  const logged = new Set(answer.chats.map((chat) => chat.session.slice(chat.session.indexOf(":/") + 2)));
   for (const row of rows) {
-    const sdk = sdkOfRow(row.session, agentDirs, row.fork_of ?? null);
+    const sdk = sdkOfRow(row.session, agentDirs, row.fork_of ?? null, (uuid) => logged.has(uuid));
     // the first row wins: one log is never answered twice
     if (sdk !== null && !rowBySdk.has(sdk)) rowBySdk.set(sdk, row.session);
   }
