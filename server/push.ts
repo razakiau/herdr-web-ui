@@ -45,7 +45,8 @@
  * A big Copilot chat about to go cold (ZAC-260, `onHostChatCosts`): 10 minutes before its prompt
  * cache expires (its last call plus the cache lifetime), a chat whose cold restart would cost at
  * least the threshold is told once, with what a hand-off costs now and what the next call costs
- * after. It fires once per idle period: a new call re-arms it, one before it fires calls it off,
+ * after. A smaller chat is told only if the owner turned keep-warm on for it (ZAC-267: its key in
+ * `forced`), and then, like a big one, only once keep-warm let it go. It fires once per idle period: a new call re-arms it, one before it fires calls it off,
  * as does the chat working, asking, being archived or leaving its list. Same rules as the rest:
  * nothing while a window is in use, nothing while Settings hides host chats, the chat's tag, so
  * a newer alert for it replaces this one. Opt-in: a device turns it on with AlertPrefs `cold: true`,
@@ -964,7 +965,10 @@ export function createPushService(options: PushServiceOptions): PushService {
         const model = cacheModel(chat);
         const table = prices.prices ?? {};
         const restart = coldRestartUsd(context, model, table, prices.fallback);
-        if (restart === null || !isBigChat(restart, coldRule.thresholdUsd)) continue;
+        if (restart === null) continue;
+        // a small chat is told only if the owner turned keep-warm on for it (ZAC-267): asked as it is due
+        const big = isBigChat(restart, coldRule.thresholdUsd);
+        if (!big && !options.keepWarmKeys) continue;
         const at = Date.parse(chat.lastCallAt) + coldRule.lifetimeMs - coldRule.leadMs;
         const expires = Date.parse(chat.lastCallAt) + coldRule.lifetimeMs;
         // already cold, or a log read late: an alert after the expiry says nothing true
@@ -983,6 +987,10 @@ export function createPushService(options: PushServiceOptions): PushService {
             const current = hostRows.get(key);
             if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working") return;
             if (await options.keptWarm?.(chat, machineId)) return;
+            if (!big) {
+              const own = keepWarmKeyFor(chat, await options.keepWarmKeys!(false));
+              if (!own?.forced || own.disabled) return;
+            }
             // its body already says "hand off now ~$X" (ZAC-262); the link's 2 h start as it goes
             // fresh (ZAC-266): the next chat reads the old one's record, so the cold chat is never woken
             const handOff = handoffButton(machineId, chat.session, current.title, "fresh");

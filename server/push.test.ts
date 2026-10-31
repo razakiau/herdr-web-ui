@@ -944,6 +944,26 @@ describe("the cold-cache alert (ZAC-260)", () => {
     expect(bodies()).toEqual(["300K goes cold in 1 min: hand off now ~$0.81, or the next call costs ~$3.00"]);
   });
 
+  it("warns about a small chat the owner turned keep-warm on for, once it is let go; never about one he did not (ZAC-267)", async () => {
+    // 60K Opus: $0.60 to write again, under the $1 mark
+    const key = (forced: boolean, kept: boolean): KeepWarmKey => ({ key: "k1", model: "claude-opus-4.8", apiKey: "copilot", tokens: 60_000, prompt: 60_000,
+      lastRealAt: Date.now(), lastPingAt: null, nextPingAt: null, until: Date.now() + 3_600_000, pings: 0, usd: 0, restartUsd: 0.6,
+      missed: !kept, disabled: false, kept, big: false, forced });
+    let keys = [key(true, false)];
+    const push = subscribed({ cold: RULE, keepWarmKeys: async () => keys, keptWarm: () => false });
+    push.onHostChats([chatRow()], "mac", "Mac");
+    push.onHostChatCosts([log(at(), 60_000)], PRICES, "mac", "Mac");
+    await arrived(1);
+    await push.settled();
+    expect(bodies()).toEqual(["60K goes cold in 1 min: hand off now ~$0.81, or the next call costs ~$0.60"]);
+    // not turned on by him: a small chat stays quiet, as before
+    keys = [key(false, false)];
+    push.onHostChatCosts([log(at(), 61_000)], PRICES, "mac", "Mac");
+    await Bun.sleep(250); // fixed wait: proving nothing arrives
+    await push.settled();
+    expect(fake.received).toHaveLength(1);
+  });
+
   it("warns about a chat waiting on the owner: it calls nothing while it asks, so its cache drains", async () => {
     const push = subscribed({ cold: RULE });
     push.onHostChats([chatRow("working")], "mac", "Mac");
