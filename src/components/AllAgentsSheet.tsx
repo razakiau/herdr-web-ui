@@ -28,7 +28,7 @@ import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } fr
 import { basename, chatAge, hostLine, tokens, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
 import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
 import { byGoingCold, costsFeed, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
-import { cacheState, costSplit, type CostSplit } from "../lib/sessionCost.ts";
+import { cacheState, costSplit, keptCacheState, type CostSplit } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
 import { hostChatStatus, samePath } from "../lib/hostPlacement.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -257,7 +257,9 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     // at a phone's width the words give way, never the cache (it is what the mark is for)
     const context = mark ? <CacheLine parts={parts} mark={mark} /> : words;
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
-    const cache = cost ? cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working") : null;
+    // a chat OmniRoute keeps warm is warm from its last ping too (ZAC-266), as its mark is
+    const kept = cost && row.status !== "working" ? keptWarmOf(keepWarmFor(keepWarm, cost.chat, now)) : null;
+    const cache = !cost ? null : kept ? keptCacheState(cost.chat.lastCallAt, kept, now, settings.cacheLifetimeMin) : cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working");
     // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing;
     // a big chat says it in words on its second line instead
     const dot = !mark && cache && cache.state !== "cold" ? cache.state : null;

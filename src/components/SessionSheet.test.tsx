@@ -431,9 +431,17 @@ describe("SessionSheet", () => {
       expect(width).toBeCloseTo(50, 0);
       expect(html).toMatch(/aria-valuenow="50"/);
       expect(text(html)).toContain(`Warm kept warm · next ping ${clock(lastAt + 55 * 60_000)}`);
+      // the price without keep-warm counts from the ping too: the cache would go an hour after it (owner's phone, ZAC-266)
+      expect(text(html)).toContain(`Without keep-warm, after ${clock(NOW + 30 * 60_000)} ~$2.15`);
+      expect(text(html)).toContain("kept warm Expires 60 min after the last call or ping");
       // no ping yet: it drains from the log's last call (48 min ago: 12 of 60 left)
       keepWarmFeed.set(answer());
       expect(Number(/session-cache-bar[^>]*><span[^>]*style="width:([0-9.]+)%"/.exec(sheet())?.[1] ?? NaN)).toBeCloseTo(20, 0);
+    });
+
+    it("a window extended from the window-end alert says its own hours, not the setting's", () => {
+      keepWarmFeed.set(answer({ until: lastAt + 20_000 + 16 * 3_600_000 }));
+      expect(text(sheet())).toContain(`Keep warm until ${clock(lastAt + 20_000 + 16 * 3_600_000)} (16 h after the last call)`);
     });
 
     it("a ping that found the cache gone: the cache counts down from the log again, and says why keep-warm stopped", () => {

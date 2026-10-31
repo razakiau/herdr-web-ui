@@ -595,6 +595,7 @@ const BASE: Record<string, string> = {
   "Cost per reply": "每次回复的费用",
   "Every call re-sends the whole conversation. The cache keeps it for 1 hour after the last call.": "每次调用都会重新发送整个对话。缓存在最后一次调用后保留 1 小时。",
   "Expires {n} min after the last call": "最后一次调用后 {n} 分钟过期",
+  "Expires {n} min after the last call or ping": "最后一次调用或 ping 后 {n} 分钟过期",
   "Kept warm while working": "工作时保持有效",
   "New input": "新输入",
   "No context size yet.": "还没有上下文大小。",

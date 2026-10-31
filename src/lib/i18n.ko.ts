@@ -591,6 +591,7 @@ const BASE: Record<string, string> = {
   "Cost per reply": "응답별 비용",
   "Every call re-sends the whole conversation. The cache keeps it for 1 hour after the last call.": "호출할 때마다 대화 전체를 다시 보냅니다. 캐시는 마지막 호출 후 1시간 동안 보관합니다.",
   "Expires {n} min after the last call": "마지막 호출 {n}분 후 만료",
+  "Expires {n} min after the last call or ping": "마지막 호출 또는 ping {n}분 후 만료",
   "Kept warm while working": "작업 중에는 유지됨",
   "New input": "새 입력",
   "No context size yet.": "아직 컨텍스트 크기가 없습니다.",

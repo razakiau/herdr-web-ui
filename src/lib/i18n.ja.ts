@@ -593,6 +593,7 @@ const BASE: Record<string, string> = {
   "Cost per reply": "返答ごとのコスト",
   "Every call re-sends the whole conversation. The cache keeps it for 1 hour after the last call.": "呼び出しのたびに会話全体を送り直します。キャッシュは最後の呼び出しから 1 時間保持します。",
   "Expires {n} min after the last call": "最後の呼び出しから {n} 分で失効",
+  "Expires {n} min after the last call or ping": "最後の呼び出しまたは ping から {n} 分で失効",
   "Kept warm while working": "実行中は有効なまま",
   "New input": "新しい入力",
   "No context size yet.": "コンテキストのサイズはまだありません。",

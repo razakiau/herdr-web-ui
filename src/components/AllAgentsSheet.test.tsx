@@ -414,6 +414,20 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     expect(cacheText(sheet, "copilotcli:/warm")).toBe("all-agents-cache is-warm: 300K · 50m left");
   });
 
+  it("gives a chat under the cold threshold that OmniRoute keeps warm the warm dot, from its last ping (ZAC-266)", async () => {
+    costsReply = { status: 200, body: { complete: true, chats: [cost("copilotcli:/small", SMALL, { lastCallAt: ago(70), context: 40_000, rewrites: 0 })] } };
+    keepWarmReply = { status: 200, body: { ok: true, writable: true, problem: null, settings: {}, state: {
+      v: 1, at: NOW, enabled: true, windowHours: 8, fusePerDay: 200, idleMin: 55, thresholdUsd: 0.1, available: true, problem: null,
+      today: { day: "x", pings: 1, usd: 0.01, avoided: 0, avoidedUsd: 0, fuseHit: false },
+      keys: [{ key: "k40", model: MODEL, apiKey: "cop", tokens: 40_000, prompt: 40_000, lastRealAt: NOW - 70 * 60_000 + 30_000, lastPingAt: NOW - 15 * 60_000,
+        nextPingAt: NOW + 40 * 60_000, until: NOW + 6 * 3_600_000, pings: 1, usd: 0.01, restartUsd: 0.4, missed: false, disabled: false, kept: true }],
+    } } };
+    const sheet = await open(true, { chats: [row("copilotcli:/small", 0)] });
+    const dots = classed(rowOf(sheet, "copilotcli:/small"), "session-dot");
+    expect(dots.length).toBe(1);
+    expect(dots[0]!.props["className"]).toBe("session-dot is-warm");
+  });
+
   it("follows the dollar threshold: at $4 only the 1.2M chat ($12) is big", async () => {
     costsReply = { status: 200, body: BIG_ANSWER };
     const sheet = await open(true, { chats: BIG_CHATS }, { coldRestartAlertUsd: 4 });

@@ -17,7 +17,7 @@ import type { ModelPrice, ModelPrices } from "../../shared/protocol.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
-import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, FRESH_CHAT_CONTEXT, freshHandoffUsd, modelLastCall, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
+import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, FRESH_CHAT_CONTEXT, freshHandoffUsd, modelLastCall, handoffUsd, mergeLive, nextCall, renewedAt, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { keepWarmFeed, keepWarmFor, keptWarmOf, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
 import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
@@ -179,13 +179,15 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
   const { key } = keep;
   const state = answer.state!;
   const on = state.enabled && !key.disabled;
+  // the chat's own window: one extended from the window-end alert ends later than the setting's hours
+  const hours = Math.round((key.until - key.lastRealAt) / 3_600_000) || state.windowHours;
   const why = !state.enabled ? t("Off in Settings")
     : key.missed ? t("Stopped: a ping found the cache gone")
-    : now >= key.until ? t("Stopped {n} h after the last call", { n: state.windowHours })
+    : now >= key.until ? t("Stopped {n} h after the last call", { n: hours })
     : state.today.fuseHit && !keep.kept ? t("Daily cap reached")
     : null;
   const sub = [
-    on && !why ? t("until {time} ({n} h after the last call)", { time: clockTime(key.until), n: state.windowHours }) : why,
+    on && !why ? t("until {time} ({n} h after the last call)", { time: clockTime(key.until), n: hours }) : why,
     key.pings > 0 ? t("{n} pings today, ~{usd}", { n: key.pings, usd: formatUsd(key.usd) }) : null,
   ].filter(Boolean).join(" · ");
   const toggle = (next: boolean): void => {
@@ -222,9 +224,10 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
   const busy = callingModel(read);
   const left = cache === null || cache.state === "cold" ? 0 : busy ? 100 : Math.min(100, (cache.leftMin / settings.cacheLifetimeMin) * 100);
   const cold = cache?.state === "cold";
-  // when the cache goes: the last call plus its lifetime, on the user's clock
+  // when the cache goes: its last renewal plus its lifetime, on the user's clock; for a kept chat the
+  // renewal is its last call or ping, the later (ZAC-266: the last call alone went stale at each ping)
   const ownLast = modelLastCall(session.chat, session.model).lastCallAt ?? session.chat.lastCallAt;
-  const lastAt = ownLast ? Date.parse(ownLast) : Number.NaN;
+  const lastAt = kept ? renewedAt(ownLast, keptWarmOf(keep)!) ?? Number.NaN : ownLast ? Date.parse(ownLast) : Number.NaN;
   const logDeadline = busy || !Number.isFinite(lastAt) ? null : clockTime(lastAt + settings.cacheLifetimeMin * 60_000);
   const deadline = cold || kept ? null : logDeadline;
   return <>
@@ -245,7 +248,7 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
           </div>
           <div className="session-countdown-captions">
             <span>{busy ? t("Kept warm while working") : kept ? t("kept warm") : cache.state === "cold" ? t("expired") : t("{n} min left", { n: cache.leftMin })}</span>
-            <span>{t("Expires {n} min after the last call", { n: settings.cacheLifetimeMin })}</span>
+            <span>{t(kept && !busy ? "Expires {n} min after the last call or ping" : "Expires {n} min after the last call", { n: settings.cacheLifetimeMin })}</span>
           </div>
         </div>}
         {keep && keepWarm?.state && !unused && <KeepWarmRow keep={keep} answer={keepWarm} now={now} />}
