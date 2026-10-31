@@ -45,6 +45,13 @@
   white-space: normal;
 }
 
+/* while the chat works without asking: why there is no Hand off button, under the advice */
+.handoff-bar-wait {
+  display: block;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
 .handoff-bar strong {
   color: var(--text-strong);
   font-weight: var(--fw-medium);

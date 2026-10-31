@@ -2,7 +2,7 @@
  * The handoff nudge over a host chat's composer (ZAC-260, owner's "tinted pill + nudge banner"):
  * one line in the cache's tint while the advice is to hand off, "Cache cold · free moment to hand
  * off", with Hand off & continue (when the session has a handoff command and is idle or waits on its
- * own question; disabled, "Working: hand off when it asks or stops", while it works without asking) and ✕. ✕ hides
+ * own question; while it works without asking, "Working: hand off when it asks or stops" as a muted line under the advice) and ✕. ✕ hides
  * it for that chat until the cache's state changes; kept in memory only, so a reload shows it again.
  * It also says why a hand-off did not go (ZAC-262: busy, an old bridge, no /resume line…), whatever
  * the advice: the tap was the user's, so the answer shows even where the advice would not.
@@ -73,10 +73,13 @@ export function HandoffBanner({ dismissKey, read, log, settings, prices, now, on
   // the advice card's headline, run on after the state as the owner's mock has it
   const rest = headline.charAt(0).toLocaleLowerCase(locale) + headline.slice(1);
   return <div className={`checkpoint-bar handoff-bar is-${state}`} role="status">
-    <span className="checkpoint-bar-text"><strong>{t(state === "warm" ? "Cache warm" : state === "cooling" ? "Cache cooling" : "Cache cold")}</strong> · {rest}</span>
+    <span className="checkpoint-bar-text"><strong>{t(state === "warm" ? "Cache warm" : state === "cooling" ? "Cache cooling" : "Cache cold")}</strong> · {rest}
+      {/* its own muted line: as a disabled button it squeezed the advice into a narrow column on a phone */}
+      {handoffWaiting && !onHandoff && !handingOff && <span className="handoff-bar-wait">{t("Working: hand off when it asks or stops")}</span>}
+    </span>
     {note !== null && <span className="checkpoint-bar-error" role="alert">{note}</span>}
-    {(onHandoff || handingOff || handoffWaiting) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff || !onHandoff} onClick={onHandoff}>
-      {t(handingOff ? "Handing off…" : onHandoff ? "Hand off & continue" : "Working: hand off when it asks or stops")}
+    {(onHandoff || handingOff) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={onHandoff}>
+      {t(handingOff ? "Handing off…" : "Hand off & continue")}
     </button>}
     <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")}
       onClick={() => { dismissHandoff(dismissKey, state); onCloseNote?.(); setHidden((n) => n + 1); }}>

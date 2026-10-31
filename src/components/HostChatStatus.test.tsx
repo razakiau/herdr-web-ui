@@ -155,10 +155,12 @@ describe("HandoffBanner", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Handing off…</);
   });
 
-  it("says Working: hand off when it asks or stops on a disabled button while the chat works without asking", () => {
+  it("says Working: hand off when it asks or stops as a muted line under the advice, not as a button, while the chat works without asking", () => {
     const html = banner("pc\nchat-k", "handoff-cold", undefined, { handoffWaiting: true });
     expect(text(html)).toBe("Cache cold · free moment to hand off Working: hand off when it asks or stops");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Working: hand off when it asks or stops</);
+    expect(html).toMatch(/<span class="checkpoint-bar-text">.*<span class="handoff-bar-wait">Working: hand off when it asks or stops<\/span><\/span>/);
+    expect(html).not.toMatch(/<button[^>]*>Working/);
+    expect(html.match(/<button/g)).toHaveLength(1);
   });
 
   it("says why a hand-off did not go, even when the advice is to keep going or it was dismissed", () => {
