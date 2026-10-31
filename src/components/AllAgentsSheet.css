@@ -170,4 +170,6 @@
 .all-agents-cache.is-cooling { color: var(--cache-cooling); }
 .all-agents-cache.is-cold { color: var(--cache-cold); }
 .all-agents-cache.is-kept svg { fill: currentColor; }
+/* a chat under the cold-restart mark (ZAC-267): the same words, quieter */
+.all-agents-cache.is-small { opacity: 0.7; }
 .all-agents-cache svg { width: 0.95em; height: 0.95em; flex: none; margin-inline-start: 1px; }

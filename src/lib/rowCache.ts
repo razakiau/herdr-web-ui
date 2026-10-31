@@ -185,13 +185,16 @@ export interface RowCacheMark {
   state: CacheState; leftMin: number; ageMin: number; fraction: number; context: number; restartUsd: number;
   /** OmniRoute's keep-warm plugin keeps it warm (ZAC-260 phase 2): the ring stays green, with a flame, draining from the last ping (ZAC-266) */
   kept?: boolean;
+  /** its cold restart costs under the threshold (ZAC-267, owner: every chat gets a ring): drawn quieter, and Going cold leaves it with the rest */
+  small?: boolean;
 }
 
 /**
- * A row's cache mark (ZAC-260): only for a big chat (its cold restart costs at least the threshold;
- * an unpriced or local one never is), or one OmniRoute keeps warm whatever its size (ZAC-267: a small
- * chat is kept only because the owner turned it on), that is not working (one asking waits on the owner: its cache drains), whose log has a last call.
- * `fraction` drains from 1 right after the last call to 0 at expiry (0 when cold).
+ * A row's cache mark (ZAC-260): for every priced chat (an unpriced or local one has no restart to
+ * weigh) that is not working (one asking waits on the owner: its cache drains), whose log has a last
+ * call. One under the threshold is `small` (ZAC-267, owner: "standardized, easy to spot": every chat
+ * says warm or cold, the big ones louder). `fraction` drains from 1 right after the last call to 0
+ * at expiry (0 when cold).
  */
 export function rowCacheMark(
   row: Pick<HostChatRow, "status">, log: HostChatCost | undefined, prices: ChatPrices | null,
@@ -201,21 +204,22 @@ export function rowCacheMark(
   if (!log || !prices || row.status === "working") return null;
   const context = log.context ?? 0;
   const restartUsd = coldRestartUsd(context, cacheModel(log), prices.prices ?? {}, prices.fallback);
-  // a kept chat is marked whatever its size: a small one is kept only because the owner turned it on (ZAC-267)
-  if (restartUsd === null || (!kept && !isBigChat(restartUsd, settings.coldRestartAlertUsd))) return null;
+  // a local model's restart is free ($0): there is no cache worth watching
+  if (restartUsd === null || restartUsd <= 0) return null;
+  const size = isBigChat(restartUsd, settings.coldRestartAlertUsd) ? {} : { small: true };
   const lifetime = settings.cacheLifetimeMin * 60_000;
   // kept warm (ZAC-266): warm, draining from its last renewal (a call or a ping); the next ping refills it
   if (kept) {
     const at = renewedAt(log.lastCallAt, kept);
     const cache = keptCacheState(log.lastCallAt, kept, now, settings.cacheLifetimeMin);
     if (at === null || !cache) return null;
-    return { ...cache, fraction: Math.max(0, Math.min(1, 1 - (now - at) / lifetime)), context, restartUsd, kept: true };
+    return { ...cache, fraction: Math.max(0, Math.min(1, 1 - (now - at) / lifetime)), context, restartUsd, kept: true, ...size };
   }
   const cache = cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, false);
   if (!cache) return null;
   const lastAt = Date.parse(log.lastCallAt!);
   const fraction = cache.state === "cold" ? 0 : Math.max(0, Math.min(1, 1 - (now - lastAt) / lifetime));
-  return { ...cache, fraction, context, restartUsd };
+  return { ...cache, fraction, context, restartUsd, ...size };
 }
 
 /**
@@ -226,7 +230,8 @@ export function rowCacheMark(
 export function byGoingCold(rows: readonly HostChatRow[], marks: ReadonlyMap<string, RowCacheMark>, logs: ReadonlyMap<string, HostChatCost>): HostChatRow[] {
   const modified = (row: HostChatRow): number => { const at = Date.parse(row.modified_at); return Number.isFinite(at) ? at : 0; };
   const lastCall = (row: HostChatRow): number => { const at = Date.parse(logs.get(row.session)?.lastCallAt ?? ""); return Number.isFinite(at) ? at : 0; };
-  const rank = (row: HostChatRow): number => { const mark = marks.get(row.session); return !mark ? 2 : mark.state === "cold" ? 1 : 0; };
+  // a small chat's mark leaves it with the rest: the order is for the restarts worth a hand-off
+  const rank = (row: HostChatRow): number => { const mark = marks.get(row.session); return !mark || mark.small ? 2 : mark.state === "cold" ? 1 : 0; };
   return [...rows].sort((a, b) => {
     const tier = rank(a) - rank(b);
     if (tier !== 0) return tier;

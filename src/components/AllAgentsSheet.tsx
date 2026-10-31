@@ -127,9 +127,10 @@ function CacheLine({ parts, mark }: { parts: string[]; mark: RowCacheMark }) {
 /** A big chat's cache on its All agents row (ZAC-260, owner's pick B): its size, then the minutes left or "cold", with a small icon. */
 export function CacheText({ mark }: { mark: RowCacheMark }) {
   const t = useT();
-  if (mark.kept) return <span className="all-agents-cache is-warm is-kept">{tokens(mark.context)} · <Flame aria-hidden="true" />{t("kept warm")}</span>;
+  const small = mark.small ? " is-small" : "";
+  if (mark.kept) return <span className={`all-agents-cache is-warm is-kept${small}`}>{tokens(mark.context)} · <Flame aria-hidden="true" />{t("kept warm")}</span>;
   const Icon = mark.state === "cold" ? Snowflake : Timer;
-  return <span className={`all-agents-cache is-${mark.state}`}>
+  return <span className={`all-agents-cache is-${mark.state}${small}`}>
     {tokens(mark.context)} · <Icon aria-hidden="true" />{mark.state === "cold" ? t("cold") : t("{n}m left", { n: mark.leftMin })}
   </span>;
 }

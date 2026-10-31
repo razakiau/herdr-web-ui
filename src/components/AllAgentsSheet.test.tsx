@@ -180,10 +180,11 @@ describe("All agents with costs tracked", () => {
     expect(classed(none, "all-agents-split")).toEqual([]);
   });
 
-  it("marks a row whose cache is still warm, not one long cold", async () => {
+  it("says every priced chat's cache in words, a small one quieter, and needs no dot (ZAC-267)", async () => {
     const sheet = await open(true);
-    expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").map((dot) => dot.props["className"])).toEqual(["session-dot is-warm"]);
-    expect(classed(rowOf(sheet, "copilotcli:/big"), "session-dot")).toEqual([]);
+    expect(classed(rowOf(sheet, "copilotcli:/small"), "all-agents-cache").map((each) => each.props["className"])).toEqual(["all-agents-cache is-warm is-small"]);
+    expect(classed(rowOf(sheet, "copilotcli:/big"), "all-agents-cache").map((each) => each.props["className"])).toEqual(["all-agents-cache is-cold"]);
+    for (const session of ["copilotcli:/small", "copilotcli:/big"]) expect(classed(rowOf(sheet, session), "session-dot")).toEqual([]);
   });
 
   it("gives each age group its subtotal, and the list a summary line: total, chats, scope and the split", async () => {
@@ -375,14 +376,15 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     return found ? `${found.props["className"]}: ${textOf(found)}` : null;
   };
 
-  it("says a big chat's size and minutes left, or cold, after its folder, in the cache's colour; nothing for a small or busy one", async () => {
+  it("says a chat's size and minutes left, or cold, after its folder, in the cache's colour, a small one quieter; nothing for a busy one", async () => {
     costsReply = { status: 200, body: BIG_ANSWER };
     const sheet = await open(true, { chats: BIG_CHATS });
     expect(cacheText(sheet, "copilotcli:/warm")).toBe("all-agents-cache is-warm: 300K · 50m left");
     expect(cacheText(sheet, "copilotcli:/cooling")).toBe("all-agents-cache is-cooling: 268K · 12m left");
     expect(cacheText(sheet, "copilotcli:/cold-old")).toBe("all-agents-cache is-cold: 312K · cold");
     expect(cacheText(sheet, "copilotcli:/cold-new")).toBe("all-agents-cache is-cold: 1.2M · cold");
-    for (const quiet of ["copilotcli:/small", "copilotcli:/busy"]) expect(cacheText(sheet, quiet)).toBeNull();
+    expect(cacheText(sheet, "copilotcli:/small")).toBe("all-agents-cache is-cooling is-small: 40K · 10m left");
+    expect(cacheText(sheet, "copilotcli:/busy")).toBeNull();
     // waiting on the owner calls nothing: its cache drains like an idle chat's (owner's phone check)
     expect(cacheText(sheet, "copilotcli:/asks")).toBe("all-agents-cache is-cooling: 300K · 4m left");
     expect(textOf(classed(rowOf(sheet, "copilotcli:/cooling"), "agent-context")[0]!)).toMatch(/^fictional · .+ · 268K · 12m left$/);
@@ -391,9 +393,9 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
     expect(words[0]).toBe("fictional");
     expect(words.slice(1).every((word) => word.startsWith(" · "))).toBe(true);
     expect(words.join("")).not.toContain("…");
-    // the warm dot is a small chat's only: a big one says it in words
+    // every marked chat says it in words: no dot
     expect(classed(rowOf(sheet, "copilotcli:/warm"), "session-dot")).toEqual([]);
-    expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").length).toBe(1);
+    expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot")).toEqual([]);
   });
 
   it("says kept warm for a chat OmniRoute keeps warm, with a flame, past its log's hour (phase 2)", async () => {
@@ -423,14 +425,14 @@ describe("All agents: a big chat's cache (ZAC-260 phase 1)", () => {
         nextPingAt: NOW + 40 * 60_000, until: NOW + 6 * 3_600_000, pings: 1, usd: 0.01, restartUsd: 0.4, missed: false, disabled: false, kept: true }],
     } } };
     const sheet = await open(true, { chats: [row("copilotcli:/small", 0)] });
-    expect(cacheText(sheet, "copilotcli:/small")).toBe("all-agents-cache is-warm is-kept: 40K · kept warm");
+    expect(cacheText(sheet, "copilotcli:/small")).toBe("all-agents-cache is-warm is-kept is-small: 40K · kept warm");
     expect(classed(rowOf(sheet, "copilotcli:/small"), "session-dot").length).toBe(0);
   });
 
   it("follows the dollar threshold: at $4 only the 1.2M chat ($12) is big", async () => {
     costsReply = { status: 200, body: BIG_ANSWER };
     const sheet = await open(true, { chats: BIG_CHATS }, { coldRestartAlertUsd: 4 });
-    expect(cacheText(sheet, "copilotcli:/warm")).toBeNull();
+    expect(cacheText(sheet, "copilotcli:/warm")).toBe("all-agents-cache is-warm is-small: 300K · 50m left");
     expect(cacheText(sheet, "copilotcli:/cold-new")).toBe("all-agents-cache is-cold: 1.2M · cold");
   });
 
