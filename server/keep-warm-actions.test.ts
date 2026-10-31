@@ -132,7 +132,7 @@ describe("an archived chat's cool (ZAC-262)", () => {
 describe("the alerts' \"Hand off now\" (ZAC-262)", () => {
   const SENT = FROM + H;
   const SESSION = "copilotcli:/0f9a3c1e-7b2d-4c8e-9a51-3e6f2b7d8c40";
-  const handoff = (over: Partial<HandoffAct> = {}): HandoffAct => ({ how: "handoff", machineId: "5b0c7f3e-2d4a-4e1b-9c6f-8a7d3e2b1c0f", session: SESSION, title: "fix the build", expires: SENT + HANDOFF_ACT_TTL_MS, ...over });
+  const handoff = (over: Partial<HandoffAct> = {}): HandoffAct => ({ how: "handoff", machineId: "5b0c7f3e-2d4a-4e1b-9c6f-8a7d3e2b1c0f", session: SESSION, title: "fix the build", expires: SENT + HANDOFF_ACT_TTL_MS, mode: "note", ...over });
 
   it("is signed like the window's buttons, and works until 2 h after the alert went", () => {
     const actions = new KeepWarmActions(stateDir, () => SENT);
@@ -159,6 +159,27 @@ describe("the alerts' \"Hand off now\" (ZAC-262)", () => {
     expect(actions.read(signed("keepwarm-handoff", act))).toBeNull();
   });
 
+  it("a fresh link round-trips its mode", () => {
+    const actions = new KeepWarmActions(stateDir, () => SENT);
+    expect(actions.read(actions.path(handoff({ mode: "fresh" })))).toEqual(handoff({ mode: "fresh" }));
+    expect(actions.read(actions.path(handoff({ mode: "note" })))).toEqual(handoff({ mode: "note" }));
+  });
+
+  it("a 5-field link signed before the deploy reads as note", () => {
+    const actions = new KeepWarmActions(stateDir, () => SENT);
+    actions.path(handoff()); // makes the key
+    const secret = Buffer.from((JSON.parse(readFileSync(join(stateDir, "keepwarm-actions.json"), "utf8")) as { secret: string }).secret, "base64url");
+    const signed = (fields: unknown[]) => {
+      const payload = Buffer.from(JSON.stringify(fields)).toString("base64url");
+      return `/api/keepwarm/act/${payload}.${createHmac("sha256", secret).update(`keepwarm-handoff:${payload}`).digest("base64url")}`;
+    };
+    const old = ["h", handoff().machineId, SESSION, "fix the build", SENT + HANDOFF_ACT_TTL_MS];
+    expect(actions.read(signed(old))).toEqual(handoff({ mode: "note" }));
+    // a sixth field that is not a mode, or a seventh, is not one of ours
+    expect(actions.read(signed([...old, "loud"]))).toBeNull();
+    expect(actions.read(signed([...old, "fresh", 1]))).toBeNull();
+  });
+
   it("refuses an altered one", () => {
     const actions = new KeepWarmActions(stateDir, () => SENT);
     const path = actions.path(handoff());
@@ -180,10 +201,15 @@ describe("the alerts' \"Hand off now\" (ZAC-262)", () => {
     const fake = link([]);
     const started: string[][] = [];
     const response = await handleKeepWarmAct(new Request(`http://x${path}`, { method: "POST" }), path, actions, fake, () => SENT, {
-      startHandoff: async (machineId, session, title) => { started.push([machineId, session, title]); return new Response(null, { status: 202 }); },
+      startHandoff: async (machineId, session, title, mode) => { started.push([machineId, session, title, mode]); return new Response(null, { status: 202 }); },
     });
     expect(response.status).toBe(202);
-    expect(started).toEqual([[handoff().machineId, SESSION, "fix the build"]]);
+    expect(started).toEqual([[handoff().machineId, SESSION, "fix the build", "note"]]);
+    const fresh = actions.path(handoff({ mode: "fresh" }));
+    await handleKeepWarmAct(new Request(`http://x${fresh}`, { method: "POST" }), fresh, actions, fake, () => SENT, {
+      startHandoff: async (machineId, session, title, mode) => { started.push([machineId, session, title, mode]); return new Response(null, { status: 202 }); },
+    });
+    expect(started[1]).toEqual([handoff().machineId, SESSION, "fix the build", "fresh"]);
     expect(fake.saved).toEqual([]);
   });
 });
@@ -197,7 +223,7 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
     const told: { title: string; body: string; machineId: string; session: string }[] = [];
     const calls: string[] = [];
     const handoffs = createHandoffFollower({
-      bridge: async (machineId, method) => { calls.push(`${method} ${machineId}`); return method === "POST" ? post : gets.shift() ?? null; },
+      bridge: async (machineId, method, _session, mode) => { calls.push(`${method} ${machineId} ${mode}`); return method === "POST" ? post : gets.shift() ?? null; },
       tell: async (alert) => { told.push(alert); },
       pcName: (machineId) => machineId === "mac" ? "Mac" : "this PC",
       pollMs: 1,
@@ -207,7 +233,7 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
 
   it("tells the new chat once the job is done, and its tap opens it", async () => {
     const { handoffs, told } = follower(json({ job: job("sending") }), [json({ job: job("waiting") }), json({ job: job("done", { newSession: "s2" }) })]);
-    expect((await handoffs.start("mac", "s1", "T")).status).toBe(202);
+    expect((await handoffs.start("mac", "s1", "T", "note")).status).toBe(202);
     await handoffs.settled();
     expect(told).toEqual([{ title: "Handed off \"T\" → new chat", body: "T", machineId: "mac", session: "s2" }]);
   });
@@ -224,7 +250,7 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
     ];
     for (const [post, title] of cases) {
       const { handoffs, told } = follower(post);
-      await handoffs.start("mac", "s1", "T");
+      await handoffs.start("mac", "s1", "T", "note");
       await handoffs.settled();
       expect(told).toEqual([{ title, body: "T", machineId: "mac", session: "s1" }]);
     }
@@ -238,7 +264,7 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
     ];
     for (const [ended, title, session] of cases) {
       const { handoffs, told } = follower(json({ job: job("sending") }), [json({ job: ended })]);
-      await handoffs.start("mac", "s1", "T");
+      await handoffs.start("mac", "s1", "T", "note");
       await handoffs.settled();
       expect(told).toEqual([{ title, body: "T", machineId: "mac", session }]);
     }
@@ -247,16 +273,48 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
   it("loses track when the bridge forgets the job or the PC drops, and gives up after its limit", async () => {
     for (const gets of [[json({ error: { code: "job_not_found" } }, 404)], [null]]) {
       const { handoffs, told } = follower(json({ job: job("sending") }), gets);
-      await handoffs.start("mac", "s1", "T");
+      await handoffs.start("mac", "s1", "T", "note");
       await handoffs.settled();
       expect(told.map((each) => each.title)).toEqual(["Lost track of the hand-off of \"T\": open the chat"]);
     }
     let at = 0;
     const told: string[] = [];
     const slow = createHandoffFollower({ bridge: async () => { at += 10 * 60_000; return json({ job: job("waiting") }); }, tell: async (alert) => { told.push(alert.title); }, pcName: () => "Mac", pollMs: 1, now: () => at });
-    await slow.start("mac", "s1", "T");
+    await slow.start("mac", "s1", "T", "note");
     await slow.settled();
     expect(told).toEqual(["Lost track of the hand-off of \"T\": open the chat"]);
+  });
+
+  it("a fresh tap POSTs chat/continue", async () => {
+    const { handoffs, told, calls } = follower(json({ job: job("starting", { mode: "fresh" }) }), [json({ job: job("done", { mode: "fresh", newSession: "s2" }) })]);
+    expect((await handoffs.start("mac", "s1", "T", "fresh")).status).toBe(202);
+    await handoffs.settled();
+    expect(calls).toEqual(["POST mac fresh", "GET mac fresh"]);
+    expect(told).toEqual([{ title: "Handed off \"T\" → new chat", body: "Cold: the new chat reads the old one's record (no note written). Old chat kept.", machineId: "mac", session: "s2" }]);
+  });
+
+  it("an old bridge's 404 on continue says update the bridge", async () => {
+    const { handoffs, told, calls } = follower(json({ error: { code: "not_found" } }, 404));
+    await handoffs.start("mac", "s1", "T", "fresh");
+    await handoffs.settled();
+    expect(calls).toEqual(["POST mac fresh"]);
+    expect(told.map((each) => each.title)).toEqual(["Update the bridge on Mac to hand off from here"]);
+  });
+
+  it("says why a fresh one could not start: no record, no /resume, no folder, the chat gone, at work", async () => {
+    const cases: [Response, string][] = [
+      [json({ error: { code: "no_record" } }, 409), "Couldn't hand off \"T\": its record isn't on its PC"],
+      [json({ error: { code: "no_resume" } }, 409), "Couldn't hand off \"T\": this chat has no /resume"],
+      [json({ error: { code: "no_folder" } }, 409), "Couldn't hand off \"T\": its folder isn't on its PC"],
+      [json({ error: { code: "host_chat_missing" } }, 404), "Lost track of the hand-off of \"T\": open the chat"],
+      [json({ error: { code: "busy" } }, 409), "Couldn't hand off \"T\": it's working. Tap again when it's done."],
+    ];
+    for (const [post, title] of cases) {
+      const { handoffs, told } = follower(post);
+      await handoffs.start("mac", "s1", "T", "fresh");
+      await handoffs.settled();
+      expect(told).toEqual([{ title, body: "T", machineId: "mac", session: "s1" }]);
+    }
   });
 
   it("follows one job per chat: a second tap while it runs starts nothing more", async () => {
@@ -268,9 +326,9 @@ describe("following a hand-off from an alert (ZAC-262)", () => {
       bridge: async (_machineId, method) => { calls.push(method); if (method === "GET") await held; return json({ job: job(method === "POST" ? "sending" : "done", { newSession: "s2" }) }); },
       tell: async (alert) => { told.push(alert.title); }, pcName: () => "Mac", pollMs: 1,
     });
-    expect((await handoffs.start("mac", "s1", "T")).status).toBe(202);
+    expect((await handoffs.start("mac", "s1", "T", "note")).status).toBe(202);
     await Bun.sleep(10); // fixed wait: the first follow reaches its GET
-    expect((await handoffs.start("mac", "s1", "T")).status).toBe(202);
+    expect((await handoffs.start("mac", "s1", "T", "note")).status).toBe(202);
     release();
     await handoffs.settled();
     expect(calls).toEqual(["POST", "GET"]);
@@ -286,11 +344,15 @@ describe("asking a PC's bridge for a hand-off (ZAC-262)", () => {
       local: null,
       fetch: async (url, init) => { seen.push({ url: String(url), init: init! }); return Response.json({ job: null }); },
     });
-    await bridge("mac", "GET", "copilotcli:/a b");
-    await bridge("mac", "POST", "copilotcli:/a b");
+    await bridge("mac", "GET", "copilotcli:/a b", "note");
+    await bridge("mac", "POST", "copilotcli:/a b", "note");
+    await bridge("mac", "POST", "copilotcli:/a b", "fresh");
+    await bridge("mac", "GET", "copilotcli:/a b", "fresh");
     expect(seen.map((each) => each.url)).toEqual([
       "https://mac.example:8443/api/host-chats/chat/handoff?session=copilotcli%3A%2Fa%20b",
       "https://mac.example:8443/api/host-chats/chat/handoff",
+      "https://mac.example:8443/api/host-chats/chat/continue",
+      "https://mac.example:8443/api/host-chats/chat/handoff?session=copilotcli%3A%2Fa%20b",
     ]);
     for (const { init } of seen) {
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer t0k");
@@ -302,11 +364,12 @@ describe("asking a PC's bridge for a hand-off (ZAC-262)", () => {
 
   it("answers null for a PC not connected, or this PC without an agent host; calls this one's in process", async () => {
     const none = bridgeHandoff({ endpoint: () => undefined, local: null, fetch: async () => { throw new Error("no fetch"); } });
-    expect(await none("mac", "POST", "s1")).toBeNull();
-    expect(await none("local", "POST", "s1")).toBeNull();
+    expect(await none("mac", "POST", "s1", "note")).toBeNull();
+    expect(await none("local", "POST", "s1", "note")).toBeNull();
     const asked: string[] = [];
     const here = bridgeHandoff({ endpoint: () => undefined, local: async (request, pathname) => { asked.push(`${request.method} ${pathname} ${new URL(request.url).search}`); return Response.json({ job: null }); }, fetch: async () => { throw new Error("no fetch"); } });
-    expect((await here("local", "GET", "s 1"))?.status).toBe(200);
-    expect(asked).toEqual(["GET /api/host-chats/chat/handoff ?session=s%201"]);
+    expect((await here("local", "GET", "s 1", "fresh"))?.status).toBe(200);
+    expect((await here("local", "POST", "s 1", "fresh"))?.status).toBe(200);
+    expect(asked).toEqual(["GET /api/host-chats/chat/handoff ?session=s%201", "POST /api/host-chats/chat/continue "]);
   });
 });

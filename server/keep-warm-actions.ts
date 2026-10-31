@@ -40,7 +40,15 @@ export interface HandoffAct {
   session: string;
   title: string;
   expires: number;
+  /**
+   * How the PC hands it off (ZAC-266): `note` asks the chat for a `/handoff` note (chat/handoff), a
+   * model call on its cache; `fresh` starts the next chat from the old one's CLI record
+   * (chat/continue), so a cold chat is never woken. A link signed before ZAC-266 reads as `note`.
+   */
+  mode: HandoffMode;
 }
+
+export type HandoffMode = HandoffJob["mode"];
 
 export type KeepWarmHow = KeepWarmAct["how"] | HandoffAct["how"];
 
@@ -86,7 +94,7 @@ export class KeepWarmActions {
   /** The button's path, `/api/keepwarm/act/...`: prefix it with the app's public address for ntfy. */
   path(act: KeepWarmAct | HandoffAct): string {
     const fields = act.how === "handoff"
-      ? ["h", act.machineId, act.session, Array.from(act.title).slice(0, HANDOFF_TITLE_CHARS).join(""), act.expires]
+      ? ["h", act.machineId, act.session, Array.from(act.title).slice(0, HANDOFF_TITLE_CHARS).join(""), act.expires, act.mode]
       : [act.key, act.from, act.announced, act.how];
     const payload = Buffer.from(JSON.stringify(fields)).toString("base64url");
     return `/api/keepwarm/act/${payload}.${this.sign(payload, act.how === "handoff" ? "keepwarm-handoff" : "keepwarm-act")}`;
@@ -105,11 +113,14 @@ export class KeepWarmActions {
     const given = Buffer.from(signature);
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
     if (handoff) {
-      if ((value as unknown[]).length !== 5) return null;
-      const [, machineId, session, title, expires] = value as unknown[];
+      // 5 fields: a link signed before ZAC-266, which only knew the note path
+      const length = (value as unknown[]).length;
+      if (length !== 5 && length !== 6) return null;
+      const [, machineId, session, title, expires, mode = "note"] = value as unknown[];
       if (typeof machineId !== "string" || typeof session !== "string" || typeof title !== "string" || typeof expires !== "number") return null;
+      if (mode !== "note" && mode !== "fresh") return null;
       if (this.now() > expires) return null;
-      return { how: "handoff", machineId, session, title, expires };
+      return { how: "handoff", machineId, session, title, expires, mode };
     }
     if (!Array.isArray(value) || value.length !== 4) return null;
     const [key, from, announced, how] = value as unknown[];
@@ -126,14 +137,14 @@ export class KeepWarmActions {
  * goes to `startHandoff` (createHandoffFollower's start), which answers at once.
  */
 export async function handleKeepWarmAct(request: Request, pathname: string, actions: KeepWarmActions, link: Pick<OmniRouteLink, "keepWarm" | "saveKeepWarm">, now: () => number = Date.now,
-  options: { startHandoff?: (machineId: string, session: string, title: string) => Promise<Response> } = {}): Promise<Response> {
+  options: { startHandoff?: (machineId: string, session: string, title: string, mode: HandoffMode) => Promise<Response> } = {}): Promise<Response> {
   const reply = (value: unknown, status = 200) => jsonResponse(value, status, { "cache-control": "no-store" });
   if (request.method !== "POST") return reply({ error: { code: "method_not_allowed", message: "Use POST" } }, 405);
   const act = actions.read(pathname);
   if (!act) return reply({ error: { code: "not_found", message: "This button has expired" } }, 404);
   if (act.how === "handoff") {
     if (!options.startHandoff) return reply({ error: { code: "handoff_unavailable", message: "This server cannot hand off" } }, 503);
-    return options.startHandoff(act.machineId, act.session, act.title);
+    return options.startHandoff(act.machineId, act.session, act.title, act.mode);
   }
   const answer = await link.keepWarm(true);
   const current = answer.state?.keys.find((each) => each.key === act.key);
@@ -168,10 +179,11 @@ export interface HandoffOutcome { title: string; body: string; machineId: string
 
 export interface HandoffFollowerOptions {
   /**
-   * one call to the PC's bridge, POST /api/host-chats/chat/handoff {session} or its GET; null: the
+   * one call to the PC's bridge: the POST starts the job, /api/host-chats/chat/handoff {session} for
+   * `note`, chat/continue for `fresh`; the GET reads either job (chat/handoff?session=). Null: the
    * PC is not reachable (disconnected, no agent host here, the request failed)
    */
-  bridge: (machineId: string, method: "POST" | "GET", session: string) => Promise<Response | null>;
+  bridge: (machineId: string, method: "POST" | "GET", session: string, mode: HandoffMode) => Promise<Response | null>;
   /** posts the outcome (an ntfy, server/ntfy.ts status `handoff`); never throws */
   tell: (outcome: HandoffOutcome) => Promise<unknown>;
   /** the PC's name for "Update the bridge on <PC>" */
@@ -185,6 +197,8 @@ export interface HandoffFollowerOptions {
 export const HANDOFF_POLL_MS = 5_000;
 export const HANDOFF_FOLLOW_MS = 25 * 60_000;
 const ENDED = new Set<HandoffJob["state"]>(["done", "no_resume", "timeout", "failed"]);
+/** A fresh hand-off's `done` (ZAC-266): no note was asked for, and the old chat is not archived. */
+export const FRESH_HANDOFF_DONE_BODY = "Cold: the new chat reads the old one's record (no note written). Old chat kept.";
 
 /**
  * "Hand off now" from an alert (ZAC-262, spec §2/§2b): the tap is answered at once (the ntfy app
@@ -208,17 +222,23 @@ export function createHandoffFollower(options: HandoffFollowerOptions) {
   };
   const safely = async (call: Promise<Response | null>): Promise<Response | null> => { try { return await call; } catch { return null; } };
 
-  async function follow(machineId: string, session: string, title: string): Promise<void> {
-    const tell = (text: string, opens = session) => options.tell({ title: text, body: title, machineId, session: opens });
+  async function follow(machineId: string, session: string, title: string, mode: HandoffMode): Promise<void> {
+    const tell = (text: string, opens = session, body = title) => options.tell({ title: text, body, machineId, session: opens });
     const offline = `Couldn't hand off "${title}": its PC is offline`;
     const lost = `Lost track of the hand-off of "${title}": open the chat`;
     const started = now();
-    const posted = await safely(options.bridge(machineId, "POST", session));
+    const posted = await safely(options.bridge(machineId, "POST", session, mode));
     if (!posted || posted.status >= 500) return void await tell(offline);
     if (!posted.ok) {
       const code = await codeOf(posted);
       if (posted.status === 409) {
         if (code === "busy") return void await tell(`Couldn't hand off "${title}": it's working. Tap again when it's done.`);
+        if (mode === "fresh") {
+          // chat/continue's own refusals (ZAC-266): it needs /resume, the CLI record, and the folder
+          if (code === "no_resume") return void await tell(`Couldn't hand off "${title}": this chat has no /resume`);
+          if (code === "no_record") return void await tell(`Couldn't hand off "${title}": its record isn't on its PC`);
+          if (code === "no_folder") return void await tell(`Couldn't hand off "${title}": its folder isn't on its PC`);
+        }
         if (code === "no_handoff" || code === "no_folder") return void await tell(`Couldn't hand off "${title}": this chat has no /handoff`);
         if (code === "recent_handoff") return void await tell(`A hand-off of "${title}" was just written: open the chat`);
       }
@@ -233,7 +253,7 @@ export function createHandoffFollower(options: HandoffFollowerOptions) {
     while (!stopped && job && !ENDED.has(job.state)) {
       await sleep(pollMs);
       if (stopped || now() - started > HANDOFF_FOLLOW_MS) break;
-      const read = await safely(options.bridge(machineId, "GET", session));
+      const read = await safely(options.bridge(machineId, "GET", session, mode));
       // the PC dropped, or its bridge restarted and forgot the job (404 job_not_found)
       if (!read || read.status === 404) { job = null; break; }
       // anything else (a 502 while the host reconnects): asked again at the next poll
@@ -241,17 +261,17 @@ export function createHandoffFollower(options: HandoffFollowerOptions) {
     }
     if (stopped) return;
     if (!job || !ENDED.has(job.state)) return void await tell(lost);
-    if (job.state === "done" && job.newSession) return void await tell(`Handed off "${title}" → new chat`, job.newSession);
+    if (job.state === "done" && job.newSession) return void await tell(`Handed off "${title}" → new chat`, job.newSession, mode === "fresh" ? FRESH_HANDOFF_DONE_BODY : title);
     if (job.state === "no_resume") return void await tell(`Hand-off note written for "${title}", but no /resume line: open the chat`);
     // timeout, failed (a new chat made but its /resume not sent: that one is opened), done without a new chat
     await tell(`Hand-off of "${title}" didn't finish: open the chat`, job.newSession ?? session);
   }
 
   return {
-    async start(machineId: string, session: string, title: string): Promise<Response> {
+    async start(machineId: string, session: string, title: string, mode: HandoffMode): Promise<Response> {
       const key = `${machineId}\u0000${session}`;
       if (!stopped && !following.has(key)) {
-        const done = follow(machineId, session, title)
+        const done = follow(machineId, session, title, mode)
           .catch((error: unknown) => { console.error(`hand-off follow failed: ${error instanceof Error ? error.message : String(error)}`); })
           .finally(() => { following.delete(key); });
         following.set(key, done);
@@ -267,6 +287,8 @@ export function createHandoffFollower(options: HandoffFollowerOptions) {
 }
 
 const HANDOFF_PATH = "/api/host-chats/chat/handoff";
+/** the fresh path's start (ZAC-266); its job is read at HANDOFF_PATH like a note's */
+const CONTINUE_PATH = "/api/host-chats/chat/continue";
 
 /**
  * The follower's `bridge` (ZAC-262): the chat's PC asked as the app asks it, a remote one through
@@ -279,16 +301,17 @@ export function bridgeHandoff(deps: {
   local: ((request: Request, pathname: string) => Promise<Response> | null) | null;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
 }): HandoffFollowerOptions["bridge"] {
-  return async (machineId, method, session) => {
+  return async (machineId, method, session, mode) => {
     const init: RequestInit = method === "POST"
       ? { method, headers: { "content-type": "application/json" }, body: JSON.stringify({ session }) }
       : { method };
     const query = method === "GET" ? `?session=${encodeURIComponent(session)}` : "";
-    if (machineId === "local") return deps.local ? deps.local(new Request(`http://local${HANDOFF_PATH}${query}`, init), HANDOFF_PATH) : null;
+    const path = method === "POST" && mode === "fresh" ? CONTINUE_PATH : HANDOFF_PATH;
+    if (machineId === "local") return deps.local ? deps.local(new Request(`http://local${path}${query}`, init), path) : null;
     const endpoint = deps.endpoint(machineId);
     if (!endpoint) return null;
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${endpoint.token}`);
-    return deps.fetch(`${endpoint.url}${HANDOFF_PATH}${query}`, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(15_000) });
+    return deps.fetch(`${endpoint.url}${path}${query}`, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(15_000) });
   };
 }

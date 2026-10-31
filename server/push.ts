@@ -618,8 +618,8 @@ export function createPushService(options: PushServiceOptions): PushService {
    * chat no longer kept is not announced.
    */
   /** "Hand off now" (ZAC-262): good for 2 h from now, as the alert goes */
-  function handoffButton(machineId: string, session: string, title: string): WindowButton | null {
-    const path = options.handoffAction?.({ how: "handoff", machineId, session, title, expires: now() + HANDOFF_ACT_TTL_MS });
+  function handoffButton(machineId: string, session: string, title: string, mode: HandoffAct["mode"]): WindowButton | null {
+    const path = options.handoffAction?.({ how: "handoff", machineId, session, title, expires: now() + HANDOFF_ACT_TTL_MS, mode });
     return path ? { action: "handoff", title: WINDOW_BUTTON_TITLES.handoff, path } : null;
   }
   async function armWindows(chats: readonly HostChatCost[], prices: ColdPrices, machineId: string, machineName: string | undefined): Promise<void> {
@@ -656,7 +656,8 @@ export function createPushService(options: PushServiceOptions): PushService {
           const act = (how: "extend" | "cool") => options.keepWarmAction?.({ key: fresh.key, from: fresh.lastRealAt, announced: fresh.until, how });
           const buttons: WindowButton[] = options.keepWarmAction ? (["extend", "cool"] as const).map((how) => ({ action: how, title: WINDOW_BUTTON_TITLES[how], path: act(how)! })) : [];
           // ntfy shows at most 3: this order, owner-approved (ZAC-262)
-          const handOff = handoffButton(machineId, chat.session, current.title);
+          // the window is still warm: the note path's /handoff is a cache read (ZAC-266)
+          const handOff = handoffButton(machineId, chat.session, current.title, "note");
           if (handOff) buttons.push(handOff);
           const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session), ...(buttons.length ? { actions: buttons } : {}) };
           const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
@@ -982,7 +983,8 @@ export function createPushService(options: PushServiceOptions): PushService {
             if (options.inUse?.() || options.hostChatsShown?.() === false || !current || current.archived || current.status === "working") return;
             if (await options.keptWarm?.(chat, machineId)) return;
             // its body already says "hand off now ~$X" (ZAC-262); the link's 2 h start as it goes
-            const handOff = handoffButton(machineId, chat.session, current.title);
+            // fresh (ZAC-266): the next chat reads the old one's record, so the cold chat is never woken
+            const handOff = handoffButton(machineId, chat.session, current.title, "fresh");
             const message: PushPayload = { pane_id: null, host_session: chat.session, ...(machineId === "local" ? {} : { machine_id: machineId }), title, body, tag: hostChatTag(machineId, chat.session), ...(handOff ? { actions: [handOff] } : {}) };
             const to = [...store().values()].filter((subscription) => coldAlertsOn(subscription.alerts ?? DEFAULT_ALERTS));
             const ntfy = options.ntfy && coldNtfy ? options.ntfy : null;

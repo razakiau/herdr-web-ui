@@ -964,7 +964,7 @@ describe("the cold-cache alert (ZAC-260)", () => {
     const actions = fake.received[0]?.payload.actions ?? [];
     expect(actions.map(({ action, title }) => ({ action, title }))).toEqual([{ action: "handoff", title: "Hand off now" }]);
     const act = JSON.parse(decodeURIComponent(actions[0]!.path.slice(3))) as HandoffAct;
-    expect({ ...act, expires: 0 }).toEqual({ how: "handoff", machineId: "mac", session: "ahp:/s1", title: "fix the build", expires: 0 });
+    expect({ ...act, expires: 0 }).toEqual({ how: "handoff", machineId: "mac", session: "ahp:/s1", title: "fix the build", expires: 0, mode: "fresh" });
     expect(Math.abs(act.expires - (sent + 2 * 3_600_000))).toBeLessThan(1_000);
   });
 
@@ -1083,7 +1083,7 @@ describe("the keep-warm window-end alert (ZAC-260, pick X)", () => {
     let keys = [keyFor(last, last + 200)];
     const refreshed: boolean[] = [];
     const push = subscribed({ cold: RULE, keepWarmLeadMs: 100, keepWarmKeys: async (refresh) => { refreshed.push(refresh); return keys; }, keepWarmAction: (act) => `/act/${act.how}/${act.key}/${act.from}/${act.announced}`,
-      handoffAction: (act) => `/act/${act.how}/${act.machineId}/${act.title}`, keptWarm: () => true });
+      handoffAction: (act) => `/act/${act.how}/${act.machineId}/${act.title}/${act.mode}`, keptWarm: () => true });
     push.onHostChats([chatRow()], "mac", "Mac");
     push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
     await Bun.sleep(40); // fixed wait: proving it waits for until - lead
@@ -1096,7 +1096,7 @@ describe("the keep-warm window-end alert (ZAC-260, pick X)", () => {
     expect(payload?.actions).toEqual([
       { action: "extend", title: "Keep 8 h more", path: `/act/extend/k1/${last}/${last + 200}` },
       { action: "cool", title: "Let it cool", path: `/act/cool/k1/${last}/${last + 200}` },
-      { action: "handoff", title: "Hand off now", path: "/act/handoff/mac/fix the build" },
+      { action: "handoff", title: "Hand off now", path: "/act/handoff/mac/fix the build/note" },
     ]);
     expect(refreshed).toEqual([false, true]);
     // read again with the same window: told once
