@@ -60,6 +60,7 @@ import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { handoffCommand, resumeCommand } from "../../shared/handoff-command.ts";
+import { nextHandoffTitle } from "../../shared/handoff-title.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { workOf } from "./artifacts.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
@@ -1273,7 +1274,7 @@ async function newChat(call: Call): Promise<Response> {
  * the host starts the chat on Manual permissions, and the next chat's first command (digest.py,
  * `git log`) waited on "Run in terminal?" while the owner thought it was reading (ZAC-266, 2026-10-31).
  */
-async function createChatWith(call: Call, id: string, cwd: string, message: Message | null, approvals: string | null = null): Promise<{ session: string; sent?: false }> {
+async function createChatWith(call: Call, id: string, cwd: string, message: Message | null, approvals: string | null = null, title: string | null = null): Promise<{ session: string; sent?: false }> {
   const session = `${PROVIDER}:/${id}`;
   if (known(call.host, session)) return message === null ? { session } : await madeBefore(call, session);
   await call.host.request("createSession", {
@@ -1291,12 +1292,27 @@ async function createChatWith(call: Call, id: string, cwd: string, message: Mess
     const channel = call.host.mirror().getSession(session)?.defaultChat;
     const chat = call.host.chat(session);
     if (!channel || !chat) return { session, sent: false };
+    if (title !== null) nameChat(call, session, title);
     send(call.host, session, channel, chat, message, id);
   } catch (error) {
     console.warn(`agent-host: chat/new made ${session} but its first message did not go (${errorName(error)})`);
     return { session, sent: false };
   }
   return { session };
+}
+
+/**
+ * Names a new chat as the user's rename does (renameChat): the host marks the title renamed, so
+ * neither its seed from the first message nor its title reminders replace it (VS Code 1.142's
+ * title controller, markTitleRenamed). Sent before the first message, so the seed never lands.
+ * A failure leaves the host's own title: the chat itself is made.
+ */
+function nameChat(call: Call, session: string, title: string): void {
+  try {
+    call.host.dispatch(session, { type: ActionType.SessionTitleChanged, title } as StateAction);
+  } catch (error) {
+    console.warn(`agent-host: could not name ${session} (${errorName(error)})`);
+  }
 }
 
 /** How long a fork waits for the host's catalog to list it after createChat answers. */
@@ -1440,7 +1456,7 @@ async function handOff(call: Call): Promise<Response> {
     },
     ended: () => handoffEnded(call, session, turnId, asked ? from : null),
     start: async (topic) => {
-      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), inheritedApprovals(call.host, session));
+      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), inheritedApprovals(call.host, session), nextHandoffTitle(titleOf(call.host, session)));
       return { session: made.session, sent: made.sent !== false };
     },
     // as Stop does (stopTurn), on the job's channel; a turn the user started since is theirs. The
@@ -1492,6 +1508,8 @@ async function continueChat(call: Call): Promise<Response> {
   if (busy(chat)) return conflictResponse("busy", "the chat is working: continue when it asks or stops");
   const turnId = chat.activeTurn?.id;
   const approvals = inheritedApprovals(call.host, session);
+  // named after the chat it continues (ZAC-267), read now: the old chat is the one in hand
+  const title = nextHandoffTitle(titleOf(call.host, session));
   const job = startContinue(call.host, call.clock, session, {
     // as Stop does (stopTurn): a cancel on a turn waiting on ask_user is no model call (verified 2026-10-31)
     stop: async () => {
@@ -1501,7 +1519,7 @@ async function continueChat(call: Call): Promise<Response> {
     },
     start: async () => {
       const first: Message = { text: `${resume} ${cliSession}`, origin: { kind: MessageKind.User }, ...(model ? { model } : {}), ...(agent ? { agent } : {}) };
-      const made = await createChatWith(call, randomUUID(), cwd, first, approvals);
+      const made = await createChatWith(call, randomUUID(), cwd, first, approvals, title);
       return { session: made.session, sent: made.sent !== false };
     },
   }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));

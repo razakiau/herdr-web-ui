@@ -225,6 +225,10 @@ describe("chat/handoff", () => {
     expect(resumed.action).toMatchObject({ message: { text: "/resume zac-262", model: SELECTION } });
     // the note hand-off no longer archives (ZAC-266): the old chat stays where it is
     expect(archived(r.fake)).toEqual([]);
+    // named after the chat it continues (ZAC-267), before its first message, so the host's seed from "/resume ..." never lands
+    const titled = sent(r.fake, "session/titleChanged").filter((each) => each.channel === done.newSession);
+    expect(titled.map((each) => (each.action as unknown as { title: string }).title)).toEqual(["FICTIONAL_chat_1 → 2"]);
+    expect(r.fake.dispatched.indexOf(titled[0]!)).toBeLessThan(r.fake.dispatched.indexOf(resumed));
   });
 
   it("the note hand-off's new chat takes the old one's approvals too", async () => {
@@ -469,6 +473,18 @@ describe("chat/continue", () => {
     expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${uuid(1)}`, model: SELECTION } });
     expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
     expect(archived(r.fake)).toEqual([]);
+    // ZAC-267: titled after the old chat, before "/harness:resume <uuid>" goes
+    const titled = sent(r.fake, "session/titleChanged").filter((each) => each.channel === done.newSession);
+    expect(titled.map((each) => (each.action as unknown as { title: string }).title)).toEqual(["FICTIONAL_chat_1 → 2"]);
+    expect(r.fake.dispatched.indexOf(titled[0]!)).toBeLessThan(r.fake.dispatched.indexOf(opened(r)!));
+  });
+
+  it("continue from a chat already titled \"X → 2\" names the next \"X → 3\"", async () => {
+    home().record(uuid(1));
+    const titledRig = await rig({}, RESUME, { sessions: [{ ...summary(1), title: "FICTIONAL work → 2" }] });
+    await go(titledRig);
+    const done = await settled(titledRig);
+    expect(sent(titledRig.fake, "session/titleChanged").filter((each) => each.channel === done.newSession).map((each) => (each.action as unknown as { title: string }).title)).toEqual(["FICTIONAL work → 3"]);
   });
 
   it("continue gives the new chat the old one's approvals, so its digest runs without a prompt", async () => {
