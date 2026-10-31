@@ -116,11 +116,11 @@ describe("HostContextMeter with costs tracked", () => {
     const html = render(createElement(HostContextMeter, { read: read(0, { context: null, busy: true } as Partial<HostChatRead>), open: false, onOpen: () => {}, onClose: () => {},
       window: 1_000_000, costs: { log: log(1, { context: 328_000 }), settings: SETTINGS, prices: PRICES, now: NOW } }));
     expect(label(html)).toBe("328K");
-    expect(used(html)).toBeCloseTo(C * 0.33, 1);
+    expect(Math.abs(used(html) - C * 0.33)).toBeLessThan(0.01);
   });
 
   it("fills the ring from the read's own share while it has one", () => {
-    expect(used(meter(read(200_000), log(1)))).toBeCloseTo(C * 0.5, 1);
+    expect(Math.abs(used(meter(read(200_000), log(1))) - C * 0.5)).toBeLessThan(0.01);
   });
 
   it("shows no ring when no window is known", () => {

@@ -122,6 +122,8 @@ describe("SessionSheet", () => {
     expect(words).not.toContain("after expiry");
     // three warm calls ($0.47) and the new chat's first reply storing 70K + a 2K note ($0.77) (shared/cache-cost.ts handoffUsd)
     expect(words).toMatch(/Hand off now ~\$1\.24 /);
+    // an archived chat hands off from its record even while warm: the fresh price (ZAC-266)
+    expect(text(sheet({ fresh: true }))).toMatch(/Hand off now ~\$0\.83 /);
     expect(html).toMatch(/class="btn btn-primary"[^>]*>Hand off &amp; continue</);
     // the last call's own hit, not its message's sum
     expect(words).toContain("Last call read from cache 50%");

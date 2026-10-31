@@ -480,7 +480,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
         sheet={trackCosts && cacheRead ? <SessionSheet read={cacheRead} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}
           settings={costSettings} onClose={() => setContextOpen(false)}
           onCompact={!cacheRead.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-          onHandoff={onHandoff} handingOff={handingOff} handoffWaiting={handoffWaiting} /> : undefined} />}
+          onHandoff={onHandoff} handingOff={handingOff} handoffWaiting={handoffWaiting} fresh={fresh} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}

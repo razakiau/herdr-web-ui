@@ -55,6 +55,8 @@ export interface SessionSheetProps {
   handingOff?: boolean;
   /** the chat works without asking (the bridge would answer busy): the button shows, disabled, saying so */
   handoffWaiting?: boolean;
+  /** the hand-off goes from the chat's record (a cold or archived chat, ZAC-266): its price is the fresh path's; absent, a cold cache decides */
+  fresh?: boolean;
 }
 
 const storedTab = (): Tab | null => {
@@ -88,8 +90,8 @@ function figures(props: SessionSheetProps, now: number) {
   const next = prices ? nextCall(context, model, avg, table, fallback) : null;
   const fresh = prices ? nextCall(FRESH_CHAT_CONTEXT, model, avg, table, fallback)?.warm ?? null : null;
   // what handing off costs now (shared/cache-cost.ts): by a note while warm (the window-end alert
-  // quotes the same), by the old chat's record once cold, as the cold alert does (ZAC-266)
-  const handoff = prices ? (cache?.state === "cold" ? freshHandoffUsd(model, avg, table, fallback) : handoffUsd(context, model, avg, table, fallback)) : null;
+  // quotes the same), by the old chat's record once cold or archived, as the button goes (ZAC-266)
+  const handoff = prices ? ((props.fresh ?? cache?.state === "cold") ? freshHandoffUsd(model, avg, table, fallback) : handoffUsd(context, model, avg, table, fallback)) : null;
   const split = prices ? costSplit(chat.models, table, fallback) : null;
   const price = prices ? priceWithFallback(model, table, fallback)?.price ?? null : null;
   return { chat, context, cache, advised, switched, next, fresh, handoff, split, model, price, calls: cost.calls };
