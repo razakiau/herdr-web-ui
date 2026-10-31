@@ -20,6 +20,12 @@ describe("keepWarmKeyFor", () => {
     expect(keepWarmKeyFor(chat(), [key({ prompt: 87 })])?.key).toBe("a".repeat(40));
   });
 
+  it("matches on the prompt too, when the cache's read + write overshoot the chat's size (ZAC-267)", () => {
+    // live 2026-10-31, "ZAC-263 new/fork chats": prompt 74,278 (read 74,150) with 87,770 written
+    // on top; the plugin's size 161,920 matched no 74K chat, so it had no switch and read cold
+    expect(keepWarmKeyFor(chat({ context: 74_278 }), [key({ tokens: 161_920, prompt: 74_278 })])?.key).toBe("a".repeat(40));
+  });
+
   it("matches nothing for another size, another time, or no last call", () => {
     expect(keepWarmKeyFor(chat({ context: 190_000 }), [key()])).toBeNull();
     expect(keepWarmKeyFor(chat({ lastCallAt: new Date(T + 30 * 60_000).toISOString() }), [key()])).toBeNull();
