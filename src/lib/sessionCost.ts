@@ -37,6 +37,31 @@ export function callingModel(read: { busy: boolean; status?: string }): boolean 
   return read.busy && read.status !== "asks";
 }
 
+/** OmniRoute's keep-warm plugin keeps the chat warm now (keepWarmFor's `kept`): its last ping, null before the first (ZAC-266). */
+export interface KeptWarm { lastPingAt: number | null }
+
+/**
+ * When a kept chat's cache was last renewed: its last call or the plugin's last ping, the later;
+ * null with neither.
+ */
+export function renewedAt(lastCallAt: string | null, kept: KeptWarm): number | null {
+  const call = lastCallAt ? Date.parse(lastCallAt) : Number.NaN;
+  const ping = kept.lastPingAt;
+  if (Number.isNaN(call)) return ping;
+  return ping === null ? call : Math.max(call, ping);
+}
+
+/**
+ * A kept chat's cache (ZAC-266): warm, its age and minutes left counted from its last renewal (a
+ * call or a ping). It never reads cooling or cold while kept: the next ping comes first.
+ */
+export function keptCacheState(lastCallAt: string | null, kept: KeptWarm, now: number, lifetimeMin: number): { state: CacheState; ageMin: number; leftMin: number } | null {
+  const at = renewedAt(lastCallAt, kept);
+  if (at === null) return null;
+  const age = Math.max(0, now - at) / 60_000;
+  return { state: "warm", ageMin: Math.floor(age), leftMin: Math.max(0, Math.floor(lifetimeMin - age)) };
+}
+
 export type Advice = "keep" | "handoff-warm" | "handoff-cooling" | "handoff-cold";
 
 /**
@@ -54,7 +79,7 @@ export interface CachePrices { prices: ModelPrices | null; fallback: Record<stri
 /**
  * What the meter and the handoff banner show (ZAC-260): the context's tokens, the live read's
  * (what the meter showed before) else the log's; the cache's state and minutes left from the log's
- * last call; what a cold restart would cost (`restartUsd`, null unpriced) and the advice, a big chat
+ * last call, or for a chat OmniRoute keeps warm (`kept`) from its last renewal, call or ping (ZAC-266); what a cold restart would cost (`restartUsd`, null unpriced) and the advice, a big chat
  * being one whose cold restart costs at least `coldRestartAlertUsd`. `cache` is null without a log
  * (a bridge before costs, or not answered yet): tokens alone, no state, no advice; with no prices
  * yet nothing is big.
@@ -65,13 +90,18 @@ export function cacheMeter(
   settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
   now: number,
   prices: CachePrices | null,
+  kept: KeptWarm | null = null,
 ): { context: number; cache: ReturnType<typeof cacheState>; advised: Advice; restartUsd: number | null; switched: boolean } {
   const context = read.context?.currentTokens ?? log?.context ?? 0;
   // the cache of the model the next call uses (phase 1b): the composer's pick, else the last call's
   const model = read.model?.id ?? (log ? cacheModel(log) : "");
   const own = log ? modelLastCall(log, model) : { lastCallAt: null, switched: false };
   const calling = callingModel(read);
-  const found = log ? cacheState(own.lastCallAt ?? log.lastCallAt, now, settings.cacheLifetimeMin, calling) : null;
+  // kept warm by OmniRoute (ZAC-266): its pings renew the last call's model's cache, not a model switched to
+  const lastCallAt = own.lastCallAt ?? log?.lastCallAt ?? null;
+  const found = !log ? null
+    : kept && !own.switched && !calling ? keptCacheState(lastCallAt, kept, now, settings.cacheLifetimeMin)
+    : cacheState(lastCallAt, now, settings.cacheLifetimeMin, calling);
   // a model switched to with no call of its own: nothing of the chat is in its cache yet
   const cache = found && own.switched && own.lastCallAt === null && !calling ? { ...found, state: "cold" as const, leftMin: 0 } : found;
   // the next call stores the whole context again on the new model: the Cache tab says why
@@ -87,8 +117,9 @@ export function cacheStateOf(
   settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number },
   now: number,
   prices: CachePrices | null,
+  kept: KeptWarm | null = null,
 ): CacheState | null {
-  return cacheMeter(read, log, settings, now, prices).cache?.state ?? null;
+  return cacheMeter(read, log, settings, now, prices, kept).cache?.state ?? null;
 }
 
 /**

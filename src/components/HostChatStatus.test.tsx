@@ -129,6 +129,16 @@ describe("HostContextMeter with costs tracked", () => {
     expect(html).not.toContain("host-chat-meter-ring");
   });
 
+  it("kept warm by OmniRoute (ZAC-266): the tokens alone, never cold, while its pings renew the cache", () => {
+    const html = render(createElement(HostContextMeter, { read: read(166_000), open: false, onOpen: () => {}, onClose: () => {},
+      costs: { log: log(122), settings: SETTINGS, prices: PRICES, now: NOW }, kept: { lastPingAt: NOW - 12 * 60_000 } }));
+    expect(label(html)).toBe("166K");
+    expect(buttonClass(html)).not.toContain("is-cold");
+    expect(buttonClass(html)).toContain("is-warm");
+    // not kept: cold as before
+    expect(label(meter(read(166_000), log(122)))).toBe("166K · cold");
+  });
+
   it("is today's ring and percent with tracking off", () => {
     const html = meter(read(210_000), log(48), { ...SETTINGS, trackCosts: false });
     expect(label(html)).toBe("53%");
@@ -153,6 +163,13 @@ describe("HandoffBanner", () => {
   it("names the warm and cooling advice", () => {
     expect(text(banner("pc\nchat-b", "handoff-warm", () => {}))).toContain("Cache warm · hand off if work remains");
     expect(text(banner("pc\nchat-b", "handoff-cooling", () => {}))).toContain("Cache cooling · hand off before it goes cold");
+  });
+
+  it("kept warm by OmniRoute (ZAC-266): the warm advice, never Cache cold", () => {
+    const html = render(createElement(HandoffBanner, { dismissKey: "pc\nchat-kept", read: read(210_000), log: log(122), settings: SETTINGS, prices: PRICES, now: NOW,
+      onHandoff: () => {}, kept: { lastPingAt: NOW - 12 * 60_000 } }));
+    expect(text(html)).not.toContain("Cache cold");
+    expect(text(html)).toContain("Cache warm · hand off if work remains");
   });
 
   it("is absent when the advice is to keep going", () => {

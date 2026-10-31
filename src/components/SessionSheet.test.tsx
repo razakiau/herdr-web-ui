@@ -424,6 +424,18 @@ describe("SessionSheet", () => {
       expect(words).not.toContain("12 min left");
     });
 
+    it("a kept chat's bar drains from its last ping (ZAC-266): pinged 30 min ago, half its lifetime left", () => {
+      keepWarmFeed.set(answer({ lastPingAt: NOW - 30 * 60_000 }));
+      const html = sheet();
+      const width = Number(/session-cache-bar[^>]*><span[^>]*style="width:([0-9.]+)%"/.exec(html)?.[1] ?? NaN);
+      expect(width).toBeCloseTo(50, 0);
+      expect(html).toMatch(/aria-valuenow="50"/);
+      expect(text(html)).toContain(`Warm kept warm · next ping ${clock(lastAt + 55 * 60_000)}`);
+      // no ping yet: it drains from the log's last call (48 min ago: 12 of 60 left)
+      keepWarmFeed.set(answer());
+      expect(Number(/session-cache-bar[^>]*><span[^>]*style="width:([0-9.]+)%"/.exec(sheet())?.[1] ?? NaN)).toBeCloseTo(20, 0);
+    });
+
     it("a ping that found the cache gone: the cache counts down from the log again, and says why keep-warm stopped", () => {
       keepWarmFeed.set(answer({ missed: true, kept: false }));
       const words = text(sheet());

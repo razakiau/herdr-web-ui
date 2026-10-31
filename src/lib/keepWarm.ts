@@ -74,6 +74,11 @@ export function keepWarmFor(answer: KeepWarmAnswer | null, log: HostChatCost | u
   return key ? { key, kept: keptWarm(key, now) } : null;
 }
 
+/** What the cache views take of a chat kept warm now (sessionCost's `KeptWarm`): its last ping; null when not kept (ZAC-266). */
+export function keptWarmOf(found: { key: KeepWarmKey; kept: boolean } | null | undefined): { lastPingAt: number | null } | null {
+  return found?.kept ? { lastPingAt: found.key.lastPingAt } : null;
+}
+
 /** The settings with one chat turned on or off (its key in `disabled`). */
 export function withChat(settings: KeepWarmSettings, key: string, on: boolean): KeepWarmSettings {
   const disabled = new Set(settings.disabled ?? []);

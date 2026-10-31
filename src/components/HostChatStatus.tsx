@@ -11,7 +11,7 @@ import { X } from "lucide-react";
 import type { HostChatCost, HostChatRead, HostContextUsage } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { contextMeter, hostStatusLine, tokens, useMinuteClock } from "../lib/hostChats.ts";
-import { cacheMeter, type CachePrices } from "../lib/sessionCost.ts";
+import { cacheMeter, type CachePrices, type KeptWarm } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import { formatUsd } from "../lib/chatCost.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -82,6 +82,8 @@ interface MeterProps {
   costs?: { log: HostChatCost | null | undefined; settings: Pick<Settings, "trackCosts" | "coldRestartAlertUsd" | "cacheLifetimeMin">; prices: CachePrices | null; now?: number };
   /** the chat's context window (its last read's limit, else the model's in the catalog): the ring's whole while the read has no context */
   window?: number | null;
+  /** OmniRoute keeps the chat warm now (ZAC-266): its last ping, which renews the cache the log never sees */
+  kept?: KeptWarm | null;
 }
 
 /** `workShown`: the session pills already count the running subagents and shells, so the line does not say it twice */
@@ -101,11 +103,11 @@ export function HostChatStatus({ read, workShown = false }: { read: HostChatRead
  * " · 12m" in the cache's colour while cooling and " · cold" once expired, and wears the cache's
  * tint when the advice is to hand off. Without the log (a bridge before costs): the tokens alone.
  */
-export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet, costs, window = null }: MeterProps) {
+export function HostContextMeter({ read, open, onOpen, onClose, cost, onCompact, sheet, costs, window = null, kept = null }: MeterProps) {
   const t = useT();
   const clock = useMinuteClock();
   const meter = contextMeter(read?.context ?? null);
-  const tracked = read !== null && costs?.settings.trackCosts ? cacheMeter(read, costs.log, costs.settings, costs.now ?? clock, costs.prices) : null;
+  const tracked = read !== null && costs?.settings.trackCosts ? cacheMeter(read, costs.log, costs.settings, costs.now ?? clock, costs.prices, kept) : null;
   if (read === null || (meter === null && (tracked === null || tracked.context <= 0))) return null;
   const radius = 6;
   const circumference = 2 * Math.PI * radius;

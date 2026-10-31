@@ -19,7 +19,7 @@ import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
 import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, FRESH_CHAT_CONTEXT, freshHandoffUsd, modelLastCall, handoffUsd, mergeLive, nextCall, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
-import { keepWarmFeed, keepWarmFor, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
+import { keepWarmFeed, keepWarmFor, keptWarmOf, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
 import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
@@ -76,13 +76,16 @@ const agoText = (minutes: number, t: Translate): string => minutes >= 60 ? t("{n
 const usd = (value: number, floor: boolean): string => floor ? listUsd(value, true) : `~${formatUsd(value)}`;
 
 /** what the chat's sums say, the live turn folded in, for both cost tabs */
-function figures(props: SessionSheetProps, now: number) {
+function figures(props: SessionSheetProps, now: number, keepWarm: KeepWarmAnswer | null) {
   const { read, cost, prices, settings } = props;
   if (!cost?.chat) return null;
   const chat = mergeLive(cost.chat, read.tokens?.totals);
-  // the meter's and the banner's rule, so the three never disagree near the threshold
-  const { context, cache, advised, switched } = cacheMeter(read, chat, settings, now, prices);
   const model = read.model?.id ?? cacheModel(chat);
+  // kept warm by OmniRoute (phase 2): its pings renew the cache the CLI's log never sees
+  // only the last call's model: the composer switched to another one stores it all again on that one
+  const keep = !modelLastCall(chat, model).switched ? keepWarmFor(keepWarm, chat, now) : null;
+  // the meter's and the banner's rule, kept warm included (ZAC-266), so the three never disagree
+  const { context, cache, advised, switched } = cacheMeter(read, chat, settings, now, prices, keptWarmOf(keep));
   // `prices` null: not answered yet; an answer without tables prices nothing, so every model is missing
   const table = prices?.prices ?? {};
   const fallback = prices?.fallback ?? null;
@@ -94,7 +97,7 @@ function figures(props: SessionSheetProps, now: number) {
   const handoff = prices ? ((props.fresh ?? cache?.state === "cold") ? freshHandoffUsd(model, avg, table, fallback) : handoffUsd(context, model, avg, table, fallback)) : null;
   const split = prices ? costSplit(chat.models, table, fallback) : null;
   const price = prices ? priceWithFallback(model, table, fallback)?.price ?? null : null;
-  return { chat, context, cache, advised, switched, next, fresh, handoff, split, model, price, calls: cost.calls };
+  return { chat, context, cache, advised, switched, next, fresh, handoff, split, model, price, calls: cost.calls, keep };
 }
 
 export function SessionSheet(props: SessionSheetProps) {
@@ -104,11 +107,8 @@ export function SessionSheet(props: SessionSheetProps) {
   const [chosen, setChosen] = useState<Tab | null>(null);
   const { read, estimate, settings, onClose, onCompact } = props;
   const keepWarm = useKeepWarm(settings.trackCosts);
-  const found = figures(props, now);
-  // kept warm by OmniRoute (phase 2): its pings renew the cache the CLI's log never sees
-  // only the last call's model: the composer switched to another one stores it all again on that one
-  const keep = found && !modelLastCall(found.chat, found.model).switched ? keepWarmFor(keepWarm, found.chat, now) : null;
-  const session = found && keep?.kept ? keptSession(found, settings.cacheLifetimeMin) : found;
+  const session = figures(props, now, keepWarm);
+  const keep = session?.keep ?? null;
   if (!settings.trackCosts) return read.context ? <ContextSheet usage={read.context} cost={estimate} onClose={onClose} onCompact={onCompact} /> : null;
   const handoff = session !== null && session.advised !== "keep";
   const tab: Tab = chosen ?? (handoff ? "cache" : storedTab() ?? "context");
@@ -165,16 +165,6 @@ function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionShee
   }
   if (log?.context) return <p className="host-context-note">{t("{size} tokens; no breakdown reported while this turn runs.", { size: formatTokenCount(log.context) })}</p>;
   return <p className="host-context-note">{t("No context size yet.")}</p>;
-}
-
-/**
- * A kept-warm chat's figures: warm with its whole lifetime left (a ping renews it before it goes),
- * so no "before it goes cold" advice; handing off a big chat is still worth saying.
- */
-function keptSession(session: Session, lifetimeMin: number): Session {
-  const cache = session.cache ? { ...session.cache, state: "warm" as const, leftMin: lifetimeMin } : session.cache;
-  const advised = session.advised === "keep" ? "keep" : "handoff-warm";
-  return { ...session, cache, advised };
 }
 
 const clockTime = (ms: number): string => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });

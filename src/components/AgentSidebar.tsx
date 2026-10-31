@@ -24,7 +24,7 @@ import { machineFilter } from "../lib/sidebarFilter.ts";
 import { useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin, hostChatPinKey } from "../lib/sidebarPins.ts";
 import { chatAge, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
-import { keepWarmFor, useKeepWarm } from "../lib/keepWarm.ts";
+import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
 import { chatLog, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
 import { agentsListHostChats, hostChatStatus } from "../lib/hostPlacement.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
@@ -380,7 +380,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const selected = selectedHostChat?.machineId === machine.id && selectedHostChat.session === chat.session;
     const { title, place, context, subtitle } = describeChat(row);
     const log = costs ? chatLog(costs, machine.id, chat.session) : undefined;
-    const ring = costs ? rowCacheMark(chat, log, costs.prices, settings, now, keepWarmFor(keepWarm, log, now)?.kept) : null;
+    const ring = costs ? rowCacheMark(chat, log, costs.prices, settings, now, keptWarmOf(keepWarmFor(keepWarm, log, now))) : null;
     const pinKey = hostChatPinKey(machine.id, chat.session);
     const menuOpen = menu?.key === pinKey;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>

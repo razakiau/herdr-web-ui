@@ -37,6 +37,7 @@ import { HandoffBanner } from "./HandoffBanner.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
+import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
 import { cacheStateOf, callingModel, switchCost as switchCostOf } from "../lib/sessionCost.ts";
 import { handoffOffer } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
@@ -226,6 +227,10 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const agent = "agent" in choice ? choice.agent ?? null : chat?.agent ?? null;
   // the cache views weigh the model the next message goes to (phase 1b): the composer's pick
   const cacheRead = useMemo(() => chat && model && chat.model?.id !== model.id ? { ...chat, model } : chat, [chat, model]);
+  // kept warm by OmniRoute (ZAC-266): its pings renew the cache the log never sees, so the meter, the
+  // banner, the Session sheet and the hand-off's path read it warm (cacheMeter leaves out a model switched to)
+  const keepWarm = useKeepWarm(trackCosts);
+  const kept = keptWarmOf(keepWarmFor(keepWarm, chatCostLog?.chat ?? undefined, minute));
   const modelEntry = catalog?.models.find((each) => each.id === model?.id);
   const modelLabel = model === null ? t("Model —") : modelEntry?.name ?? model.id;
   const agentLabel = agent === null ? t("Agent") : catalog?.agents.find((each) => each.uri === agent)?.name ?? agentName(agent);
@@ -371,7 +376,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const offer = chat ? handoffOffer(chat) : null;
   const handoffWaiting = offer === "working";
   const fresh = archived || (cacheRead !== null && trackCosts && chatCostLog?.chat
-    ? cacheStateOf(cacheRead, chatCostLog.chat, costSettings, minute, sheetPrices) === "cold" : false);
+    ? cacheStateOf(cacheRead, chatCostLog.chat, costSettings, minute, sheetPrices, kept) === "cold" : false);
   const runHandoff = (asFresh: boolean): void => {
     setHandingOff(true); setHandoffNote(null); setHandoffOutcome(null);
     // a chat left mid-job stops following it: its PC's bridge goes on, and the chat list shows the new chat
@@ -469,13 +474,13 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     </div>}
     {/* an archived chat's bar stands for the advice (owner's mock); a hand-off's note or outcome still shows */}
     {(!archived || outcome !== null || handoffNote !== null) && <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}
-      handingOff={handingOff} handoffWaiting={handoffWaiting} note={handoffNote} cold={fresh} outcome={outcome}
+      handingOff={handingOff} handoffWaiting={handoffWaiting} note={handoffNote} cold={fresh} outcome={outcome} kept={kept}
       onCloseNote={() => { setHandoffNote(null); setHandoffOutcome(null); }} />}
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
       toolbarEnd={<HostContextMeter read={cacheRead} window={lastContext?.usage.tokenLimit ?? modelEntry?.context ?? null} open={contextOpen} onOpen={() => setContextOpen(true)} onClose={() => setContextOpen(false)} cost={cost}
-        costs={{ log: chatCostLog?.chat ?? (chatCostLog === undefined ? undefined : null), settings: costSettings, prices: sheetPrices }}
+        costs={{ log: chatCostLog?.chat ?? (chatCostLog === undefined ? undefined : null), settings: costSettings, prices: sheetPrices }} kept={kept}
         onCompact={chat && !chat.busy ? () => { void sendAs("send", "/compact"); } : undefined}
         sheet={trackCosts && cacheRead ? <SessionSheet read={cacheRead} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}
           settings={costSettings} onClose={() => setContextOpen(false)}

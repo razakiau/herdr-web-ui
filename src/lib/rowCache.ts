@@ -10,7 +10,7 @@ import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/ho
 import { cacheModel, coldRestartUsd, isBigChat } from "../../shared/cache-cost.ts";
 import { fetchModelPrices, type ChatPrices } from "./api.ts";
 import { fetchHostCosts, onHostChatResume, onHostChatRows } from "./hostChats.ts";
-import { cacheState, type CacheState } from "./sessionCost.ts";
+import { cacheState, type CacheState, keptCacheState, type KeptWarm, renewedAt } from "./sessionCost.ts";
 
 /** How often the feed asks again while a list is shown (plan, ZAC-260): costs move by the call, not by the second. */
 export const COSTS_REFRESH_MS = 5 * 60_000;
@@ -183,7 +183,7 @@ export function chatLog(feed: CostsFeed | null, machineId: string, session: stri
 /** What a list row shows of a big chat's cache: its state, minutes left, its share of the lifetime left and its size. */
 export interface RowCacheMark {
   state: CacheState; leftMin: number; ageMin: number; fraction: number; context: number; restartUsd: number;
-  /** OmniRoute's keep-warm plugin keeps it warm (ZAC-260 phase 2): the ring stays full and green, with a flame */
+  /** OmniRoute's keep-warm plugin keeps it warm (ZAC-260 phase 2): the ring stays green, with a flame, draining from the last ping (ZAC-266) */
   kept?: boolean;
 }
 
@@ -194,19 +194,25 @@ export interface RowCacheMark {
  */
 export function rowCacheMark(
   row: Pick<HostChatRow, "status">, log: HostChatCost | undefined, prices: ChatPrices | null,
-  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number }, now: number, kept = false,
+  settings: { coldRestartAlertUsd: number; cacheLifetimeMin: number }, now: number, kept: KeptWarm | null = null,
 ): RowCacheMark | null {
   // only a working chat keeps its cache warm: one that asks waits on the owner and calls nothing
   if (!log || !prices || row.status === "working") return null;
   const context = log.context ?? 0;
   const restartUsd = coldRestartUsd(context, cacheModel(log), prices.prices ?? {}, prices.fallback);
   if (restartUsd === null || !isBigChat(restartUsd, settings.coldRestartAlertUsd)) return null;
+  const lifetime = settings.cacheLifetimeMin * 60_000;
+  // kept warm (ZAC-266): warm, draining from its last renewal (a call or a ping); the next ping refills it
+  if (kept) {
+    const at = renewedAt(log.lastCallAt, kept);
+    const cache = keptCacheState(log.lastCallAt, kept, now, settings.cacheLifetimeMin);
+    if (at === null || !cache) return null;
+    return { ...cache, fraction: Math.max(0, Math.min(1, 1 - (now - at) / lifetime)), context, restartUsd, kept: true };
+  }
   const cache = cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, false);
   if (!cache) return null;
-  // kept warm: a ping renews the cache before it goes, so it reads as just written
-  if (kept) return { state: "warm", leftMin: settings.cacheLifetimeMin, ageMin: cache.ageMin, fraction: 1, context, restartUsd, kept: true };
   const lastAt = Date.parse(log.lastCallAt!);
-  const fraction = cache.state === "cold" ? 0 : Math.max(0, Math.min(1, 1 - (now - lastAt) / (settings.cacheLifetimeMin * 60_000)));
+  const fraction = cache.state === "cold" ? 0 : Math.max(0, Math.min(1, 1 - (now - lastAt) / lifetime));
   return { ...cache, fraction, context, restartUsd };
 }
 

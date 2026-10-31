@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HostChatCost, HostCostModel, HostCostsAnswer } from "../../shared/host-chats.ts";
-import { advice, cacheMeter, cacheState, coldRestartUsd, costSplit, freshHandoffUsd, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, switchCost, writePrice } from "./sessionCost.ts";
+import { advice, cacheMeter, cacheState, cacheStateOf, coldRestartUsd, costSplit, freshHandoffUsd, handoffUsd, isBigChat, mergeLive, nextCall, periodTotals, switchCost, writePrice } from "./sessionCost.ts";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -96,6 +96,34 @@ describe("a prompt cache is one model's (phase 1b)", () => {
     expect(cacheMeter({ busy: false }, log, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
     const old = { ...log, lastModel: undefined };
     expect(cacheMeter({ busy: false, model: { id: "cc/claude-sonnet-5-5" } }, old, settings, NOW, prices)).toMatchObject({ cache: { state: "warm", leftMin: 50 }, switched: false });
+  });
+});
+
+describe("a chat kept warm by OmniRoute (ZAC-266)", () => {
+  const settings = { coldRestartAlertUsd: 1, cacheLifetimeMin: 60 };
+  const prices = { prices: PRICES, fallback: null };
+  const log = (lastMin: number): HostChatCost => ({
+    session: "s", lastCallAt: ago(lastMin), lastModel: "cc/claude-opus-5-5", context: 166_000, peak: 166_000, rewrites: 0, days: {}, partial: false,
+    models: [model({ model: "cc/claude-opus-5-5", input: 166_000, calls: 3, lastCallAt: ago(lastMin) })],
+  });
+  it("is warm and counts down from its last ping, not the log's last call", () => {
+    const meter = cacheMeter({ busy: false }, log(122), settings, NOW, prices, { lastPingAt: NOW - 12 * 60_000 });
+    expect(meter).toMatchObject({ cache: { state: "warm", ageMin: 12, leftMin: 48 }, advised: "handoff-warm", switched: false });
+    expect(cacheStateOf({ busy: false }, log(122), settings, NOW, prices, { lastPingAt: NOW - 12 * 60_000 })).toBe("warm");
+  });
+  it("with no ping yet counts down from the log's last call", () => {
+    expect(cacheMeter({ busy: false }, log(10), settings, NOW, prices, { lastPingAt: null })).toMatchObject({ cache: { state: "warm", leftMin: 50 } });
+  });
+  it("never reads cooling or cold while kept: the next ping comes first", () => {
+    expect(cacheMeter({ busy: false }, log(122), settings, NOW, prices, { lastPingAt: NOW - 50 * 60_000 })).toMatchObject({ cache: { state: "warm", leftMin: 10 } });
+  });
+  it("not kept: cold from the log as before", () => {
+    expect(cacheMeter({ busy: false }, log(122), settings, NOW, prices, null)).toMatchObject({ cache: { state: "cold", leftMin: 0 }, advised: "handoff-cold" });
+    expect(cacheStateOf({ busy: false }, log(122), settings, NOW, prices)).toBe("cold");
+  });
+  it("on a model switched to, keep-warm (the last call's model) does not count", () => {
+    const meter = cacheMeter({ busy: false, model: { id: "deepseek/deepseek-v4-flash" } }, log(122), settings, NOW, prices, { lastPingAt: NOW - 12 * 60_000 });
+    expect(meter.cache?.state).toBe("cold");
   });
 });
 

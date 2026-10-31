@@ -71,17 +71,23 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(body(mark(48))).toContain("cache cooling, 12 min left");
   });
 
-  it("kept warm by OmniRoute (phase 2): a full warm ring with a flame, whatever the log's age, and says so", () => {
-    const kept = rowCacheMark(idle, log(90, 300_000), PRICES, SETTINGS, NOW, true)!;
-    expect(kept).toMatchObject({ state: "warm", fraction: 1, leftMin: 60, kept: true });
+  it("kept warm by OmniRoute (phase 2): a warm ring with a flame, whatever the log's age, draining from the last ping (ZAC-266), and says so", () => {
+    const kept = rowCacheMark(idle, log(90, 300_000), PRICES, SETTINGS, NOW, { lastPingAt: NOW - 30 * 60_000 })!;
+    expect(kept).toMatchObject({ state: "warm", leftMin: 30, kept: true });
+    expect(kept.fraction).toBeCloseTo(0.5, 9);
+    // just pinged: full again
+    expect(rowCacheMark(idle, log(90, 300_000), PRICES, SETTINGS, NOW, { lastPingAt: NOW })!.fraction).toBe(1);
+    // no ping yet: from the log's last call; never cold while kept
+    expect(rowCacheMark(idle, log(15, 300_000), PRICES, SETTINGS, NOW, { lastPingAt: null })).toMatchObject({ state: "warm", fraction: 0.75, leftMin: 45, kept: true });
+    expect(rowCacheMark(idle, log(50, 300_000), PRICES, SETTINGS, NOW, { lastPingAt: null })).toMatchObject({ state: "warm", leftMin: 10, kept: true });
     const html = body(kept);
     expect(html).toContain('class="cache-ring is-warm is-kept"');
-    expect(html).toContain('stroke-dasharray="100.0 100"');
+    expect(html).toContain('stroke-dasharray="50.0 100"');
     expect(html).toContain('data-testid="kept-warm"');
     expect(html).toContain(", cache kept warm</span>");
     expect(body(mark(15))).not.toContain("kept-warm");
     // a small chat is not marked even if kept
-    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, true)).toBeNull();
+    expect(rowCacheMark(idle, log(10, 40_000), PRICES, SETTINGS, NOW, { lastPingAt: null })).toBeNull();
   });
 
   it("is dashed all round once cold, with no track, and says cache cold", () => {

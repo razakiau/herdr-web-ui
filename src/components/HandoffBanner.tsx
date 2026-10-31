@@ -16,7 +16,7 @@ import { X } from "lucide-react";
 import type { HostChatCost, HostChatRead } from "../../shared/host-chats.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
 import { useMinuteClock } from "../lib/hostChats.ts";
-import { cacheMeter, type CachePrices, type CacheState } from "../lib/sessionCost.ts";
+import { cacheMeter, type CachePrices, type CacheState, type KeptWarm } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
 import "./SessionSheet.css";
 
@@ -59,9 +59,11 @@ export interface HandoffBannerProps {
   cold?: boolean;
   /** a hand-off opened a new chat: the outcome line, whatever the advice; ✕ is onCloseNote */
   outcome?: { mode: "note" | "fresh"; onOpen(): void; onArchive?: (() => void) | undefined } | null;
+  /** OmniRoute keeps the chat warm now (ZAC-266): warm advice, never "Cache cold" */
+  kept?: KeptWarm | null;
 }
 
-export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, handoffWaiting = false, note = null, onCloseNote, cold = false, outcome = null }: HandoffBannerProps) {
+export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, handoffWaiting = false, note = null, onCloseNote, cold = false, outcome = null, kept = null }: HandoffBannerProps) {
   const t = useT();
   const locale = useLocale();
   const clock = useMinuteClock();
@@ -84,7 +86,7 @@ export function HandoffBanner({ dismissKey, read, log, settings, prices, now, on
     </button>
   </div>;
   if (read === null || !settings.trackCosts || !log) return noteOnly;
-  const { cache, advised } = cacheMeter(read, log, settings, now ?? clock, prices);
+  const { cache, advised } = cacheMeter(read, log, settings, now ?? clock, prices, kept);
   if (cache === null || advised === "keep" || isDismissed(dismissKey, cache.state)) return noteOnly;
   const { state } = cache;
   const headline = t(state === "warm" ? "Hand off if work remains" : state === "cooling" ? "Hand off before it goes cold" : "Free moment to hand off");

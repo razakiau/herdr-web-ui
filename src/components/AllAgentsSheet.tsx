@@ -26,7 +26,7 @@ import { listUsd } from "../lib/chatCost.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } from "../lib/hostChatGroups.ts";
 import { basename, chatAge, hostLine, tokens, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
-import { keepWarmFor, useKeepWarm } from "../lib/keepWarm.ts";
+import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
 import { byGoingCold, costsFeed, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
 import { cacheState, costSplit, type CostSplit } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -229,7 +229,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     const found = new Map<string, RowCacheMark>();
     for (const row of pc.chats) {
       const log = costs.get(row.session)?.chat;
-      const mark = rowCacheMark(row, log, prices, settings, now, keepWarmFor(keepWarm, log, now)?.kept);
+      const mark = rowCacheMark(row, log, prices, settings, now, keptWarmOf(keepWarmFor(keepWarm, log, now)));
       if (mark) found.set(row.session, mark);
     }
     return found;
