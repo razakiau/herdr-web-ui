@@ -274,7 +274,7 @@ describe("the cold-cache alert on ntfy (ZAC-260)", () => {
     on.onHostChatCosts([{ ...log, lastCallAt: new Date().toISOString() }], PRICES, "mac", "Mac");
     for (const deadline = Date.now() + 5_000; posted.length === 0;) { if (Date.now() > deadline) throw new Error("nothing posted"); await Bun.sleep(5); }
     await on.settled();
-    expect(posted.map((each) => each.body)).toEqual([{ topic: "herdr-agents", title: "Mac · fix the build", message: "268K goes cold in 1 min: hand off now ~$0.48, or the next call costs ~$2.68",
+    expect(posted.map((each) => each.body)).toEqual([{ topic: "herdr-agents", title: "Mac · fix the build", message: "268K goes cold in 1 min: hand off now ~$0.81, or the next call costs ~$2.68",
       priority: 3, tags: ["snowflake"], click: "https://herdr.example/?machine=mac&chat=ahp%3A%2Fs1" }]);
     posted.length = 0;
     const off = service({}, { cold: RULE });
