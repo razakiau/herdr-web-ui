@@ -258,7 +258,7 @@ export interface HandoffJob {
  * CLI session id>` (`continue`), or VS Code's Fork Conversation (`fork`, made by the server).
  */
 export type LinkKind = "job" | "resume" | "spawn" | "continue" | "fork";
-/** `to` continues `from`; both host row session ids once answered (a log no row runs on keeps its SDK id), `at` when it was seen. */
+/** `to` continues `from`; both host row session ids once answered (a link to a chat no row lists yet waits), `at` when it was seen. */
 export interface HostLink { from: string; to: string; kind: LinkKind; at: string }
 
 /** A turn's checkpoint (HostChatRead.checkpoints): its id, and each file its edits touched with the lines they changed. */

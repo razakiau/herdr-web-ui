@@ -16,6 +16,7 @@ import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, 
 import { CostIndex } from "./costs.ts";
 import { LinkIndex } from "./links.ts";
 import { forgetSessionTodos } from "./todos.ts";
+import { GroupStore } from "../groups-store.ts";
 import { Database } from "bun:sqlite";
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -423,7 +424,7 @@ describe("host chat links", () => {
   const at = (hoursAgo: number) => new Date(now - hoursAgo * 3_600_000).toISOString();
   const event = (type: string, when: string, content: string) => `${JSON.stringify({ type, id: `e-${type}-${when}`, timestamp: when, parentId: "p", data: { content } })}\n`;
 
-  it("\"links\" answers the logs' links under the host rows' ids, a log no row runs on under its copilotcli id, and filters by since", async () => {
+  it("\"links\" answers the logs' links under the host rows' ids, leaves out a link to a log no row runs on, and filters by since", async () => {
     const home = temp();
     const logs: Record<string, string[]> = {
       // the VS Code chat (row ahp-session:/CHAT, SDK session SDK) hands off; the host's CLI chat 1 resumes it
@@ -447,13 +448,52 @@ describe("host chat links", () => {
     const vscode = `ahp-session:/${CHAT}`;
     const r = await rig({ sessions: [summary(1), summary(2), { ...summary(3), resource: vscode }] });
     const all = await call(r, "/api/host-chats/links");
+    // CLI is a chat the host does not list: its link waits for a row
     expect(all).toEqual({ status: 200, json: { complete: true, links: [
       { from: vscode, to: sessionUri(1), kind: "resume", at: at(48) },
-      { from: `copilotcli:/${CLI}`, to: sessionUri(2), kind: "continue", at: at(2) },
     ] } });
     const recent = await call(r, `/api/host-chats/links?since=${encodeURIComponent(at(24))}`);
-    expect(recent.json.links).toEqual([{ from: `copilotcli:/${CLI}`, to: sessionUri(2), kind: "continue", at: at(2) }]);
+    expect(recent.json.links).toEqual([]);
+    const old = await call(r, `/api/host-chats/links?since=${encodeURIComponent(at(60))}`);
+    expect(old.json.links).toEqual([{ from: vscode, to: sessionUri(1), kind: "resume", at: at(48) }]);
     expect((await call(r, "/api/host-chats/links?since=yesterday")).status).toBe(400);
+  });
+
+  it("a link to a new VS Code chat no row lists yet waits, then is answered once under its row id, and files it once", async () => {
+    const home = temp();
+    const NEW = "2b6d0c3e-8f41-4a7e-9c55-1e0f2a3b4c5d";
+    const NEW_SDK = "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4";
+    const logs: Record<string, string[]> = {
+      // host chat 1 hands off; the new VS Code chat (SDK session NEW_SDK) resumes it
+      [uuid(1)]: [event("assistant.message", at(3), "Start the next chat with: /resume fictional-new")],
+      [NEW_SDK]: [event("user.message", at(2), "/resume fictional-new")],
+    };
+    for (const [id, lines] of Object.entries(logs)) {
+      mkdirSync(join(home, "session-state", id), { recursive: true });
+      writeFileSync(join(home, "session-state", id, "events.jsonl"), lines.join(""));
+    }
+    const agentDirs = [join(home, "agentSessionData")];
+    mkdirSync(join(agentDirs[0]!, NEW), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, NEW, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: NEW_SDK })]);
+    db.close();
+    setLinkIndexForTests(new LinkIndex(home, agentDirs), agentDirs);
+    const r = await rig();
+    // the host does not list the new chat yet: no row names its end
+    const before = (await call(r, "/api/host-chats/links")).json.links;
+    expect(before).toEqual([]);
+    const vscode = `ahp-session:/${NEW}`;
+    r.fake.push("ahp-root://", { type: "root/sessionAdded", summary: { ...summary(3), resource: vscode } });
+    await until("the host to list the new chat", () => r.conn.summaries().some((each) => each.resource === vscode));
+    const after = (await call(r, "/api/host-chats/links")).json.links;
+    expect(after).toEqual([{ from: sessionUri(1), to: vscode, kind: "resume", at: at(2) }]);
+    const store = new GroupStore(temp());
+    try {
+      store.addLinks("local", before);
+      store.addLinks("local", after);
+      expect(store.snapshot().groups.map((group) => group.members.map((member) => member.session).sort())).toEqual([[sessionUri(1), vscode].sort()]);
+    } finally { store.close(); }
   });
 
   it("a job link given by host row ids is answered once, over the log's own link for the same chats", async () => {

@@ -841,9 +841,10 @@ const linkJob: HandoffDone = (job) => {
  * GET links (ZAC-265): which chat continues which on this PC, as LinkIndex reads them from the
  * Copilot logs plus the hand-off jobs this bridge saw end, read POLL_BYTES_PER_SCAN at a time as
  * the server's cost poll is (hostCostsPolled): the server polls it, nobody waits on it. Each end is
- * named by its host row's session id, as GET costs names a chat; a log no listed row runs on keeps
- * its `copilotcli:/<uuid>` id, and an end already a row id stays. `?since=<iso>`: links seen after
- * it. A log that fails to read answers no links, not complete.
+ * named by its host row's session id, as GET costs names a chat, and an end already a row id stays.
+ * A link with an end no listed row runs on is left out until the host lists that chat (its row id
+ * is not known before), so a chat is never named two ways. `?since=<iso>`: links seen after it. A
+ * log that fails to read answers no links, not complete.
  */
 async function readLinks(call: Call): Promise<Response> {
   const raw = call.url.searchParams.get("since");
@@ -863,10 +864,16 @@ export async function hostLinks(host: Pick<AgentHost, "state" | "summaries">, si
     }
   } catch { return { links: [], complete: false }; }
   const rowBySdk = rowsBySdk(host, agentDirs);
-  const named = (end: string): string => UUID.test(end) ? rowBySdk.get(end.toLowerCase()) ?? `${PROVIDER}:/${end}` : end;
+  // a log no listed row runs on has no id that stays: once VS Code lists its chat, the row's id
+  // (`ahp-session:/…`) is not the `copilotcli:/<uuid>` it would be named by now, and the store would
+  // file the chat twice (review of PR 1). Such a link waits; the logs give it again on a later call.
+  const named = (end: string): string | null => UUID.test(end) ? rowBySdk.get(end.toLowerCase()) ?? null : end;
   const kept = new Map<string, HostLink>();
-  const ordered = answer.links.map((link) => ({ ...link, from: named(link.from), to: named(link.to) }))
-    .sort((a, b) => LINK_ORDER.indexOf(a.kind) - LINK_ORDER.indexOf(b.kind));
+  const ordered = answer.links.flatMap((link): HostLink[] => {
+    const from = named(link.from);
+    const to = named(link.to);
+    return from === null || to === null ? [] : [{ ...link, from, to }];
+  }).sort((a, b) => LINK_ORDER.indexOf(a.kind) - LINK_ORDER.indexOf(b.kind));
   for (const link of ordered) {
     if (link.from === link.to) continue;
     if (since !== null && Date.parse(link.at) <= since) continue;
