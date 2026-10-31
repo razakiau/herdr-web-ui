@@ -1,7 +1,8 @@
 /**
  * The handoff nudge over a host chat's composer (ZAC-260, owner's "tinted pill + nudge banner"):
  * one line in the cache's tint while the advice is to hand off, "Cache cold · free moment to hand
- * off", with Hand off & continue (when the session has a handoff command and is idle) and ✕. ✕ hides
+ * off", with Hand off & continue (when the session has a handoff command and is idle or waits on its
+ * own question; disabled, "Working: hand off when it asks or stops", while it works without asking) and ✕. ✕ hides
  * it for that chat until the cache's state changes; kept in memory only, so a reload shows it again.
  * It also says why a hand-off did not go (ZAC-262: busy, an old bridge, no /resume line…), whatever
  * the advice: the tap was the user's, so the answer shows even where the advice would not.
@@ -42,16 +43,18 @@ export interface HandoffBannerProps {
   prices: CachePrices | null;
   /** the minute clock, given by a test */
   now?: number;
-  /** starts Hand off & continue; absent while the chat works or when the session lists no handoff command */
+  /** starts Hand off & continue; absent while the chat works without asking or when the session lists no handoff command */
   onHandoff?: (() => void) | undefined;
   /** the hand-off job runs: the button says so and waits */
   handingOff?: boolean;
+  /** the chat works without asking (the bridge would answer busy): the button shows, disabled, saying so */
+  handoffWaiting?: boolean;
   /** why the last hand-off did not open a new chat (handOffAndContinue's line) */
   note?: string | null;
   onCloseNote?: () => void;
 }
 
-export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, note = null, onCloseNote }: HandoffBannerProps) {
+export function HandoffBanner({ dismissKey, read, log, settings, prices, now, onHandoff, handingOff = false, handoffWaiting = false, note = null, onCloseNote }: HandoffBannerProps) {
   const t = useT();
   const locale = useLocale();
   const clock = useMinuteClock();
@@ -72,8 +75,8 @@ export function HandoffBanner({ dismissKey, read, log, settings, prices, now, on
   return <div className={`checkpoint-bar handoff-bar is-${state}`} role="status">
     <span className="checkpoint-bar-text"><strong>{t(state === "warm" ? "Cache warm" : state === "cooling" ? "Cache cooling" : "Cache cold")}</strong> · {rest}</span>
     {note !== null && <span className="checkpoint-bar-error" role="alert">{note}</span>}
-    {(onHandoff || handingOff) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={onHandoff}>
-      {t(handingOff ? "Handing off…" : "Hand off & continue")}
+    {(onHandoff || handingOff || handoffWaiting) && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff || !onHandoff} onClick={onHandoff}>
+      {t(handingOff ? "Handing off…" : onHandoff ? "Hand off & continue" : "Working: hand off when it asks or stops")}
     </button>}
     <button type="button" className="icon-button handoff-bar-close" aria-label={t("Dismiss")} title={t("Dismiss")}
       onClick={() => { dismissHandoff(dismissKey, state); onCloseNote?.(); setHidden((n) => n + 1); }}>

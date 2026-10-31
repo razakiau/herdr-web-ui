@@ -163,6 +163,12 @@ describe("SessionSheet", () => {
     expect(html).not.toMatch(/>Hand off &amp; continue</);
   });
 
+  it("says Working: hand off when it asks or stops on a disabled button while the chat works without asking", () => {
+    const html = sheet({ onHandoff: undefined, handoffWaiting: true });
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Working: hand off when it asks or stops</);
+    expect(html).not.toMatch(/>Hand off &amp; continue</);
+  });
+
   it("has no Hand off button when the session does not list /handoff", () => {
     expect(handoffCommandText([{ name: "handoff", description: "", kind: "skill" }])).toBe("/handoff");
     expect(handoffCommandText([{ name: "review", description: "", kind: "skill" }])).toBeNull();

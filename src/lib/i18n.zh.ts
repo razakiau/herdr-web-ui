@@ -533,6 +533,7 @@ const BASE: Record<string, string> = {
   "{usd} per call": "每次调用 {usd}",
   "Hand off & continue": "交接并继续",
   "Handing off…": "正在交接…",
+  "Working: hand off when it asks or stops": "正在运行：等它提问或停下时再交接",
   "It's working: try again when it's done": "正在运行：完成后再试",
   "Hand-off note written, but no /resume line: open the chat": "已写交接说明，但没有 /resume 行：请打开对话",
   "Hand-off didn't finish: open the chat": "交接未完成：请打开对话",

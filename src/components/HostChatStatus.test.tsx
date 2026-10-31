@@ -120,7 +120,7 @@ describe("HostContextMeter with costs tracked", () => {
 describe("HandoffBanner", () => {
   // advice by the cache's age: 4 min warm, 48 min cooling, 120 min cold; 210K is over the threshold
   const AGE = { "handoff-warm": 4, "handoff-cooling": 48, "handoff-cold": 120, keep: 120 } as const;
-  const banner = (key: string, advised: keyof typeof AGE, onHandoff?: () => void, over: { handingOff?: boolean; note?: string | null } = {}): string =>
+  const banner = (key: string, advised: keyof typeof AGE, onHandoff?: () => void, over: { handingOff?: boolean; handoffWaiting?: boolean; note?: string | null } = {}): string =>
     render(createElement(HandoffBanner, { dismissKey: key, read: read(advised === "keep" ? 40_000 : 210_000), log: log(AGE[advised]), settings: SETTINGS, prices: PRICES, now: NOW, onHandoff, ...over }));
 
   it("says the cache is cold and offers Hand off & continue", () => {
@@ -153,6 +153,12 @@ describe("HandoffBanner", () => {
     const html = banner("pc\nchat-h", "handoff-cold", () => {}, { handingOff: true });
     expect(text(html)).toBe("Cache cold · free moment to hand off Handing off…");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Handing off…</);
+  });
+
+  it("says Working: hand off when it asks or stops on a disabled button while the chat works without asking", () => {
+    const html = banner("pc\nchat-k", "handoff-cold", undefined, { handoffWaiting: true });
+    expect(text(html)).toBe("Cache cold · free moment to hand off Working: hand off when it asks or stops");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Working: hand off when it asks or stops</);
   });
 
   it("says why a hand-off did not go, even when the advice is to keep going or it was dismissed", () => {

@@ -1,5 +1,5 @@
 import { handoffCommand } from "../../shared/handoff-command.ts";
-import type { HostCommand } from "../../shared/host-chats.ts";
+import type { HostChatRead, HostCommand } from "../../shared/host-chats.ts";
 import type { SlashCommand } from "../../shared/protocol.ts";
 
 /**
@@ -18,4 +18,17 @@ export function compactCommandText(commands: readonly SlashCommand[]): string | 
  */
 export function handoffCommandText(commands: readonly HostCommand[]): string | null {
   return handoffCommand(commands)?.handoff ?? null;
+}
+
+/**
+ * Whether Hand off & continue can go now (ZAC-262): "ready" while the chat is idle or waits on its
+ * own question that takes a typed answer (the bridge answers it with the hand-off words);
+ * "working" while it works without asking, or asks for an approval or a closed choice (the bridge
+ * would answer busy: the button shows, disabled); null without the hand-off skill.
+ */
+export function handoffOffer(chat: Pick<HostChatRead, "busy" | "commands"> & { prompt: Pick<NonNullable<HostChatRead["prompt"]>, "kind" | "custom_option_index" | "host"> | null }): "ready" | "working" | null {
+  if (handoffCommandText(chat.commands) === null) return null;
+  if (!chat.busy) return "ready";
+  const prompt = chat.prompt;
+  return prompt?.kind === "question" && "request_id" in prompt.host && prompt.custom_option_index !== null ? "ready" : "working";
 }

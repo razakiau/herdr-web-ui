@@ -38,7 +38,7 @@ import { useSettings } from "../lib/settings.ts";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
 import { callingModel, switchCost as switchCostOf } from "../lib/sessionCost.ts";
-import { handoffCommandText } from "../lib/compactContext.ts";
+import { handoffOffer } from "../lib/compactContext.ts";
 import { HostSessionPills } from "./HostSessionPills.tsx";
 import { HostTodoBar } from "./HostTodoBar.tsx";
 import { HostPendingRequests } from "./HostPendingRequests.tsx";
@@ -359,9 +359,12 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   };
   const costSettings = { trackCosts, coldRestartAlertUsd, cacheLifetimeMin };
   const sheetPrices = prices ?? (pricesAnswered ? NO_PRICES : null);
-  // Hand off & continue (ZAC-262), from the Session sheet and the banner: only while idle, and only when the session lists the command.
-  // The bridge's job sends /handoff, starts the next chat with its /resume line and archives this one; the new chat opens here
-  const onHandoff = chat && !chat.busy && !handingOff && handoffCommandText(chat.commands) ? () => {
+  // Hand off & continue (ZAC-262), from the Session sheet and the banner: while idle or waiting on its own question, and only when
+  // the session lists the command; working without asking, the button shows disabled (handoffWaiting).
+  // The bridge's job sends /handoff (or answers the question with it), starts the next chat with its /resume line and archives this one; the new chat opens here
+  const offer = chat ? handoffOffer(chat) : null;
+  const handoffWaiting = offer === "working";
+  const onHandoff = offer === "ready" && !handingOff ? () => {
     setHandingOff(true); setHandoffNote(null);
     // a chat left mid-job stops following it: its PC's bridge goes on, and the chat list shows the new chat
     const poll = async (ms: number): Promise<void> => { await new Promise((done) => setTimeout(done, ms)); if (!mounted.current) throw new Error("left"); };
@@ -437,7 +440,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     }} />}
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
     <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}
-      handingOff={handingOff} note={handoffNote} onCloseNote={() => setHandoffNote(null)} />
+      handingOff={handingOff} handoffWaiting={handoffWaiting} note={handoffNote} onCloseNote={() => setHandoffNote(null)} />
     {/* the session's pills sit under the box (`foot`; owner, ZAC-228: above it they sandwiched the
         todo tab), and stay while a question or approval is up: what the session made is often what it is about */}
     <Composer key={session} paneId="" connected agent="copilot" agentStatus={status} autoFocus={false}
@@ -447,7 +450,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
         sheet={trackCosts && cacheRead ? <SessionSheet read={cacheRead} lastContext={lastContext} estimate={cost} cost={chatCostLog} prices={sheetPrices}
           settings={costSettings} onClose={() => setContextOpen(false)}
           onCompact={!cacheRead.busy ? () => { void sendAs("send", "/compact"); } : undefined}
-          onHandoff={onHandoff} handingOff={handingOff} /> : undefined} />}
+          onHandoff={onHandoff} handingOff={handingOff} handoffWaiting={handoffWaiting} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
       tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}

@@ -529,6 +529,7 @@ const BASE: Record<string, string> = {
   "{usd} per call": "호출당 {usd}",
   "Hand off & continue": "인계하고 계속",
   "Handing off…": "인계 중…",
+  "Working: hand off when it asks or stops": "작업 중: 질문하거나 멈추면 인계하세요",
   "It's working: try again when it's done": "작업 중입니다. 끝나면 다시 시도하세요",
   "Hand-off note written, but no /resume line: open the chat": "인계 메모는 작성됐지만 /resume 줄이 없습니다. 채팅을 여세요",
   "Hand-off didn't finish: open the chat": "인계가 끝나지 않았습니다. 채팅을 여세요",

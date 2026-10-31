@@ -121,7 +121,7 @@ describe("resumeTopic", () => {
 });
 
 describe("chat/handoff", () => {
-  it("refuses a busy chat with 409 busy, nothing dispatched", async () => {
+  it("refuses a busy chat without an open question with 409 busy, nothing dispatched", async () => {
     const r = await rig({ activeTurn: { id: "turn-live", startedAt: AT, message: { text: "FICTIONAL working", origin: { kind: "user" } }, usage: undefined, responseParts: [] } });
     const answer = await start(r);
     expect(answer.status).toBe(409);
@@ -257,5 +257,95 @@ describe("chat/handoff", () => {
     await until("the cancel", () => sent(r.fake, "chat/turnCancelled").length > 0);
     expect(sent(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId, duration: 0 } as StateAction }]);
     expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
+  });
+
+  describe("a chat waiting on its own question", () => {
+    const HARNESS = [pluginSkill("harness:handoff"), pluginSkill("harness:resume")];
+    const QUESTION = { id: "q-next", kind: "single-select", title: "Next", message: "FICTIONAL what next?", required: true, allowFreeformInput: true, options: [{ id: "a", label: "FICTIONAL A" }, { id: "b", label: "FICTIONAL B" }] };
+    const asking = (parts: unknown[] = [{ kind: "inputRequest", request: { id: "req-1", message: "FICTIONAL which way?", questions: [QUESTION] } }]) => ({
+      status: 24, activeTurn: { id: "turn-live", startedAt: AT, message: { text: "FICTIONAL keep going", origin: { kind: "user" }, model: SELECTION }, usage: undefined, responseParts: parts },
+    });
+    const words = (name: string) => `Hand off now: run ${name}, then end your reply with its "Start the next chat with: /resume <topic>" line. Don't ask me anything else.`;
+    const answered = (text: string) => ({
+      type: "chat/inputCompleted", requestId: "req-1", response: "accept",
+      answers: { "q-next": { state: "submitted", value: { kind: "selected", value: "", freeformValues: [text] } } },
+    });
+    const ended = async (r: Rig, state: string) => {
+      let now = "";
+      await until(`the job to be ${state}`, () => { void job(r).then((each) => { now = each.state; }); return now === state; });
+    };
+
+    it("answers the question with the hand-off words; the resume line in the final reply starts the next chat, then archives", async () => {
+      const r = await rig(asking(), HARNESS);
+      const answer = await start(r);
+      expect(answer.status).toBe(200);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      expect(sent(r.fake, "chat/inputCompleted").map((each) => each.action)).toEqual([answered(words("/harness:handoff")) as unknown as StateAction]);
+      // no new turn in the old chat: the answer is the message
+      expect(sent(r.fake, "chat/turnStarted")).toEqual([]);
+      expect((await job(r)).state).toBe("waiting");
+      reply(r, "turn-live", "FICTIONAL note written.\nStart the next chat with: /resume t");
+      await ended(r, "done");
+      expect(await job(r)).toMatchObject({ state: "done", topic: "t", error: null });
+      const resumed = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1))!;
+      expect(resumed.action).toMatchObject({ message: { text: "/harness:resume t", model: SELECTION } });
+      // the turn ended by itself: nothing left to stop
+      expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
+      expect(sent(r.fake, "session/isArchivedChanged").length).toBe(1);
+    });
+
+    it("takes the resume line from the agent's next question without waiting for the turn to end: stops the turn, then archives", async () => {
+      const r = await rig(asking(), HARNESS);
+      await start(r);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      r.fake.push(chatUri(1), { type: "chat/responsePart", turnId: "turn-live", part: { kind: "markdown", id: "p2", content: "FICTIONAL note written." } } as unknown as StateAction);
+      r.fake.push(chatUri(1), { type: "chat/responsePart", turnId: "turn-live", part: { kind: "inputRequest", request: { id: "req-2", message: "FICTIONAL done.\nStart the next chat with: /resume t", questions: [{ ...QUESTION, id: "q-again" }] } } } as unknown as StateAction);
+      await ended(r, "done");
+      expect(await job(r)).toMatchObject({ state: "done", topic: "t", error: null });
+      const resumed = sent(r.fake, "chat/turnStarted").find((each) => each.channel !== chatUri(1))!;
+      expect(resumed.action).toMatchObject({ message: { text: "/harness:resume t" } });
+      expect(sent(r.fake, "chat/turnCancelled")).toEqual([{ channel: chatUri(1), action: { type: "chat/turnCancelled", turnId: "turn-live", duration: 0 } as StateAction }]);
+      // made, then stopped, then archived
+      const order: string[] = r.fake.dispatched.map((each) => each.action.type);
+      expect(order.lastIndexOf("chat/turnStarted")).toBeLessThan(order.indexOf("chat/turnCancelled"));
+      expect(order.indexOf("chat/turnCancelled")).toBeLessThan(order.indexOf("session/isArchivedChanged"));
+    });
+
+    it("a resume line written before the answer does not count", async () => {
+      const r = await rig(asking([
+        { kind: "markdown", id: "p0", content: "FICTIONAL earlier\nStart the next chat with: /resume old" },
+        { kind: "inputRequest", request: { id: "req-1", questions: [QUESTION] } },
+      ]), HARNESS);
+      await start(r);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      reply(r, "turn-live", "FICTIONAL no line");
+      await ended(r, "no_resume");
+      expect(await job(r)).toMatchObject({ state: "no_resume", topic: null, newSession: null });
+      expect(sent(r.fake, "session/isArchivedChanged")).toEqual([]);
+    });
+
+    it("says /handoff where the plain skill is listed", async () => {
+      const r = await rig(asking());
+      await start(r);
+      await until("the answer", () => sent(r.fake, "chat/inputCompleted").length > 0);
+      expect(sent(r.fake, "chat/inputCompleted")[0]!.action).toEqual(answered(words("/handoff")) as unknown as StateAction);
+    });
+
+    it("recent_handoff: the newest turn's question was answered with the hand-off words", async () => {
+      const answeredPart = { kind: "inputRequest", request: { id: "req-0", questions: [QUESTION], answers: { "q-next": { state: "submitted", value: { kind: "selected", value: "", freeformValues: [words("/harness:handoff")] } } } }, response: "accept" };
+      const r = await rig(asking([answeredPart, { kind: "inputRequest", request: { id: "req-1", questions: [QUESTION] } }]), HARNESS);
+      const answer = await start(r);
+      expect(answer.status).toBe(409);
+      expect(answer.json.error.code).toBe("recent_handoff");
+      expect(wrote(r.fake)).toEqual([]);
+    });
+
+    it("a pending tool approval is not a question: 409 busy", async () => {
+      const r = await rig(asking([{ kind: "toolCall", toolCall: { toolCallId: "tc-1", toolName: "bash", displayName: "Bash", status: "pending-confirmation", invocationMessage: "FICTIONAL run", confirmationTitle: "FICTIONAL run?" } }]));
+      const answer = await start(r);
+      expect(answer.status).toBe(409);
+      expect(answer.json.error.code).toBe("busy");
+      expect(wrote(r.fake)).toEqual([]);
+    });
   });
 });

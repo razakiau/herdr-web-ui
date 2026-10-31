@@ -531,6 +531,7 @@ const BASE: Record<string, string> = {
   "{usd} per call": "1 回あたり {usd}",
   "Hand off & continue": "引き継いで続ける",
   "Handing off…": "引き継ぎ中…",
+  "Working: hand off when it asks or stops": "実行中：質問するか止まったら引き継げます",
   "It's working: try again when it's done": "実行中です。終わってからもう一度お試しください",
   "Hand-off note written, but no /resume line: open the chat": "引き継ぎメモは書かれましたが /resume 行がありません。チャットを開いてください",
   "Hand-off didn't finish: open the chat": "引き継ぎが終わりませんでした。チャットを開いてください",

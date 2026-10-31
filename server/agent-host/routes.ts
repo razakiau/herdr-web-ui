@@ -31,9 +31,11 @@ import {
   ToolCallCancellationReason,
   ToolCallConfirmationReason,
   TurnState,
+  type Turn,
   type ChatInputAnswer,
   type ChatInputAnswerValue,
   type ChatInputQuestion,
+  type ChatInputRequest,
   type ChatState,
   type ToolResultFileEditContent,
   type Changeset,
@@ -62,7 +64,7 @@ import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse
 import { workOf } from "./artifacts.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
-import { HANDOFF_WAIT_MS, handoffJob, handoffRunning, startHandoff } from "./handoff.ts";
+import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startHandoff } from "./handoff.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
 export interface AgentHost {
@@ -1340,19 +1342,59 @@ const errorName = (error: unknown): string => error instanceof Error ? error.nam
 const RECENT_HANDOFF_MS = 60 * 60_000;
 /** The commands that write a hand-off note: the harness plugin's skill, by either name (costs.ts counts both). */
 const HANDOFF_MESSAGE = /^\/(?:harness:)?handoff\b/;
+/** A question answered with the hand-off words (askHandoffText): the same ask as a `/handoff` message. */
+const HANDOFF_ANSWER = /^Hand off now: run \//;
+
+/** The question a running turn waits on that takes a typed answer: the first open request's current one, else null. */
+function askedQuestion(chat: ChatState): { request: ChatInputRequest; question: ChatInputQuestion } | null {
+  const request = openRequests(chat)[0];
+  const question = request && currentQuestion(request);
+  if (!request || !question) return null;
+  // the hand-off words go as a typed answer: a yes/no, a number or a closed choice cannot take them
+  try { valueFor(question, [], askHandoffText("/handoff")); } catch { return null; }
+  return { request, question };
+}
+
+/** The typed answers of the questions a turn asked, answered or still drafted. */
+function typedAnswers(turn: { responseParts: Turn["responseParts"] }): string[] {
+  return turn.responseParts.flatMap((part) => {
+    if (part.kind !== ResponsePartKind.InputRequest) return [];
+    return Object.values(part.request.answers ?? {}).flatMap((answer) => {
+      if (answer.state !== ChatInputAnswerState.Submitted) return [];
+      const value = answer.value;
+      return value.kind === ChatInputAnswerValueKind.Text ? [value.value]
+        : value.kind === ChatInputAnswerValueKind.Selected || value.kind === ChatInputAnswerValueKind.SelectedMany ? value.freeformValues ?? [] : [];
+    });
+  });
+}
+
+/**
+ * A hand-off asked for less than RECENT_HANDOFF_MS ago: the newest turn's message is a `/handoff`,
+ * or one of its questions was answered with the hand-off words (the running turn's, or the last
+ * one's when it ended that recently).
+ */
+function recentHandoff(chat: ChatState): boolean {
+  const newest = chat.turns.at(-1);
+  const at = Date.parse(newest?.startedAt ?? "");
+  if (newest && HANDOFF_MESSAGE.test(newest.message.text.trim()) && Date.now() - at < RECENT_HANDOFF_MS) return true;
+  if (chat.activeTurn) return typedAnswers(chat.activeTurn).some((each) => HANDOFF_ANSWER.test(each.trim()));
+  return newest !== undefined && Date.now() - (at + (newest.duration ?? 0)) < RECENT_HANDOFF_MS && typedAnswers(newest).some((each) => HANDOFF_ANSWER.test(each.trim()));
+}
 
 /**
  * Hand off & continue (handoff.ts): answers at once with the job, which runs on. A job already
- * running for the chat is that job (its own `/handoff` turn makes the chat busy). Refused: a busy
- * chat, one without the hand-off skill (handoffCommand: `handoff` or `harness:handoff`), and one whose newest message is a `/handoff` sent
- * within RECENT_HANDOFF_MS.
+ * running for the chat is that job (its own `/handoff` turn makes the chat busy). A chat whose turn
+ * waits on its own question (ask_user) is asked through it: the question is answered with the
+ * hand-off words (askHandoffText) and the job reads the agent's text after them. Refused: a busy
+ * chat that asks nothing, one without the hand-off skill (handoffCommand: `handoff` or
+ * `harness:handoff`), and one that asked for a hand-off within RECENT_HANDOFF_MS (recentHandoff).
  */
 async function handOff(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const running = handoffJob(call.host, session);
   if (handoffRunning(running)) return jsonResponse({ job: running });
   const { channel, chat: watchedChat } = await watched(call, session);
-  if (watchedChat.activeTurn !== undefined) return conflictResponse("busy", "the chat is working: hand off when it is done");
+  if (watchedChat.activeTurn !== undefined && askedQuestion(watchedChat) === null) return conflictResponse("busy", "the chat is working: hand off when it asks or stops");
   // the customizations first; the plugins' skills are only in the host's "/" completions (sessionSkills)
   // a plugin's skill is listed namespaced there (`harness:handoff`): handoffCommand names what to send from both
   // lists, as the chat's own "/" commands join them. A plain `handoff` among the customizations needs no completions
@@ -1360,28 +1402,31 @@ async function handOff(call: Call): Promise<Response> {
   const plain = handoffCommand(customized);
   const named = plain?.handoff === "/handoff" ? plain : handoffCommand([...customized, ...await sessionSkills(call.host, session)]);
   if (named === null) return conflictResponse("no_handoff", "this chat has no /handoff");
-  const newest = watchedChat.turns.at(-1);
-  const at = Date.parse(newest?.startedAt ?? "");
-  if (newest && HANDOFF_MESSAGE.test(newest.message.text.trim()) && Date.now() - at < RECENT_HANDOFF_MS) {
-    return conflictResponse("recent_handoff", "a hand-off note was asked for less than an hour ago");
-  }
+  if (recentHandoff(watchedChat)) return conflictResponse("recent_handoff", "a hand-off note was asked for less than an hour ago");
   const cwd = folderOf(call.host, session);
   if (cwd === null) return conflictResponse("no_folder", "this chat has no folder on its PC to start the next chat in");
   // the chat's current model, effort included (as HostChatRead.model reads it); its agent stays the same
-  const latest = newest?.message;
+  const latest = (watchedChat.activeTurn ?? watchedChat.turns.at(-1))?.message;
   const model = latest?.model ?? watchedChat.draft?.model;
   const agent = latest?.agent;
   const message = (words: string): Message => ({ text: words, origin: { kind: MessageKind.User }, ...(model ? { model } : {}) });
-  const turnId = randomUUID();
   // the checks above awaited: a second tap may have started the job, or a turn begun, meanwhile.
   // Nothing awaits from here to startHandoff, which holds the job at once
   const again = handoffJob(call.host, session);
   if (handoffRunning(again)) return jsonResponse({ job: again });
   const chat = call.host.chat(session) ?? missing();
-  if (chat.activeTurn !== undefined) return conflictResponse("busy", "the chat is working: hand off when it is done");
+  const asked = chat.activeTurn === undefined ? null : askedQuestion(chat);
+  if (chat.activeTurn !== undefined && asked === null) return conflictResponse("busy", "the chat is working: hand off when it asks or stops");
+  // the job's turn: a new `/handoff` one, or the running one whose question it answers. The agent's
+  // text after the answer is what counts: its parts from `from` on
+  const turnId = chat.activeTurn?.id ?? randomUUID();
+  const from = chat.activeTurn?.responseParts.length ?? 0;
   const job = startHandoff(call.host, call.clock, session, {
-    send: async () => { send(call.host, session, channel, chat, { ...message(named.handoff), ...(agent ? { agent } : {}) }, turnId); },
-    ended: () => handoffEnded(call, session, turnId),
+    send: async () => {
+      if (asked) answerWith(call.host, channel, asked.request, asked.question, typedAnswer(asked.question, askHandoffText(named.handoff)), true);
+      else send(call.host, session, channel, chat, { ...message(named.handoff), ...(agent ? { agent } : {}) }, turnId);
+    },
+    ended: () => handoffEnded(call, session, turnId, asked ? from : null),
     start: async (topic) => {
       const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`));
       return { session: made.session, sent: made.sent !== false };
@@ -1400,19 +1445,33 @@ async function handOff(call: Call): Promise<Response> {
   return jsonResponse({ job });
 }
 
+/** A response part's words: a reply's markdown, a question's message and its questions' own. */
+function partText(part: Turn["responseParts"][number]): string[] {
+  if (part.kind === ResponsePartKind.Markdown) return [part.content];
+  if (part.kind !== ResponsePartKind.InputRequest) return [];
+  return [part.request.message ?? "", ...(part.request.questions ?? []).flatMap((question) => [question.title ?? "", question.message])].filter((each) => each !== "");
+}
+
 /**
  * The text of turn `turnId`'s reply once it has ended, polled from the mirror as ended() does, or
- * null at HANDOFF_WAIT_MS on the call's clock. A question it asks is not an end: it keeps waiting.
- * The chat's lease is renewed meanwhile, so its watch (and the mirror's copy) stays.
+ * null at HANDOFF_WAIT_MS on the call's clock. A question it asks is not an end: it keeps waiting,
+ * except for a job that answered one (`after` set, the turn's part count when it answered): only
+ * the parts from `after` on count, and a new question among them is taken as soon as it appears,
+ * its words included. The chat's lease is renewed meanwhile, so its watch (and the mirror's copy) stays.
  */
-async function handoffEnded(call: Call, session: string, turnId: string): Promise<string | null> {
+async function handoffEnded(call: Call, session: string, turnId: string, after: number | null = null): Promise<string | null> {
   let late = false;
   const timer = call.clock.setTimeout(() => { late = true; }, HANDOFF_WAIT_MS);
+  const textOf = (parts: Turn["responseParts"]): string => parts.slice(after ?? 0).flatMap(partText).join("\n");
   try {
     while (!late) {
       const chat = call.host.chat(session);
-      const done = chat?.activeTurn?.id === turnId ? undefined : chat?.turns.find((turn) => turn.id === turnId);
-      if (done) return done.responseParts.flatMap((part) => part.kind === ResponsePartKind.Markdown ? [part.content] : []).join("\n");
+      const running = chat?.activeTurn?.id === turnId ? chat.activeTurn : undefined;
+      if (running && after !== null && running.responseParts.slice(after).some((part) => part.kind === ResponsePartKind.InputRequest && part.response === undefined)) {
+        return textOf(running.responseParts);
+      }
+      const done = running ? undefined : chat?.turns.find((turn) => turn.id === turnId);
+      if (done) return after === null ? done.responseParts.flatMap((part) => part.kind === ResponsePartKind.Markdown ? [part.content] : []).join("\n") : textOf(done.responseParts);
       await call.leases.sessions.take(session).catch(() => undefined);
       await Bun.sleep(50); // fixed wait: one poll step
     }
@@ -1513,17 +1572,27 @@ async function answerQuestion(call: Call): Promise<Response> {
   }
   const question = questions.find((each) => each.id === questionId) ?? gone();
   if (currentQuestion(request)?.id !== question.id) gone();
-  const answer = submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined));
-  const answers = request.answers ?? {};
-  // every step is shown, `required` or not: the form completes on its last unsettled question
-  const more = questions.some((each) => each.id !== question.id && !answerSettled(answers[each.id]));
-  if (more) {
-    call.host.dispatch(channel, { type: ActionType.ChatInputAnswerChanged, requestId, questionId: question.id, answer } as StateAction);
-  } else {
-    const done = Object.fromEntries(Object.entries(answers).filter(([, each]) => answerSettled(each)));
-    call.host.dispatch(channel, { type: ActionType.ChatInputCompleted, requestId, response: ChatInputResponseKind.Accept, answers: { ...done, [question.id]: answer } } as StateAction);
-  }
+  answerWith(call.host, channel, request, question, submittedAs(valueFor(question, (rawIds as string[] | undefined)?.filter((id) => id !== "") ?? [], typed as string | undefined)));
   return jsonResponse({ ok: true });
+}
+
+/** A typed answer to `question`, as the card's own "type your answer" sends it. */
+const typedAnswer = (question: ChatInputQuestion, words: string): ChatInputAnswer => submittedAs(valueFor(question, [], words));
+
+/**
+ * Answers `request`'s `question`. Every step is shown, `required` or not: the form completes on its
+ * last unsettled question. `finish` completes it now (Hand off & continue): the questions left go as skipped.
+ */
+function answerWith(host: AgentHost, channel: string, request: ChatInputRequest, question: ChatInputQuestion, answer: ChatInputAnswer, finish = false): void {
+  const answers = request.answers ?? {};
+  const left = (request.questions ?? []).filter((each) => each.id !== question.id && !answerSettled(answers[each.id]));
+  if (left.length > 0 && !finish) {
+    host.dispatch(channel, { type: ActionType.ChatInputAnswerChanged, requestId: request.id, questionId: question.id, answer } as StateAction);
+    return;
+  }
+  const done = Object.fromEntries(Object.entries(answers).filter(([, each]) => answerSettled(each)));
+  const skipped = Object.fromEntries(left.map((each): [string, ChatInputAnswer] => [each.id, { state: ChatInputAnswerState.Skipped }]));
+  host.dispatch(channel, { type: ActionType.ChatInputCompleted, requestId: request.id, response: ChatInputResponseKind.Accept, answers: { ...done, ...skipped, [question.id]: answer } } as StateAction);
 }
 
 async function confirmTool(call: Call): Promise<Response> {
