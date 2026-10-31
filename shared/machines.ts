@@ -99,7 +99,9 @@ export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "
   /** the `$name` tokens herdr's `[ui.sidebar.agents]` rows draw on this server's PC, for every PC's agent rows (server/herdr-sidebar.ts) */
   | { type: "herdr-sidebar"; agents: AgentRowTokens | null }
   /** finishes a browser of this server presented (shared/seen.ts): every record when the stream opens, then each change */
-  | { type: "seen"; finishes: SeenFinish[] };
+  | { type: "seen"; finishes: SeenFinish[] }
+  /** the chat groups changed (server/groups-routes.ts): read GET /api/groups again; never sent while nothing changed */
+  | { type: "groups" };
 export interface BridgeHealth { ok: true; auth: HealthAuth; bridge_protocol: number }
 export interface BridgeIdentity {
   pid: number;

@@ -63,9 +63,11 @@ import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTOR
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
-import { hostChatsRoute, hostCosts, hostCostsPolled } from "./agent-host/routes.ts";
+import { hostChatsRoute, hostCosts, hostCostsPolled, hostLinks } from "./agent-host/routes.ts";
 import { createDigestScheduler, type DigestPc, digestRunner, DigestStore, handleDigestRequest } from "./digest.ts";
 import { createCostsPoller } from "./costs-poller.ts";
+import { GroupStore } from "./groups-store.ts";
+import { createGroupsPoller, GroupsSignal, handleGroupsRequest, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
@@ -373,6 +375,42 @@ export function createServer(
     }
     return Promise.all(pcs);
   };
+  /**
+   * Chat groups (ZAC-265, server/groups-routes.ts): every PC's hand-off links and rows, pulled on
+   * the cold poll's cadence while the shared switch is on, filed into groups.sqlite. This PC's
+   * through its own index, another's over its bridge; one that does not answer changes nothing.
+   * The store opens on first use, so a server with the switch never on keeps no file.
+   */
+  let groupStore: GroupStore | null = null;
+  const groupsStore = (): GroupStore => groupStore ??= new GroupStore(stateDir);
+  const groupsSignal = new GroupsSignal();
+  const groupSources = (): GroupsPcSource[] => {
+    const sources: GroupsPcSource[] = [];
+    if (agentHostConnection) {
+      sources.push({ pc: "local", read: async () => {
+        // the rows name the links' ends: without them a link keeps its log id, which no row matches
+        if (agentHostConnection.state().state !== "connected") return null;
+        return { links: (await hostLinks(agentHostConnection)).links, rows: rowsFrom(agentHostConnection.summaries()) };
+      } });
+    }
+    for (const machine of machines?.list() ?? []) {
+      if (machine.id === "local" || !machine.enabled) continue;
+      sources.push({ pc: machine.id, read: async () => {
+        const endpoint = machines?.endpoint(machine.id);
+        return endpoint ? remotePcChats((path, timeoutMs) => remoteJson(endpoint, path, timeoutMs)) : null;
+      } });
+    }
+    return sources;
+  };
+  const groupsPoller = createGroupsPoller({
+    store: groupsStore,
+    intervalMs: COSTS_POLL_MS,
+    wanted: () => preferences.get().settings.chatGroups === true,
+    sources: groupSources,
+    changed: () => groupsSignal.tell(),
+  });
+  groupsPoller.start();
+
   const digestScheduler = options.weeklyDigest ? createDigestScheduler({
     store: digests,
     run: digestRunner({
@@ -525,7 +563,7 @@ export function createServer(
           // resume on agent.start and then its store check (machine-api.ts slowMachinePath)
           bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : slowMachinePath(pathname.split("/").slice(4).join("/")) ? 180 : 80);
           const deviceId = access.level === "full" ? access.device?.id : undefined;
-          const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined, preferences, readOnly, herdrSidebar, seen);
+          const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined, preferences, readOnly, herdrSidebar, seen, groupsSignal);
           response.headers.set("cache-control", "no-store");
           return response;
         }
@@ -590,6 +628,8 @@ export function createServer(
       if (pathname === "/api/preferences") { setRequestRoute(pathname); return handlePreferencesRequest(request, preferences); }
       // the finishes read in some browser of this server; a watching device reads them and cannot add to them (above)
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
+      // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)
+      if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell());
 
       if (pathname === "/api/usage") { setRequestRoute(pathname); return handleUsageRequest(request, url, usage); }
       if (pathname === "/api/usage/omniroute") { setRequestRoute(pathname); return handleOmniRouteRequest(request, omniRoute); }
@@ -767,6 +807,9 @@ export function createServer(
       core.stop(() => {
         clearInterval(draftTimer);
         localCosts?.stop();
+        groupsPoller.stop();
+        // a pull in flight finishes on its own; the store closes once it has
+        void groupsPoller.idle().then(() => { groupStore?.close(); groupStore = null; });
         handoffs.stop();
         digestScheduler?.stop();
         openCodeState.clear();
