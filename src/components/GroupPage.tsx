@@ -62,12 +62,14 @@ const shownArtifact = (artifact: HostArtifact): boolean => artifact.isArtifact |
 
 /** How many chat reads the page has in flight at once: each is a full read of a chat. */
 export const ARTIFACT_READS = 3;
+/** How long one artifact read may take before it gives up its place (a PC that hangs never answers). */
+export const ARTIFACT_READ_TIMEOUT_MS = 20_000;
 
 /**
  * Each member's artifacts, read from its chat's read as the page opens, at most ARTIFACT_READS at a
  * time. A member read once is not read again (a nudge or a PC reconnecting re-renders, it does not
  * re-read); a chat that joins is read, one that leaves takes its artifacts with it. A PC that is not
- * connected is not asked, and a failed read is none.
+ * connected is not asked, and a failed or timed-out read (ARTIFACT_READ_TIMEOUT_MS) is none.
  */
 function useMemberArtifacts(group: ChatGroup, machines: readonly Machine[]): Map<string, HostArtifact[]> {
   const [found, setFound] = useState<Map<string, HostArtifact[]>>(() => new Map());
@@ -97,7 +99,7 @@ function useMemberArtifacts(group: ChatGroup, machines: readonly Machine[]): Map
         const key = state.queue.shift()!;
         const at = key.indexOf(" ");
         state.active += 1;
-        fetchHostChat(key.slice(0, at), key.slice(at + 1)).then((read) => {
+        fetchHostChat(key.slice(0, at), key.slice(at + 1), undefined, AbortSignal.timeout(ARTIFACT_READ_TIMEOUT_MS)).then((read) => {
           if (state.live && state.asked.has(key)) setFound((current) => new Map(current).set(key, (read.artifacts ?? []).filter(shownArtifact)));
         }, () => { /* the chat is still drawn; it shows no artifacts */ }).finally(() => {
           state.active -= 1;

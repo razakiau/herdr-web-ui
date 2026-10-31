@@ -178,4 +178,31 @@ describe("the group page", () => {
     for (let turn = 0; turn < 5; turn++) await act(async () => { await Promise.resolve(); });
     expect(urls).toHaveLength(7);
   });
+
+  it("a read that never answers frees its place once it times out, and counts as no artifacts", async () => {
+    // AbortSignal.timeout stands in: each read's signal is aborted by hand, as its timer would
+    const realTimeout = Object.getOwnPropertyDescriptor(AbortSignal, "timeout")!;
+    const timers: { ms: number; controller: AbortController }[] = [];
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: (ms: number) => {
+      const controller = new AbortController();
+      timers.push({ ms, controller });
+      return controller.signal;
+    } });
+    try {
+      // every read hangs until its signal aborts, as fetch does
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        urls.push(String(input));
+        return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("timed out", "TimeoutError"))));
+      }) as typeof fetch;
+      const four: ChatGroup = { ...GROUP, members: Array.from({ length: 4 }, (_, at) => ({ pc: "local", session: `s-${at}`, joined: "manual" as const, addedAt: `2026-10-29T0${at}:00:00Z` })) };
+      const props = { group: four, answer: { ...ANSWER, groups: [four], links: [] }, machines: MACHINES, hostChats: HOST_CHATS, onOpenChat: () => {}, onClose: () => {} };
+      await act(async () => { renderer = create(createElement(SettingsProvider, { children: createElement(GroupPage, props) }), { createNodeMock: nodeMock }); });
+      expect(urls).toHaveLength(3);
+      expect(timers.map((each) => each.ms)).toEqual([20_000, 20_000, 20_000]);
+      // the first read times out: the fourth takes its place
+      await act(async () => { timers[0]!.controller.abort(); for (let turn = 0; turn < 5; turn++) await Promise.resolve(); });
+      expect(urls).toHaveLength(4);
+      expect(classed(renderer!.root, "group-artifact-chip")).toHaveLength(0);
+    } finally { Object.defineProperty(AbortSignal, "timeout", realTimeout); }
+  });
 });

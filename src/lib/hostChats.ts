@@ -85,10 +85,13 @@ export function chatStatus(row: HostChatRow): "working" | "blocked" | undefined 
 
 // ─── One chat ────────────────────────────────────────────────────────────────
 
-/** GET host-chats/chat: the chat as its PC's host has it; `before` (a read's `cursor`) asks for the turns before. */
-export async function fetchHostChat(machineId: string, session: string, before?: string): Promise<HostChatRead> {
+/**
+ * GET host-chats/chat: the chat as its PC's host has it; `before` (a read's `cursor`) asks for the
+ * turns before. `signal` ends the read early (the group page's timeout); without it the read waits.
+ */
+export async function fetchHostChat(machineId: string, session: string, before?: string, signal?: AbortSignal): Promise<HostChatRead> {
   const query = new URLSearchParams({ session, ...(before ? { before } : {}) });
-  const read = await getJson<HostChatRead>(machinePath(machineId, `host-chats/chat?${query.toString()}`));
+  const read = await getJson<HostChatRead>(machinePath(machineId, `host-chats/chat?${query.toString()}`), signal ? { signal } : undefined);
   // a send whose answer was lost but that went: its id is the chat's now, never to be reused
   const attempt = storedAttempt(machineId, session);
   if (attempt && (read.message_ids ?? []).includes(attempt.id)) dropAttempt(machineId, session, attempt.id);
