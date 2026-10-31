@@ -1262,11 +1262,16 @@ async function newChat(call: Call): Promise<Response> {
  * New Chat, left empty). The phone's id names the session: a retry of a chat already made makes
  * nothing. `sent: false` when the session exists but its message did not go.
  */
-async function createChatWith(call: Call, id: string, cwd: string, message: Message | null): Promise<{ session: string; sent?: false }> {
+/**
+ * `approvals`: the new chat's autoApprove, a hand-off's taken from the chat it continues. Without it
+ * the host starts the chat on Manual permissions, and the next chat's first command (digest.py,
+ * `git log`) waited on "Run in terminal?" while the owner thought it was reading (ZAC-266, 2026-10-31).
+ */
+async function createChatWith(call: Call, id: string, cwd: string, message: Message | null, approvals: string | null = null): Promise<{ session: string; sent?: false }> {
   const session = `${PROVIDER}:/${id}`;
   if (known(call.host, session)) return message === null ? { session } : await madeBefore(call, session);
   await call.host.request("createSession", {
-    channel: session, provider: PROVIDER, workingDirectories: [pathToFileURL(cwd).href], config: { isolation: "folder" },
+    channel: session, provider: PROVIDER, workingDirectories: [pathToFileURL(cwd).href], config: { isolation: "folder", ...(approvals ? { [APPROVALS_KEY]: approvals } : {}) },
   });
   if (message === null) {
     emptiesOf(call.host).add(session);
@@ -1429,7 +1434,7 @@ async function handOff(call: Call): Promise<Response> {
     },
     ended: () => handoffEnded(call, session, turnId, asked ? from : null),
     start: async (topic) => {
-      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`));
+      const made = await createChatWith(call, randomUUID(), cwd, message(`${named.resume} ${topic}`), configChoices(configOf(call.host, session)).approvals);
       return { session: made.session, sent: made.sent !== false };
     },
     // as Stop does (stopTurn), on the job's channel; a turn the user started since is theirs. The
@@ -1480,6 +1485,7 @@ async function continueChat(call: Call): Promise<Response> {
   const chat = call.host.chat(session) ?? missing();
   if (busy(chat)) return conflictResponse("busy", "the chat is working: continue when it asks or stops");
   const turnId = chat.activeTurn?.id;
+  const approvals = configChoices(configOf(call.host, session)).approvals;
   const job = startContinue(call.host, call.clock, session, {
     // as Stop does (stopTurn): a cancel on a turn waiting on ask_user is no model call (verified 2026-10-31)
     stop: async () => {
@@ -1489,7 +1495,7 @@ async function continueChat(call: Call): Promise<Response> {
     },
     start: async () => {
       const first: Message = { text: `${resume} ${cliSession}`, origin: { kind: MessageKind.User }, ...(model ? { model } : {}), ...(agent ? { agent } : {}) };
-      const made = await createChatWith(call, randomUUID(), cwd, first);
+      const made = await createChatWith(call, randomUUID(), cwd, first, approvals);
       return { session: made.session, sent: made.sent !== false };
     },
   }, (error) => error instanceof AgentHostError ? error.code : error instanceof Refusal ? "refused" : errorName(error));

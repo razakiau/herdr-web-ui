@@ -69,14 +69,14 @@ function manualClock(): LeaseClock & { advance(ms: number): void } {
 
 interface Rig { fake: FakeAgentHost; conn: AgentHostConnection; clock: ReturnType<typeof manualClock> }
 
-async function rig(chat: Record<string, unknown> = {}, skills?: unknown[], seed: { sessions?: SessionSummary[]; chats?: Record<string, ChatState> } = {}): Promise<Rig> {
+async function rig(chat: Record<string, unknown> = {}, skills?: unknown[], seed: { sessions?: SessionSummary[]; chats?: Record<string, ChatState>; states?: Record<string, SessionState> } = {}): Promise<Rig> {
   const home = mkdtempSync(join(tmpdir(), "herdr-handoff-"));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const config = join(home, "cfg");
   const entries = join(config, "Code", "agent-host", "local-endpoint", "entries");
   mkdirSync(entries, { recursive: true });
   const fake = await fakeAgentHost({
-    sessions: seed.sessions ?? [summary(1)], states: { [sessionUri(1)]: sessionState(1, skills) }, chats: { [chatUri(1)]: chatState(1, chat), ...seed.chats }, models: [MODEL], entryDir: entries,
+    sessions: seed.sessions ?? [summary(1)], states: { [sessionUri(1)]: sessionState(1, skills), ...seed.states }, chats: { [chatUri(1)]: chatState(1, chat), ...seed.chats }, models: [MODEL], entryDir: entries,
   });
   cleanups.push(() => fake.stop());
   const conn = new AgentHostConnection({ home, env: { XDG_CONFIG_HOME: config }, platform: "linux", startHost: false, onChange: () => {}, clientId: "herdr-web-0000test", deps: { sleep: (ms) => Bun.sleep(Math.min(ms, 10)) } });
@@ -225,6 +225,14 @@ describe("chat/handoff", () => {
     expect(resumed.action).toMatchObject({ message: { text: "/resume zac-262", model: SELECTION } });
     // the note hand-off no longer archives (ZAC-266): the old chat stays where it is
     expect(archived(r.fake)).toEqual([]);
+  });
+
+  it("the note hand-off's new chat takes the old one's approvals too", async () => {
+    const r = await rig({}, undefined, { states: { [sessionUri(1)]: { ...sessionState(1), config: { schema: { properties: {} }, values: { autoApprove: "assisted" } } } as unknown as SessionState } });
+    await start(r);
+    reply(r, await handoffTurn(r), "FICTIONAL note written.\nStart the next chat with: /resume zac-262");
+    for (let i = 0; i < 200 && (await job(r)).state !== "done"; i++) await Bun.sleep(10);
+    expect(r.fake.requests.find((each) => each.method === "createSession")!.params).toMatchObject({ config: { isolation: "folder", autoApprove: "assisted" } });
   });
 
   it("no_resume archives nothing and creates nothing", async () => {
@@ -461,6 +469,26 @@ describe("chat/continue", () => {
     expect(opened(r)!.action).toMatchObject({ message: { text: `/harness:resume ${uuid(1)}`, model: SELECTION } });
     expect(sent(r.fake, "chat/turnCancelled")).toEqual([]);
     expect(archived(r.fake)).toEqual([]);
+  });
+
+  it("continue gives the new chat the old one's approvals, so its digest runs without a prompt", async () => {
+    // live (2026-10-31): the new chat came up on Manual permissions while the old one allowed all,
+    // and stopped on "Run in terminal?" before digest.py read anything
+    home().record(uuid(1));
+    const r = await rig({}, RESUME, { states: { [sessionUri(1)]: { ...sessionState(1, RESUME), config: { schema: { properties: {} }, values: { autoApprove: "autoApprove", mode: "interactive", isolation: "folder" } } } as unknown as SessionState } });
+    expect((await go(r)).status).toBe(200);
+    await settled(r);
+    const create = r.fake.requests.find((each) => each.method === "createSession")!;
+    expect(create.params).toMatchObject({ config: { isolation: "folder", autoApprove: "autoApprove" } });
+  });
+
+  it("continue leaves the new chat's approvals to the host when the old one has none", async () => {
+    home().record(uuid(1));
+    const r = await rig({}, RESUME);
+    expect((await go(r)).status).toBe(200);
+    await settled(r);
+    const create = r.fake.requests.find((each) => each.method === "createSession")!;
+    expect((create.params as { config: Record<string, unknown> }).config).toEqual({ isolation: "folder" });
   });
 
   it("continue on a chat asking a question cancels the turn and does not answer it", async () => {
