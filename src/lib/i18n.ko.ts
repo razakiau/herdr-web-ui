@@ -624,6 +624,8 @@ const BASE: Record<string, string> = {
   "kept warm · next ping {time}": "웜 유지 중 · 다음 핑 {time}",
   "until {time} ({n} h after the last call)": "{time}까지 (마지막 호출 후 {n}시간)",
   "{n} pings today, ~{usd}": "오늘 핑 {n}회, ~{usd}",
+  "1 ping today, ~{usd}": "오늘 핑 1회, ~{usd}",
+  "Cache already gone: kept from its next call": "캐시가 이미 만료됨: 다음 호출부터 유지",
   "Without keep-warm": "웜 유지 없이",
   "Without keep-warm, after {time}": "웜 유지 없이, {time} 이후",
   "Off in Settings": "설정에서 꺼짐",

@@ -193,6 +193,7 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
   const hours = Math.round((key.until - key.lastRealAt) / 3_600_000) || state.windowHours;
   const why = !state.enabled ? t("Off in Settings")
     : key.missed ? t("Stopped: a ping found the cache gone")
+    : chosen && key.expired ? t("Cache already gone: kept from its next call")
     : now >= key.until ? t("Stopped {n} h after the last call", { n: hours })
     : state.today.fuseHit && !keep.kept ? t("Daily cap reached")
     : !chosen && big ? t("Off by you")
@@ -201,7 +202,7 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
   const sub = [
     on && !why ? t("until {time} ({n} h after the last call)", { time: clockTime(key.until), n: hours }) : why,
     on && !why && !big ? t("on by you, under {mark}", { mark }) : null,
-    key.pings > 0 ? t("{n} pings today, ~{usd}", { n: key.pings, usd: formatUsd(key.usd) }) : null,
+    key.pings === 1 ? t("1 ping today, ~{usd}", { usd: formatUsd(key.usd) }) : key.pings > 1 ? t("{n} pings today, ~{usd}", { n: key.pings, usd: formatUsd(key.usd) }) : null,
   ].filter(Boolean).join(" · ");
   const toggle = (next: boolean): void => {
     setSaving(true);

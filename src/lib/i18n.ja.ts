@@ -626,6 +626,8 @@ const BASE: Record<string, string> = {
   "kept warm · next ping {time}": "ウォーム維持中 · 次の ping {time}",
   "until {time} ({n} h after the last call)": "{time} まで（最後の呼び出しから {n} 時間）",
   "{n} pings today, ~{usd}": "今日 {n} 回の ping、~{usd}",
+  "1 ping today, ~{usd}": "今日 1 回の ping、~{usd}",
+  "Cache already gone: kept from its next call": "キャッシュは失効済み：次の呼び出しから保温",
   "Without keep-warm": "ウォーム維持なしの場合",
   "Without keep-warm, after {time}": "ウォーム維持なしの場合、{time} 以降",
   "Off in Settings": "設定でオフ",
