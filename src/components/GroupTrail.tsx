@@ -1,13 +1,13 @@
 /**
  * Chat groups (ZAC-265), the bar in a chat that is in a group (owner's v2): one line under the
- * header, "⧉ Ovis keep-warm follow-ups · 3 chats · 1 working · 1 warm ›", the whole line one tap
+ * header, "▤ Ovis keep-warm follow-ups · 3 chats · 1 working · 1 warm ›", the whole line one tap
  * to the group's page. The name drops a leading ticket ("ZAC-262 ") for the bar only (lib/groups.ts
  * trailName) and is what gives way, with an ellipsis; the count and the state never do. The state
  * is the rows' own (GroupState.tsx): nothing when every chat is idle and cold. Nothing at all while
  * Settings → Chat groups is off or the chat is in no group.
  */
 import { useMemo } from "react";
-import { ChevronRight, Layers } from "lucide-react";
+import { ChevronRight, GalleryVerticalEnd } from "lucide-react";
 
 import "./GroupTrail.css";
 
@@ -45,7 +45,7 @@ function TrailBar({ group, machineId, session, chats }: { group: NonNullable<Ret
   const count = group.members.length;
   return <nav className="group-trail" aria-label={t("Group {name}", { name: group.name })}>
     <button type="button" className="group-trail-open" onClick={() => groupsView.openGroup(group.id, { pc: machineId, session })}>
-      <Layers className="group-trail-icon" aria-hidden="true" />
+      <GalleryVerticalEnd className="group-trail-icon" aria-hidden="true" />
       <span className="group-trail-name" title={group.name}>{trailName(group.name)}</span>
       <span className="group-trail-facts">
         <span className="group-trail-dot" aria-hidden="true">·</span>

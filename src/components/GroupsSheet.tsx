@@ -9,7 +9,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Layers, Plus, X } from "lucide-react";
+import { GalleryVerticalEnd, Plus, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./AllAgentsSheet.css";
@@ -171,7 +171,7 @@ function GroupCard({ group, answer, rows, total, pcName, locale, onOpen }: {
   return <li className="groups-card-item">
     <button type="button" className="groups-card" onClick={onOpen}>
       <span className="groups-card-top">
-        <Layers className="groups-card-icon" aria-hidden="true" />
+        <GalleryVerticalEnd className="groups-card-icon" aria-hidden="true" />
         <strong className="groups-card-name">{group.name}</strong>
         {working > 0 && <span className="badge badge-working">{t(working === 1 ? "1 working" : "{n} working", { n: working })}</span>}
       </span>

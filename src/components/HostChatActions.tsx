@@ -11,7 +11,7 @@
  */
 import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArchiveRestore, Layers, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, GalleryVerticalEnd, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
@@ -75,7 +75,7 @@ export function hostChatItems(actions: HostChatActions, target: HostChatRef, t: 
     chat.archived
       ? { id: "restore", label: t("Restore"), icon: ArchiveRestore, run: () => actions.setArchived(machineId, chat.session, false) }
       : { id: "mark-done", label: t("Mark as done"), icon: Archive, run: () => actions.setArchived(machineId, chat.session, true) },
-    ...(actions.addToGroup ? [{ id: "add-to-group", label: t("Add to group…"), icon: Layers, run: () => actions.addToGroup?.(machineId, chat.session) }] : []),
+    ...(actions.addToGroup ? [{ id: "add-to-group", label: t("Add to group…"), icon: GalleryVerticalEnd, run: () => actions.addToGroup?.(machineId, chat.session) }] : []),
     { id: "delete-chat", label: t("Delete…"), icon: Trash2, danger: true, divider: true, run: () => actions.askDelete(target) },
   ];
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, Layers, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, GalleryVerticalEnd, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -351,7 +351,7 @@ function MachineGroup({ machine, hostChats, onNewHostChat, onFolderChats, onAllA
   const headItems: RowMenuItem[] = [
     ...(onAllAgents ? [{ id: "all-agents", label: t("All agents on {pc}…", { pc: machine.name }), icon: ListTree, run: onAllAgents }] : []),
     // chat groups (ZAC-265): every group across the PCs, from any PC that has chats
-    ...(onAllAgents && chatGroups ? [{ id: "groups", label: t("Groups…"), icon: Layers, run: () => groupsView.openList() }] : []),
+    ...(onAllAgents && chatGroups ? [{ id: "groups", label: t("Groups…"), icon: GalleryVerticalEnd, run: () => groupsView.openList() }] : []),
     ...(onPutBack ? [{ id: "put-back", label: t("Move to Other PCs"), icon: FoldVertical, run: onPutBack }] : []),
     ...(machine.kind === "ssh" ? [{ id: "manage", label: t("Manage PC"), icon: SlidersHorizontal, checked: editing, run: () => { setEditing(!editing); setConfirmDelete(false); } }] : []),
   ];
