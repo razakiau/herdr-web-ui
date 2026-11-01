@@ -550,7 +550,7 @@ const BASE: Record<string, string> = {
   "Continued in a new chat from a hand-off note. This one is not archived.": "已根据交接说明在新对话中继续。此对话未归档。",
   "Open new chat": "打开新对话",
   "Archive this one": "归档此对话",
-  " · continue it in a new chat; it reads this one's record": " · 在新对话中继续；新对话会读取此对话的记录",
+  "Keep warm turned off when it was archived": "归档时已关闭保持预热",
   "Continue in a new chat": "在新对话中继续",
   "Hand off now": "现在交接",
   "Hand off if work remains": "如果还有工作，请交接",

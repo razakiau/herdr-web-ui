@@ -167,4 +167,5 @@ export const COMPOSER_KO: Record<string, string> = {
   "Stop and Send": "중지 후 보내기",
   "Add to Queue": "대기열에 추가",
   "Steer with Message": "메시지로 방향 지정",
+  "This answer was refused: {reason}": "이 답변은 거부되었습니다: {reason}",
 };

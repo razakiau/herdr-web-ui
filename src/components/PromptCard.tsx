@@ -100,9 +100,32 @@ export interface PromptCardViewProps extends Omit<PromptCardProps, "paneId"> {
   submit(choice: PromptChoice): Promise<void>;
   /** a host chat's card: + opens the composer's attach sheet (its folder, camera, photos) for this chat */
   attachSheet?: { machineId: string; session: string };
+  /**
+   * A host chat's card: the bridge refuses an answer (400 invalid_answer) only for what it says
+   * (ZAC-271: a number page held words, the card said "the question changed" and every resend
+   * failed the same way). Its words are shown and the card stays as typed. A pane's 400 can still
+   * mean a card read before the question moved on, so it keeps the re-read.
+   */
+  refusalSaysWhy?: boolean;
 }
 
-export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false, onUploadFile, expandable = false, attachSheet, stale = false }: PromptCardViewProps) {
+/** what a failed answer shows, and whether the card reads the question again */
+export function answerRefusal(cause: unknown, refusalSaysWhy: boolean, t: Translate): { error: UserError; reread: boolean } {
+  if (cause instanceof ApiError && cause.code === "reply_unconfirmed") {
+    return { error: { message: t("OpenCode did not confirm the answer. Check the question before sending again."), detail: null }, reread: true };
+  }
+  if (refusalSaysWhy && cause instanceof ApiError && cause.status === 400 && (cause.code === "invalid_answer" || cause.code === "missing_answer")) {
+    return { error: { message: t("This answer was refused: {reason}", { reason: cause.detail }), detail: null }, reread: false };
+  }
+  // a card read before the question moved on: refused as changed (409), or as an answer it no longer fits (400).
+  // The note stays until the card is replaced or answered again, so the button never looks dead
+  if (cause instanceof ApiError && ((cause.status === 409 && cause.code === "prompt_changed") || (cause.status === 400 && cause.code === "invalid_answer"))) {
+    return { error: { message: t("The question on screen changed; check it and answer again."), detail: null }, reread: true };
+  }
+  return { error: userErrorMessage(cause), reread: false };
+}
+
+export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, markdown = false, onUploadFile, expandable = false, attachSheet, stale = false, refusalSaysWhy = false }: PromptCardViewProps) {
   const t = useT();
   // the agent's own defaults (an OpenCode field restored by Back) stand picked and typed from the start
   const [selected, setSelected] = useState<Set<number>>(() => {
@@ -190,15 +213,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       if (!shown.current) return false;
       // a card read before the question moved on: refused as changed (409), or as an answer it no longer fits (400).
       // The note stays until the card is replaced or answered again, so the button never looks dead
-      if (cause instanceof ApiError && cause.code === "reply_unconfirmed") {
-        setError({ message: t("OpenCode did not confirm the answer. Check the question before sending again."), detail: null });
-        onPromptChanged();
-      } else if (cause instanceof ApiError && ((cause.status === 409 && cause.code === "prompt_changed") || (cause.status === 400 && cause.code === "invalid_answer"))) {
-        setError({ message: t("The question on screen changed; check it and answer again."), detail: null });
-        onPromptChanged();
-      } else {
-        setError(userErrorMessage(cause));
-      }
+      const refused = answerRefusal(cause, refusalSaysWhy, t);
+      setError(refused.error);
+      if (refused.reread) onPromptChanged();
     }
     setPending(false);
     return true;

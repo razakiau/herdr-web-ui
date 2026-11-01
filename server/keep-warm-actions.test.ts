@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { type KeepWarmAnswer, type KeepWarmKey, type KeepWarmSettings, keepWarmSettingsFrom, withWindow } from "../shared/keep-warm.ts";
 import { requiresAuth } from "./auth.ts";
 import type { HandoffJob } from "../shared/host-chats.ts";
-import { bridgeHandoff, coolArchivedChat, createHandoffFollower, type HandoffAct, HANDOFF_ACT_TTL_MS, handleKeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { bridgeHandoff, coolArchivedChat, createHandoffFollower, restoreArchivedChat, type HandoffAct, HANDOFF_ACT_TTL_MS, handleKeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 
 const H = 3_600_000;
 const FROM = Date.parse("2026-10-30T08:00:00Z");
@@ -110,22 +110,41 @@ describe("the window-end alert's buttons", () => {
   });
 });
 
-describe("an archived chat's cool (ZAC-262)", () => {
+describe("an archived chat's cool (ZAC-262), and its switch off (ZAC-271)", () => {
   const NOW = FROM + H;
-  it("saves \"Let it cool\" for the call push matched, keeping the owner's settings", async () => {
-    const fake = link([key()], { enabled: true });
-    expect(await coolArchivedChat(key(), fake, () => NOW)).toBe(true);
-    expect(fake.saved).toEqual([{ ...withWindow({ enabled: true }, "k1", FROM, NOW, "cool", NOW) }]);
+  const CHAT = "chat:mac:s1";
+  it("cools the call push matched and turns the switch off for that chat, keeping the owner's settings", async () => {
+    const fake = link([key(), key({ key: "k2" })], { enabled: true, disabled: ["k2"], forced: ["k1"], archived: { gone: "chat:mac:old" } });
+    expect(await coolArchivedChat(key(), CHAT, fake, () => NOW)).toBe(true);
+    const cooled = withWindow({ enabled: true }, "k1", FROM, NOW, "cool", NOW);
+    // an archive whose key the plugin let go of goes with it
+    expect(fake.saved).toEqual([{ enabled: true, disabled: ["k2", "k1"], forced: [], extend: cooled.extend, archived: { k1: CHAT } }]);
   });
 
-  it("saves nothing for a key let go, and answers false when the plugin moved past the call or lost it", async () => {
+  it("turns off a small chat forced on even once its cache is gone, and leaves a chat already off alone", async () => {
+    const forced = link([key({ kept: false, expired: true })], { forced: ["k1"] });
+    expect(await coolArchivedChat(key(), CHAT, forced, () => NOW)).toBe(true);
+    expect(forced.saved.map((each) => [each.disabled, each.forced, each.archived])).toEqual([[["k1"], [], { k1: CHAT }]]);
     const letGo = link([key({ kept: false })]);
-    expect(await coolArchivedChat(key(), letGo, () => NOW)).toBe(true);
+    expect(await coolArchivedChat(key(), CHAT, letGo, () => NOW)).toBe(true);
+    expect(letGo.saved).toEqual([]);
+  });
+
+  it("saves nothing and answers false when the plugin moved past the call or lost it", async () => {
     const moved = link([key({ lastRealAt: FROM + H })]);
-    expect(await coolArchivedChat(key(), moved, () => NOW)).toBe(false);
+    expect(await coolArchivedChat(key(), CHAT, moved, () => NOW)).toBe(false);
     const gone = link([]);
-    expect(await coolArchivedChat(key(), gone, () => NOW)).toBe(false);
-    expect([...letGo.saved, ...moved.saved, ...gone.saved]).toEqual([]);
+    expect(await coolArchivedChat(key(), CHAT, gone, () => NOW)).toBe(false);
+    expect([...moved.saved, ...gone.saved]).toEqual([]);
+  });
+
+  it("restoring gives the chat's keys back the default, and writes nothing for a chat its archive never turned off", async () => {
+    const fake = link([key()], { disabled: ["k1", "k3"], archived: { k1: CHAT, k3: "chat:mac:other" } });
+    expect(await restoreArchivedChat(CHAT, fake)).toBe(true);
+    expect(fake.saved).toEqual([{ disabled: ["k3"], forced: [], archived: { k3: "chat:mac:other" } }]);
+    const untouched = link([key()], { disabled: ["k1"] });
+    expect(await restoreArchivedChat(CHAT, untouched)).toBe(true);
+    expect(untouched.saved).toEqual([]);
   });
 });
 

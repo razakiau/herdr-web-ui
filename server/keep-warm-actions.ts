@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { HandoffJob } from "../shared/host-chats.ts";
-import { type KeepWarmKey, keptWarm, withWindow } from "../shared/keep-warm.ts";
+import { type KeepWarmKey, keptWarm, withArchived, withRestored, withWindow } from "../shared/keep-warm.ts";
 import { jsonResponse } from "./http.ts";
 import type { OmniRouteLink } from "./omniroute.ts";
 import { writePrivateState } from "./private-state.ts";
@@ -159,18 +159,35 @@ export async function handleKeepWarmAct(request: Request, pathname: string, acti
 }
 
 /**
- * An archived chat's "Let it cool" (ZAC-262), as the button saves it: the plugin is read again
- * first, so a window let go since is left as it is, and the save keeps the owner's other settings.
+ * An archived chat's keep-warm, turned off (ZAC-262, ZAC-271): its window cools now, and its switch
+ * goes off (`disabled`, remembered for `chat` so restoring it gives the default back). The plugin is
+ * read again first, so a chat let go since is left as it is, and the save keeps the owner's other
+ * settings. A chat not kept and not forced on is left alone: off already, and no write.
  * False when that read cannot vouch for the call push matched (no answer, the key gone, or a newer
  * real call: push's cached read lagged), so push looks again at its next poll; a failed save throws.
  */
-export async function coolArchivedChat(key: KeepWarmKey, link: Pick<OmniRouteLink, "keepWarm" | "saveKeepWarm">, now: () => number = Date.now): Promise<boolean> {
+export async function coolArchivedChat(key: KeepWarmKey, chat: string, link: Pick<OmniRouteLink, "keepWarm" | "saveKeepWarm">, now: () => number = Date.now): Promise<boolean> {
   const answer = await link.keepWarm(true);
   const current = answer.state?.keys.find((each) => each.key === key.key);
   if (!answer.ok || !current || current.lastRealAt !== key.lastRealAt) return false;
   const at = now();
-  if (!keptWarm(current, at)) return true;
-  await link.saveKeepWarm(withWindow(answer.settings, key.key, key.lastRealAt, at, "cool", at));
+  const forced = (answer.settings.forced ?? []).includes(key.key);
+  if (!keptWarm(current, at) && !forced) return true;
+  const live = new Set(answer.state!.keys.map((each) => each.key));
+  await link.saveKeepWarm(withArchived(withWindow(answer.settings, key.key, key.lastRealAt, at, "cool", at), key.key, chat, live));
+  return true;
+}
+
+/**
+ * A restored chat's keep-warm back on the default rules (ZAC-271, owner: "like a new chat"): the
+ * keys its archive turned off leave `disabled` and `archived`. Nothing to save, nothing written.
+ */
+export async function restoreArchivedChat(chat: string, link: Pick<OmniRouteLink, "keepWarm" | "saveKeepWarm">): Promise<boolean> {
+  const answer = await link.keepWarm(true);
+  if (!answer.ok) return false;
+  const restored = withRestored(answer.settings, chat);
+  if (restored === null) return true;
+  await link.saveKeepWarm(restored);
   return true;
 }
 

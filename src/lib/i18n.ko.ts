@@ -546,7 +546,7 @@ const BASE: Record<string, string> = {
   "Continued in a new chat from a hand-off note. This one is not archived.": "인계 메모로 새 채팅에서 이어갔습니다. 이 채팅은 보관되지 않았습니다.",
   "Open new chat": "새 채팅 열기",
   "Archive this one": "이 채팅 보관",
-  " · continue it in a new chat; it reads this one's record": " · 새 채팅에서 이어가세요. 새 채팅이 이 채팅의 기록을 읽습니다",
+  "Keep warm turned off when it was archived": "보관할 때 웜 유지를 껐습니다",
   "Continue in a new chat": "새 채팅에서 계속",
   "Hand off now": "지금 인계하면",
   "Hand off if work remains": "작업이 남았다면 인계하세요",

@@ -167,4 +167,5 @@ export const COMPOSER_JA: Record<string, string> = {
   "Stop and Send": "停止して送信",
   "Add to Queue": "キューに追加",
   "Steer with Message": "メッセージで誘導",
+  "This answer was refused: {reason}": "この回答は受け付けられませんでした: {reason}",
 };

@@ -784,21 +784,25 @@ code.session-sheet-detail { font-family: var(--font-mono); }
 .session-sheet-item > .edit-diff { margin: 0 0 var(--space-2) var(--space-2); }
 @media (prefers-reduced-motion: reduce) { .session-sheet-chevron { transition: none; } }
 
-/* an archived chat's bar (ZAC-266, owner's mock): "Archived · continue it in a new chat…" in full,
-   wrapping on a phone, with Continue in a new chat at its end */
+/* an archived chat's bar (ZAC-266; one row since ZAC-271, owner's pick B): "Archived", then Restore
+   and Continue in a new chat at its end; under them, in grey, that its keep-warm went off */
 .archived-bar {
   flex-wrap: wrap;
+  row-gap: 0;
 }
 
-.archived-bar .checkpoint-bar-text {
-  white-space: normal;
-}
-
-.archived-bar strong {
+.archived-bar > strong.checkpoint-bar-text {
   color: var(--text-strong);
   font-weight: var(--fw-medium);
 }
 
-.archived-bar .checkpoint-bar-redo {
-  margin-left: auto;
+.archived-bar .checkpoint-bar-go {
+  flex: none;
+}
+
+.archived-bar-sub {
+  flex: 1 0 100%;
+  padding-bottom: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
 }
