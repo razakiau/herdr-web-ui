@@ -40,12 +40,11 @@ import { basename, chatAge, fetchHostChat, type HostPc } from "../lib/hostChats.
 import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { daysBack } from "../lib/hostChatGroups.ts";
 import type { CostsFeed } from "../lib/rowCache.ts";
-import { useSettings } from "../lib/settings.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import type { CostSplit } from "../lib/sessionCost.ts";
 import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
-import { CacheLine, RowCostCell, rowCacheDot } from "./AllAgentsSheet.tsx";
+import { RowCostCell } from "./AllAgentsSheet.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { GroupNameSheet, rowsByKey, shortDate } from "./GroupsSheet.tsx";
 import { GroupStateSummary, hasGroupState, useMemberStates } from "./GroupState.tsx";
@@ -161,7 +160,6 @@ function relation(node: TreeNode, name: (session: string) => string, t: Translat
 export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS, feed = null, from = null, onOpenChat, onOpenFile, onClose }: GroupPageProps) {
   const t = useT();
   const locale = useLocale();
-  const { settings } = useSettings();
   const id = useId();
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const [asking, setAsking] = useState<"rename" | "delete" | null>(null);
@@ -198,7 +196,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     return () => window.removeEventListener("keydown", onKey, true);
   });
   const rows = useMemo(() => rowsByKey(hostChats), [hostChats]);
-  const { states, logs, keepWarm, now } = useMemberStates(group, rows, feed);
+  const { states, now } = useMemberStates(group, rows, feed);
   const artifacts = useMemberArtifacts(group, machines);
   const credited = useMemo(() => creditArtifacts(artifacts, tree.map((node) => chatKey(node.pc, node.session))), [artifacts, tree]);
   const machineOf = (pc: string): Machine | undefined => machines.find((machine) => machine.id === pc);
@@ -256,14 +254,13 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     const cost = costs.get(key);
     const state = states.get(key);
     const mark = state?.mark ?? null;
-    const log = logs.get(key);
     const title = titleOf(node);
     const selected = from !== null && from.pc === node.pc && from.session === node.session;
     // the second line as All agents': why it is not there, archived (All agents says it by its section, a tree in words), its folder, its age, then its cache in words
     const parts = [row?.status === "error" ? t("Error") : null, offline ? t("PC offline") : gone ? t("gone") : null, row?.archived ? t("Archived") : null,
       row?.cwd ? basename(row.cwd) : null, row ? chatAge(row, now, t) : null].filter((part): part is string => Boolean(part));
-    const context = mark ? <CacheLine parts={parts} mark={mark} /> : parts.join(" · ");
-    const dot = cost && row && log ? rowCacheDot(row, log, mark, keepWarm, settings, now) : null;
+    // the cache is the ring round the mark, as All agents' rows say it (round 3): no words or dot for it again
+    const context = parts.join(" · ");
     const relationText = relation(node, (session) => shortChatName(titleOf({ pc: node.pc, session })), t);
     const at = Date.parse(node.join.at);
     const summary = summaries.get(key);
@@ -286,7 +283,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
           onClick={() => onOpenChat({ machineId: node.pc, session: node.session })}>
           <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={pcNames ? machine?.name ?? node.pc : null} context={context} tokens={[]}
             status={row ? hostChatStatus(row) : undefined} cacheRing={mark} cacheWords={mark ? cacheWords(mark, t) : null} />
-          {cost && <RowCostCell cost={cost} dot={dot} />}
+          {cost && <RowCostCell cost={cost} />}
         </button>
       </div>
       {summary && !line.folded && <p className="group-summary">{summary}</p>}

@@ -114,8 +114,6 @@
 }
 .group-summary { margin: 0; padding: 0 var(--space-2) var(--space-2) calc(var(--side-box) + var(--space-2)); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
 .group-node .agent-item.is-offline .agent-title { color: var(--text-dim); }
-/* the row's state cell (its status glyph) sits at its right edge: its room kept, so it never lands on the cost */
-.group-page .group-node .agent-item { padding-right: var(--side-box); }
 /* the folded line's state wraps inside it, part by part (GroupState.tsx draws it one line elsewhere) */
 .group-fold .group-state,
 .group-continue .group-state { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; row-gap: 2px; white-space: normal; }

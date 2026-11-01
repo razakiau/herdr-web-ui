@@ -37,11 +37,7 @@
 }
 .all-agents-group { min-width: 0; }
 .all-agents-age { padding-top: var(--space-2); }
-.all-agents .agent-item { padding-right: 0; }
-/* a row with a chat's ⋯ keeps the state cell's room after it, as an Agents row does */
-.all-agents .agent-item:has(> .agent-actions) { padding-right: var(--side-box); }
-/* PROTOTYPE (ZAC-265 round 2, B): a row drawn as the sidebar's keeps its state cell's room, so the glyph never sits on the cost */
-.all-agents .agent-item.has-state-cell { padding-right: var(--side-box); }
+/* a row keeps its state cell's room at its right edge (after a chat's ⋯), as an Agents row does: the glyph never sits on the cost */
 /* two lines with air above and below, and a faint rule between rows, so they never touch */
 .all-agents .agent-row { gap: var(--space-2); padding-block: var(--space-2); }
 .all-agents-group .agent-item + .agent-item { border-top: var(--hairline) solid color-mix(in srgb, var(--border) 60%, transparent); }
@@ -158,15 +154,8 @@
   gap: 1px;
 }
 
-/* a big chat's cache on its second line (ZAC-260, owner's pick B): "268K · 12m left" in the cache's
-   colour (tokens in src/styles.css, 4.5:1 on every row surface), a small Timer or Snowflake before the time */
-.all-agents-context-split { display: inline-flex; max-width: 100%; min-width: 0; vertical-align: bottom; }
-.all-agents-sep { flex: none; white-space: pre; }
-/* CacheLine drops the words that do not fit, whole; the first one alone shrinks, with an ellipsis */
-.all-agents-words { display: inline-flex; flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.all-agents-tail { display: inline-flex; flex: none; }
-.all-agents-word { flex: none; white-space: pre; }
-.all-agents-word:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* a cache state in words, in its colour (GroupState.tsx: a group's "2 warm · 1 cooling"; tokens in
+   src/styles.css, 4.5:1 on every row surface), a small icon before it */
 .all-agents-cache { flex: none; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
 .all-agents-cache.is-warm { color: var(--cache-warm); }
 .all-agents-cache.is-cooling { color: var(--cache-cooling); }

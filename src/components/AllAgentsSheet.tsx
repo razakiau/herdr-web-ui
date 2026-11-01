@@ -5,15 +5,16 @@
  * 7 days, Last 30 days, Older: lib/hostChatGroups.ts), each with when it last changed and, under All,
  * its folder; the archived ones last, folded. Picking one opens it, as a look (App.tsx selectHostChat).
  * With `folder` it is "Chats in <folder>…", an agent host workspace's own list: that folder's chats only.
- * With costs tracked (ZAC-260) each Copilot chat the PC's bridge has a log of gets its cost and a
- * split bar (the five parts), a dot while its cache is warm or cooling, and its cold restarts on its
- * second line; each age its subtotal. A sort chip first in the folder pills opens Recent · Cost,
+ * Each row is the sidebar's (ZAC-265, owner's round 3): a chat's cache is the ring round its mark,
+ * with the flame when kept warm (lib/rowCache.ts rowCacheMark, as AgentSidebar.tsx builds it). With
+ * costs tracked (ZAC-260) each Copilot chat the PC's bridge has a log of gets its cost and a split
+ * bar (the five parts), and its cold restarts on its second line while it has no ring; each age its subtotal. A sort chip first in the folder pills opens Recent · Cost,
  * highest first (Cost: one flat list), and a summary line under them gives the list's total, its
  * count and scope and its split. A chat without a log shows nothing (owner's option A, 2026-10-29).
  */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Flame, Hourglass, Search, Snowflake, Timer, X } from "lucide-react";
+import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Hourglass, Search, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -22,14 +23,13 @@ import "./AllAgentsSheet.css";
 
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
 import type { ChatPrices } from "../lib/api.ts";
-import type { KeepWarmAnswer } from "../../shared/keep-warm.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } from "../lib/hostChatGroups.ts";
-import { basename, chatAge, hostLine, tokens, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
+import { basename, chatAge, hostLine, useMinuteClock, type HostPc } from "../lib/hostChats.ts";
 import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
 import { byGoingCold, costsFeed, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
-import { cacheState, costSplit, keptCacheState, type CostSplit } from "../lib/sessionCost.ts";
+import { costSplit, type CostSplit } from "../lib/sessionCost.ts";
 import { useSettings } from "../lib/settings.ts";
 import { hostChatStatus, samePath } from "../lib/hostPlacement.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -55,12 +55,6 @@ export interface AllAgentsSheetProps {
   initialSort?: Sort;
   onOpen(session: string): void;
   onClose(): void;
-  /**
-   * PROTOTYPE (ZAC-265 round 2, B; off until the owner approves): each row drawn as the sidebar's,
-   * the cache a ring round the mark (with its flame when kept warm), the words and the dot the ring
-   * now says left off; the folder, age, restarts and the cost stay
-   */
-  ringRows?: boolean;
 }
 
 /** The focus is in something over the sheet (a chat's menu, its rename or delete), not on the page under it. */
@@ -89,82 +83,12 @@ export type Sort = "recent" | "cost" | "cold";
 /** the sort chip's word for each order */
 const SORT_LABEL: Record<Sort, string> = { recent: "Recent", cost: "Cost", cold: "Going cold" };
 
-/**
- * A big chat's second line (round 6): its words, then its cache, which never gives way. Where the
- * row is too narrow the last words drop whole, each with its separator (the restarts, then the
- * age), never leaving "· … ·"; the first (the folder) alone shrinks, with an ellipsis. Measured: the
- * words' widths once per text, the line's room on each resize.
- */
-export function CacheLine({ parts, mark }: { parts: string[]; mark: RowCacheMark }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const text = parts.join("\u0000");
-  const [fit, setFit] = useState<{ text: string; shown: number } | null>(null);
-  const shown = fit?.text === text ? fit.shown : parts.length;
-  const widths = useRef<{ text: string; words: number[] } | null>(null);
-  useLayoutEffect(() => {
-    const line = ref.current;
-    const room = line?.parentElement;
-    if (!line || !room || typeof ResizeObserver === "undefined") return;
-    const measure = (): void => {
-      if (widths.current?.text !== text) {
-        const words = [...line.querySelectorAll<HTMLElement>(".all-agents-word")];
-        // measured while every word is drawn: the first render of a text draws them all
-        if (words.length !== parts.length) return;
-        // each word's own width: the first may be drawn shrunk already, so its scroll width, whole pixels up
-        widths.current = { text, words: words.map((word) => Math.max(word.scrollWidth, Math.ceil(word.getBoundingClientRect().width))) };
-      }
-      const tail = line.querySelector<HTMLElement>(".all-agents-tail")?.getBoundingClientRect().width ?? 0;
-      // a pixel spare: a sub-pixel overflow would cut the folder to keep the age, the wrong way round
-      const space = room.getBoundingClientRect().width - tail - 1;
-      const words = widths.current.words;
-      let count = 1;
-      for (let used = words[0] ?? 0; count < words.length && used + words[count]! <= space; count++) used += words[count]!;
-      setFit((last) => last?.text === text && last.shown === count ? last : { text, shown: count });
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(room);
-    return () => observer.disconnect();
-  }, [text]);
-  return <span ref={ref} className="all-agents-context-split">
-    <span className="all-agents-words">{parts.slice(0, shown).map((part, index) => <span key={index} className="all-agents-word">{index > 0 ? ` · ${part}` : part}</span>)}</span>
-    <span className="all-agents-tail"><span className="all-agents-sep">{" · "}</span><CacheText mark={mark} /></span>
-  </span>;
-}
-
-/** A big chat's cache on its All agents row (ZAC-260, owner's pick B): its size, then the minutes left or "cold", with a small icon. */
-export function CacheText({ mark }: { mark: RowCacheMark }) {
-  const t = useT();
-  const small = mark.small ? " is-small" : "";
-  if (mark.kept) return <span className={`all-agents-cache is-warm is-kept${small}`}>{tokens(mark.context)} · <Flame aria-hidden="true" />{t("kept warm")}</span>;
-  const Icon = mark.state === "cold" ? Snowflake : Timer;
-  return <span className={`all-agents-cache is-${mark.state}${small}`}>
-    {tokens(mark.context)} · <Icon aria-hidden="true" />{mark.state === "cold" ? t("cold") : t("{n}m left", { n: mark.leftMin })}
-  </span>;
-}
-
-/**
- * The dot beside a row's cost: only while resuming is still cheap (a cold cache is every old chat's,
- * and says nothing), and only on a chat without a cache mark (a mark says it on the row already).
- * A chat OmniRoute keeps warm is warm from its last ping too (ZAC-266), as its mark is.
- */
-export function rowCacheDot(row: { status: HostChatRow["status"] }, log: HostChatCost, mark: RowCacheMark | null, keepWarm: KeepWarmAnswer | null,
-  settings: { cacheLifetimeMin: number }, now: number): "warm" | "cooling" | null {
-  if (mark) return null;
-  const kept = row.status !== "working" ? keptWarmOf(keepWarmFor(keepWarm, log, now)) : null;
-  const cache = kept ? keptCacheState(log.lastCallAt, kept, now, settings.cacheLifetimeMin) : cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working");
-  return cache && cache.state !== "cold" ? cache.state : null;
-}
-
-/** A row's cost at its right (All agents, a group's page): the figure, the cache dot before it, a tiny split bar under it. */
-export function RowCostCell({ cost, dot }: { cost: CostSplit; dot: "warm" | "cooling" | null }) {
+/** A row's cost at its right (All agents, a group's page): the figure, a tiny split bar under it; the cache is the ring round the row's mark. */
+export function RowCostCell({ cost }: { cost: CostSplit }) {
   const t = useT();
   const localOnly = cost.usd === 0 && cost.local.length > 0 && cost.missing.length === 0;
   return <span className="all-agents-cost">
     <span className="all-agents-usd-line">
-      {dot && <span className={`session-dot is-${dot}`} title={t(dot === "warm" ? "Cache warm" : "Cache cooling")}>
-        <span className="visually-hidden">{t(dot === "warm" ? "Cache warm" : "Cache cooling")}</span>
-      </span>}
       <span className={`all-agents-usd${cost.floor ? " is-floor" : ""}`}>{localOnly ? t("$0 · local") : listUsd(cost.usd, cost.floor)}</span>
     </span>
     {!localOnly && <CostStack split={cost} className="cost-mini all-agents-split" />}
@@ -190,7 +114,7 @@ function rowCosts(rows: readonly HostChatRow[], answer: HostCostsAnswer, prices:
 }
 
 
-export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: only, initialSort = "recent", onOpen, onClose, ringRows = false }: AllAgentsSheetProps) {
+export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: only, initialSort = "recent", onOpen, onClose }: AllAgentsSheetProps) {
   const t = useT();
   const id = useId();
   const now = useMinuteClock();
@@ -284,29 +208,23 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     const title = hostChatTitle(row, t);
     // under All the row says its folder; a folder's pill already names it
     const cost = costs.get(row.session);
-    // its cold restarts after the folder and age: the list is compared by cost, and the peak size is the open chat's Context tab's
-    const restarts = cost?.chat.rewrites ?? 0;
-    const parts = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
-      restarts === 1 ? t("1 cold restart") : restarts > 1 ? t("{n} cold restarts", { n: restarts }) : null].filter((part): part is string => Boolean(part));
-    const words = parts.join(" · ");
-    // a big chat's cache after the rest (owner's pick B): "· 268K · 12m left", "· 312K · cold", in the cache's colour
+    // the cache is the ring round the mark (the sidebar's): its words, its dot and the cold restarts it says are not repeated
     const mark = marks.get(row.session);
-    // at a phone's width the words give way, never the cache (it is what the mark is for)
-    const context = mark && !ringRows ? <CacheLine parts={parts} mark={mark} /> : words;
+    // a chat with no ring keeps its cold restarts after the folder and age: the list is compared by cost
+    const restarts = mark ? 0 : cost?.chat.rewrites ?? 0;
+    const context = [row.status === "error" ? t("Error") : null, shownFolder === "all" ? row.cwd ? basename(row.cwd) : t("No folder") : null, chatAge(row, now, t),
+      restarts === 1 ? t("1 cold restart") : restarts > 1 ? t("{n} cold restarts", { n: restarts }) : null].filter((part): part is string => Boolean(part)).join(" · ");
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
-    const dot = cost && !ringRows ? rowCacheDot(row, cost.chat, mark ?? null, keepWarm, settings, now) : null;
     const menuOpen = menu?.session === row.session;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { session: row.session, anchor, point, previousFocus });
-    return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}${ringRows ? " has-state-cell" : ""}`} data-host-session={row.session}
+    return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}`} data-host-session={row.session}
       onMouseDownCapture={actions ? (event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); } : undefined}
       onContextMenu={actions ? (event) => onRowContextMenu(event, toggleMenu) : undefined}>
       <button type="button" className="agent-select agent-row" aria-current={row.session === selected ? "true" : undefined} title={[title, row.cwd, noPrice].filter(Boolean).join("\n")} onClick={() => onOpen(row.session)}>
-        {ringRows
-          ? <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} now={hostChatNow(row, t)}
-            cacheRing={mark ?? null} cacheWords={mark ? cacheWords(mark, t) : null} />
-          : <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} />}
-        {cost && <RowCostCell cost={cost} dot={dot} />}
+        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} now={hostChatNow(row, t)}
+          cacheRing={mark ?? null} cacheWords={mark ? cacheWords(mark, t) : null} />
+        {cost && <RowCostCell cost={cost} />}
       </button>
       {actions && <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>

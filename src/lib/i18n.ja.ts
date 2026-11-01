@@ -656,7 +656,6 @@ const BASE: Record<string, string> = {
   "Sort: {order}": "並べ替え：{order}",
   "Cost, highest first": "コストの高い順",
   "Going cold": "失効が近い順",
-  "{n}m left": "残り{n}分",
   "1 chat · {scope}": "1 件のチャット · {scope}",
   "{n} chats · {scope}": "{n} 件のチャット · {scope}",
   "all folders": "すべてのフォルダー",
