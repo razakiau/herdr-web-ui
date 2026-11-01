@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChatGroup } from "../../shared/groups.ts";
 import type { HostArtifact, HostChatRow, HostLink } from "../../shared/host-chats.ts";
-import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, groupTree, shortChatName, trailName } from "./groups.ts";
+import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, defaultFolds, groupTree, rerootTree, shortChatName, trailName, treeLines } from "./groups.ts";
 
 const PC = "mac";
 const row = (session: string, title: string, modified: string, over: Partial<HostChatRow> = {}): HostChatRow =>
@@ -95,6 +95,48 @@ describe("groupTree", () => {
     const group: ChatGroup = { ...GROUP, members: [member("a", "link", "2026-10-31T09:00:00Z"), member("b", "link", "2026-10-31T10:00:00Z")] };
     const tree = groupTree(group, [link("a", "b", "spawn", "2026-10-31T10:00:00Z"), link("b", "a", "resume", "2026-10-31T11:00:00Z")]);
     expect(shape(tree)).toEqual(["a resume b", "  b spawn a"]);
+  });
+});
+
+describe("the drawn tree (Reddit's thread)", () => {
+  const link = (from: string, to: string, at: string) => ({ pc: PC, from, to, kind: "spawn" as const, at });
+  // a chain seven deep (a … g), and an archived branch x → y beside it
+  const sessions = ["a", "b", "c", "d", "e", "f", "g", "x", "y"];
+  const group: ChatGroup = { ...GROUP, members: sessions.map((session) => member(session, "link")) };
+  const links = [...["a", "b", "c", "d", "e", "f"].map((from, index) => link(from, sessions[index + 1]!, `2026-10-31T1${index}:00:00Z`)),
+    link("a", "x", "2026-10-31T09:30:00Z"), link("x", "y", "2026-10-31T09:40:00Z")];
+  const tree = groupTree(group, links);
+  const keyOf = (session: string) => chatKey(PC, session);
+  const sessionsOf = (lines: ReturnType<typeof treeLines>) => lines.map((line) => line.node.session);
+
+  it("stops at the cap: the last level says Continue this thread with what it hides", () => {
+    const lines = treeLines(tree, new Set(), 3);
+    expect(sessionsOf(lines)).toEqual(["a", "x", "y", "b", "c"]);
+    const c = lines.at(-1)!;
+    expect(c.continued).toBe(true);
+    expect(c.hidden.map((node) => node.session)).toEqual(["d", "e", "f", "g"]);
+    expect(c.ancestors).toEqual([keyOf("a"), keyOf("b")]);
+    expect(sessionsOf(treeLines(tree, new Set(), 5))).toEqual(["a", "x", "y", "b", "c", "d", "e"]);
+  });
+
+  it("folds a branch into its top chat's line", () => {
+    const lines = treeLines(tree, new Set([keyOf("x")]), 5);
+    const x = lines.find((line) => line.node.session === "x")!;
+    expect(x.folded).toBe(true);
+    expect(x.hidden.map((node) => node.session)).toEqual(["y"]);
+    expect(sessionsOf(lines)).not.toContain("y");
+  });
+
+  it("folds by default only a branch whose chats are all quiet (archived and cold)", () => {
+    expect([...defaultFolds(tree, (key) => key === keyOf("x") || key === keyOf("y"))]).toEqual([keyOf("x")]);
+    expect([...defaultFolds(tree, (key) => key === keyOf("x"))]).toEqual([]);
+  });
+
+  it("re-roots at a chat: its branch from depth 0, the path from the root to it", () => {
+    const { nodes, path } = rerootTree(tree, keyOf("c"));
+    expect(nodes.map((node) => `${node.session}${node.depth}`)).toEqual(["c0", "d1", "e2", "f3", "g4"]);
+    expect(path.map((node) => node.session)).toEqual(["a", "b", "c"]);
+    expect(rerootTree(tree, null).nodes).toHaveLength(tree.length);
   });
 });
 

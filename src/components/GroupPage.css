@@ -16,27 +16,93 @@
 .group-artifact-from { flex: none; max-width: 40%; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .group-artifact-more { align-self: flex-start; }
 
-/* the chats, a tree of who started whom: each the app's own agent row (All agents' look), its
-   relation line above it; a child is indented one step a level (two at most on a phone) with a
-   thin line down its left from its parent */
+/* the chats, a tree of who started whom (Reddit's thread, owner's round 2): each the app's own
+   agent row (All agents' look), its relation line above it; a child indented one step a level, a
+   thin line per level down its left (a tap on it folds that level's branch). The tree stops at 3
+   levels on a phone and 5 wider (GroupPage.tsx: "Continue this thread"), so the indent never runs away */
 .group-tree { margin: 0; padding: 0; list-style: none; }
 .group-node {
-  --group-step: var(--space-4);
+  --group-step: 14px;
   position: relative;
   padding-inline-start: calc(var(--group-depth, 0) * var(--group-step));
 }
-@media (min-width: 641px) {
+@media (min-width: 520px) {
   .group-node { --group-step: var(--space-5); }
 }
 .group-node + .group-node { border-top: var(--hairline) solid color-mix(in srgb, var(--border) 60%, transparent); }
-.group-node.is-child::before {
+.group-node + .group-node.is-child { border-top-color: transparent; }
+.group-thread {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: calc(var(--thread-level) * var(--group-step));
+  z-index: 1;
+  width: var(--group-step);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.group-thread::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  inset-inline-start: calc((var(--group-depth, 0) - 1) * var(--group-step) + var(--space-2));
+  inset-inline-start: calc(var(--group-step) / 2 - 1px);
   border-inline-start: 2px solid var(--border-strong);
 }
+@media (hover: hover) { .group-thread:hover::before { border-color: var(--accent); } }
+.group-thread:focus-visible::before { border-color: var(--accent); }
+.group-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  margin-inline-start: -4px;
+  padding: 0 4px 0 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.group-fold-toggle > span { overflow: hidden; text-overflow: ellipsis; }
+.group-fold-toggle svg { flex: none; width: 14px; height: 14px; transform: rotate(90deg); transition: transform var(--dur-fast, 120ms); }
+.group-fold-toggle[aria-expanded="false"] svg { transform: none; }
+@media (hover: hover) { .group-fold-toggle:hover { color: var(--text); } }
+/* a folded branch's line, and "Continue this thread": under the row, at its title's start */
+.group-fold,
+.group-continue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  box-sizing: border-box;
+  width: fit-content;
+  /* a button sizes to its words: held to the row's text column, so a long state wraps rather than spilling out */
+  max-width: calc(100% - var(--side-box) * 2 - var(--space-2));
+  margin: 0 0 var(--space-2) calc(var(--side-box) + var(--space-2));
+  padding: 2px var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: start;
+  cursor: pointer;
+}
+.group-continue { color: var(--accent); }
+.group-continue > svg { flex: none; width: 14px; height: 14px; margin-inline-start: -4px; }
+.group-continue-count { color: var(--text-dim); }
+@media (hover: hover) { .group-fold:hover, .group-continue:hover { background: var(--bg-hover); } }
+/* the breadcrumb of a continued thread: each chat back up a button */
+.group-crumbs ol { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 var(--space-2); padding: 0; list-style: none; font-size: var(--fs-xs); }
+.group-crumbs li { display: inline-flex; align-items: center; gap: 2px; }
+.group-crumb { padding: 2px 4px; border: 0; border-radius: var(--radius-sm, 4px); background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.group-crumb.is-current { color: var(--text-strong); cursor: default; }
+@media (hover: hover) { button.group-crumb:hover { background: var(--bg-hover); } }
+.group-crumb-sep { width: 12px; height: 12px; color: var(--text-dim); }
 .group-relation {
   margin: 0;
   padding: var(--space-2) var(--space-2) 0;
@@ -48,3 +114,12 @@
 }
 .group-summary { margin: 0; padding: 0 var(--space-2) var(--space-2) calc(var(--side-box) + var(--space-2)); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
 .group-node .agent-item.is-offline .agent-title { color: var(--text-dim); }
+/* the row's state cell (its status glyph) sits at its right edge: its room kept, so it never lands on the cost */
+.group-page .group-node .agent-item { padding-right: var(--side-box); }
+/* the folded line's state wraps inside it, part by part (GroupState.tsx draws it one line elsewhere) */
+.group-fold .group-state,
+.group-continue .group-state { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; row-gap: 2px; white-space: normal; }
+.group-fold .group-state > *,
+.group-continue .group-state > * { white-space: nowrap; }
+.group-fold .group-state-status,
+.group-continue .group-state-status { display: contents; }

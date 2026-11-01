@@ -157,6 +157,85 @@ export function groupTree(group: ChatGroup, links: readonly GroupLink[]): TreeNo
   return out;
 }
 
+/** How many chats sit under the tree's node at `index` (its whole branch, the node left out). */
+export function branchSize(tree: readonly TreeNode[], index: number): number {
+  const depth = tree[index]!.depth;
+  let end = index + 1;
+  while (end < tree.length && tree[end]!.depth > depth) end++;
+  return end - index - 1;
+}
+
+/**
+ * The tree from one chat down (a "Continue this thread" opened on the group page): its branch, the
+ * depths counted from it, with the path of chats from the tree's root to it (the breadcrumb). The
+ * whole tree when the chat is not in it.
+ */
+export function rerootTree(tree: readonly TreeNode[], key: string | null): { nodes: TreeNode[]; path: TreeNode[] } {
+  const index = key === null ? -1 : tree.findIndex((node) => chatKey(node.pc, node.session) === key);
+  if (index < 0) return { nodes: [...tree], path: [] };
+  const top = tree[index]!;
+  const nodes = tree.slice(index, index + 1 + branchSize(tree, index)).map((node) => ({ ...node, depth: node.depth - top.depth }));
+  // the ancestors: walking back, the last node seen at each smaller depth
+  const path: TreeNode[] = [top];
+  for (let at = index - 1, depth = top.depth; at >= 0 && depth > 0; at--) {
+    if (tree[at]!.depth < depth) { path.unshift(tree[at]!); depth = tree[at]!.depth; }
+  }
+  return { nodes, path };
+}
+
+/** One line of the drawn tree: a chat's row, with its branch folded into it, or cut at the depth cap. */
+export interface TreeLine {
+  node: TreeNode;
+  /** the chats of its branch that are not drawn: folded (`folded`) or past the cap (`continued`) */
+  hidden: TreeNode[];
+  folded: boolean;
+  continued: boolean;
+  /** has a branch at all (a chevron to fold it) */
+  parent: boolean;
+  /** each ancestor's key, the root's first: the thread lines at its left, one per level, fold them */
+  ancestors: string[];
+}
+
+/**
+ * The tree as the page draws it (Reddit's thread, owner's round 2): a folded chat is one line with
+ * its branch hidden in it; at `cap` levels (3 on a phone, 5 wider) a chat with a branch stops there
+ * and says "Continue this thread" instead of indenting further.
+ */
+export function treeLines(tree: readonly TreeNode[], folded: ReadonlySet<string>, cap: number): TreeLine[] {
+  const lines: TreeLine[] = [];
+  const stack: string[] = [];
+  for (let index = 0; index < tree.length;) {
+    const node = tree[index]!;
+    const key = chatKey(node.pc, node.session);
+    stack.length = node.depth;
+    const size = branchSize(tree, index);
+    const isFolded = size > 0 && folded.has(key);
+    const continued = size > 0 && !isFolded && node.depth >= cap - 1;
+    const hide = isFolded || continued;
+    lines.push({ node, hidden: hide ? tree.slice(index + 1, index + 1 + size) : [], folded: isFolded, continued, parent: size > 0, ancestors: [...stack] });
+    stack.push(key);
+    index += hide ? size + 1 : 1;
+  }
+  return lines;
+}
+
+/**
+ * The branches folded when the page opens: the topmost chat whose whole branch (it too) is archived
+ * and cold, so nothing live is ever folded away unasked. `quiet` says a chat is archived and cold.
+ */
+export function defaultFolds(tree: readonly TreeNode[], quiet: (key: string) => boolean): Set<string> {
+  const folds = new Set<string>();
+  for (let index = 0; index < tree.length;) {
+    const size = branchSize(tree, index);
+    const branch = tree.slice(index, index + 1 + size);
+    if (size > 0 && branch.every((node) => quiet(chatKey(node.pc, node.session)))) {
+      folds.add(chatKey(tree[index]!.pc, tree[index]!.session));
+      index += size + 1;
+    } else index += 1;
+  }
+  return folds;
+}
+
 /**
  * The artifacts of every chat, each once and credited to the first chat in `order` (the tree's)
  * that has it: a child hands its parent's list on, so every chat names what the first one made.

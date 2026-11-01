@@ -239,4 +239,39 @@ describe("the group page", () => {
     expect(credits()).toHaveLength(7);
     expect(classed(page.root, "group-artifact-more")).toHaveLength(0);
   });
+
+  it("folds an archived, cold branch by default, says +N, and opens it on a tap", async () => {
+    const group: ChatGroup = { ...GROUP, members: [...GROUP.members, { pc: "local", session: "s-arch", joined: "link", addedAt: "2026-10-30T10:00:00Z" }] };
+    const answer: GroupsAnswer = { ...ANSWER, groups: [group], links: [...ANSWER.links, { pc: "local", from: "s-old", to: "s-arch", kind: "spawn", at: "2026-10-30T10:00:00Z" }] };
+    const archivedOnly: ReadonlyMap<string, HostPc> = new Map([["local", { host: null, chats: [
+      row("s-old", "FICTIONAL-262 follow-ups", { archived: true }), row("s-new", "FICTIONAL-265 groups", { archived: true }), row("s-arch", "FICTIONAL-266 side", { archived: true }),
+    ] }]]);
+    const page = await open({ group, answer, hostChats: archivedOnly });
+    const fold = classed(page.root, "group-fold");
+    expect(fold.map(textOf)).toEqual(["+2 chats"]);
+    expect(page.root.findAll((each) => each.type === "li" && each.props["data-member"] === "local s-new")).toHaveLength(0);
+    await act(async () => { fold[0]!.props["onClick"](); });
+    expect(classed(page.root, "group-fold")).toHaveLength(0);
+    expect(card(page, "local s-new").props["data-depth"]).toBe(1);
+  });
+
+  it("stops a deep chain at the cap with Continue this thread, re-roots there with a breadcrumb, and Back goes up", async () => {
+    const chain = ["c0", "c1", "c2", "c3", "c4", "c5", "c6"];
+    const group: ChatGroup = { ...GROUP, members: chain.map((session, index) => ({ pc: "local", session, joined: "link" as const, addedAt: `2026-10-3${index % 2}T0${index}:00:00Z` })) };
+    const answer: GroupsAnswer = { ...ANSWER, groups: [group], links: chain.slice(1).map((to, index) => ({ pc: "local", from: chain[index]!, to, kind: "spawn" as const, at: `2026-10-31T0${index}:00:00Z` })) };
+    const deep: ReadonlyMap<string, HostPc> = new Map([["local", { host: null, chats: chain.map((session) => row(session, `FICTIONAL-${session.slice(1)}0 step`)) }]]);
+    let closed = 0;
+    const page = await open({ group, answer, hostChats: deep, onClose: () => { closed++; } });
+    const continued = classed(page.root, "group-continue");
+    expect(continued.map(textOf)).toEqual(["Continue this thread(2 chats)"]);
+    await act(async () => { continued[0]!.props["onClick"](); });
+    expect(classed(page.root, "group-crumb").map(textOf)).toEqual(["00", "10", "20", "30", "40"]);
+    expect(card(page, "local c4").props["data-depth"]).toBe(0);
+    const back = page.root.find((each) => each.type === "button" && each.props["aria-label"] === "Back");
+    await act(async () => { back.props["onClick"](); });
+    expect(classed(page.root, "group-crumb")).toHaveLength(0);
+    expect(closed).toBe(0);
+    await act(async () => { back.props["onClick"](); });
+    expect(closed).toBe(1);
+  });
 });

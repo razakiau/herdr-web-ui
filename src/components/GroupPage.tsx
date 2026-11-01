@@ -15,7 +15,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronLeft, CircleDot, Ellipsis, GitCommitHorizontal, GitPullRequest, Globe, Link, Package, Pencil, Trash2, type LucideProps } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, CircleDot, Ellipsis, GitCommitHorizontal, GitPullRequest, Globe, Link, Package, Pencil, Trash2, type LucideProps } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -33,7 +33,9 @@ import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { pathOfFileUri } from "../lib/artifacts.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { chatKey, costOf, creditArtifacts, groupsApi, groupTree, shortChatName, type ChatRef, type TreeNode } from "../lib/groups.ts";
+import { chatKey, costOf, creditArtifacts, defaultFolds, groupsApi, groupTree, rerootTree, shortChatName, treeLines, type ChatRef, type TreeLine, type TreeNode } from "../lib/groups.ts";
+import { hostChatStatus } from "../lib/hostPlacement.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { basename, chatAge, fetchHostChat, type HostPc } from "../lib/hostChats.ts";
 import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { daysBack } from "../lib/hostChatGroups.ts";
@@ -165,21 +167,37 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const [asking, setAsking] = useState<"rename" | "delete" | null>(null);
   const [kind, setKind] = useState<HostArtifactType | null>(null);
   const [more, setMore] = useState(false);
+  // the branches the owner folded or opened (by the chat at their top), over the default folds
+  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
+  // the "Continue this thread"s opened, in turn: the page shows the last one's branch, a breadcrumb back up
+  const [roots, setRoots] = useState<readonly string[]>([]);
+  const root = roots.at(-1) ?? null;
+  // a breadcrumb's chat: back to where it was opened, else (a chat above the first continue) a new step
+  const goTo = (key: string | null): void => setRoots((last) => {
+    if (key === null) return [];
+    const at = last.indexOf(key);
+    return at >= 0 ? last.slice(0, at + 1) : [key];
+  });
+  // Reddit's thread (owner's round 2): 3 levels on a phone, 5 wider, then "Continue this thread"
+  const cap = useMediaQuery("(max-width: 519px)") ? 3 : 5;
   const page = useRef<HTMLDivElement | null>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: page });
-  usePhoneSheetBack(() => onClose(), menu === null && asking === null);
+  const tree = useMemo(() => groupTree(group, answer.links), [group, answer.links]);
+  const shown = useMemo(() => rerootTree(tree, root), [tree, root]);
+  // Back (and the header's ‹, and Escape) goes up a level first (to where the thread was continued), then closes
+  const back = (): boolean => { if (root !== null) { setRoots((last) => last.slice(0, -1)); return false; } onClose(); return true; };
+  usePhoneSheetBack(back, menu === null && asking === null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "Escape" || menu !== null || asking !== null || nativeModalOver(surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
-      onClose();
+      back();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   });
   const rows = useMemo(() => rowsByKey(hostChats), [hostChats]);
-  const tree = useMemo(() => groupTree(group, answer.links), [group, answer.links]);
   const { states, logs, keepWarm, now } = useMemberStates(group, rows, feed);
   const artifacts = useMemberArtifacts(group, machines);
   const credited = useMemo(() => creditArtifacts(artifacts, tree.map((node) => chatKey(node.pc, node.session))), [artifacts, tree]);
@@ -214,9 +232,21 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   };
   const canOpen = (artifact: HostArtifact): boolean => artifact.type === "file" ? artifact.uri !== undefined && onOpenFile !== undefined
     : /^https?:\/\//i.test(artifact.link ?? artifact.uri ?? "") || artifact.commitHash !== undefined;
+  // a branch all archived and cold folds by default (the chat the page was opened from never does)
+  const quiet = (key: string): boolean => {
+    const row = rows.get(key);
+    const mark = states.get(key)?.mark ?? null;
+    return row?.archived === true && (mark === null || mark.state === "cold") && !(from !== null && chatKey(from.pc, from.session) === key);
+  };
+  const folds = new Set(defaultFolds(shown.nodes, quiet));
+  for (const [key, on] of toggled) { if (on) folds.add(key); else folds.delete(key); }
+  const lines = treeLines(shown.nodes, folds, cap);
+  const toggle = (key: string): void => setToggled((last) => new Map(last).set(key, !folds.has(key)));
+  const nameOfNode = (node: TreeNode): string => shortChatName(titleOf(node));
   const nameOfKey = (key: string): string => { const at = key.indexOf(" "); return shortChatName(titleOf({ pc: key.slice(0, at), session: key.slice(at + 1) })); };
 
-  const member = (node: TreeNode) => {
+  const member = (line: TreeLine) => {
+    const { node } = line;
     const key = chatKey(node.pc, node.session);
     const row = rowOf(node);
     const machine = machineOf(node.pc);
@@ -237,18 +267,39 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     const relationText = relation(node, (session) => shortChatName(titleOf({ pc: node.pc, session })), t);
     const at = Date.parse(node.join.at);
     const summary = summaries.get(key);
-    return <li key={key} data-member={key} data-depth={node.depth} className={`group-node${node.depth > 0 ? " is-child" : ""}`}
-      style={{ "--group-depth": Math.min(node.depth, 2) } as React.CSSProperties}>
-      <p className="group-relation">{relationText}{Number.isFinite(at) && node.join.kind !== "first" ? ` · ${dayOf(at, now, locale, t)}` : ""}</p>
+    const hiddenStates = line.hidden.map((each) => states.get(chatKey(each.pc, each.session))).filter((each): each is NonNullable<typeof each> => each !== undefined);
+    const hiddenCount = line.hidden.length;
+    const relationLine = <>{relationText}{Number.isFinite(at) && node.join.kind !== "first" ? ` · ${dayOf(at, now, locale, t)}` : ""}</>;
+    return <li key={key} data-member={key} data-depth={node.depth} className={`group-node${node.depth > 0 ? " is-child" : ""}${line.folded ? " is-folded" : ""}`}
+      style={{ "--group-depth": node.depth } as React.CSSProperties}>
+      {/* a thin line per level at the left, Reddit's thread: a tap folds that level's chat's branch */}
+      {line.ancestors.map((ancestor, level) => <button key={ancestor} type="button" className="group-thread" tabIndex={-1} style={{ "--thread-level": level } as React.CSSProperties}
+        aria-label={t("Fold {name}", { name: nameOfKey(ancestor) })} title={t("Fold {name}", { name: nameOfKey(ancestor) })} onClick={() => toggle(ancestor)} />)}
+      <p className="group-relation">
+        {line.parent && !line.continued ? <button type="button" className="group-fold-toggle" aria-expanded={!line.folded}
+          aria-label={line.folded ? t("Unfold {name}", { name: nameOfNode(node) }) : t("Fold {name}", { name: nameOfNode(node) })} onClick={() => toggle(key)}>
+          <ChevronRight aria-hidden="true" /><span>{relationLine}</span>
+        </button> : relationLine}
+      </p>
       <div className={`agent-item host-chat-item${selected ? " is-selected" : ""}${offline || gone ? " is-offline" : ""}${row?.archived ? " is-archived" : ""}`} data-host-session={node.session}>
         <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, row?.cwd].filter(Boolean).join("\n")}
           onClick={() => onOpenChat({ machineId: node.pc, session: node.session })}>
           <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={pcNames ? machine?.name ?? node.pc : null} context={context} tokens={[]}
-            status={state?.status} cacheRing={mark} cacheWords={mark ? cacheWords(mark, t) : null} />
+            status={row ? hostChatStatus(row) : undefined} cacheRing={mark} cacheWords={mark ? cacheWords(mark, t) : null} />
           {cost && <RowCostCell cost={cost} dot={dot} />}
         </button>
       </div>
-      {summary && <p className="group-summary">{summary}</p>}
+      {summary && !line.folded && <p className="group-summary">{summary}</p>}
+      {/* a folded branch: one line, its live state still said, so a warm or working chat is never hidden without a sign */}
+      {line.folded && <button type="button" className="group-fold" onClick={() => toggle(key)}>
+        <span>{t(hiddenCount === 1 ? "+1 chat" : "+{n} chats", { n: hiddenCount })}</span>
+        {hasGroupState(hiddenStates) && <><span aria-hidden="true">·</span><GroupStateSummary states={hiddenStates} /></>}
+      </button>}
+      {line.continued && <button type="button" className="group-continue" onClick={() => setRoots((last) => [...last, key])}>
+        <span>{t("Continue this thread")}</span><ChevronRight aria-hidden="true" />
+        <span className="group-continue-count">{t(hiddenCount === 1 ? "(1 chat)" : "({n} chats)", { n: hiddenCount })}</span>
+        {hasGroupState(hiddenStates) && <GroupStateSummary states={hiddenStates} />}
+      </button>}
     </li>;
   };
 
@@ -256,7 +307,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     <div className="modal-scrim new-session-scrim group-page-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={(node) => { surface.current = node; page.current = node; }} className="modal group-page all-agents" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}>
         <header className="modal-header group-page-head">
-          <button type="button" className="icon-button" aria-label={t("Back")} title={t("Back")} onClick={onClose}><ChevronLeft aria-hidden="true" /></button>
+          <button type="button" className="icon-button" aria-label={t("Back")} title={t("Back")} onClick={back}><ChevronLeft aria-hidden="true" /></button>
           <div className="group-page-title">
             <h2 className="modal-title" id={`${id}-title`}>{group.name}</h2>
             <span className="group-page-sub">
@@ -274,7 +325,18 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
           {/* the digest card goes here (Task 9): nothing shows in its place yet */}
           <section className="all-agents-group" aria-label={t("Chats")}>
             <h3 className="sidebar-section-label all-agents-age">{t("Chats")}</h3>
-            <ol className="agent-list group-tree">{tree.map(member)}</ol>
+            {shown.path.length > 0 && <nav className="group-crumbs" aria-label={t("Thread")}>
+              <ol>{shown.path.map((node, index) => {
+                const last = index === shown.path.length - 1;
+                const target = node.depth === 0 ? null : chatKey(node.pc, node.session);
+                return <li key={chatKey(node.pc, node.session)}>
+                  {index > 0 && <ChevronRight className="group-crumb-sep" aria-hidden="true" />}
+                  {last ? <span className="group-crumb is-current" aria-current="location">{nameOfNode(node)}</span>
+                    : <button type="button" className="group-crumb" onClick={() => goTo(target)}>{nameOfNode(node)}</button>}
+                </li>;
+              })}</ol>
+            </nav>}
+            <ol className="agent-list group-tree">{lines.map(member)}</ol>
           </section>
           {chips.length > 0 && <section className="all-agents-group group-made" aria-label={t("Made in this group")}>
             <h3 className="sidebar-section-label all-agents-age">{t("Made in this group")}</h3>
