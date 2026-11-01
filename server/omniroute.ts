@@ -133,6 +133,7 @@ export interface OmniRouteConfig { url: string; token: string; writeToken?: stri
 /** How long the keep-warm plugin's state is reused: it syncs it once a minute */
 const KEEP_WARM_FRESH_MS = 30_000;
 const KEEP_WARM_PATH = "/api/plugins/keep-warm/config";
+const SESSION_CONTEXT_PATH = "/api/cache/session-context";
 
 /** An OmniRoute gateway's limits for /api/usage, and its state for Settings. */
 export class OmniRouteUsage {
@@ -257,6 +258,31 @@ export class OmniRouteUsage {
     return this.keepWarm(true);
   }
 
+  /**
+   * Makes OmniRoute forget one chat's frozen checkpoint list (ZAC-272): it keeps each chat's
+   * `<session_context>` as first sent until the chat compacts, so the prompt's cache survives a new
+   * checkpoint; the next call after this sends the list as it is now and stores the chat again.
+   * OmniRoute names the chat by its CLI log's folder (HostChatCost.log), not the host row's id.
+   */
+  async refreshSessionContext(session: string): Promise<{ removed: number }> {
+    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    if (!this.config.writeToken) throw new OmniRouteError("refresh_read_only", 409, "Refreshing needs a write token");
+    const id = /^[A-Za-z0-9._-]{1,128}$/.test(session) && session !== "." && session !== ".." ? session : null;
+    if (!id) throw new OmniRouteError("invalid_chat", 400, "Invalid chat");
+    const response = await this.fetcher(`${this.url}${SESSION_CONTEXT_PATH}?session=${encodeURIComponent(id)}`, {
+      method: "DELETE", redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: { accept: "application/json", authorization: `Bearer ${this.config.writeToken}` },
+    }).catch(() => null);
+    if (!response || !response.ok) {
+      await response?.body?.cancel();
+      const status = response?.status;
+      throw new OmniRouteError("refresh_unavailable", 502, status === 401 || status === 403 ? "OmniRoute refused the write token"
+        : status === 404 ? "This OmniRoute freezes no checkpoint list" : "Could not reach OmniRoute");
+    }
+    const removed = number(record(await response.json().catch(() => null))?.["removed"]);
+    return { removed: removed ?? 0 };
+  }
+
   private async get(path: string): Promise<unknown> {
     const response = await this.fetcher(`${this.url}${path}`, {
       method: "GET", redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -333,6 +359,8 @@ export class OmniRouteLink {
   keepWarm(refresh = false): Promise<KeepWarmAnswer> { return this.usage.keepWarm(refresh); }
 
   saveKeepWarm(value: unknown): Promise<KeepWarmAnswer> { return this.usage.saveKeepWarm(value); }
+
+  refreshSessionContext(session: string): Promise<{ removed: number }> { return this.usage.refreshSessionContext(session); }
 
   /** Saves `{url, token?}` and reads the gateway once; a blank token keeps the saved one for the same URL. */
   async save(value: unknown): Promise<OmniRouteStatus> {
@@ -418,6 +446,22 @@ export async function handleKeepWarmRequest(request: Request, link: Pick<OmniRou
     }
   } catch (error) {
     const safe = error instanceof OmniRouteError ? error : invalid();
+    return reply({ error: { code: safe.code, message: safe.message } }, safe.status);
+  }
+}
+
+/** POST `{session}` (a CLI log's id) on /api/usage/omniroute/session-context (ZAC-272): the Cache tab's Refresh; only fixed words leave it. */
+export async function handleSessionContextRefresh(request: Request, link: Pick<OmniRouteLink, "refreshSessionContext">): Promise<Response> {
+  const reply = (value: unknown, status = 200) => jsonResponse(value, status, { "cache-control": "no-store" });
+  if (request.method !== "POST") return reply({ error: { code: "method_not_allowed", message: "Use POST" } }, 405);
+  try {
+    let body: unknown;
+    try { body = await request.json(); } catch { throw new OmniRouteError("invalid_chat", 400, "Invalid chat"); }
+    const session = record(body)?.["session"];
+    if (typeof session !== "string") throw new OmniRouteError("invalid_chat", 400, "Invalid chat");
+    return reply(await link.refreshSessionContext(session));
+  } catch (error) {
+    const safe = error instanceof OmniRouteError ? error : new OmniRouteError("refresh_unavailable", 502, "Could not reach OmniRoute");
     return reply({ error: { code: safe.code, message: safe.message } }, safe.status);
   }
 }

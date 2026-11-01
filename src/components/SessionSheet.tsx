@@ -10,7 +10,7 @@
 import { useState } from "react";
 
 import { HandoffStep } from "./HandoffStep.tsx";
-import { Flame } from "lucide-react";
+import { Flame, RotateCw } from "lucide-react";
 
 import "./SessionSheet.css";
 
@@ -21,7 +21,8 @@ import { useMinuteClock } from "../lib/hostChats.ts";
 import { formatUsd, isLocalModel, listUsd, priceWithFallback } from "../lib/chatCost.ts";
 import { avgOutput, cacheMeter, cacheModel, callingModel, costSplit, FRESH_CHAT_CONTEXT, freshHandoffUsd, modelLastCall, handoffUsd, mergeLive, nextCall, renewedAt, writePrice, type CostSplit } from "../lib/sessionCost.ts";
 import type { Settings } from "../lib/settings.ts";
-import { keepWarmFeed, keepWarmFor, keptWarmOf, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
+import { keepWarmFeed, keepWarmFor, keptWarmOf, refreshSessionContext, saveKeepWarm, useKeepWarm, withChat } from "../lib/keepWarm.ts";
+import { ApiError } from "../lib/api.ts";
 import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
 import { ContextPanel, ContextSheet, formatTokenCount, SheetFrame } from "./HostChatStatus.tsx";
 import { CostChart, messageCosts } from "./CostChart.tsx";
@@ -216,6 +217,48 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
   </div>;
 }
 
+type RefreshPhase = "idle" | "confirm" | "busy" | "done" | "failed";
+
+/** The refresh row's words for a step (ZAC-272); `action` null: no button. */
+export function refreshRowWords(step: { phase: RefreshPhase; size: string; price: string | null; problem?: string }, t: Translate): { sub: string; action: string | null } {
+  const stores = step.price ? t("the next call stores {size} again ({usd})", { size: step.size, usd: step.price }) : t("the next call stores {size} again", { size: step.size });
+  switch (step.phase) {
+    case "idle": return { sub: t("frozen until the next compaction"), action: t("Refresh") };
+    case "confirm": return { sub: stores, action: t("Refresh now") };
+    case "busy": return { sub: stores, action: t("Refreshing…") };
+    case "done": return { sub: t("the next call sends the current list"), action: null };
+    case "failed": return { sub: step.problem ?? t("Could not reach OmniRoute"), action: t("Refresh") };
+  }
+}
+
+/**
+ * The Cache tab's checkpoint-list row (ZAC-272). OmniRoute keeps a chat's `<session_context>` (its
+ * checkpoint list) as first sent until the chat compacts, so a new checkpoint no longer stores the
+ * whole prompt again. Refresh makes the next call send the list as it is now, at the price of one
+ * write of the chat: the first press asks, showing that price; the second does it.
+ */
+function RefreshContextRow({ session, size, price }: { session: string; size: string; price: string | null }) {
+  const t = useT();
+  const [phase, setPhase] = useState<RefreshPhase>("idle");
+  const [problem, setProblem] = useState<string | undefined>(undefined);
+  const words = refreshRowWords({ phase, size, price, ...(problem ? { problem } : {}) }, t);
+  const press = (): void => {
+    if (phase !== "confirm") { setPhase("confirm"); return; }
+    setPhase("busy");
+    void refreshSessionContext(session).then(() => setPhase("done"), (error: unknown) => {
+      setProblem(error instanceof ApiError ? error.detail : undefined);
+      setPhase("failed");
+    });
+  };
+  return <div className="host-context-row session-refresh-context">
+    <span className="session-row-label"><span><RotateCw className="session-refresh-icon" aria-hidden="true" />{t("Checkpoint list")}</span><small className="session-row-sub">{words.sub}</small></span>
+    {words.action && <span className="session-refresh-actions">
+      {phase === "confirm" && <button type="button" className="btn btn-ghost" onClick={() => setPhase("idle")}>{t("Cancel")}</button>}
+      <button type="button" className={`btn${phase === "confirm" ? " btn-primary" : ""}`} disabled={phase === "busy"} onClick={press}>{words.action}</button>
+    </span>}
+  </div>;
+}
+
 function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: KeepWarmKey; kept: boolean } | null; keepWarm: KeepWarmAnswer | null; now: number }) {
   const { read, session, settings, onClose, onCompact, onHandoff, handingOff, handoffWaiting, keep, keepWarm, now } = props;
   const [step, setStep] = useState(false);
@@ -269,6 +312,7 @@ function CacheTab(props: SessionSheetProps & { session: Session; keep: { key: Ke
           </div>
         </div>}
         {keep && keepWarm?.state && !unused && <KeepWarmRow keep={keep} answer={keepWarm} now={now} />}
+        {keep && keepWarm?.writable && props.cost?.chat?.log && <RefreshContextRow session={props.cost.chat.log} size={size} price={next ? usd(next.cold, false) : null} />}
         {hit !== null && !unused && <div className="host-context-row"><span>{t("Last call read from cache")}</span><span className="session-value">{hit}%</span></div>}
         {/* cold: no warm price to have, the next call stores it all again; it is weighed against a fresh chat */}
         {/* the composer's model has no warm cache of this chat: the next call stores it all again on it, priced on it */}

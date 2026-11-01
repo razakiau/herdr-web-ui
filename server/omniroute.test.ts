@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
+import { handleKeepWarmRequest, handleOmniRoutePricing, handleSessionContextRefresh, handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -371,5 +371,51 @@ describe("keep-warm (ZAC-260 phase 2)", () => {
     expect(text).toContain("OmniRoute refused the write token");
     expect(text).not.toContain(WRITE);
     expect(text).not.toContain(TOKEN);
+  });
+});
+
+describe("refresh a chat's checkpoint list (ZAC-272)", () => {
+  const WRITE = "oma_FICTIONAL_write_token_never_in_answers";
+  type Call = { method: string; url: string; auth: string | null };
+  const gateway = (calls: Call[], status = 200, removed = 1) => async (url: string, init: RequestInit) => {
+    calls.push({ method: init.method ?? "GET", url, auth: new Headers(init.headers).get("authorization") });
+    return status === 200 ? Response.json({ ok: true, session: "x", removed }) : new Response(`bad ${WRITE}`, { status });
+  };
+
+  it("asks OmniRoute to forget the chat's frozen list with the write token, by the chat's own id", async () => {
+    const calls: Call[] = [];
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE }, gateway(calls), () => NOW);
+    expect(await service.refreshSessionContext("0d6a7c1e-FICTIONAL")).toEqual({ removed: 1 });
+    expect(calls).toEqual([{ method: "DELETE", url: "http://omniroute.test/api/cache/session-context?session=0d6a7c1e-FICTIONAL", auth: `Bearer ${WRITE}` }]);
+  });
+
+  it("refuses without a write token or with an id OmniRoute would not take, and asks nothing", async () => {
+    const calls: Call[] = [];
+    const readOnly = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN }, gateway(calls), () => NOW);
+    await expect(readOnly.refreshSessionContext("abc")).rejects.toThrow("Refreshing needs a write token");
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE }, gateway(calls), () => NOW);
+    for (const bad of ["", ".", "..", "copilotcli:/abc", "a b", "../x?y", "a".repeat(129)]) {
+      await expect(service.refreshSessionContext(bad)).rejects.toThrow("Invalid chat");
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("the route takes POST {session}, answers what OmniRoute removed, and leaks no token on a refusal", async () => {
+    const ok = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE }, gateway([], 200, 0), () => NOW);
+    const post = (body: string) => new Request("http://x/api/usage/omniroute/session-context", { method: "POST", body });
+    const answered = await handleSessionContextRefresh(post(JSON.stringify({ session: "abc" })), ok);
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toEqual({ removed: 0 });
+    expect((await handleSessionContextRefresh(new Request("http://x/", { method: "GET" }), ok)).status).toBe(405);
+    expect((await handleSessionContextRefresh(post("{"), ok)).status).toBe(400);
+    const refused = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE }, gateway([], 403), () => NOW);
+    const answer = await handleSessionContextRefresh(post(JSON.stringify({ session: "abc" })), refused);
+    const body = await answer.text();
+    expect(answer.status).toBe(502);
+    expect(body).toContain("OmniRoute refused the write token");
+    expect(body).not.toContain(WRITE);
+    // an OmniRoute before ZAC-272 has no such route
+    const old = new OmniRouteUsage({ url: "http://omniroute.test", token: TOKEN, writeToken: WRITE }, gateway([], 404), () => NOW);
+    expect(await (await handleSessionContextRefresh(post(JSON.stringify({ session: "abc" })), old)).text()).toContain("This OmniRoute freezes no checkpoint list");
   });
 });

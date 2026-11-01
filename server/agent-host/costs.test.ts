@@ -330,6 +330,9 @@ describe("CostIndex", () => {
     const cost = index(agentDirs).costOf(`ahp-session:/${CHAT}`);
     expect(cost?.session).toBe(`ahp-session:/${CHAT}`);
     expect(cost?.context).toBe(4242);
+    // the log it came from, which OmniRoute names the chat's frozen checkpoint list by (ZAC-272)
+    expect(cost?.log).toBe(UUID);
+    expect(index().costOf(`copilotcli:/${UUID}`)?.log).toBe(UUID);
   });
 
   /** the parent's VS Code store, naming its default chat's SDK session and its other chats' */
