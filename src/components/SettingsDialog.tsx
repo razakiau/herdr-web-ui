@@ -408,9 +408,12 @@ export function KeepWarmRows() {
     <SettingsRow label={t("Pings per day at most")} dimmed={!state.enabled}>
       <NumberField label={t("Pings per day at most")} value={state.fusePerDay} min={1} max={1000} step={1} disabled={locked || !state.enabled} onCommit={(fusePerDay) => save({ fusePerDay })} />
     </SettingsRow>
-    <SettingsRow label={t("Today")} description={today.fuseHit ? t("Daily cap reached: no more pings today") : undefined}>
+    {/* a long tally: under its label at the card's width, the cap's notice its own line under it */}
+    <div className="settings-row is-stacked">
+      <span className="settings-label">{t("Today")}</span>
       <span className="settings-value" data-testid="keep-warm-today">{tally}</span>
-    </SettingsRow>
+      {today.fuseHit && <span className="settings-condition is-notice" role="status">{t("Daily cap reached: no more pings today")}</span>}
+    </div>
   </>;
 }
 

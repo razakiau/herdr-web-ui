@@ -100,6 +100,18 @@
   color: var(--text);
 }
 
+/* a row whose value is a sentence of facts (Chat → Today): the value under the label at the card's
+   width, then any condition as its own line, never squeezing the label */
+.settings-row.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  padding-block: var(--space-2);
+}
+.settings-row.is-stacked > .settings-value { flex: none; color: var(--text); white-space: normal; }
+.settings-condition.is-notice { color: var(--notice); font-size: var(--fs-xs); }
+
 /* one sentence at rest; its conditions and exceptions open under it (DESIGN.md: messages say
    only what the person needs now). The toggle word stands in for the marker. */
 .settings-details {
