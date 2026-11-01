@@ -9,10 +9,11 @@
  * That menu also carries the open pane's actions, so a lone pane shows no ellipsis of its own.
  * A host chat's tab has the chat's own menu instead (HostChatTab).
  */
-import { useEffect, useLayoutEffect, useRef, useState, type DOMAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DOMAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Bot, Ellipsis, Pencil, Plus, Server, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
+import "./Sidebar.css";
 import "./AgentSidebar.css";
 
 import type { HerdrPane, HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
@@ -35,7 +36,9 @@ import { indicatorGlyph, paneStatus, rollupStatus } from "../lib/status.ts";
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { CacheRing } from "./AgentSidebar.tsx";
-import type { RowCacheMark } from "../lib/rowCache.ts";
+import { chatLog, rowCacheMark, useCostsFeed, type RowCacheMark } from "../lib/rowCache.ts";
+import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
+import { useMinuteClock } from "../lib/hostChats.ts";
 import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
@@ -80,7 +83,7 @@ export interface TabStripProps {
  * an Android keyboard's Enter (keyCode 229) never reaches a bare field's key handler.
  */
 function HostChatTab({ chat, selected, hosted, onSelect, move, cacheRing = null }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void; move?: HostTabMove;
-  /** PROTOTYPE (ZAC-265 round 2, C): the chat's cache as the sidebar's ring, small, round its mark (with the flame when kept warm) */
+  /** the chat's cache (ZAC-265): the sidebar's ring round its mark, at the tab's size, with the flame when kept warm */
   cacheRing?: RowCacheMark | null }) {
   const t = useT();
   const { settings } = useSettings();
@@ -157,7 +160,7 @@ function HostChatTab({ chat, selected, hosted, onSelect, move, cacheRing = null 
       {status !== "idle" && (settings.statusIndicators === "classic"
         ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" onAnimationStart={alignBreath} />
         : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true" onAnimationStart={alignBreath}>{indicatorGlyph(status, settings.statusIndicators)}</span>)}
-      {cacheRing ? <span className="tab-strip-mark has-cache-ring"><CacheRing mark={cacheRing} /><AgentMark agent="copilot" size={11} /></span> : <AgentMark agent="copilot" size={14} />}
+      {cacheRing ? <span className="sidebar-mark has-cache-ring tab-strip-ring" aria-hidden="true"><CacheRing mark={cacheRing} /><AgentMark agent="copilot" size={14} /></span> : <AgentMark agent="copilot" size={14} />}
       {hosted && <Server className="host-chat-tab-glyph" aria-hidden="true" />}
       <span className="tab-strip-label">{title}</span>
     </button>}
@@ -249,16 +252,38 @@ function useStripOverflow(strip: { current: HTMLDivElement | null }, count: numb
   }, [strip, count]);
 }
 
+/**
+ * Each host chat tab's cache ring (ZAC-265), by session: the sidebar's own call (AgentSidebar.tsx
+ * chatItem: lib/rowCache.ts rowCacheMark over the page's costs feed, with keep-warm), for the strip's
+ * PC. Nothing while costs are not tracked (the feed is null then).
+ */
+function useHostCacheRings(chats: readonly HostChatRow[]): ReadonlyMap<string, RowCacheMark> {
+  const { settings } = useSettings();
+  const machineId = useMachineId();
+  const now = useMinuteClock();
+  const pcs = useMemo(() => chats.length > 0 ? [machineId] : [], [machineId, chats.length > 0]);
+  const costs = useCostsFeed(pcs, settings.trackCosts);
+  const keepWarm = useKeepWarm(settings.trackCosts);
+  const rings = new Map<string, RowCacheMark>();
+  if (!costs) return rings;
+  for (const chat of chats) {
+    // the sidebar's two lines, as they are there
+    const log = chatLog(costs, machineId, chat.session);
+    const ring = rowCacheMark(chat, log, costs.prices, settings, now, keptWarmOf(keepWarmFor(keepWarm, log, now)));
+    if (ring) rings.set(chat.session, ring);
+  }
+  return rings;
+}
+
 /** A folder row's tabs: its host chats, as a workspace's strip draws them, with no pane beside them. */
-export function HostChatTabStrip({ folder, chats, selectedSession, onSelect, cacheRings }: { folder: string; chats: HostChatRow[]; selectedSession: string; onSelect(session: string): void;
-  /** PROTOTYPE (ZAC-265 round 2, C; not passed by the app yet): each tab's cache mark by session */
-  cacheRings?: ReadonlyMap<string, RowCacheMark> }) {
+export function HostChatTabStrip({ folder, chats, selectedSession, onSelect }: { folder: string; chats: HostChatRow[]; selectedSession: string; onSelect(session: string): void }) {
   const t = useT();
   const strip = useRef<HTMLDivElement | null>(null);
   useStripOverflow(strip, chats.length);
   const move = useHostTabMoves(strip, chats);
+  const rings = useHostCacheRings(chats);
   return <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: folder })} onKeyDown={moveTabFocus}>
-    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} move={move(chat.session)} cacheRing={cacheRings?.get(chat.session) ?? null} />)}
+    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} move={move(chat.session)} cacheRing={rings.get(chat.session) ?? null} />)}
   </div>;
 }
 
@@ -413,6 +438,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   }, [faces]);
   useStripOverflow(strip, tabs.length + hostTabs.length + (shown ? 1 : 0));
   const hostMove = useHostTabMoves(strip, hostTabs);
+  const hostRings = useHostCacheRings(hostTabs);
   const onScroll = (): void => {
     const row = strip.current;
     if (row) scroll.current = stripScrolled(scroll.current, row.scrollLeft, row.scrollWidth - row.clientWidth);
@@ -649,7 +675,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
             </div>
           );
         })}
-        {hostTabs.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedHostSession} hosted={hosted} onSelect={() => onSelectHostChat?.(chat.session)} move={hostMove(chat.session)} />)}
+        {hostTabs.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedHostSession} hosted={hosted} onSelect={() => onSelectHostChat?.(chat.session)} move={hostMove(chat.session)} cacheRing={hostRings.get(chat.session) ?? null} />)}
         <button type="button" className="tab-strip-add" aria-label={t("New terminal")} title={t("New terminal")}
           onClick={() => { setError(null); void onNewTerminal().catch((reason: unknown) => setError(t("New terminal failed: {reason}", { reason: said(reason) }))); }}>
           <Plus aria-hidden="true" />
