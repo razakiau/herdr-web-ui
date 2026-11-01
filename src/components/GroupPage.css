@@ -6,7 +6,7 @@
 .group-page-head { gap: var(--space-1); }
 .group-page-title { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
 .group-page-title .modal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-page-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; color: var(--text-dim); font-size: var(--fs-xs); }
+.group-page-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
 .group-page-body { display: flex; flex-direction: column; gap: var(--space-2); padding-top: var(--space-2); }
 
 .group-artifacts { display: flex; flex-wrap: wrap; gap: var(--space-1); }
@@ -22,7 +22,7 @@
    levels on a phone and 5 wider (GroupPage.tsx: "Continue this thread"), so the indent never runs away */
 .group-tree { margin: 0; padding: 0; list-style: none; }
 .group-node {
-  --group-step: 14px;
+  --group-step: var(--space-4);
   position: relative;
   padding-inline-start: calc(var(--group-depth, 0) * var(--group-step));
 }
@@ -53,13 +53,15 @@
 }
 @media (hover: hover) { .group-thread:hover::before { border-color: var(--accent); } }
 .group-thread:focus-visible::before { border-color: var(--accent); }
+/* the relation's chevron in the row's mark column, centred under the mark, its words on the title's
+   column (the row's grid: a --side-box cell, --space-2, the text), with or without a chevron */
 .group-fold-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  max-width: 100%;
-  margin-inline-start: -4px;
-  padding: 0 4px 0 0;
+  gap: var(--space-2);
+  max-width: calc(100% + var(--side-box) + var(--space-2));
+  margin-inline-start: calc((var(--side-box) + var(--space-2)) * -1);
+  padding: 0;
   border: 0;
   background: none;
   color: inherit;
@@ -67,7 +69,7 @@
   cursor: pointer;
 }
 .group-fold-toggle > span { overflow: hidden; text-overflow: ellipsis; }
-.group-fold-toggle svg { flex: none; width: 14px; height: 14px; transform: rotate(90deg); transition: transform var(--dur-fast, 120ms); }
+.group-fold-toggle svg { flex: none; width: 14px; height: 14px; margin-inline: calc((var(--side-box) - 14px) / 2); transform: rotate(90deg); transition: transform var(--dur-fast); }
 .group-fold-toggle[aria-expanded="false"] svg { transform: none; }
 @media (hover: hover) { .group-fold-toggle:hover { color: var(--text); } }
 /* a folded branch's line, and "Continue this thread": under the row, at its title's start */
@@ -76,13 +78,13 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 6px;
+  gap: 0 var(--space-1);
   box-sizing: border-box;
   width: fit-content;
   /* a button sizes to its words: held to the row's text column, so a long state wraps rather than spilling out */
   max-width: calc(100% - var(--side-box) * 2 - var(--space-2));
   margin: 0 0 var(--space-2) calc(var(--side-box) + var(--space-2));
-  padding: 2px var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
@@ -93,19 +95,19 @@
   cursor: pointer;
 }
 .group-continue { color: var(--accent); }
-.group-continue > svg { flex: none; width: 14px; height: 14px; margin-inline-start: -4px; }
+.group-continue > svg { flex: none; width: 14px; height: 14px; }
 .group-continue-count { color: var(--text-dim); }
 @media (hover: hover) { .group-fold:hover, .group-continue:hover { background: var(--bg-hover); } }
 /* the breadcrumb of a continued thread: each chat back up a button */
-.group-crumbs ol { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 var(--space-2); padding: 0; list-style: none; font-size: var(--fs-xs); }
-.group-crumbs li { display: inline-flex; align-items: center; gap: 2px; }
-.group-crumb { padding: 2px 4px; border: 0; border-radius: var(--radius-sm, 4px); background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.group-crumbs ol { display: flex; flex-wrap: wrap; align-items: center; gap: 0; margin: 0 0 var(--space-2) calc(var(--space-1) * -1); padding: 0; list-style: none; font-size: var(--fs-xs); }
+.group-crumbs li { display: inline-flex; align-items: center; gap: 0; }
+.group-crumb { padding: 0 var(--space-1); border: 0; border-radius: var(--radius-sm); background: none; color: var(--accent); font: inherit; cursor: pointer; }
 .group-crumb.is-current { color: var(--text-strong); cursor: default; }
 @media (hover: hover) { button.group-crumb:hover { background: var(--bg-hover); } }
 .group-crumb-sep { width: 12px; height: 12px; color: var(--text-dim); }
 .group-relation {
   margin: 0;
-  padding: var(--space-2) var(--space-2) 0;
+  padding: var(--space-2) var(--space-2) 0 calc(var(--side-box) + var(--space-2));
   overflow: hidden;
   color: var(--text-dim);
   font-size: var(--fs-2xs);
@@ -116,8 +118,14 @@
 .group-node .agent-item.is-offline .agent-title { color: var(--text-dim); }
 /* the folded line's state wraps inside it, part by part (GroupState.tsx draws it one line elsewhere) */
 .group-fold .group-state,
-.group-continue .group-state { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; row-gap: 2px; white-space: normal; }
+.group-continue .group-state { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; row-gap: 0; white-space: normal; }
 .group-fold .group-state > *,
 .group-continue .group-state > * { white-space: nowrap; }
 .group-fold .group-state-status,
 .group-continue .group-state-status { display: contents; }
+/* the head's facts wrap part by part, as the folded line's do: the state no longer drops whole to a
+   line of its own and leaves a dot hanging at the end of the one above */
+.group-page-sub .group-state,
+.group-page-sub .group-state-status { display: contents; }
+.group-page-sub .group-state > *,
+.group-page-sub .group-state-status > * { white-space: nowrap; }

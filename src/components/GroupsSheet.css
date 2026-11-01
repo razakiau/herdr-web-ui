@@ -10,7 +10,7 @@
 .groups-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   width: 100%;
   padding: var(--space-3);
   border: var(--hairline) solid var(--border);
@@ -24,7 +24,7 @@
 .groups-card:hover { background: var(--bg-hover); }
 .groups-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .groups-card-top { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.groups-card-icon { flex: none; width: 18px; height: 18px; color: var(--accent); }
+.groups-card-icon { flex: none; width: var(--icon-size); height: var(--icon-size); color: var(--accent); }
 .groups-card-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -62,4 +62,4 @@
 .group-rail i.is-working { background: var(--status-working); }
 .group-rail i.is-archived { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-dim); }
 .group-rail em { flex: 1; height: 2px; background: var(--border-strong); }
-.group-rail-more { margin-inline-start: 6px; color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap; }
+.group-rail-more { margin-inline-start: var(--space-2); color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap; }

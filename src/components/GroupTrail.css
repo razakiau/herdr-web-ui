@@ -7,13 +7,19 @@
   border-bottom: var(--hairline) solid var(--border);
   background: var(--bg-panel);
 }
+/* on the tab row's columns (TabStrip.css: the strip's --space-3, then the tab's): the icon where a
+   tab's 14px mark is, the name where a tab's label starts, one control high and centred on it */
 .group-trail-open {
+  --trail-inset: calc(var(--space-3) * 2);
   display: flex;
   flex: 1 1 auto;
   align-items: center;
-  gap: 6px;
+  /* one step between the words and dots, as the facts have; the icon keeps a tab's mark-to-label gap */
+  gap: var(--space-1);
   min-width: 0;
-  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h);
+  /* the chevron ends on the strip's own trailing inset */
+  padding: 0 var(--space-3) 0 var(--trail-inset);
   border: 0;
   background: none;
   color: var(--text-dim);
@@ -25,17 +31,17 @@
 }
 @media (hover: hover) { .group-trail-open:hover { background: var(--bg-hover); } }
 .group-trail-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* the tab's own mark size, so the icon reads as one more mark in that column */
 .group-trail-open > svg { flex: none; width: 14px; height: 14px; }
-.group-trail-icon { color: var(--accent); }
+.group-trail-icon { margin-inline-end: var(--space-1); color: var(--accent); }
 /* the name gives way; the facts after it never do */
 .group-trail-name { flex: 0 1 auto; min-width: min(8ch, 20%); overflow: hidden; color: var(--text); font-weight: var(--fw-medium); text-overflow: ellipsis; }
-.group-trail-facts { display: inline-flex; flex: none; align-items: center; gap: 6px; }
+.group-trail-facts { display: inline-flex; flex: none; align-items: center; gap: var(--space-1); }
 .group-trail-chev { margin-inline-start: auto; color: var(--text-dim); }
 
 /* a group's state (GroupState.tsx): the Agents head's counts, then the caches in All agents' colours */
-.group-state { display: inline-flex; flex: none; align-items: center; gap: 6px; white-space: nowrap; }
+.group-state { display: inline-flex; flex: none; align-items: center; gap: var(--space-1); white-space: nowrap; }
 .group-state-status { display: inline-flex; align-items: center; gap: var(--space-2); }
-.group-state .all-agents-cache svg { margin-inline: 0 2px; }
 
 /* a phone's bar: the counts behind their marks, the number only (the Agents head's narrow form), so the name keeps some room */
 @container (max-width: 520px) {
