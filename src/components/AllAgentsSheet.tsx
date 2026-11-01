@@ -22,6 +22,7 @@ import "./AllAgentsSheet.css";
 
 import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../../shared/host-chats.ts";
 import type { ChatPrices } from "../lib/api.ts";
+import type { KeepWarmAnswer } from "../../shared/keep-warm.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { useT } from "../lib/i18n.ts";
 import { byAge, byCost, folderKey, folderPills, groupSubtotal, type ChatAge } from "../lib/hostChatGroups.ts";
@@ -87,7 +88,7 @@ const SORT_LABEL: Record<Sort, string> = { recent: "Recent", cost: "Cost", cold:
  * age), never leaving "· … ·"; the first (the folder) alone shrinks, with an ellipsis. Measured: the
  * words' widths once per text, the line's room on each resize.
  */
-function CacheLine({ parts, mark }: { parts: string[]; mark: RowCacheMark }) {
+export function CacheLine({ parts, mark }: { parts: string[]; mark: RowCacheMark }) {
   const ref = useRef<HTMLSpanElement>(null);
   const text = parts.join("\u0000");
   const [fit, setFit] = useState<{ text: string; shown: number } | null>(null);
@@ -132,6 +133,34 @@ export function CacheText({ mark }: { mark: RowCacheMark }) {
   const Icon = mark.state === "cold" ? Snowflake : Timer;
   return <span className={`all-agents-cache is-${mark.state}${small}`}>
     {tokens(mark.context)} · <Icon aria-hidden="true" />{mark.state === "cold" ? t("cold") : t("{n}m left", { n: mark.leftMin })}
+  </span>;
+}
+
+/**
+ * The dot beside a row's cost: only while resuming is still cheap (a cold cache is every old chat's,
+ * and says nothing), and only on a chat without a cache mark (a mark says it on the row already).
+ * A chat OmniRoute keeps warm is warm from its last ping too (ZAC-266), as its mark is.
+ */
+export function rowCacheDot(row: { status: HostChatRow["status"] }, log: HostChatCost, mark: RowCacheMark | null, keepWarm: KeepWarmAnswer | null,
+  settings: { cacheLifetimeMin: number }, now: number): "warm" | "cooling" | null {
+  if (mark) return null;
+  const kept = row.status !== "working" ? keptWarmOf(keepWarmFor(keepWarm, log, now)) : null;
+  const cache = kept ? keptCacheState(log.lastCallAt, kept, now, settings.cacheLifetimeMin) : cacheState(log.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working");
+  return cache && cache.state !== "cold" ? cache.state : null;
+}
+
+/** A row's cost at its right (All agents, a group's page): the figure, the cache dot before it, a tiny split bar under it. */
+export function RowCostCell({ cost, dot }: { cost: CostSplit; dot: "warm" | "cooling" | null }) {
+  const t = useT();
+  const localOnly = cost.usd === 0 && cost.local.length > 0 && cost.missing.length === 0;
+  return <span className="all-agents-cost">
+    <span className="all-agents-usd-line">
+      {dot && <span className={`session-dot is-${dot}`} title={t(dot === "warm" ? "Cache warm" : "Cache cooling")}>
+        <span className="visually-hidden">{t(dot === "warm" ? "Cache warm" : "Cache cooling")}</span>
+      </span>}
+      <span className={`all-agents-usd${cost.floor ? " is-floor" : ""}`}>{localOnly ? t("$0 · local") : listUsd(cost.usd, cost.floor)}</span>
+    </span>
+    {!localOnly && <CostStack split={cost} className="cost-mini all-agents-split" />}
   </span>;
 }
 
@@ -258,13 +287,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     // at a phone's width the words give way, never the cache (it is what the mark is for)
     const context = mark ? <CacheLine parts={parts} mark={mark} /> : words;
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
-    // a chat OmniRoute keeps warm is warm from its last ping too (ZAC-266), as its mark is
-    const kept = cost && row.status !== "working" ? keptWarmOf(keepWarmFor(keepWarm, cost.chat, now)) : null;
-    const cache = !cost ? null : kept ? keptCacheState(cost.chat.lastCallAt, kept, now, settings.cacheLifetimeMin) : cacheState(cost.chat.lastCallAt, now, settings.cacheLifetimeMin, row.status === "working");
-    // the dot only while resuming is still cheap: a cold cache is every old chat's, and says nothing;
-    // a big chat says it in words on its second line instead
-    const dot = !mark && cache && cache.state !== "cold" ? cache.state : null;
-    const localOnly = cost !== undefined && cost.usd === 0 && cost.local.length > 0 && cost.missing.length === 0;
+    const dot = cost ? rowCacheDot(row, cost.chat, mark ?? null, keepWarm, settings, now) : null;
     const menuOpen = menu?.session === row.session;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { session: row.session, anchor, point, previousFocus });
@@ -273,15 +296,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
       onContextMenu={actions ? (event) => onRowContextMenu(event, toggleMenu) : undefined}>
       <button type="button" className="agent-select agent-row" aria-current={row.session === selected ? "true" : undefined} title={[title, row.cwd, noPrice].filter(Boolean).join("\n")} onClick={() => onOpen(row.session)}>
         <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} />
-        {cost && <span className="all-agents-cost">
-          <span className="all-agents-usd-line">
-            {dot && <span className={`session-dot is-${dot}`} title={t(dot === "warm" ? "Cache warm" : "Cache cooling")}>
-              <span className="visually-hidden">{t(dot === "warm" ? "Cache warm" : "Cache cooling")}</span>
-            </span>}
-            <span className={`all-agents-usd${cost.floor ? " is-floor" : ""}`}>{localOnly ? t("$0 · local") : listUsd(cost.usd, cost.floor)}</span>
-          </span>
-          {!localOnly && <CostStack split={cost} className="cost-mini all-agents-split" />}
-        </span>}
+        {cost && <RowCostCell cost={cost} dot={dot} />}
       </button>
       {actions && <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>

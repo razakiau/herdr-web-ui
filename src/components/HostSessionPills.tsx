@@ -38,7 +38,7 @@ const SECTION_TITLE: Record<HostArtifactType, string> = {
 
 const isWeb = (link: string | undefined): link is string => link !== undefined && /^https?:\/\//i.test(link);
 
-function ArtifactGlyph({ artifact, state }: { artifact: HostArtifact; state?: ReferenceState }) {
+export function ArtifactGlyph({ artifact, state }: { artifact: HostArtifact; state?: ReferenceState }) {
   const look = artifactLook(artifact, state);
   if (artifact.type === "file") {
     const path = artifact.uri ? pathOfFileUri(artifact.uri) : null;
@@ -218,12 +218,21 @@ function useHostChanges(machineId: string | undefined, session: string | undefin
   return changes;
 }
 
-function ArtifactList({ title, items, states, onOpen }: { title?: string; items: HostArtifact[]; states: Record<string, ReferenceState>; onOpen(artifact: HostArtifact): void }) {
+/**
+ * A kind's artifacts as the chat's sheets list them: each one's glyph (a PR or issue in its live
+ * state's colour, a file by its type), its label and where it lives. A group's page passes `aside`
+ * (the chat that made it) and `canOpen` (it has no file viewer).
+ */
+export function ArtifactList({ title, items, states, onOpen, aside, canOpen }: {
+  title?: string; items: readonly HostArtifact[]; states: Record<string, ReferenceState>; onOpen(artifact: HostArtifact): void;
+  aside?(artifact: HostArtifact): React.ReactNode;
+  canOpen?(artifact: HostArtifact): boolean;
+}) {
   const t = useT();
   return <section className="session-sheet-section">
     {title !== undefined && <h3 className="session-sheet-heading">{title}</h3>}
     <ul className="session-sheet-list">{items.map((artifact) => {
-      const openable = artifact.type === "file" ? artifact.uri !== undefined : isWeb(artifact.link ?? artifact.uri) || artifact.commitHash !== undefined;
+      const openable = canOpen ? canOpen(artifact) : artifact.type === "file" ? artifact.uri !== undefined : isWeb(artifact.link ?? artifact.uri) || artifact.commitHash !== undefined;
       const detail = artifact.type === "commit" ? artifact.commitHash?.slice(0, 7) : artifact.type === "file" && artifact.uri ? pathOfFileUri(artifact.uri) ?? undefined : hostOf(artifact.link ?? artifact.uri);
       return <li key={artifact.id} className="session-sheet-item">
         <button type="button" className="session-sheet-row" disabled={!openable} onClick={() => onOpen(artifact)}
@@ -234,6 +243,7 @@ function ArtifactList({ title, items, states, onOpen }: { title?: string; items:
             {detail && <span className="session-sheet-detail">{detail}</span>}
           </span>
           {artifact.type === "commit" && !artifact.link && <Copy className="session-sheet-aside" aria-hidden="true" />}
+          {aside?.(artifact)}
         </button>
       </li>;
     })}</ul>
@@ -315,7 +325,7 @@ function PillSheet({ title, onClose, children }: { title: string; onClose(): voi
 }
 
 /** Each PR and issue link's state, asked once per set of links; unknown until it answers, or when it fails. */
-function useReferenceStates(machineId: string | undefined, artifacts: HostArtifact[]): Record<string, ReferenceState> {
+export function useReferenceStates(machineId: string | undefined, artifacts: readonly HostArtifact[]): Record<string, ReferenceState> {
   const links = [...new Set(artifacts.filter((each) => (each.type === "pullRequest" || each.type === "issue") && isWeb(each.link)).map((each) => each.link!))].sort();
   const key = links.join("\n");
   const [states, setStates] = useState<Record<string, ReferenceState>>({});
