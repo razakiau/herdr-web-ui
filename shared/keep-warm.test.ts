@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { keepWarmKeyFor, keepWarmSettingsFrom, keepWarmStateFrom, keptWarm, type KeepWarmKey } from "./keep-warm.ts";
+import { archivedChatRef, keepWarmKeyFor, keepWarmSettingsFrom, keepWarmStateFrom, keptWarm, type KeepWarmKey, withArchived, withRestored } from "./keep-warm.ts";
 
 const T = Date.parse("2026-10-31T12:00:00Z");
 const key = (over: Partial<KeepWarmKey> = {}): KeepWarmKey => ({
@@ -77,5 +77,30 @@ describe("wire shapes", () => {
   it("keeps the owner's forced chats (ZAC-267) as it keeps the disabled ones", () => {
     expect(keepWarmSettingsFrom({ forced: ["k", "k", 7, "x".repeat(65)] })).toEqual({ forced: ["k"] });
     expect(keepWarmSettingsFrom({ forced: "k" })).toEqual({});
+  });
+});
+
+describe("archiving turns a chat's keep-warm off, restoring gives it back the default (ZAC-271)", () => {
+  const ref = archivedChatRef("mac", "ahp:/s 1");
+  it("names a chat as push does", () => {
+    expect(ref).toBe("chat:mac:ahp%3A%2Fs%201");
+  });
+  it("archive: off, never forced, and remembered for the chat", () => {
+    expect(withArchived({ enabled: true, disabled: ["x"], forced: ["k", "y"] }, "k", ref))
+      .toEqual({ enabled: true, disabled: ["x", "k"], forced: ["y"], archived: { k: ref } });
+  });
+  it("archive: drops the archives the plugin has let go of, with their switch", () => {
+    const before = withArchived({ disabled: ["x"] }, "old", ref);
+    expect(withArchived(before, "k", ref, new Set(["k", "x"]))).toEqual({ disabled: ["x", "k"], forced: [], archived: { k: ref } });
+    expect(withArchived(before, "k", ref)).toEqual({ disabled: ["x", "old", "k"], forced: [], archived: { old: ref, k: ref } });
+  });
+  it("restore: the keys that chat's archive turned off go back to the default, and nothing else", () => {
+    const archived = withArchived(withArchived({ disabled: ["x"], extend: { k: { from: 1, until: 2 }, j: { from: 3, until: 4 } } }, "k", ref), "j", archivedChatRef("mac", "other"));
+    expect(withRestored(archived, ref)).toEqual({ extend: { j: { from: 3, until: 4 } }, disabled: ["x", "j"], forced: [], archived: { j: archivedChatRef("mac", "other") } });
+    expect(withRestored(archived, archivedChatRef("mac", "never"))).toBeNull();
+  });
+  it("reads the archived chats back, dropping malformed ones", () => {
+    expect(keepWarmSettingsFrom({ archived: { k: ref, j: 4, ["x".repeat(65)]: ref } })).toEqual({ archived: { k: ref } });
+    expect(keepWarmSettingsFrom({ archived: [ref] })).toEqual({});
   });
 });

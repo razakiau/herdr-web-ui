@@ -7,7 +7,8 @@ import { SettingsProvider } from "../lib/settings.ts";
 import { JA } from "../lib/i18n.ja.ts";
 import { KO } from "../lib/i18n.ko.ts";
 import { ZH } from "../lib/i18n.zh.ts";
-import { PromptCardView } from "./PromptCard.tsx";
+import { PromptCardView, answerRefusal } from "./PromptCard.tsx";
+import { ApiError } from "../lib/api.ts";
 
 const prompt = (extra: Partial<InteractivePrompt> = {}): InteractivePrompt => ({
   id: "p-1", agent: "copilot", kind: "question", title: "FICTIONAL **title**", question: "Pick **one**", body: "FICTIONAL `body`",
@@ -108,5 +109,22 @@ describe("the typed-answer slot", () => {
     const html = renderIn("ko", undefined, other);
     expect(placeholder(html)).toBe("Other…");
     expect(renderIn("ko", false, other)).toBe(html);
+  });
+});
+
+describe("answerRefusal (ZAC-271)", () => {
+  const t = ((key: string, vars?: Record<string, string>) => key.replace(/\{(\w+)\}/g, (_, k: string) => vars?.[k] ?? "")) as Parameters<typeof answerRefusal>[2];
+  const refused = new ApiError("/x", 400, "Question 2: the answer must be a number.", "invalid_answer");
+  it("a host chat's card says why the bridge refused, and keeps the question", () => {
+    expect(answerRefusal(refused, true, t)).toEqual({ error: { message: "This answer was refused: Question 2: the answer must be a number.", detail: null }, reread: false });
+  });
+  it("a required page left empty says which one", () => {
+    expect(answerRefusal(new ApiError("/x", 400, "\"Cap\" needs an answer", "missing_answer"), true, t).error.message).toBe("This answer was refused: \"Cap\" needs an answer");
+  });
+  it("a pane's card still reads a 400 as a moved-on question", () => {
+    expect(answerRefusal(refused, false, t)).toEqual({ error: { message: "The question on screen changed; check it and answer again.", detail: null }, reread: true });
+  });
+  it("a 409 prompt_changed stays a changed question on a host chat too", () => {
+    expect(answerRefusal(new ApiError("/x", 409, "gone", "prompt_changed"), true, t).reread).toBe(true);
   });
 });

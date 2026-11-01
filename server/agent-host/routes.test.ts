@@ -715,6 +715,25 @@ describe("host chat read and write routes", () => {
     }
   });
 
+  it("a number question takes the number typed, and words go through as words, as VS Code's own card sends them (ZAC-271)", async () => {
+    // the owner dictated a long answer onto a form's percent page: the whole form was refused with no way out
+    const PICK = { id: "next", kind: "single-select", title: "Next", message: "FICTIONAL what next?", required: false, options: [{ id: "go", label: "Go" }] };
+    const CAP = { id: "cap", kind: "integer", title: "Cap", message: "FICTIONAL max %", required: false };
+    const NOTES = { id: "notes", kind: "text", title: "Notes", message: "FICTIONAL anything else?", required: false };
+    const cases: Array<[string, unknown]> = [
+      ["60", { kind: "number", value: 60 }],
+      [" 60 % ", { kind: "number", value: 60 }],
+      ["FICTIONAL keep main chats on Ultra", { kind: "text", value: "FICTIONAL keep main chats on Ultra" }],
+    ];
+    for (const [typed, value] of cases) {
+      const r = await rig({ chats: { [chatUri(1)]: asking([PICK, CAP, NOTES]), [chatUri(2)]: chatState(2) } });
+      const res = await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: { next: { option_ids: ["go"] }, cap: { option_ids: [""], text: typed }, notes: null } });
+      expect({ typed, status: res.status }).toEqual({ typed, status: 200 });
+      await until("the form", () => actions(r.fake, "chat/inputCompleted").length > 0);
+      expect({ typed, cap: (only(r.fake, "chat/inputCompleted") as { answers: Record<string, unknown> }).answers["cap"] }).toEqual({ typed, cap: { state: "submitted", value } });
+    }
+  });
+
   it("a form is read whole and answered in one go: every answer completes it at once, an optional one left empty as skipped", async () => {
     const r = await rig({ chats: { [chatUri(1)]: asking([COLOR, { ...SIZE, required: false }]), [chatUri(2)]: chatState(2) } });
     const read = ((await call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`)).json as HostChatRead).prompt!;
@@ -722,7 +741,7 @@ describe("host chat read and write routes", () => {
     expect(read.host).toMatchObject({ request_id: "req-1", form: [{ question_id: "q-color", option_ids: ["red", "blue", ""] }, { question_id: "q-size", option_ids: [""] }] });
     // a required question with no answer is refused, and nothing reaches the host
     const missing = await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: { "q-size": { text: "FICTIONAL large" } } });
-    expect({ status: missing.status, code: missing.json.error.code }).toEqual({ status: 400, code: "missing_answer" });
+    expect({ status: missing.status, code: missing.json.error.code, message: missing.json.error.message }).toEqual({ status: 400, code: "missing_answer", message: "\"Color\" needs an answer" });
     expect(actions(r.fake, "chat/inputCompleted")).toEqual([]);
     expect((await call(r, "/api/host-chats/chat/answer", { session: sessionUri(1), request_id: "req-1", answers: { "q-color": { option_ids: ["blue"] }, "q-size": null } })).json).toEqual({ ok: true });
     await until("the form", () => actions(r.fake, "chat/inputCompleted").length > 0);

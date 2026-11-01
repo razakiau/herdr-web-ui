@@ -71,6 +71,11 @@ export interface KeepWarmSettings {
   /** chats under the threshold the owner keeps warm anyway (ZAC-267); `disabled` wins */
   forced?: string[];
   extend?: Record<string, KeepWarmWindow>;
+  /**
+   * The keys archiving turned off (ZAC-271), each with its chat (archivedChatRef): restoring that
+   * chat gives them back the default. The plugin ignores it.
+   */
+  archived?: Record<string, string>;
 }
 
 /** What GET /api/keepwarm answers: the plugin's state, or why there is none (keep-warm unavailable). */
@@ -122,7 +127,45 @@ export function keepWarmSettingsFrom(raw: unknown): KeepWarmSettings {
     }).slice(0, 500);
     if (windows.length > 0) settings.extend = Object.fromEntries(windows);
   }
+  const archived = value["archived"];
+  if (archived && typeof archived === "object" && !Array.isArray(archived)) {
+    const chats = Object.entries(archived as Record<string, unknown>)
+      .filter((entry): entry is [string, string] => entry[0].length <= 64 && typeof entry[1] === "string" && entry[1].length <= 512).slice(0, 500);
+    if (chats.length > 0) settings.archived = Object.fromEntries(chats);
+  }
   return settings;
+}
+
+/** A host chat as push names it, and as `archived` remembers it. */
+export const archivedChatRef = (machineId: string, session: string): string => `chat:${encodeURIComponent(machineId)}:${encodeURIComponent(session)}`;
+
+/**
+ * The settings with an archived chat's key turned off (ZAC-271, owner: archiving turns the switch
+ * off): in `disabled`, out of `forced`, and remembered for `chat` so restoring it undoes exactly this.
+ */
+export function withArchived(settings: KeepWarmSettings, key: string, chat: string, live?: ReadonlySet<string>): KeepWarmSettings {
+  // an archive the plugin has since let go of (pruned an hour past its window) goes, with its `disabled`
+  // entry: the lists would grow with every archive and the reader keeps 500
+  const gone = new Set(Object.keys(settings.archived ?? {}).filter((each) => live !== undefined && each !== key && !live.has(each)));
+  const disabled = new Set((settings.disabled ?? []).filter((each) => !gone.has(each)));
+  disabled.add(key);
+  const archived = Object.entries(settings.archived ?? {}).filter(([each]) => !gone.has(each));
+  return { ...settings, disabled: [...disabled], forced: (settings.forced ?? []).filter((each) => each !== key), archived: { ...Object.fromEntries(archived), [key]: chat } };
+}
+
+/**
+ * The settings with a restored chat back on the default rules (owner: "like a new chat"): every key
+ * its archive turned off leaves `disabled`, `forced` and `archived`. Null when its archive turned
+ * nothing off, so there is nothing to save.
+ */
+export function withRestored(settings: KeepWarmSettings, chat: string): KeepWarmSettings | null {
+  const keys = new Set(Object.entries(settings.archived ?? {}).filter(([, each]) => each === chat).map(([key]) => key));
+  if (keys.size === 0) return null;
+  const archived = Object.entries(settings.archived ?? {}).filter(([key]) => !keys.has(key));
+  const extend = Object.entries(settings.extend ?? {}).filter(([key]) => !keys.has(key));
+  const { archived: _, extend: __, ...rest } = settings;
+  return { ...rest, ...(extend.length > 0 ? { extend: Object.fromEntries(extend) } : {}), disabled: (settings.disabled ?? []).filter((key) => !keys.has(key)), forced: (settings.forced ?? []).filter((key) => !keys.has(key)),
+    ...(archived.length > 0 ? { archived: Object.fromEntries(archived) } : {}) };
 }
 
 /** How much longer "Keep 8 h more" keeps a chat warm, and the plugin's cap after its last real call (EXTEND_MAX_HOURS). */

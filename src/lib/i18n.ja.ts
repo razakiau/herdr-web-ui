@@ -548,7 +548,7 @@ const BASE: Record<string, string> = {
   "Continued in a new chat from a hand-off note. This one is not archived.": "引き継ぎメモから新しいチャットで続けました。このチャットはアーカイブされていません。",
   "Open new chat": "新しいチャットを開く",
   "Archive this one": "このチャットをアーカイブ",
-  " · continue it in a new chat; it reads this one's record": " · 新しいチャットで続けられます。このチャットの記録を読みます",
+  "Keep warm turned off when it was archived": "アーカイブ時にウォームの維持をオフにしました",
   "Continue in a new chat": "新しいチャットで続ける",
   "Hand off now": "今引き継ぐと",
   "Hand off if work remains": "作業が残っていれば引き継ぎを",
