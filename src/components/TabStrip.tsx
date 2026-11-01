@@ -263,7 +263,7 @@ function useHostCacheRings(chats: readonly HostChatRow[]): ReadonlyMap<string, R
   const now = useMinuteClock();
   const pcs = useMemo(() => chats.length > 0 ? [machineId] : [], [machineId, chats.length > 0]);
   const costs = useCostsFeed(pcs, settings.trackCosts);
-  const keepWarm = useKeepWarm(settings.trackCosts);
+  const keepWarm = useKeepWarm(settings.trackCosts && chats.length > 0);
   const rings = new Map<string, RowCacheMark>();
   if (!costs) return rings;
   for (const chat of chats) {
