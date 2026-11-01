@@ -93,7 +93,7 @@ export function CacheRing({ mark }: { mark: RowCacheMark }) {
 export function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted = false, place = null, now = null, since = null, cacheRing = null, cacheWords = null }: AgentRowBodyProps) {
   const t = useT();
   return <>
-    <span className={`sidebar-mark${cacheRing ? " has-cache-ring" : ""}`} aria-hidden="true">{cacheRing && <CacheRing mark={cacheRing} />}{mark !== null ? <AgentMark agent={mark} size={cacheRing ? 14 : 18} /> : <Terminal />}</span>
+    <span className={`sidebar-mark${cacheRing ? " has-cache-ring" : ""}`} aria-hidden="true">{cacheRing && <CacheRing mark={cacheRing} />}{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
     <span className="agent-copy">
       {markKind && <span className="visually-hidden">{markKind}: </span>}
       <span className="agent-main">

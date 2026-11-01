@@ -424,25 +424,24 @@
 .agent-facet .agent-facet-mark .sidebar-status-glyph { animation: none; }
 
 /* a big chat's cache (ZAC-260, owner's pick A): a circle around the mark that drains to the cache's
-   expiry, dashed once cold; the state on the row's right is unchanged. It sits inside the mark's
-   own cell, centred on it (24px in the 34px cell, 5px to the title), the logo shrunk to 14px within
-   it (round 6: a square ring offset over the title's first letter) */
-.sidebar-mark.has-cache-ring { position: relative; align-self: center; height: 24px; }
-/* the mark's svg too: `.sidebar-mark svg` sizes it to --icon-size (18px), which hung it 2px below the
-   ring's centre out of its 14px box (phase 1b, measured at DPR 3: glyph centre 2px low) */
-.sidebar-mark.has-cache-ring > :not(.cache-ring, .cache-ring-flame),
-.sidebar-mark.has-cache-ring > :not(.cache-ring, .cache-ring-flame) svg { width: 14px; height: 14px; }
+   expiry, dashed once cold; the state on the row's right is unchanged. The mark keeps its own size
+   (ZAC-265 round 4, owner: a ring that shrank the logo looked wrong): the ring is drawn around it,
+   centred on the mark's cell and out of the layout, so a ringed row is exactly as tall as a bare one.
+   --cache-mark is the mark's own size; the ring's box keeps one proportion to it (28px round the
+   18px mark, the circle 25.7px, a 3.8px clear band before its stroke), so a tab's 14px mark gets the
+   same ring scaled down (TabStrip.css) and both read alike. */
+.sidebar-mark.has-cache-ring { --cache-mark: var(--icon-size); --cache-ring: calc(var(--cache-mark) * 14 / 9); position: relative; }
 .cache-ring {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 24px;
-  height: 24px;
+  width: var(--cache-ring, 24px);
+  height: var(--cache-ring, 24px);
   transform: translate(-50%, -50%);
   pointer-events: none;
   overflow: visible;
 }
-.sidebar-mark .cache-ring { width: 24px; height: 24px; }
+.sidebar-mark .cache-ring { width: var(--cache-ring); height: var(--cache-ring); }
 .cache-ring circle { stroke-width: 2.25; }
 /* the track: the state's own colour, thin; the arc of time left over it, thick */
 .cache-ring .cache-ring-track { stroke-width: 1; }
@@ -455,16 +454,17 @@
 .cache-ring.is-small .cache-ring-stroke { stroke-width: 1.5; }
 .cache-ring.is-small.is-cold .cache-ring-stroke { stroke-width: 1.25; }
 /* kept warm by OmniRoute (ZAC-260 phase 2): the ring stays full, a small flame badge on its top
-   right (owner's pick A: on the lower right it sat over the subtitle's first letters). The cell is
-   34px with the 24px ring centred, so right 1px puts the badge's centre over the ring's 1:30 point,
-   and top -3px keeps it above the title's cap height. Flame orange, mixed from the theme's notice
-   yellow and blocked red, so it is not read as the ring's warm green */
+   right (owner's pick A: on the lower right it sat over the subtitle's first letters). Its centre sits
+   off the ring's top right, as far out as the owner's pick had it (0.4 of the ring from its centre,
+   each way), and its size keeps the ring's proportion (12px on the 28px ring). Flame orange, mixed
+   from the theme's notice yellow and blocked red, so it is not read as the ring's warm green */
 .sidebar-mark .cache-ring-flame {
+  --cache-flame: calc(var(--cache-ring) * 3 / 7);
   position: absolute;
-  right: 1px;
-  top: -3px;
-  width: 12px;
-  height: 12px;
+  right: calc(50% - var(--cache-ring) * 0.4 - var(--cache-flame) / 2);
+  top: calc(50% - var(--cache-ring) * 0.4 - var(--cache-flame) / 2);
+  width: var(--cache-flame);
+  height: var(--cache-flame);
   padding: 1.5px;
   border-radius: 50%;
   background: var(--bg-panel, var(--bg));

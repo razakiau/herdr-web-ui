@@ -313,13 +313,13 @@
 }
 
 /* a host chat tab's cache (ZAC-265): the sidebar's own ring cell (AgentSidebar.css
-   .sidebar-mark.has-cache-ring: the 24px ring centred on the 14px mark, the flame on its top right),
-   the same geometry drawn at three quarters for the tab (18px ring, 10.5px mark); the margin gives
-   back the room the scale leaves, so the tab lays it out at 18px. In the tab's own colour. */
+   .sidebar-mark.has-cache-ring), round the tab's own 14px mark: the mark keeps the bare tab's size
+   and the ring, in the same proportion as a row's (22px), lies over the tab's padding, out of the
+   layout, so a ringed tab is as wide and tall as a bare one. In the tab's own colour. */
 .tab-strip-ring.sidebar-mark.has-cache-ring {
-  --side-box: 24px;
-  margin: -3px;
+  --side-box: auto;
+  --cache-mark: 14px;
   color: inherit;
-  transform: scale(0.75);
 }
+.tab-strip-ring.sidebar-mark .agent-mark svg { width: var(--cache-mark); height: var(--cache-mark); }
 .tab-strip-ring.sidebar-mark .agent-mark { color: inherit; }

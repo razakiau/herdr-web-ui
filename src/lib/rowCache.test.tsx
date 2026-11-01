@@ -111,23 +111,27 @@ describe("the sidebar's ring (AgentRowBody cacheRing)", () => {
     expect(html).toContain(", cache cold</span>");
   });
 
-  it("is a circle centred on the mark, its arc from 12 o'clock, the mark shrunk inside it (round 6)", () => {
+  it("is a circle centred on the mark, its arc from 12 o'clock, round the mark at its own size (ZAC-265 round 4)", () => {
     const html = body(mark(15));
     expect(html).not.toContain("<rect");
     expect(html).toContain('<circle cx="12" cy="12" r="11"');
     expect(html).toContain('transform="rotate(-90 12 12)"');
-    // the logo shrinks to fit inside the ring, which sits in the mark's own cell, not over the title
-    expect(html).toContain('width="14" height="14"');
+    // the logo keeps the bare row's size; the ring is drawn round it, not the logo shrunk into it
+    expect(html).toContain('width="18" height="18"');
+    expect(html).not.toContain('width="14" height="14"');
     expect(body(null)).toContain('width="18" height="18"');
   });
 
-  it("sizes the mark's own svg to its 14px box, so the glyph is centred in the ring (phase 1b)", () => {
-    // `.sidebar-mark svg` sets --icon-size (18px): only the box shrank, and the glyph hung 2px below
-    // the ring's centre (measured at 390px, DPR 3: glyph centre y+2 before, 0 after)
+  it("draws the ring out of the layout, in one proportion to the mark, so a ringed row is as tall as a bare one", () => {
+    // measured at 390px, DPR 3 (.ci/zac265-centre.ts): ring 28px round the 18px mark, centres 0/0, rows the same height
     const css = readFileSync(join(import.meta.dir, "../components/AgentSidebar.css"), "utf8");
-    const rule = css.split("}").find((block) => block.includes(".sidebar-mark.has-cache-ring > :not(.cache-ring, .cache-ring-flame) svg"));
-    expect(rule).toBeDefined();
-    expect(rule).toContain("width: 14px; height: 14px;");
+    const cell = css.split("}").find((block) => block.includes(".sidebar-mark.has-cache-ring {"));
+    expect(cell).toContain("--cache-mark: var(--icon-size);");
+    expect(cell).toContain("--cache-ring: calc(var(--cache-mark) * 14 / 9);");
+    expect(cell).not.toContain("height:");
+    const ring = css.split("}").find((block) => block.trimStart().startsWith(".cache-ring {"));
+    expect(ring).toContain("position: absolute;");
+    expect(ring).toContain("transform: translate(-50%, -50%);");
   });
 
   it("is absent with no mark (a busy or unpriced chat): the row is today's", () => {
