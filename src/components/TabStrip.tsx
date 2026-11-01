@@ -13,6 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type DOMAttributes, type 
 import { ArrowLeft, ArrowRight, Bot, Ellipsis, Pencil, Plus, Server, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
+import "./AgentSidebar.css";
 
 import type { HerdrPane, HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
@@ -33,6 +34,8 @@ import { useTabReorder } from "../lib/useTabReorder.ts";
 import { indicatorGlyph, paneStatus, rollupStatus } from "../lib/status.ts";
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { CacheRing } from "./AgentSidebar.tsx";
+import type { RowCacheMark } from "../lib/rowCache.ts";
 import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
@@ -76,7 +79,9 @@ export interface TabStripProps {
  * On a phone Rename… opens the sidebar's sheet instead: a field in a 390 px strip is a sliver, and
  * an Android keyboard's Enter (keyCode 229) never reaches a bare field's key handler.
  */
-function HostChatTab({ chat, selected, hosted, onSelect, move }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void; move?: HostTabMove }) {
+function HostChatTab({ chat, selected, hosted, onSelect, move, cacheRing = null }: { chat: HostChatRow; selected: boolean; hosted: boolean; onSelect(): void; move?: HostTabMove;
+  /** PROTOTYPE (ZAC-265 round 2, C): the chat's cache as the sidebar's ring, small, round its mark (with the flame when kept warm) */
+  cacheRing?: RowCacheMark | null }) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -152,7 +157,7 @@ function HostChatTab({ chat, selected, hosted, onSelect, move }: { chat: HostCha
       {status !== "idle" && (settings.statusIndicators === "classic"
         ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" onAnimationStart={alignBreath} />
         : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true" onAnimationStart={alignBreath}>{indicatorGlyph(status, settings.statusIndicators)}</span>)}
-      <AgentMark agent="copilot" size={14} />
+      {cacheRing ? <span className="tab-strip-mark has-cache-ring"><CacheRing mark={cacheRing} /><AgentMark agent="copilot" size={11} /></span> : <AgentMark agent="copilot" size={14} />}
       {hosted && <Server className="host-chat-tab-glyph" aria-hidden="true" />}
       <span className="tab-strip-label">{title}</span>
     </button>}
@@ -245,13 +250,15 @@ function useStripOverflow(strip: { current: HTMLDivElement | null }, count: numb
 }
 
 /** A folder row's tabs: its host chats, as a workspace's strip draws them, with no pane beside them. */
-export function HostChatTabStrip({ folder, chats, selectedSession, onSelect }: { folder: string; chats: HostChatRow[]; selectedSession: string; onSelect(session: string): void }) {
+export function HostChatTabStrip({ folder, chats, selectedSession, onSelect, cacheRings }: { folder: string; chats: HostChatRow[]; selectedSession: string; onSelect(session: string): void;
+  /** PROTOTYPE (ZAC-265 round 2, C; not passed by the app yet): each tab's cache mark by session */
+  cacheRings?: ReadonlyMap<string, RowCacheMark> }) {
   const t = useT();
   const strip = useRef<HTMLDivElement | null>(null);
   useStripOverflow(strip, chats.length);
   const move = useHostTabMoves(strip, chats);
   return <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: folder })} onKeyDown={moveTabFocus}>
-    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} move={move(chat.session)} />)}
+    {chats.map((chat) => <HostChatTab key={chat.session} chat={chat} selected={chat.session === selectedSession} hosted={false} onSelect={() => onSelect(chat.session)} move={move(chat.session)} cacheRing={cacheRings?.get(chat.session) ?? null} />)}
   </div>;
 }
 

@@ -311,3 +311,34 @@
   margin-left: -2px;
   color: var(--text-dim);
 }
+
+/* PROTOTYPE (ZAC-265 round 2, C): a host chat tab's cache, the sidebar's ring (AgentSidebar.css
+   .cache-ring) at the tab's size round its mark, the flame badge on its top right when kept warm */
+.tab-strip-mark.has-cache-ring {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+.tab-strip-mark.has-cache-ring > :not(.cache-ring, .cache-ring-flame),
+.tab-strip-mark.has-cache-ring > :not(.cache-ring, .cache-ring-flame) svg { width: 11px; height: 11px; }
+.tab-strip-mark .cache-ring { width: 18px; height: 18px; }
+.tab-strip-mark .cache-ring circle { stroke-width: 2.5; }
+.tab-strip-mark .cache-ring .cache-ring-track { stroke-width: 1.25; }
+.tab-strip-mark .cache-ring-flame {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--bg-panel, var(--bg));
+  color: var(--cache-kept);
+  fill: currentColor;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
