@@ -2,7 +2,8 @@
  * Chat groups (ZAC-265): what App draws of them, from lib/groups.ts's view store. The Groups sheet
  * (B), one group's page (E) over it, and "Add to group" for a chat. Nothing while Settings → Chat
  * groups is off. Costs come from the page's costs feed (lib/rowCache.ts), asked of the PCs that
- * are connected while costs are tracked and a view is open. A chat opened from a view closes them all.
+ * are connected while costs are tracked and a view is open, and the group's page draws each row's
+ * cache ring from the same feed. A chat (or a file) opened from a view closes them all.
  */
 import { useEffect, useMemo } from "react";
 
@@ -15,10 +16,12 @@ import { AddToGroupSheet } from "./AddToGroupSheet.tsx";
 import { GroupPage } from "./GroupPage.tsx";
 import { GroupsSheet } from "./GroupsSheet.tsx";
 
-export function GroupsHost({ machines, hostChats, onOpenChat }: {
+export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
   machines: readonly Machine[];
   hostChats: ReadonlyMap<string, HostPc>;
   onOpenChat(target: { machineId: string; session: string }): void;
+  /** a file artifact of a group's page, in herdr's viewer on its chat's PC */
+  onOpenFile?(target: { machineId: string; path: string }): void;
 }) {
   const { settings } = useSettings();
   const on = settings.chatGroups;
@@ -41,8 +44,8 @@ export function GroupsHost({ machines, hostChats, onOpenChat }: {
   return <>
     {view.list && <GroupsSheet answer={answer} failed={groups?.failed ?? false} machines={machines} hostChats={hostChats} costs={costs}
       onOpenGroup={(id) => groupsView.openGroup(id)} onClose={() => groupsView.closeList()} />}
-    {group !== null && answer !== null && <GroupPage key={group.id} group={group} answer={answer} machines={machines} hostChats={hostChats} costs={costs}
-      onOpenChat={openChat} onClose={() => groupsView.closeGroup()} />}
+    {group !== null && answer !== null && <GroupPage key={group.id} group={group} answer={answer} machines={machines} hostChats={hostChats} costs={costs} feed={feed} from={view.from}
+      onOpenChat={openChat} onOpenFile={onOpenFile ? (target) => { groupsView.closeAll(); onOpenFile(target); } : undefined} onClose={() => groupsView.closeGroup()} />}
     {view.addTo !== null && <AddToGroupSheet key={`${view.addTo.pc} ${view.addTo.session}`} chat={view.addTo} answer={answer} hostChats={hostChats}
       onClose={() => groupsView.closeAddTo()} />}
   </>;

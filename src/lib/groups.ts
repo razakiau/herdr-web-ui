@@ -94,25 +94,84 @@ export function chainOrder(group: ChatGroup, links: readonly GroupLink[], rows: 
   return blocks.map((block, index) => ({ ...block, index })).sort((a, b) => a.at - b.at || a.index - b.index).flatMap((block) => block.steps);
 }
 
+/** One chat in the group page's tree: how deep it sits, and how it got there. */
+export interface TreeNode {
+  pc: string;
+  session: string;
+  /** 0 for a root; a child of a root 1, and so on with no limit (the page caps the indent, not the tree) */
+  depth: number;
+  /**
+   * how it joined: `first` a root the links lead from (or no link names), `manual` added by hand,
+   * else the link that filed it, `from` its parent's session (on the same PC), `at` when
+   */
+  join: { kind: "first"; at: string } | { kind: "manual"; at: string } | { kind: LinkKind; from: string; at: string };
+}
+
 /**
- * The trail bar's path (C): from the first chat of this one's chain to it, following the links back
- * (the oldest link into each chat). Where the trail forks only this branch is in it; a chat in no
- * link of the group is a trail of one.
+ * The group's chats as a tree (the group page): a chat's parent is the `from` of the oldest link of
+ * the group into it (the one that filed it). A chat added by hand, and one no link of the group
+ * leads to, is a root; roots by when they joined (`addedAt`), children by their link's time. Any
+ * depth. A loop of links (a → b → a) cannot hide its chats: once every root is walked, the earliest
+ * chat not reached starts a branch of its own, and every member is in the tree once.
  */
-export function trailTo(group: ChatGroup, links: readonly GroupLink[], session: string, pc?: string): string[] {
-  const member = group.members.find((each) => each.session === session && (pc === undefined || each.pc === pc));
-  if (!member) return [session];
-  const own = inGroup(group, links).filter((link) => link.pc === member.pc);
-  const path = [session];
-  const seen = new Set(path);
-  for (let at = session; ;) {
-    const back = own.find((link) => link.to === at);
-    if (!back || seen.has(back.from)) break;
-    path.unshift(back.from);
-    seen.add(back.from);
-    at = back.from;
+export function groupTree(group: ChatGroup, links: readonly GroupLink[]): TreeNode[] {
+  const own = inGroup(group, links);
+  const byKey = new Map(group.members.map((member) => [chatKey(member.pc, member.session), member]));
+  // the link that filed each chat: the oldest into it (own is oldest first)
+  const filed = new Map<string, GroupLink>();
+  for (const link of own) {
+    const to = chatKey(link.pc, link.to);
+    if (byKey.get(to)?.joined === "manual" || filed.has(to)) continue;
+    filed.set(to, link);
   }
-  return path;
+  const children = new Map<string, GroupLink[]>();
+  for (const [, link] of filed) {
+    const from = chatKey(link.pc, link.from);
+    children.set(from, [...children.get(from) ?? [], link]);
+  }
+  const at = (iso: string): number => { const time = Date.parse(iso); return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY; };
+  const byJoined = (keys: string[]): string[] => keys.map((key, index) => ({ key, index }))
+    .sort((a, b) => at(byKey.get(a.key)!.addedAt) - at(byKey.get(b.key)!.addedAt) || a.index - b.index).map((each) => each.key);
+  const out: TreeNode[] = [];
+  const seen = new Set<string>();
+  const walk = (key: string, depth: number, join: TreeNode["join"]): void => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    const member = byKey.get(key)!;
+    out.push({ pc: member.pc, session: member.session, depth, join });
+    for (const link of children.get(key) ?? []) walk(chatKey(link.pc, link.to), depth + 1, { kind: link.kind, from: link.from, at: link.at });
+  };
+  const rootJoin = (key: string): TreeNode["join"] => {
+    const member = byKey.get(key)!;
+    return member.joined === "manual" ? { kind: "manual", at: member.addedAt } : { kind: "first", at: member.addedAt };
+  };
+  const keys = group.members.map((member) => chatKey(member.pc, member.session));
+  for (const key of byJoined(keys.filter((each) => !filed.has(each)))) walk(key, 0, rootJoin(key));
+  // a loop: its chats each have a parent, so none was a root; the earliest left starts its branch,
+  // keeping the link that filed it (the relation line still names its real parent)
+  for (const key of byJoined(keys)) {
+    if (seen.has(key)) continue;
+    const link = filed.get(key);
+    walk(key, 0, link ? { kind: link.kind, from: link.from, at: link.at } : rootJoin(key));
+  }
+  return out;
+}
+
+/**
+ * The artifacts of every chat, each once and credited to the first chat in `order` (the tree's)
+ * that has it: a child hands its parent's list on, so every chat names what the first one made.
+ */
+export function creditArtifacts(perChat: ReadonlyMap<string, readonly HostArtifact[]>, order: readonly string[]): { artifact: HostArtifact; from: string }[] {
+  const ordered = new Map<string, readonly HostArtifact[]>();
+  for (const key of order) { const found = perChat.get(key); if (found) ordered.set(key, found); }
+  for (const [key, found] of perChat) if (!ordered.has(key)) ordered.set(key, found);
+  return dedupArtifacts(ordered).map(({ artifact, from }) => ({ artifact, from: from[0]! }));
+}
+
+/** A group's name as the trail shows it: a leading ticket ("ZAC-262 ") left off; the group keeps its name. */
+export function trailName(name: string): string {
+  const short = name.replace(/^[A-Z]+-\d+\s+/, "");
+  return short === "" ? name : short;
 }
 
 /**
@@ -247,10 +306,14 @@ export const groupsApi = {
 // ─── Which view is open ──────────────────────────────────────────────────────
 
 /** The Groups sheet (B), one group's page (E), the "Add to group" sheet for a chat; App draws them (GroupsHost). */
-export interface GroupsView { list: boolean; group: number | null; addTo: ChatRef | null }
+export interface GroupsView {
+  list: boolean; group: number | null; addTo: ChatRef | null;
+  /** the chat the group's page was opened from (its bar): drawn as the selected row there */
+  from: ChatRef | null;
+}
 
 function createGroupsView() {
-  let state: GroupsView = { list: false, group: null, addTo: null };
+  let state: GroupsView = { list: false, group: null, addTo: null, from: null };
   const listeners = new Set<() => void>();
   const set = (next: Partial<GroupsView>): void => { state = { ...state, ...next }; for (const listener of [...listeners]) listener(); };
   return {
@@ -259,12 +322,12 @@ function createGroupsView() {
     openList: (): void => set({ list: true }),
     closeList: (): void => set({ list: false }),
     /** a group's page, over the list when that is open: closing it goes back to the list */
-    openGroup: (group: number): void => set({ group }),
-    closeGroup: (): void => set({ group: null }),
+    openGroup: (group: number, from: ChatRef | null = null): void => set({ group, from }),
+    closeGroup: (): void => set({ group: null, from: null }),
     openAddTo: (chat: ChatRef): void => set({ addTo: chat }),
     closeAddTo: (): void => set({ addTo: null }),
     /** a chat opened from a view: every one of them goes */
-    closeAll: (): void => set({ list: false, group: null, addTo: null }),
+    closeAll: (): void => set({ list: false, group: null, addTo: null, from: null }),
   };
 }
 

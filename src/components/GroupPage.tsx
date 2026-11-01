@@ -1,37 +1,53 @@
 /**
- * Chat groups (ZAC-265), one group's page (owner's option E): one scrolling page. Its header names
- * the group, "N chats · <first date> – now · ~$cost" and a ⋯ (Rename, Delete). The digest card's
- * place comes next (Task 9 fills it; nothing shows there yet). Then the artifacts of every chat in
- * chips by kind ("2 pull requests · 3 files"), each opening its list labelled with the chats it
- * came from, the same PR made in two chats once (lib/groups.ts dedupArtifacts); they are read from
- * each chat's own read when the page opens, a PC that is offline not asked. Then the timeline: a
- * card per chat in hand-off order (lib/groups.ts chainOrder), its title, an archived icon or a
- * working badge, its summary, "PC · date · ~$cost", and between cards the join ("handed off ·
- * resume", "262 also handed off", "added by you"). A tap opens the chat, an archived one too (it
- * goes on through ZAC-266's hand-off). A chat whose PC is offline says "PC offline", one its PC no
- * longer lists "gone": neither is hidden.
+ * Chat groups (ZAC-265), one group's page (owner's option E, v2 polish): one scrolling page. Its
+ * header names the group, "N chats · 1 working · 1 warm · <first date> – now · ~$cost" and a ⋯
+ * (Rename, Delete). The digest card's place comes next (Task 9 fills it). Then the chats as a tree
+ * of who started whom (lib/groups.ts groupTree), any depth (a phone indents two levels, deeper ones
+ * keep the second's indent): each is the app's own agent row, as All agents draws it (AgentRowBody
+ * with the cache ring and keep-warm flame, the status glyph and its time, the cost cell), under one
+ * line saying how it got there ("Started by 262 · Nov 1"), and its summary when it has one. The chat
+ * the page was opened from is the selected row. Then the artifacts in chips by kind, each opening
+ * its list as the chat's sheets list them (HostSessionPills.tsx ArtifactList: live PR and issue
+ * colours, file glyphs), each credited to the first chat that has it (lib/groups.ts
+ * creditArtifacts), five shown, then "Show N more". They are read from each chat's own read when
+ * the page opens, a PC that is offline not asked. A tap on a row opens the chat, an archived one
+ * too. A chat whose PC is offline says "PC offline", one its PC no longer lists "gone".
  */
 import { useEffect, useId, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArrowRight, ChevronLeft, Ellipsis, GitBranch, GitCommitHorizontal, GitPullRequest, Globe, CircleDot, Link, Package, Pencil, Plus, Split, Trash2, type LucideProps } from "lucide-react";
+import { ChevronDown, ChevronLeft, CircleDot, Ellipsis, GitCommitHorizontal, GitPullRequest, Globe, Link, Package, Pencil, Trash2, type LucideProps } from "lucide-react";
 
 import "./NewSessionDialog.css";
+import "./Sidebar.css";
+import "./AgentSidebar.css";
+import "./AllAgentsSheet.css";
+import "./SessionSheet.css";
+import "./HostChatView.css";
 import "./GroupsSheet.css";
+import "./GroupTrail.css";
 import "./GroupPage.css";
 
 import type { ChatGroup, GroupsAnswer } from "../../shared/groups.ts";
 import type { HostArtifact, HostArtifactType, HostChatRow } from "../../shared/host-chats.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
-import { chainOrder, chatKey, costOf, dedupArtifacts, groupsApi, shortChatName, type ChainStep } from "../lib/groups.ts";
-import { fetchHostChat, type HostPc } from "../lib/hostChats.ts";
+import { pathOfFileUri } from "../lib/artifacts.ts";
+import { copyText } from "../lib/clipboard.ts";
+import { chatKey, costOf, creditArtifacts, groupsApi, groupTree, shortChatName, type ChatRef, type TreeNode } from "../lib/groups.ts";
+import { basename, chatAge, fetchHostChat, type HostPc } from "../lib/hostChats.ts";
 import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { daysBack } from "../lib/hostChatGroups.ts";
+import type { CostsFeed } from "../lib/rowCache.ts";
+import { useSettings } from "../lib/settings.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import type { CostSplit } from "../lib/sessionCost.ts";
+import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
+import { CacheLine, RowCostCell, rowCacheDot } from "./AllAgentsSheet.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { GroupNameSheet, rowsByKey, shortDate } from "./GroupsSheet.tsx";
+import { GroupStateSummary, hasGroupState, useMemberStates } from "./GroupState.tsx";
+import { ArtifactList, useReferenceStates } from "./HostSessionPills.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 
 export interface GroupPageProps {
@@ -41,7 +57,13 @@ export interface GroupPageProps {
   hostChats: ReadonlyMap<string, HostPc>;
   /** each chat's cost by chatKey (lib/groups.ts chatCosts) */
   costs?: ReadonlyMap<string, CostSplit>;
+  /** the page's costs feed (lib/rowCache.ts), for each row's cache ring as the sidebar draws it; null while costs are not tracked */
+  feed?: CostsFeed | null;
+  /** the chat the page was opened from: its row is the selected one */
+  from?: ChatRef | null;
   onOpenChat(target: { machineId: string; session: string }): void;
+  /** a file artifact, in herdr's viewer on its chat's PC */
+  onOpenFile?(target: { machineId: string; path: string }): void;
   onClose(): void;
 }
 
@@ -116,16 +138,33 @@ function useMemberArtifacts(group: ChatGroup, machines: readonly Machine[]): Map
   }, [found, all]);
 }
 
-/** A chat's day as the timeline says it: "today", "Oct 29". */
+/** A day as the relation line says it: "today", "Oct 29". */
 const dayOf = (at: number, now: number, locale: string, t: Translate): string => daysBack(at, now) <= 0 ? t("today") : shortDate(at, locale);
 
-export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS, onOpenChat, onClose }: GroupPageProps) {
+/** How many of a kind's artifacts show before "Show N more". */
+export const ARTIFACTS_SHOWN = 5;
+
+/** How a chat got into the tree, in plain words: "The first chat", "Started by 262", "Added by you". */
+function relation(node: TreeNode, name: (session: string) => string, t: Translate): string {
+  switch (node.join.kind) {
+    case "first": return t("The first chat");
+    case "manual": return t("Added by you");
+    case "spawn": case "job": return t("Started by {name}", { name: name(node.join.from) });
+    case "continue": return t("Continued from {name}", { name: name(node.join.from) });
+    case "resume": return t("Resumed from {name}", { name: name(node.join.from) });
+    case "fork": return t("Forked from {name}", { name: name(node.join.from) });
+  }
+}
+
+export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS, feed = null, from = null, onOpenChat, onOpenFile, onClose }: GroupPageProps) {
   const t = useT();
   const locale = useLocale();
+  const { settings } = useSettings();
   const id = useId();
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const [asking, setAsking] = useState<"rename" | "delete" | null>(null);
   const [kind, setKind] = useState<HostArtifactType | null>(null);
+  const [more, setMore] = useState(false);
   const page = useRef<HTMLDivElement | null>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: page });
   usePhoneSheetBack(() => onClose(), menu === null && asking === null);
@@ -140,101 +179,123 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     return () => window.removeEventListener("keydown", onKey, true);
   });
   const rows = useMemo(() => rowsByKey(hostChats), [hostChats]);
-  const order = useMemo(() => chainOrder(group, answer.links, rows), [group, answer.links, rows]);
+  const tree = useMemo(() => groupTree(group, answer.links), [group, answer.links]);
+  const { states, logs, keepWarm, now } = useMemberStates(group, rows, feed);
   const artifacts = useMemberArtifacts(group, machines);
-  const gathered = useMemo(() => dedupArtifacts(artifacts), [artifacts]);
-  const now = Date.now();
+  const credited = useMemo(() => creditArtifacts(artifacts, tree.map((node) => chatKey(node.pc, node.session))), [artifacts, tree]);
   const machineOf = (pc: string): Machine | undefined => machines.find((machine) => machine.id === pc);
-  const rowOf = (step: { pc: string; session: string }): HostChatRow | undefined => rows.get(chatKey(step.pc, step.session));
-  const titleOf = (step: { pc: string; session: string }): string => rowOf(step)?.title.trim() || t("Copilot chat");
+  const rowOf = (ref: { pc: string; session: string }): HostChatRow | undefined => rows.get(chatKey(ref.pc, ref.session));
+  const titleOf = (ref: { pc: string; session: string }): string => rowOf(ref)?.title.trim() || t("Copilot chat");
   const keys = group.members.map((member) => chatKey(member.pc, member.session));
   const total = costOf(keys, costs);
   const times = group.members.map((member) => Date.parse(rows.get(chatKey(member.pc, member.session))?.modified_at ?? "")).filter(Number.isFinite);
   const first = Math.min(Date.parse(group.createdAt) || now, ...times);
   const count = group.members.length;
-  const sub = [t(count === 1 ? "1 chat" : "{n} chats", { n: count }), t("{date} – now", { date: shortDate(first, locale) }), total ? listUsd(total.usd, total.floor) : null].filter(Boolean).join(" · ");
+  const shownStates = [...states.values()];
   const summaries = new Map(answer.summaries.map((summary) => [chatKey(summary.pc, summary.session), summary.text]));
-  const open = (step: ChainStep): void => onOpenChat({ machineId: step.pc, session: step.session });
-  const chips = KINDS.map((each) => ({ ...each, items: gathered.filter((entry) => entry.artifact.type === each.type) })).filter((each) => each.items.length > 0);
+  const chips = KINDS.map((each) => ({ ...each, items: credited.filter((entry) => entry.artifact.type === each.type) })).filter((each) => each.items.length > 0);
   const listed = kind === null ? [] : chips.find((each) => each.type === kind)?.items ?? [];
-
-  const join = (step: ChainStep): string | null => {
-    if (step.join === null) return null;
-    if (step.join.kind === "manual") return t("added by you");
-    const how = step.join.kind === "fork" ? t("forked") : t("handed off · {how}", { how: step.join.kind });
-    if (step.forkNote === undefined) return how;
-    return t("{name} also handed off · {how}", { name: shortChatName(titleOf({ pc: step.pc, session: step.forkNote })), how: step.join.kind });
+  const shownListed = more ? listed : listed.slice(0, ARTIFACTS_SHOWN);
+  // the PR and issue states, asked of this server as the chat's pills ask them (any connected PC stands for the page)
+  const anyPc = machines.find((machine) => machine.state === "connected")?.id;
+  const references = useMemo(() => credited.map((entry) => entry.artifact), [credited]);
+  const referenceStates = useReferenceStates(anyPc, references);
+  const creditOf = new Map(credited.map((entry) => [entry.artifact, entry.from]));
+  const pcNames = new Set(group.members.map((member) => member.pc)).size > 1;
+  const openArtifact = (artifact: HostArtifact): void => {
+    const key = creditOf.get(artifact);
+    if (artifact.type === "file" && artifact.uri && key !== undefined && onOpenFile) {
+      const path = pathOfFileUri(artifact.uri);
+      if (path !== null) { onOpenFile({ machineId: key.slice(0, key.indexOf(" ")), path }); return; }
+    }
+    const link = artifact.link ?? artifact.uri;
+    if (link !== undefined && /^https?:\/\//i.test(link)) { window.open(link, "_blank", "noopener,noreferrer"); return; }
+    if (artifact.commitHash) void copyText(artifact.commitHash);
   };
-  const JoinIcon = (step: ChainStep) => step.join?.kind === "manual" ? Plus : step.forkNote !== undefined ? Split : step.join?.kind === "fork" ? GitBranch : ArrowRight;
+  const canOpen = (artifact: HostArtifact): boolean => artifact.type === "file" ? artifact.uri !== undefined && onOpenFile !== undefined
+    : /^https?:\/\//i.test(artifact.link ?? artifact.uri ?? "") || artifact.commitHash !== undefined;
+  const nameOfKey = (key: string): string => { const at = key.indexOf(" "); return shortChatName(titleOf({ pc: key.slice(0, at), session: key.slice(at + 1) })); };
+
+  const member = (node: TreeNode) => {
+    const key = chatKey(node.pc, node.session);
+    const row = rowOf(node);
+    const machine = machineOf(node.pc);
+    const offline = machine?.state !== "connected";
+    const pc = hostChats.get(node.pc);
+    const gone = !offline && row === undefined && pc !== undefined && pc.stale !== true;
+    const cost = costs.get(key);
+    const state = states.get(key);
+    const mark = state?.mark ?? null;
+    const log = logs.get(key);
+    const title = titleOf(node);
+    const selected = from !== null && from.pc === node.pc && from.session === node.session;
+    // the second line as All agents': why it is not there, archived (All agents says it by its section, a tree in words), its folder, its age, then its cache in words
+    const parts = [row?.status === "error" ? t("Error") : null, offline ? t("PC offline") : gone ? t("gone") : null, row?.archived ? t("Archived") : null,
+      row?.cwd ? basename(row.cwd) : null, row ? chatAge(row, now, t) : null].filter((part): part is string => Boolean(part));
+    const context = mark ? <CacheLine parts={parts} mark={mark} /> : parts.join(" · ");
+    const dot = cost && row && log ? rowCacheDot(row, log, mark, keepWarm, settings, now) : null;
+    const relationText = relation(node, (session) => shortChatName(titleOf({ pc: node.pc, session })), t);
+    const at = Date.parse(node.join.at);
+    const summary = summaries.get(key);
+    return <li key={key} data-member={key} data-depth={node.depth} className={`group-node${node.depth > 0 ? " is-child" : ""}`}
+      style={{ "--group-depth": Math.min(node.depth, 2) } as React.CSSProperties}>
+      <p className="group-relation">{relationText}{Number.isFinite(at) && node.join.kind !== "first" ? ` · ${dayOf(at, now, locale, t)}` : ""}</p>
+      <div className={`agent-item host-chat-item${selected ? " is-selected" : ""}${offline || gone ? " is-offline" : ""}${row?.archived ? " is-archived" : ""}`} data-host-session={node.session}>
+        <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, row?.cwd].filter(Boolean).join("\n")}
+          onClick={() => onOpenChat({ machineId: node.pc, session: node.session })}>
+          <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={pcNames ? machine?.name ?? node.pc : null} context={context} tokens={[]}
+            status={state?.status} cacheRing={mark} cacheWords={mark ? cacheWords(mark, t) : null} />
+          {cost && <RowCostCell cost={cost} dot={dot} />}
+        </button>
+      </div>
+      {summary && <p className="group-summary">{summary}</p>}
+    </li>;
+  };
 
   return createPortal(
     <div className="modal-scrim new-session-scrim group-page-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={(node) => { surface.current = node; page.current = node; }} className="modal group-page" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}>
+      <div ref={(node) => { surface.current = node; page.current = node; }} className="modal group-page all-agents" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}>
         <header className="modal-header group-page-head">
           <button type="button" className="icon-button" aria-label={t("Back")} title={t("Back")} onClick={onClose}><ChevronLeft aria-hidden="true" /></button>
           <div className="group-page-title">
             <h2 className="modal-title" id={`${id}-title`}>{group.name}</h2>
-            <span className="group-page-sub">{sub}</span>
+            <span className="group-page-sub">
+              <span>{t(count === 1 ? "1 chat" : "{n} chats", { n: count })}</span>
+              {hasGroupState(shownStates) && <><span aria-hidden="true">·</span><GroupStateSummary states={shownStates} /></>}
+              <span aria-hidden="true">·</span>
+              <span>{t("{date} – now", { date: shortDate(first, locale) })}</span>
+              {total && <><span aria-hidden="true">·</span><span>{listUsd(total.usd, total.floor)}</span></>}
+            </span>
           </div>
           <button type="button" className="icon-button" aria-label={t("More for {title}", { title: group.name })} aria-haspopup="menu" aria-expanded={menu !== null}
             onClick={(event) => setMenu(menu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>
         </header>
         <div className="modal-body group-page-body">
           {/* the digest card goes here (Task 9): nothing shows in its place yet */}
-          {chips.length > 0 && <div className="group-artifacts" role="group" aria-label={t("Artifacts")}>
-            {chips.map((each) => {
-              const Icon = each.icon;
-              return <button key={each.type} type="button" className="session-pill group-artifact-chip" aria-expanded={kind === each.type} onClick={() => setKind(kind === each.type ? null : each.type)}>
-                <Icon className="session-pill-icon" aria-hidden="true" />
-                <span className="session-pill-label">{each.label(each.items.length, t)}</span>
-              </button>;
-            })}
-          </div>}
-          {listed.length > 0 && <ul className="group-artifact-list">
-            {listed.map(({ artifact, from }) => {
-              const link = artifact.link ?? artifact.uri;
-              const web = link !== undefined && /^https?:\/\//i.test(link);
-              const names = from.map((key) => { const at = key.indexOf(" "); return shortChatName(titleOf({ pc: key.slice(0, at), session: key.slice(at + 1) })); }).join(", ");
-              return <li key={link ?? artifact.commitHash ?? artifact.id}>
-                {web ? <a className="group-artifact" href={link} target="_blank" rel="noopener noreferrer"><span className="group-artifact-label">{artifact.label}</span><span className="group-artifact-from">{names}</span></a>
-                  : <span className="group-artifact"><span className="group-artifact-label">{artifact.label}</span><span className="group-artifact-from">{names}</span></span>}
-              </li>;
-            })}
-          </ul>}
-          <ol className="group-timeline">
-            {order.map((step, index) => {
-              const key = chatKey(step.pc, step.session);
-              const row = rowOf(step);
-              const machine = machineOf(step.pc);
-              const offline = machine?.state !== "connected";
-              const pc = hostChats.get(step.pc);
-              const gone = !offline && row === undefined && pc !== undefined && pc.stale !== true;
-              const cost = costs.get(key);
-              const at = row ? Date.parse(row.modified_at) : Number.NaN;
-              const meta = [machine?.name ?? step.pc, offline ? t("PC offline") : gone ? t("gone") : Number.isFinite(at) ? dayOf(at, now, locale, t) : null, cost ? listUsd(cost.usd, cost.floor) : null].filter(Boolean).join(" · ");
-              const words = join(step);
-              const Icon = JoinIcon(step);
-              const working = row?.status === "working";
-              return <li key={key} data-member={key} className={`group-member${offline || gone ? " is-away" : ""}`}>
-                {words !== null && index > 0 && <p className="group-join"><Icon aria-hidden="true" />{words}</p>}
-                <div className="group-member-row">
-                  <span className="group-member-rail" aria-hidden="true">
-                    <i className={working ? "is-working" : row?.archived ? "is-archived" : ""} />
-                    {index < order.length - 1 && <em />}
-                  </span>
-                  <button type="button" className="group-member-card" onClick={() => open(step)}>
-                    <span className="group-member-head">
-                      <strong className="group-member-title">{titleOf(step)}</strong>
-                      {row?.archived && <Archive className="group-member-archived" aria-label={t("Archived")} />}
-                      {working && <span className="badge badge-working">{t("working")}</span>}
-                    </span>
-                    <span className={`group-member-sum${summaries.has(key) ? "" : " is-dim"}`}>{summaries.get(key) ?? t("Not summarised yet.")}</span>
-                    <span className="group-member-meta">{meta}</span>
-                  </button>
-                </div>
-              </li>;
-            })}
-          </ol>
+          <section className="all-agents-group" aria-label={t("Chats")}>
+            <h3 className="sidebar-section-label all-agents-age">{t("Chats")}</h3>
+            <ol className="agent-list group-tree">{tree.map(member)}</ol>
+          </section>
+          {chips.length > 0 && <section className="all-agents-group group-made" aria-label={t("Made in this group")}>
+            <h3 className="sidebar-section-label all-agents-age">{t("Made in this group")}</h3>
+            <div className="group-artifacts" role="group" aria-label={t("Artifacts")}>
+              {chips.map((each) => {
+                const Icon = each.icon;
+                return <button key={each.type} type="button" className="session-pill group-artifact-chip" aria-expanded={kind === each.type}
+                  onClick={() => { setKind(kind === each.type ? null : each.type); setMore(false); }}>
+                  <Icon className="session-pill-icon" aria-hidden="true" />
+                  <span className="session-pill-label">{each.label(each.items.length, t)}</span>
+                </button>;
+              })}
+            </div>
+            {shownListed.length > 0 && <div className="group-artifact-list">
+              <ArtifactList items={shownListed.map((entry) => entry.artifact)} states={referenceStates} onOpen={openArtifact} canOpen={canOpen}
+                aside={(artifact) => { const key = creditOf.get(artifact); return key === undefined ? null : <span className="group-artifact-from">{nameOfKey(key)}</span>; }} />
+              {listed.length > shownListed.length && <button type="button" className="agent-more group-artifact-more" onClick={() => setMore(true)}>
+                <ChevronDown aria-hidden="true" />{t("Show {n} more", { n: listed.length - shownListed.length })}
+              </button>}
+            </div>}
+          </section>}
         </div>
       </div>
       {menu && <RowMenu anchor={menu} title={group.name} onClose={() => setMenu(null)} items={[

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChatGroup } from "../../shared/groups.ts";
 import type { HostArtifact, HostChatRow, HostLink } from "../../shared/host-chats.ts";
-import { chainOrder, chatKey, createGroupsFeed, dedupArtifacts, shortChatName, trailTo } from "./groups.ts";
+import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, groupTree, shortChatName, trailName } from "./groups.ts";
 
 const PC = "mac";
 const row = (session: string, title: string, modified: string, over: Partial<HostChatRow> = {}): HostChatRow =>
@@ -61,11 +61,58 @@ describe("chainOrder", () => {
   });
 });
 
-describe("trailTo", () => {
-  it("is the path from the first chat to this one, not the other branch", () => {
-    expect(trailTo(GROUP, LINKS, "s265")).toEqual(["s262", "s265"]);
-    expect(trailTo(GROUP, LINKS, "s266")).toEqual(["s262", "s266"]);
-    expect(trailTo(GROUP, LINKS, "h")).toEqual(["h"]);
+describe("groupTree", () => {
+  const link = (from: string, to: string, kind: HostLink["kind"], at: string) => ({ pc: PC, from, to, kind, at });
+  const shape = (nodes: ReturnType<typeof groupTree>) => nodes.map((node) => `${"  ".repeat(node.depth)}${node.session} ${node.join.kind}${"from" in node.join ? ` ${node.join.from}` : ""}`);
+
+  it("puts children under who started them, siblings by link time, a chat added by hand a root of its own", () => {
+    expect(shape(groupTree(GROUP, LINKS))).toEqual(["s262 first", "  s265 resume s262", "  s266 resume s262", "h manual"]);
+  });
+
+  it("goes to any depth: a grandchild, and a chain four deep", () => {
+    const group: ChatGroup = { ...GROUP, members: ["a", "b", "c", "d", "e"].map((session) => member(session, "link")) };
+    const links = [link("a", "b", "spawn", "2026-10-31T10:00:00Z"), link("b", "c", "job", "2026-10-31T11:00:00Z"),
+      link("c", "d", "continue", "2026-10-31T12:00:00Z"), link("d", "e", "spawn", "2026-10-31T13:00:00Z")];
+    const tree = groupTree(group, links);
+    expect(tree.map((node) => node.depth)).toEqual([0, 1, 2, 3, 4]);
+    expect(shape(tree)).toEqual(["a first", "  b spawn a", "    c job b", "      d continue c", "        e spawn d"]);
+    expect(tree[4]!.join).toEqual({ kind: "spawn", from: "d", at: "2026-10-31T13:00:00Z" });
+  });
+
+  it("keeps a fork's kind, and files a chat two links lead to under the older one", () => {
+    const group: ChatGroup = { ...GROUP, members: ["a", "b", "c"].map((session) => member(session, "link")) };
+    const links = [link("a", "b", "fork", "2026-10-31T10:00:00Z"), link("a", "c", "spawn", "2026-10-31T11:00:00Z"), link("b", "c", "resume", "2026-10-31T12:00:00Z")];
+    expect(shape(groupTree(group, links))).toEqual(["a first", "  b fork a", "  c spawn a"]);
+  });
+
+  it("never files a chat added by hand under a link into it", () => {
+    const group: ChatGroup = { ...GROUP, members: [member("a", "link"), member("m", "manual", "2026-10-31T09:00:00Z")] };
+    const tree = groupTree(group, [link("a", "m", "spawn", "2026-10-31T10:00:00Z")]);
+    expect(shape(tree)).toEqual(["m manual", "a first"]);
+  });
+
+  it("shows every chat of a loop once (a → b → a)", () => {
+    const group: ChatGroup = { ...GROUP, members: [member("a", "link", "2026-10-31T09:00:00Z"), member("b", "link", "2026-10-31T10:00:00Z")] };
+    const tree = groupTree(group, [link("a", "b", "spawn", "2026-10-31T10:00:00Z"), link("b", "a", "resume", "2026-10-31T11:00:00Z")]);
+    expect(shape(tree)).toEqual(["a resume b", "  b spawn a"]);
+  });
+});
+
+describe("creditArtifacts", () => {
+  it("credits each artifact once, to the first chat in the tree's order that has it", () => {
+    const pr: HostArtifact = { id: "p7", isArtifact: true, type: "pullRequest", label: "#7", link: "https://github.com/o/r/pull/7" };
+    const doc: HostArtifact = { id: "d1", isArtifact: true, type: "file", label: "spec.md", uri: "file:///w/spec.md" };
+    const perChat = new Map<string, HostArtifact[]>([[chatKey(PC, "b"), [pr, doc]], [chatKey(PC, "a"), [pr]]]);
+    const credited = creditArtifacts(perChat, [chatKey(PC, "a"), chatKey(PC, "b")]);
+    expect(credited.map((entry) => [entry.artifact.label, entry.from])).toEqual([["#7", chatKey(PC, "a")], ["spec.md", chatKey(PC, "b")]]);
+  });
+});
+
+describe("trailName", () => {
+  it("leaves a leading ticket off, and keeps a name that is only a ticket", () => {
+    expect(trailName("ZAC-262 Ovis keep-warm")).toBe("Ovis keep-warm");
+    expect(trailName("Ovis ZAC-262")).toBe("Ovis ZAC-262");
+    expect(trailName("ZAC-262")).toBe("ZAC-262");
   });
 });
 

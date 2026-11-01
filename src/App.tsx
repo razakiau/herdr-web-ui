@@ -1000,7 +1000,8 @@ export function App() {
       </MachineContext.Provider>}
       {/* the weekly digest's "This week" page (ZAC-262): its tap, `?digest=`, the Costs sheet's link */}
       <WeekDigestHost onOpenChat={(target) => { setDrawerOpen(false); selectHostChatRef.current(target); }} />
-      <GroupsHost machines={machines} hostChats={hostChats} onOpenChat={(target) => { setDrawerOpen(false); selectHostChatRef.current(target); }} />
+      <GroupsHost machines={machines} hostChats={hostChats} onOpenChat={(target) => { setDrawerOpen(false); selectHostChatRef.current(target); }}
+        onOpenFile={({ machineId, path }) => openFile({ path, paneId: null, machineId })} />
       {hostRename && <RenameHostChatSheet title={hostRename.chat.title} onClose={() => setHostRename(null)}
         onSave={(title) => hostActions.rename(hostRename.machineId, hostRename.chat.session, title)} />}
       {/* the one place the product's name is said: it names where else the chat goes */}

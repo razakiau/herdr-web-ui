@@ -84,8 +84,8 @@ afterEach(async () => {
 const nodeMock = () => ({ focus() {}, contains: () => false, closest: () => null, isConnected: true, querySelector: () => null, querySelectorAll: () => [],
   addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }), style: {} });
 
-async function open(): Promise<ReactTestRenderer> {
-  const page = createElement(GroupPage, { group: GROUP, answer: ANSWER, machines: MACHINES, hostChats: HOST_CHATS, onOpenChat: () => {}, onClose: () => {} });
+async function open(over: Partial<Parameters<typeof GroupPage>[0]> = {}): Promise<ReactTestRenderer> {
+  const page = createElement(GroupPage, { group: GROUP, answer: ANSWER, machines: MACHINES, hostChats: HOST_CHATS, onOpenChat: () => {}, onClose: () => {}, ...over });
   await act(async () => { renderer = create(createElement(SettingsProvider, { children: page }), { createNodeMock: nodeMock }); });
   for (let turn = 0; turn < 5; turn++) await act(async () => { await Promise.resolve(); });
   return renderer!;
@@ -97,16 +97,19 @@ const classed = (node: ReactTestInstance, name: string): ReactTestInstance[] =>
   node.findAll((each) => typeof each.type === "string" && typeof each.props["className"] === "string" && (each.props["className"] as string).split(" ").includes(name));
 
 describe("the group page", () => {
-  it("draws every member in hand-off order, the one added by hand last", async () => {
+  it("draws every member as a tree: a hand-off under who handed off, the one added by hand a root of its own", async () => {
     const page = await open();
     const keys = page.root.findAll((each) => each.type === "li" && typeof each.props["data-member"] === "string").map((each) => each.props["data-member"] as string);
     expect(keys).toEqual(["local s-old", "local s-new", "cde s-far"]);
   });
 
-  it("marks an archived member with the archived icon, and still opens it", async () => {
+  it("draws each member as the app's agent row, says an archived one archived, and still opens it", async () => {
     const page = await open();
     const old = card(page, "local s-old");
-    expect(classed(old, "group-member-archived")).toHaveLength(1);
+    expect(classed(old, "agent-row")).toHaveLength(1);
+    expect(textOf(old)).toContain("Archived");
+    expect(old.props["data-depth"]).toBe(0);
+    expect(card(page, "local s-new").props["data-depth"]).toBe(1);
     expect(textOf(old)).toContain("FICTIONAL-262 follow-ups");
     expect(old.findAll((each) => each.type === "button").length).toBeGreaterThan(0);
   });
@@ -118,10 +121,20 @@ describe("the group page", () => {
     expect(urls.some((url) => url.includes("/machines/cde/"))).toBe(false);
   });
 
-  it("says the join between cards: a hand-off, and a chat added by hand", async () => {
+  it("says how each chat got there, and shows no summary line where there is none", async () => {
     const page = await open();
-    const joins = classed(page.root, "group-join").map(textOf);
-    expect(joins).toEqual(["handed off · resume", "added by you"]);
+    const relations = classed(page.root, "group-relation").map(textOf);
+    expect(relations[0]).toBe("The first chat");
+    expect(relations[1]).toMatch(/^Resumed from 262 · /);
+    expect(relations[2]).toMatch(/^Added by you/);
+    expect(classed(page.root, "group-summary")).toHaveLength(0);
+    expect(textOf(page.root)).not.toContain("Not summarised yet.");
+  });
+
+  it("gives the chat it was opened from the row's selected look", async () => {
+    const page = await open({ from: { pc: "local", session: "s-new" } });
+    expect(classed(card(page, "local s-new"), "is-selected")).toHaveLength(1);
+    expect(classed(card(page, "local s-old"), "is-selected")).toHaveLength(0);
   });
 
   it("leaves the digest's place empty", async () => {
@@ -204,5 +217,26 @@ describe("the group page", () => {
       expect(urls).toHaveLength(4);
       expect(classed(renderer!.root, "group-artifact-chip")).toHaveLength(0);
     } finally { Object.defineProperty(AbortSignal, "timeout", realTimeout); }
+  });
+
+  it("lists a kind as the chat's sheet does, each credited to the first chat with it, five then the rest on asking", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://x");
+      const session = url.searchParams.get("session");
+      const file = (n: number) => ({ id: `f${n}`, type: "file", label: `notes-${n}.md`, isArtifact: true, uri: `file:///w/notes-${n}.md` });
+      const artifacts = session === "s-old" ? [file(1), file(2)] : session === "s-new" ? [file(1), file(3), file(4), file(5), file(6), file(7)] : [];
+      return new Response(JSON.stringify({ session, busy: false, title: "", turns: [], artifacts }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const page = await open();
+    const chip = classed(page.root, "group-artifact-chip")[0]!;
+    expect(textOf(chip)).toBe("7 files");
+    await act(async () => { chip.props["onClick"](); });
+    const credits = () => classed(page.root, "group-artifact-from").map(textOf);
+    expect(credits()).toEqual(["262", "262", "265", "265", "265"]);
+    const more = classed(page.root, "group-artifact-more")[0]!;
+    expect(textOf(more)).toBe("Show 2 more");
+    await act(async () => { more.props["onClick"](); });
+    expect(credits()).toHaveLength(7);
+    expect(classed(page.root, "group-artifact-more")).toHaveLength(0);
   });
 });
