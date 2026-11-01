@@ -50,7 +50,7 @@ import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
 import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
 import { type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
-import { bridgeHandoff, coolArchivedChat, createHandoffFollower, handleKeepWarmAct, type HandoffAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
+import { bridgeHandoff, coolArchivedChat, createHandoffFollower, restoreArchivedChat, handleKeepWarmAct, type HandoffAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
@@ -269,7 +269,8 @@ export function createServer(
     keepWarmKeys: async (refresh: boolean) => (await omniRoute.keepWarm(refresh)).state?.keys ?? [],
     keepWarmAction: (act: KeepWarmAct) => keepWarmActions.path(act),
     handoffAction: (act: HandoffAct) => keepWarmActions.path(act),
-    coolKeepWarm: (key: KeepWarmKey) => coolArchivedChat(key, omniRoute),
+    coolKeepWarm: (key: KeepWarmKey, chat: string) => coolArchivedChat(key, chat, omniRoute),
+    restoreKeepWarm: (chat: string) => restoreArchivedChat(chat, omniRoute),
   };
   const references = options.references ?? new GitHubReferenceState();
   const usage = options.usage ?? new UsageService(undefined, undefined, async (refresh) => {

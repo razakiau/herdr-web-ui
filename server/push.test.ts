@@ -1187,6 +1187,30 @@ describe("archiving a chat lets it cool (ZAC-262)", () => {
     expect(cooled.map((key) => key.lastRealAt)).toEqual([last, next]);
   });
 
+  it("names the chat it turns off, turns off a small chat forced on, and gives the default back as the chat is restored (ZAC-271)", async () => {
+    const last = Date.now() - 60_000;
+    const cooled: Array<[string, string]> = [];
+    const restored: string[] = [];
+    // a small chat the owner forced on, its cache gone: not kept now, but its switch is on
+    const push = subscribed({ keepWarmKeys: async () => [keyFor(last, { kept: false, big: false, forced: true })],
+      coolKeepWarm: async (key, chat) => { cooled.push([key.key, chat]); return true; }, restoreKeepWarm: async (chat) => { restored.push(chat); return true; } });
+    push.onHostChats([chatRow(false)], "mac", "Mac");
+    push.onHostChatCosts([log(new Date(last).toISOString())], PRICES, "mac", "Mac");
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    await push.settled();
+    expect(cooled).toEqual([["k1", "chat:mac:ahp%3A%2Fs1"]]);
+    expect(restored).toEqual([]);
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    push.onHostChats([chatRow(false)], "mac", "Mac");
+    push.onHostChats([chatRow(false)], "mac", "Mac");
+    await push.settled();
+    expect(restored).toEqual(["chat:mac:ahp%3A%2Fs1"]);
+    // archived again after the restore: turned off again, for the same call
+    push.onHostChats([chatRow(true)], "mac", "Mac");
+    await push.settled();
+    expect(cooled).toHaveLength(2);
+  });
+
   it("cools a chat first seen archived once its cost row arrives", async () => {
     const last = Date.now() - 60_000;
     const cooled: KeepWarmKey[] = [];

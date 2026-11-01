@@ -1714,11 +1714,13 @@ function valueFor(question: ChatInputQuestion, optionIds: string[], typed: strin
     }
     case ChatInputQuestionKind.Number:
     case ChatInputQuestionKind.Integer: {
-      const number = free.length ? Number(free[0]!.trim()) : Number.NaN;
-      if (!Number.isFinite(number) || (question.kind === ChatInputQuestionKind.Integer && !Number.isInteger(number))) {
-        return refuse(badRequest("invalid_answer", "the answer must be a number"));
-      }
-      return { kind: ChatInputAnswerValueKind.Number, value: number };
+      if (!free.length) return noAnswer();
+      // "60" or "60 %" is the number; anything else goes as the words typed, as VS Code's own card
+      // sends them and the host passes them on (ZAC-271: a dictated answer on a percent page refused the
+      // whole form, and the card had no way out but stopping the chat)
+      const number = Number(free[0]!.trim().replace(/\s*%$/, ""));
+      const fits = Number.isFinite(number) && (question.kind !== ChatInputQuestionKind.Integer || Number.isInteger(number));
+      return fits ? { kind: ChatInputAnswerValueKind.Number, value: number } : { kind: ChatInputAnswerValueKind.Text, value: free[0]! };
     }
     default:
       return free.length ? { kind: ChatInputAnswerValueKind.Text, value: free[0]! } : noAnswer();
@@ -1741,11 +1743,33 @@ function formAnswers(questions: readonly ChatInputQuestion[], given: Record<stri
     const picked = (ids as string[] | undefined)?.filter((id) => id !== "") ?? [];
     const empty = picked.length === 0 && (typeof typed !== "string" || typed.trim() === "");
     if (empty && question.required !== true) return [question.id, { state: ChatInputAnswerState.Skipped }];
+    if (empty) refuse(badRequest("missing_answer", `"${question.title ?? question.id}" needs an answer`));
     return [question.id, submittedAs(valueFor(question, picked, typed as string | undefined))];
   }));
 }
 
+/**
+ * Answers a question, logging what the bridge refuses: the code and the question kinds, never the
+ * words (ZAC-271: a refused form showed nowhere in the bridge's log, only a 400 in the request log).
+ */
 async function answerQuestion(call: Call): Promise<Response> {
+  try {
+    const response = await answerQuestionNow(call);
+    if (response.status === 400) logRefusedAnswer(call, response);
+    return response;
+  } catch (error) {
+    if (error instanceof Refusal && error.response.status === 400) logRefusedAnswer(call, error.response);
+    throw error;
+  }
+}
+
+function logRefusedAnswer(call: Call, response: Response): void {
+  void response.clone().json().then((body: { error?: { code?: string; message?: string } }) => {
+    console.error(`[host-chats] answer refused: ${body.error?.code ?? "?"} (request ${String(call.body["request_id"]).slice(0, 12)})`);
+  }, () => {});
+}
+
+async function answerQuestionNow(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const requestId = call.body["request_id"];
   const questionId = call.body["question_id"];

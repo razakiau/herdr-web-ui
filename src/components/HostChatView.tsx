@@ -10,7 +10,7 @@
  * Every read the source makes is handed here too, for the title, the prompt card and the pills.
  * A message goes out once, on the user's tap: a send that fails leaves its text in the box and says so.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { chatCost } from "../lib/chatCost.ts";
 import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
 import { Eye, GitFork, RotateCw, SlidersHorizontal } from "lucide-react";
@@ -39,6 +39,8 @@ import { useSettings } from "../lib/settings.ts";
 import { GroupTrail } from "./GroupTrail.tsx";
 import { useChatCostLog } from "../lib/useChatCostLog.ts";
 import { chatLog, costsFeed, newerLog, useCostsFeedRead } from "../lib/rowCache.ts";
+import { HostChatActionsContext } from "./HostChatActions.tsx";
+import { archivedChatRef } from "../../shared/keep-warm.ts";
 import { keepWarmFor, keptWarmOf, useKeepWarm } from "../lib/keepWarm.ts";
 import { cacheStateOf, callingModel, switchCost as switchCostOf } from "../lib/sessionCost.ts";
 import { handoffOffer } from "../lib/compactContext.ts";
@@ -117,7 +119,7 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
       ...(optionId !== "" ? { option_id: optionId } : {}),
     });
   };
-  return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown expandable
+  return <PromptCardView prompt={prompt} submit={submit} onPromptChanged={onPromptChanged} onAnswered={onAnswered} markdown expandable refusalSaysWhy
     attachSheet={{ machineId, session }}
     onUploadFile={(file) => uploadHostFile(machineId, session, file)} />;
 }
@@ -382,6 +384,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const fresh = archived || (cacheRead !== null && trackCosts && chatCostLog?.chat
     ? cacheStateOf(cacheRead, chatCostLog.chat, costSettings, minute, sheetPrices, kept) === "cold" : false);
   const [archivedStep, setArchivedStep] = useState(false);
+  const hostActions = useContext(HostChatActionsContext);
+  // archiving turned its keep-warm off (ZAC-271): the settings remember it for this chat, so restoring gives the default back
+  const archivedCooled = Object.values(keepWarm?.settings.archived ?? {}).includes(archivedChatRef(machineId, session));
   const runHandoff = (asFresh: boolean, message?: string): void => {
     setHandingOff(true); setHandoffNote(null); setHandoffOutcome(null);
     // a chat left mid-job stops following it: its PC's bridge goes on, and the chat list shows the new chat
@@ -474,13 +479,19 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     <HostChatStatus read={chat} workShown={(chat?.work ?? []).length > 0} />
     {/* an archived chat (ZAC-266): the host still opens it, so it can go on in a new chat that reads its record */}
     {archived && outcome === null && <div className={`checkpoint-bar archived-bar${archivedStep ? " is-step" : ""}`} role="status">
-      <span className="checkpoint-bar-text"><strong>{t("Archived")}</strong>{t(" · continue it in a new chat; it reads this one's record")}</span>
       {/* the same message step as Hand off (ZAC-267) */}
       {archivedStep && !handingOff
         ? <HandoffStep onSend={(message) => { setArchivedStep(false); runHandoff(true, message); }} onCancel={() => setArchivedStep(false)} />
-        : <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={() => setArchivedStep(true)}>
-          {t(handingOff ? "Handing off…" : "Continue in a new chat")}
-        </button>}
+        : <>
+          {/* one row (owner's pick B, ZAC-271): Restore puts it back here, as All agents ⋯ → Restore does */}
+          <strong className="checkpoint-bar-text">{t("Archived")}</strong>
+          {/* the list's own Restore: the row shows it once the PC has it, a refusal is said as there */}
+          {hostActions && <button type="button" className="btn btn-ghost checkpoint-bar-redo" disabled={handingOff} onClick={() => hostActions.setArchived(machineId, session, false)}>{t("Restore")}</button>}
+          <button type="button" className="btn checkpoint-bar-go" disabled={handingOff} onClick={() => setArchivedStep(true)}>
+            {t(handingOff ? "Handing off…" : "Continue in a new chat")}
+          </button>
+          {archivedCooled && <small className="archived-bar-sub">{t("Keep warm turned off when it was archived")}</small>}
+        </>}
     </div>}
     {/* an archived chat's bar stands for the advice (owner's mock); a hand-off's note or outcome still shows */}
     {(!archived || outcome !== null || handoffNote !== null) && <HandoffBanner dismissKey={`${machineId}\n${session}`} read={cacheRead} log={chatCostLog?.chat} settings={costSettings} prices={sheetPrices} onHandoff={onHandoff}

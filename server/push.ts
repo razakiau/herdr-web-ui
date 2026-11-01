@@ -222,7 +222,12 @@ export interface PushServiceOptions {
    * saves "Let it cool" for a kept chat just archived (ZAC-262); absent: archiving changes nothing.
    * False when the plugin, read again, has a newer real call for the key: push looks again next poll
    */
-  coolKeepWarm?: (key: KeepWarmKey) => Promise<boolean>;
+  coolKeepWarm?: (key: KeepWarmKey, chat: string) => Promise<boolean>;
+  /**
+   * gives a chat back the default keep-warm as it is restored (ZAC-271): the keys its archive turned
+   * off. Told on the list's change only: a chat restored while CT 208 was down keeps its switch off
+   */
+  restoreKeepWarm?: (chat: string) => Promise<boolean>;
 }
 
 /** The prices a big chat is weighed with: OmniRoute's table and LiteLLM's behind it, each null when missing. */
@@ -597,14 +602,25 @@ export function createPushService(options: PushServiceOptions): PushService {
       const kept = keepWarmKeyFor(chat, await options.keepWarmKeys!(false));
       if (!kept) return;
       coolChecked.set(key, lastCallAt);
-      if (!keptWarm(kept, now())) return;
+      // a small chat forced on is turned off too, its cache gone or not (ZAC-271): else the switch stays on
+      if (!keptWarm(kept, now()) && kept.forced !== true) return;
       const sig = `${kept.key}:${kept.lastRealAt}`;
       if (cooledFor.get(key) === sig) return;
       cooledFor.set(key, sig);
       // false: the plugin, read again, has moved past this call (a stale cached match): look again next poll
-      if (await cool(kept) === false) { coolChecked.delete(key); cooledFor.delete(key); }
+      if (await cool(kept, key) === false) { coolChecked.delete(key); cooledFor.delete(key); }
     })().catch((error: unknown) => {
       console.error(`keep-warm cool: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    inFlight.add(done);
+    void done.finally(() => inFlight.delete(done));
+  }
+
+  /** a restored chat's keep-warm back on the default (ZAC-271); a failed save is logged */
+  function restoreArchived(key: string): void {
+    if (!options.restoreKeepWarm) return;
+    const done = options.restoreKeepWarm(key).then(() => {}, (error: unknown) => {
+      console.error(`keep-warm restore: ${error instanceof Error ? error.message : String(error)}`);
     });
     inFlight.add(done);
     void done.finally(() => inFlight.delete(done));
@@ -879,8 +895,10 @@ export function createPushService(options: PushServiceOptions): PushService {
         const wasArchived = hostRows.get(key)?.archived;
         hostRows.set(key, row);
         // archived now, or first seen archived (CT 208 restarted): an unarchived chat is looked at afresh next time
-        if (!row.archived) coolChecked.delete(key);
-        else if (wasArchived !== true) coolArchived(key);
+        if (!row.archived) {
+          coolChecked.delete(key);
+          if (wasArchived === true) { cooledFor.delete(key); restoreArchived(key); }
+        } else if (wasArchived !== true) coolArchived(key);
         // working or put away: its cache is kept warm, or nobody will come back to it. A chat that asks
         // calls nothing while it waits on the owner: its cache drains, and its alert is the most useful
         if (row.status === "working" || row.archived) callOffCold(key);

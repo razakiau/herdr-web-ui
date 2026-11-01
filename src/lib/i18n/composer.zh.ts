@@ -167,4 +167,5 @@ export const COMPOSER_ZH: Record<string, string> = {
   "Stop and Send": "停止并发送",
   "Add to Queue": "添加到队列",
   "Steer with Message": "用消息引导",
+  "This answer was refused: {reason}": "此回答未被接受：{reason}",
 };
