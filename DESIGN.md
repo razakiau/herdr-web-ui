@@ -1320,6 +1320,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   **Settings** to screen readers and in its tooltip), with the plan meters filling the rest of its row,
   as rows on the same grid with no rule above.
   It carries no product name or version: the running versions are read in Settings.
+- A big chat's **cache ring** (`.sidebar-mark.has-cache-ring`, AgentSidebar.tsx `CacheRing`) is
+  drawn round the agent's mark at the mark's own size: the logo never shrinks to fit it (ZAC-265).
+  The ring is out of the layout, centred on the mark, its box `--cache-mark × 14/9` (28px round the
+  18px row mark, 22px round a tab's 14px mark), so it lies over the cell's padding and a ringed row
+  or tab is as tall and wide as a bare one; the kept-warm flame sits off its top right in the same
+  proportion. One rule for the sidebar, All agents, a group's page and a folder's tabs.
+- The Agents lens's filter chips (`.agent-facets`) stay at the top of the sidebar's one scroll, as
+  the Agents | PCs tabs above them stay put: sticky, on the panel's solid `--bg-panel` across the
+  whole width, no rule under them. The **Pinned** caption is the card's own label and scrolls with it.
 
 ### Plan meters (`.usage*`)
 - Right of the Settings gear, one button holding as many chips as the row has room for (judged
