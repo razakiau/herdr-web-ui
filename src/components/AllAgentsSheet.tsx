@@ -35,7 +35,8 @@ import { hostChatStatus, samePath } from "../lib/hostPlacement.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
-import { AgentRowBody } from "./AgentSidebar.tsx";
+import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
+import { hostChatNow } from "../lib/agentNow.ts";
 import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 import { CostStack } from "./CostParts.tsx";
@@ -54,6 +55,12 @@ export interface AllAgentsSheetProps {
   initialSort?: Sort;
   onOpen(session: string): void;
   onClose(): void;
+  /**
+   * PROTOTYPE (ZAC-265 round 2, B; off until the owner approves): each row drawn as the sidebar's,
+   * the cache a ring round the mark (with its flame when kept warm), the words and the dot the ring
+   * now says left off; the folder, age, restarts and the cost stay
+   */
+  ringRows?: boolean;
 }
 
 /** The focus is in something over the sheet (a chat's menu, its rename or delete), not on the page under it. */
@@ -183,7 +190,7 @@ function rowCosts(rows: readonly HostChatRow[], answer: HostCostsAnswer, prices:
 }
 
 
-export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: only, initialSort = "recent", onOpen, onClose }: AllAgentsSheetProps) {
+export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: only, initialSort = "recent", onOpen, onClose, ringRows = false }: AllAgentsSheetProps) {
   const t = useT();
   const id = useId();
   const now = useMinuteClock();
@@ -285,17 +292,20 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
     // a big chat's cache after the rest (owner's pick B): "· 268K · 12m left", "· 312K · cold", in the cache's colour
     const mark = marks.get(row.session);
     // at a phone's width the words give way, never the cache (it is what the mark is for)
-    const context = mark ? <CacheLine parts={parts} mark={mark} /> : words;
+    const context = mark && !ringRows ? <CacheLine parts={parts} mark={mark} /> : words;
     const noPrice = cost && cost.missing.length > 0 ? t("No price for {models}.", { models: cost.missing.join(", ") }) : null;
-    const dot = cost ? rowCacheDot(row, cost.chat, mark ?? null, keepWarm, settings, now) : null;
+    const dot = cost && !ringRows ? rowCacheDot(row, cost.chat, mark ?? null, keepWarm, settings, now) : null;
     const menuOpen = menu?.session === row.session;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { session: row.session, anchor, point, previousFocus });
-    return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}`} data-host-session={row.session}
+    return <li key={row.session} className={`agent-item host-chat-item${row.session === selected ? " is-selected" : ""}${ringRows ? " has-state-cell" : ""}`} data-host-session={row.session}
       onMouseDownCapture={actions ? (event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); } : undefined}
       onContextMenu={actions ? (event) => onRowContextMenu(event, toggleMenu) : undefined}>
       <button type="button" className="agent-select agent-row" aria-current={row.session === selected ? "true" : undefined} title={[title, row.cwd, noPrice].filter(Boolean).join("\n")} onClick={() => onOpen(row.session)}>
-        <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} />
+        {ringRows
+          ? <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} now={hostChatNow(row, t)}
+            cacheRing={mark ?? null} cacheWords={mark ? cacheWords(mark, t) : null} />
+          : <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} context={context} tokens={[]} status={hostChatStatus(row)} />}
         {cost && <RowCostCell cost={cost} dot={dot} />}
       </button>
       {actions && <div className="agent-actions">

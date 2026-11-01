@@ -40,6 +40,8 @@
 .all-agents .agent-item { padding-right: 0; }
 /* a row with a chat's ⋯ keeps the state cell's room after it, as an Agents row does */
 .all-agents .agent-item:has(> .agent-actions) { padding-right: var(--side-box); }
+/* PROTOTYPE (ZAC-265 round 2, B): a row drawn as the sidebar's keeps its state cell's room, so the glyph never sits on the cost */
+.all-agents .agent-item.has-state-cell { padding-right: var(--side-box); }
 /* two lines with air above and below, and a faint rule between rows, so they never touch */
 .all-agents .agent-row { gap: var(--space-2); padding-block: var(--space-2); }
 .all-agents-group .agent-item + .agent-item { border-top: var(--hairline) solid color-mix(in srgb, var(--border) 60%, transparent); }
