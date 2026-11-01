@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { HostChatCost, HostChatRead, HostCostCall } from "../../shared/host-chats.ts";
 import { handoffCommandText } from "../lib/compactContext.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { SessionSheet, type SessionSheetProps } from "./SessionSheet.tsx";
+import { translate } from "../lib/i18n.ts";
+import { refreshRowWords, SessionSheet, type SessionSheetProps } from "./SessionSheet.tsx";
 import { keepWarmFeed } from "../lib/keepWarm.ts";
 import type { KeepWarmAnswer, KeepWarmKey } from "../../shared/keep-warm.ts";
 
@@ -499,6 +500,29 @@ describe("SessionSheet", () => {
       expect(sheet()).toMatch(/role="switch" aria-checked="false" aria-label="Keep warm"/);
       keepWarmFeed.set(answer());
       expect(sheet()).toMatch(/role="switch" aria-checked="true" aria-label="Keep warm"/);
+    });
+
+    it("a chat OmniRoute serves offers to refresh its checkpoint list, with what the next call then costs (ZAC-272)", () => {
+      stored.set("ovis:session-tab", "cache");
+      keepWarmFeed.set(answer());
+      // a bridge before 1087 names no log: OmniRoute could not be told which chat
+      expect(text(sheet())).not.toContain("Checkpoint list");
+      const html = sheet({ cost: { chat: chat({ log: "0d6a7c1e-FICTIONAL" }), calls: CALLS } });
+      const words = text(html);
+      expect(words).toContain("Checkpoint list frozen until the next compaction");
+      expect(html).toMatch(/<button[^>]*>Refresh<\/button>/);
+      // read-only gateway: nothing to press
+      keepWarmFeed.set({ ...answer(), writable: false });
+      expect(text(sheet({ cost: { chat: chat({ log: "0d6a7c1e-FICTIONAL" }), calls: CALLS } }))).not.toContain("Checkpoint list");
+    });
+
+    it("the refresh row's words for each step: ask, confirm with the price, done, failed", () => {
+      const en = (key: string, vars?: Record<string, string | number>) => translate("en", key, vars);
+      expect(refreshRowWords({ phase: "idle", size: "210K", price: "~$2.15" }, en)).toEqual({ sub: "frozen until the next compaction", action: "Refresh" });
+      expect(refreshRowWords({ phase: "confirm", size: "210K", price: "~$2.15" }, en)).toEqual({ sub: "the next call stores 210K again (~$2.15)", action: "Refresh now" });
+      expect(refreshRowWords({ phase: "busy", size: "210K", price: null }, en)).toEqual({ sub: "the next call stores 210K again", action: "Refreshing…" });
+      expect(refreshRowWords({ phase: "done", size: "210K", price: null }, en)).toEqual({ sub: "the next call sends the current list", action: null });
+      expect(refreshRowWords({ phase: "failed", size: "210K", price: null, problem: "OmniRoute refused the write token" }, en)).toEqual({ sub: "OmniRoute refused the write token", action: "Refresh" });
     });
 
     it("turned off for this chat, or no plugin: phase 1's tab", () => {

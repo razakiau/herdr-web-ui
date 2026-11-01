@@ -407,10 +407,10 @@ function splitOf(sums: LogState["sums"]): HostContextUsage | null {
   return usage;
 }
 
-function answer(session: string, state: LogState): HostChatCost {
+function answer(session: string, state: LogState, log: string): HostChatCost {
   const sums = state.sums;
   return {
-    session, models: models(sums.models), lastCallAt: sums.lastCallAt, lastModel: sums.lastModel, context: sums.context, peak: sums.peak, rewrites: sums.rewrites, firstWrites: sums.firstWrites, split: splitOf(sums),
+    session, log, models: models(sums.models), lastCallAt: sums.lastCallAt, lastModel: sums.lastModel, context: sums.context, peak: sums.peak, rewrites: sums.rewrites, firstWrites: sums.firstWrites, split: splitOf(sums),
     days: Object.fromEntries([...sums.days].sort(([a], [b]) => a.localeCompare(b)).map(([day, map]) => [day, models(map)])),
     dayCounts: Object.fromEntries([...sums.dayCounts].sort(([a], [b]) => a.localeCompare(b)).map(([day, counts]) => [day, { ...counts }])),
     partial: state.partial,
@@ -467,7 +467,7 @@ export class CostIndex {
   costOf(session: string, parent: string | null = null): HostChatCost | null {
     const uuid = this.sdkOf(session, parent);
     const state = uuid === null ? null : this.read(uuid, this.bytesPerRequest);
-    return state === null ? null : answer(session, state);
+    return state === null || uuid === null ? null : answer(session, state, uuid);
   }
 
   /**
@@ -512,7 +512,7 @@ export class CostIndex {
       const state = this.read(uuid, budget);
       if (state) budget -= state.offset;
     }
-    const chats = [...this.logs].filter(([, state]) => state.sums.models.size > 0).map(([uuid, state]) => answer(`copilotcli:/${uuid}`, state));
+    const chats = [...this.logs].filter(([, state]) => state.sums.models.size > 0).map(([uuid, state]) => answer(`copilotcli:/${uuid}`, state, uuid));
     const complete = queue.length === 0 && [...this.logs.values()].every((state) => !state.partial);
     return { chats, complete };
   }

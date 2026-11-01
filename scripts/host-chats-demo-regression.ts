@@ -33,6 +33,9 @@ const patch = `(() => {
   // the cold hand-off fixture (ZAC-266): the build chat idle, its cache cold two hours, its session
   // listing /handoff and /resume; chat/continue answers a fresh job done at once
   const COLD = sessionStorage.getItem("fictional-cold") === "1";
+  // the kept fixture (ZAC-272): the build chat warm, its last call 4 min ago, kept warm by OmniRoute, whose
+  // write token lets the Cache tab refresh its frozen checkpoint list
+  const KEPT = sessionStorage.getItem("fictional-kept") === "1";
   const ids = SIX ? ["local", "remote", "pc-c", "pc-d", "pc-e", "pc-f"] : ["local", "remote"];
   const NAMES = { local: "Laptop", remote: "Build PC", "pc-c": "FICTIONAL PC C", "pc-d": "FICTIONAL PC D", "pc-e": "FICTIONAL PC E", "pc-f": "FICTIONAL PC F" };
   const roster = (original) => ids.map((id) => {
@@ -204,6 +207,16 @@ const patch = `(() => {
     if (SIX && machine === "pc-e" && path === "/api/host-chats/chats") return json({ chats: [{ session: "fictional-pc-e", title: "FICTIONAL waits on you", status: state.peAsks ? "asks" : "idle", modified_at: at(1), cwd: "/tmp/fictional-e", unread: false, archived: false }] });
     // ZAC-207: this server reads the PR pill's state (GitHub): the fixture's PR is merged
     // OmniRoute's prices, from this server (whichever PC the chat is on)
+    if (KEPT && url.pathname === "/api/usage/omniroute/keepwarm") {
+      const now = Date.now(), last = now - 4 * 60_000;
+      return json({ ok: true, writable: true, problem: null, settings: {}, state: { v: 1, at: now, enabled: true, windowHours: 10, fusePerDay: 200, idleMin: 55, thresholdUsd: 1, available: true, problem: null,
+        today: { day: new Date(now).toISOString().slice(0, 10), pings: 2, usd: 0.07, avoided: 0, avoidedUsd: 0, fuseHit: false },
+        keys: [{ key: "f".repeat(40), model: "claude-fictional-opus", apiKey: "cop", tokens: 182_000, prompt: 182_000, lastRealAt: last, lastPingAt: null, nextPingAt: last + 55 * 60_000, until: last + 10 * 3_600_000, pings: 2, usd: 0.07, restartUsd: 0.91, missed: false, disabled: false, kept: true, big: true, pingUsd: 0.036 }] } });
+    }
+    if (KEPT && url.pathname === "/api/usage/omniroute/session-context") {
+      (calls.refreshed ??= []).push(JSON.parse(init.body));
+      return json({ removed: 1 });
+    }
     if (url.pathname === "/api/usage/omniroute/pricing") { calls.prices = (calls.prices ?? 0) + 1; return json({ prices: { cc: { "fictional-opus": { input: 4, output: 20, cached: 0.2 } } }, fallback: { "fictional-v4-flash": { input: 0.5, output: 1 } } }); }
     if (path === "/api/references/state") return json({ states: Object.fromEntries(url.searchParams.getAll("url").map((each) => [each, { state: each.endsWith("/pull/12") ? "merged" : "unknown" }])) });
     if (machine === "remote" && path.startsWith("/api/host-chats/")) {
@@ -232,6 +245,11 @@ const patch = `(() => {
         return json({ path: "/tmp/fictional-repo/.herdr-web-ui/" + body.name });
       }
       if (path === "/api/host-chats/chat/resume") { state.resumed = true; return json({ ok: true }); }
+      if (KEPT && path === "/api/host-chats/costs") {
+        const log = (session) => ({ session, log: "0d6a7c1e-0000-4000-8000-00000000f1c7", models: [{ model: "cc/fictional-opus", input: 2_400_000, cacheRead: 2_310_000, cacheWrite: 182_000, output: 9000, calls: 14, lastCallAt: at(4) }], lastCallAt: at(4), lastModel: "cc/fictional-opus", context: 182_000, peak: 182_000, rewrites: 0, days: {}, partial: false });
+        const session = url.searchParams.get("session");
+        return json(session ? { chat: log(session), calls: [{ at: at(4), input: 182_000, cacheRead: 181_200, cacheWrite: 800, output: 600, main: true, context: 182_000, lastCacheRead: 181_200 }] } : { chats: [log(SESSION)], complete: true });
+      }
       if (COLD && path === "/api/host-chats/costs") {
         const log = (session) => ({ session, models: [{ model: "cc/fictional-opus", input: 84000, cacheRead: 0, cacheWrite: 84000, output: 100, calls: 1, lastCallAt: at(120) }], lastCallAt: at(120), lastModel: "cc/fictional-opus", context: 84000, peak: 84000, rewrites: 0, days: {}, partial: false });
         const session = url.searchParams.get("session");
@@ -401,6 +419,45 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      // ZAC-272: a warm chat kept warm offers to refresh its frozen checkpoint list; the first press shows
+      // what the next call then stores, Cancel goes back, the second press posts the chat's log id
+      const keptContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US", deviceScaleFactor: 3 });
+      try {
+        await keptContext.addInitScript(() => {
+          sessionStorage.setItem("fictional-kept", "1");
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", trackCosts: true, coldRestartAlertUsd: 0.01 }));
+          localStorage.setItem("ovis:session-tab", "cache");
+        });
+        const kept = await keptContext.newPage();
+        const errors: string[] = [];
+        kept.on("pageerror", (error) => errors.push(error.message));
+        await kept.goto(`http://127.0.0.1:${server.port}/?machine=remote&chat=${encodeURIComponent(SESSION)}`);
+        const view = kept.locator(`.host-chat[data-host-session="${SESSION}"]`);
+        await view.waitFor({ timeout: 10_000 });
+        await kept.evaluate(() => { const host = window as unknown as { hostState: { answered: boolean; model: unknown }; rereadHost(): void }; host.hostState.answered = true; host.hostState.model = { id: "cc/fictional-opus", effort: null }; host.rereadHost(); });
+        await view.getByRole("button", { name: /^Context window:/ }).click();
+        const sheet = kept.getByRole("dialog").filter({ has: kept.locator(".session-refresh-context") });
+        await sheet.waitFor({ timeout: 10_000 }).catch(() => assert.fail("the Cache tab shows the checkpoint-list row"));
+        const row = sheet.locator(".session-refresh-context");
+        assert.match(await row.innerText(), /Checkpoint list\s+frozen until the next compaction/);
+        await settled(kept);
+        if (shots) await kept.screenshot({ path: join(shots, "zac272-refresh-idle-390.png") });
+        await row.getByRole("button", { name: "Refresh", exact: true }).click();
+        assert.match(await row.innerText(), /the next call stores [0-9.]+K again \(~\$[0-9.]+\)/, "the confirm step says what the next call stores");
+        const fits = await row.evaluate((element) => { const r = element.getBoundingClientRect(); return [...element.querySelectorAll("button")].every((b) => { const x = b.getBoundingClientRect(); return x.right <= r.right + 1 && x.left >= r.left - 1; }); });
+        assert.ok(fits, "Cancel and Refresh now fit in the row at 390 px");
+        if (shots) await kept.screenshot({ path: join(shots, "zac272-refresh-confirm-390.png") });
+        await row.getByRole("button", { name: "Cancel" }).click();
+        assert.equal(await row.getByRole("button", { name: "Refresh", exact: true }).count(), 1, "Cancel goes back");
+        assert.equal((await kept.evaluate(() => (window as unknown as { hostCalls: { refreshed?: unknown[] } }).hostCalls.refreshed ?? [])).length, 0, "nothing posted before the confirm");
+        await row.getByRole("button", { name: "Refresh", exact: true }).click();
+        await row.getByRole("button", { name: "Refresh now" }).click();
+        await row.getByText("the next call sends the current list").waitFor({ timeout: 5_000 });
+        assert.deepEqual(await kept.evaluate(() => (window as unknown as { hostCalls: { refreshed?: unknown[] } }).hostCalls.refreshed), [{ session: "0d6a7c1e-0000-4000-8000-00000000f1c7" }], "posts the chat's log id, once");
+        if (shots) await kept.screenshot({ path: join(shots, "zac272-refresh-done-390.png") });
+        assert.deepEqual(errors, [], "no render errors");
+        console.log("PASS a kept chat refreshes its checkpoint list after a confirm (ZAC-272)");
+      } finally { await keptContext.close(); }
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", voiceInput: "on" })));
