@@ -146,6 +146,8 @@ describe("demo transport", () => {
     "/api/pricing": "an OmniRoute gateway's own price table, asked server to server by server/omniroute.ts",
     "/api/plugins/keep-warm/config": "the OmniRoute keep-warm plugin's own config, asked server to server by server/omniroute.ts (ZAC-260)",
     "/api/usage/omniroute/keepwarm": "a 404 is keep-warm unavailable: every view shows phase 1's cache (src/lib/keepWarm.ts)",
+    "/api/usage/omniroute/session-context": "the Cache tab's Refresh shows only beside keep-warm, which the demo never has (a 404 above); its failure is shown in the row (ZAC-272)",
+    "/api/cache/session-context": "an OmniRoute gateway's own route, asked server to server by server/omniroute.ts (ZAC-272)",
     "/api/preferences": "a 404 turns shared-settings sync off, as on an older server (fetchPreferences, src/lib/api.ts)",
     "/api/updates/check": "the demo's /api/updates says managed: false, so Settings offers no check",
     "/api/updates/install": "the demo's /api/updates says managed: false, so Settings offers no install",

@@ -48,7 +48,7 @@ import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { CLIProxyService } from "./cliproxy.ts";
 import { LiteLlmPrices } from "./litellmPrices.ts";
-import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, OmniRouteLink } from "./omniroute.ts";
+import { handleKeepWarmRequest, handleOmniRoutePricing, handleOmniRouteRequest, handleSessionContextRefresh, OmniRouteLink } from "./omniroute.ts";
 import { type KeepWarmKey, keepWarmKeyFor, keptWarm } from "../shared/keep-warm.ts";
 import { bridgeHandoff, coolArchivedChat, createHandoffFollower, restoreArchivedChat, handleKeepWarmAct, type HandoffAct, KEEP_WARM_ACT_ROUTE, type KeepWarmAct, KeepWarmActions } from "./keep-warm-actions.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
@@ -595,6 +595,7 @@ export function createServer(
       if (pathname === "/api/usage") { setRequestRoute(pathname); return handleUsageRequest(request, url, usage); }
       if (pathname === "/api/usage/omniroute") { setRequestRoute(pathname); return handleOmniRouteRequest(request, omniRoute); }
       if (pathname === "/api/usage/omniroute/keepwarm") { setRequestRoute(pathname); return handleKeepWarmRequest(request, omniRoute); }
+      if (pathname === "/api/usage/omniroute/session-context") { setRequestRoute(pathname); return handleSessionContextRefresh(request, omniRoute); }
       if (pathname === "/api/costs/digests" || pathname === "/api/costs/digest") { setRequestRoute(pathname); return handleDigestRequest(request, url, digests)!; }
       if (pathname === "/api/usage/omniroute/pricing") { setRequestRoute(pathname); return handleOmniRoutePricing(request, omniRoute, litellmPrices); }
       if (pathname === "/api/references/state") { setRequestRoute(pathname); return handleReferenceStateRequest(request, references); }

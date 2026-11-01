@@ -514,6 +514,10 @@
 /* the Cache tab's keep-warm row (ZAC-260 phase 2): a small flame before its label, in the warm colour */
 .session-sheet .session-keep-flame { width: 14px; height: 14px; margin-inline-end: 4px; vertical-align: -2px; color: var(--cache-warm); fill: currentColor; }
 .session-sheet .session-keep-warm .settings-toggle { flex: none; }
+/* the checkpoint-list row (ZAC-272): its icon in the dim text colour; Cancel beside the confirm, never wrapped */
+.session-sheet .session-refresh-icon { width: 14px; height: 14px; margin-inline-end: 4px; vertical-align: -2px; color: var(--text-dim); }
+.session-sheet .session-refresh-actions { display: flex; flex: none; gap: var(--space-1); }
+.session-sheet .session-refresh-actions > .btn { white-space: nowrap; }
 
 /* the outcome line after a hand-off (ZAC-266, owner's mock): the words on their own row, Open new
    chat and Archive this one under them, ✕ at the row's end; a phone has no room for all on one line */

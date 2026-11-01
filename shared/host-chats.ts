@@ -111,6 +111,12 @@ export interface HostCostCall {
 /** GET /api/host-chats/costs: what a chat's log says it spent. */
 export interface HostChatCost {
   session: string; models: HostCostModel[];
+  /**
+   * the CLI log's folder (its session id) the sums came from: a VS Code chat's row id is not it
+   * (routes.ts sdkOfRow). OmniRoute names a chat's frozen checkpoint list by it (ZAC-272); absent
+   * from a bridge before 1087
+   */
+  log?: string;
   /** the main agent's last call: the cache's age runs from it */
   lastCallAt: string | null;
   /** that call's model, whose cache the chat's next call reads unless the model is switched; absent from a bridge before 1071 */

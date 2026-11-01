@@ -93,3 +93,11 @@ export function withChat(settings: KeepWarmSettings, key: string, on: boolean, b
   if (!big && on) forced.add(key);
   return { ...settings, disabled: [...disabled], forced: [...forced] };
 }
+
+/**
+ * Makes OmniRoute forget the chat's frozen checkpoint list (ZAC-272): its next call sends the list
+ * as it is now, and stores the chat's prompt again once. `session` is the chat's CLI log id (HostChatCost.log).
+ */
+export function refreshSessionContext(session: string): Promise<{ removed: number }> {
+  return getJson<{ removed: number }>("/api/usage/omniroute/session-context", { method: "POST", cache: "no-store", body: JSON.stringify({ session }), headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(30_000) });
+}
