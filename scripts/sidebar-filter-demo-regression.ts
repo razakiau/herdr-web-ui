@@ -337,7 +337,7 @@ async function measure(page: Page): Promise<Record<string, unknown>> {
     const svg = clear?.querySelector("svg") ?? null;
     return {
       input: { ...text(input), placeholder: input.value === "" ? text(input, () => getComputedStyle(input, "::placeholder").color) : null, accessibleName: input.getAttribute("aria-label") ?? input.labels?.[0]?.textContent ?? null, type: input.type, width: inputBox.width, height: inputBox.height, suggestions: input.list?.options.length ?? 0 },
-      label: text(document.querySelector(".sidebar-filter-label")),
+      label: text(document.querySelector(".sidebar-filter .search-field-icon")),
       clear: clear ? { accessibleName: clear.getAttribute("aria-label"), width: clearBox!.width, height: clearBox!.height, glyphContrast: svg ? contrast(over(rgba(getComputedStyle(svg).color), background(clear)), background(clear)) : null } : null,
       selectedNote: [...document.querySelectorAll(".sidebar-filter-note")].map((el) => text(el)),
       contextWorkspace: [...document.querySelectorAll(".workspace-group.is-filter-context > .workspace-header .workspace-name")].slice(0, 3).map((el) => text(el)),
@@ -958,7 +958,7 @@ async function koreanShots(browser: Browser): Promise<void> {
       report(`measurements-rest-390-${theme}-ko`, await measure(page));
       const input = await openSearch(page);
       assert.equal(await input.getAttribute("placeholder"), "워크스페이스와 에이전트", "the field says what it filters in Korean");
-      assert.equal(await page.locator(".sidebar-filter-label").textContent(), "필터", "the field's label is in Korean (for a screen reader, beside its magnifier)");
+      assert.equal(await input.getAttribute("aria-label"), "워크스페이스와 에이전트 필터", "the field's name is in Korean (for a screen reader; the magnifier is the field's own, SearchField.tsx)");
       await input.click();
       await input.pressSequentially("flag");
       await waitWorkspaceIds(page, 'ids.includes("w1K") && ids.length < 11');

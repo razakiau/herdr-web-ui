@@ -1,0 +1,72 @@
+/* SearchField.tsx: the app's one search field, the filter pill's family (AllAgentsSheet.css
+   .all-agents-pill, .all-agents-sort): its height (--pill-h), round ends, raised ground and hairline;
+   the magnifier dim in the leading cell, the clear in the trailing one. Focus is the pill's open
+   state: the hairline turns amber, nothing thicker. */
+.search-field {
+  position: relative;
+  display: flex;
+  /* grows along a row (beside a pill), never shrinks in a column's height */
+  flex: 1 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--pill-h);
+  min-height: var(--pill-h);
+  padding-inline: 14px var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
+  cursor: text;
+}
+/* the pill's own reach: drawn at --pill-h, a finger's 44 px through the field's band */
+.search-field::before { content: ""; position: absolute; inset: calc((var(--pill-h) - var(--touch-target)) / 2) 0; }
+.search-field:not(.has-clear) { padding-inline-end: 14px; }
+.search-field:focus-within { border-color: var(--accent); }
+.search-field.is-disabled { opacity: 0.6; cursor: default; }
+.search-field-icon { position: relative; flex: none; width: 14px; height: 14px; color: var(--text-dim); pointer-events: none; }
+.search-field-input {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-input);
+  text-overflow: ellipsis;
+  outline: none;
+}
+/* one cross, the field's own: the browser's cancel glyph and its suggestion arrow are off */
+.search-field-input::-webkit-search-cancel-button,
+.search-field-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+.search-field-input::-webkit-calendar-picker-indicator { display: none !important; }
+.search-field-input::-webkit-list-button { display: none !important; }
+.search-field-clear {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--pill-h) - var(--space-2));
+  height: calc(var(--pill-h) - var(--space-2));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.search-field-clear svg { width: var(--space-4); height: var(--space-4); }
+/* a pointer's hover, as the pill draws it; a finger's tap leaves no hover behind */
+@media (hover: hover) {
+  .search-field:hover { background: var(--bg-hover); }
+  .search-field-clear:hover { background: var(--bg-input); color: var(--text-strong); }
+}
+.search-field-clear:focus-visible { outline: var(--ring); outline-offset: calc(var(--ring-offset) * -1); }
+/* the size a field's words take on a wide screen, as .input steps down */
+@media (min-width: 641px) {
+  .search-field-input { font-size: var(--fs-sm); }
+}

@@ -77,7 +77,7 @@ describe("the sidebar's Groups lens", () => {
   });
 
   it("the sidebar search: in Groups it searches the groups; in Agents, agents plus a Groups section; the field says what it finds", () => {
-    expect(sidebarSearchView("groups", true, true, "zac")).toEqual({ agents: false, pcs: false, groups: true, groupHits: false, placeholder: "Groups and their chats" });
+    expect(sidebarSearchView("groups", true, true, "zac")).toEqual({ agents: false, pcs: false, groups: true, groupHits: false, placeholder: "Search groups" });
     expect(sidebarSearchView("agents", true, true, "zac")).toEqual({ agents: true, pcs: true, groups: false, groupHits: true, placeholder: "Agents and groups" });
     // nothing typed yet: no Groups section
     expect(sidebarSearchView("agents", true, true, " ").groupHits).toBe(false);

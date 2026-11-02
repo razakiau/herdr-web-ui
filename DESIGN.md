@@ -693,6 +693,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--keybar-h` | `48px` | — | Terminal key bar |
 | `--row-h` | `56px` | `44px` | Palette, worktree, device and background-task list rows; chat and composer list height caps |
 | `--chip-h` | `20px` | `18px` | Badge/pill height |
+| `--pill-h` | `36px` | — | A filter pill (PillMenu) and the search field (SearchField): one height, so a row of both shares its edges |
 | `--icon-size` | `18px` | — | Standard icon |
 | `--mark-size` | `22px` | — | Brand mark |
 | `--avatar-size` | `32px` | `26px` | Command-palette mark box |
@@ -864,6 +865,21 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Every placeholder is `--text-dim` at full opacity (at least 4.5:1 on every field of every
   palette), never the browser's own grey (3.8:1 on a dark field).
 
+### Search field (`.search-field`, SearchField.tsx)
+- Every search or filter input is this one component (ZAC-265 round 13): the sidebar's, All agents,
+  Add to group and Merge into, the model and agent pickers, Attach, the new chat's folders, the
+  directory browser, Settings (fonts, shortcuts, providers), the command palette and both find bars.
+- It is the filter pill's family (`PillMenu.tsx`, `.all-agents-pill`): `--pill-h` tall with
+  `--radius-pill` ends, the pill's `--bg-elevated` ground and `--hairline` `--border` edge, a 14 px
+  `--text-dim` magnifier in the leading cell, then the words, then a round cross (**Clear search**)
+  only while there are words. Focus turns the hairline `--accent`, as the pill is while its menu is
+  open: no thicker ring. A pointer's hover takes `--bg-hover`, as the pill's does.
+- Beside a pill (the PC filter left of it) the two share their top and bottom edges, `--space-2`
+  apart. The field grows along its row and never shrinks in a column; a finger reaches 44 px through
+  the field's band (`::before`), as the pill's own expander does.
+- A bar whose Close sits beside the field (the find bars, the palette) draws no cross inside it.
+- The words keep `--fs-input` on a phone (no focus zoom) and `--fs-sm` from 641 px, as `.input` does.
+
 ### Menu / popover (`.menu*`)
 - Bordered `--radius-lg` surface with `--shadow-pop`; rows use `--control-h`, `--radius-md`, icon,
   ellipsized main label and optional hint.
@@ -986,12 +1002,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - **Search workspaces and agents** is a magnifier (`.sidebar-search-toggle`, a `.sidebar-row-action`) at the
   right of the lens tabs; there is no standing filter row (ZAC-233, 2026-10-25: the roster first).
   Pressing it draws the field (`.sidebar-filter`, MachineSidebar.tsx) and puts the caret in it: the
-  magnifier as its label (`.sidebar-filter-label`, the word **Filter** visually hidden), then one
-  `.input` the height of a row (`--side-row`, so a finger's `--touch-target` on a phone) in the rows'
-  gutter above the lists, its placeholder naming the scope (**Workspaces and agents**) and its
-  suggestions the names the rows show (a `<datalist>`, rebuilt from the roster, nothing typed kept),
-  with its cross (`.sidebar-filter-clear`, the same square, inside the field's trailing cell) always
-  there: **Clear filter** while there is text, **Close search** on an empty field. The browser's own
+  app's one search field (see **Search field** below), centred in a row's band (`--side-row`) in the
+  rows' gutter above the lists, named **Filter workspaces and agents**, its placeholder naming the scope
+  (**Workspaces and agents**; **Agents and groups** while chat groups are on; **Search groups** in the
+  Groups lens, with the PC pill before it) and its suggestions the names the rows show (a `<datalist>`,
+  rebuilt from the roster, nothing typed kept), with its cross (`.sidebar-filter-clear`, inside the
+  field's trailing cell) always there: **Clear filter** while there is text, **Close search** on an empty field. The browser's own
   search cancel glyph is off, so there is one. The query lives in the component's state alone: never
   in storage, the address, a request or a frame, and it is empty again after a reload, an unmount, a
   clear, Escape in the field, or the phone's drawer closing (which closes the search too). Escape in

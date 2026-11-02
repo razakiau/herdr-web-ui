@@ -5,6 +5,7 @@ import "./FindBar.css";
 import "./RepoDiffViewer.css";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { Skeleton } from "./Skeleton.tsx";
+import { SearchField } from "./SearchField.tsx";
 
 import type { RepoDiffFilePatch } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -266,16 +267,15 @@ export function RepoDiffViewer({ target, onClose, onOpenFile, keyboardActive = t
         </header>
         {finding && <form className="find-bar repo-diff-find" role="search" aria-label={t("Find in diff")} onSubmit={(event) => { event.preventDefault(); step(1); }}>
           <div className="find-bar-controls">
-            <label className="find-bar-query">
-              <Search size={16} aria-hidden="true" />
-              <span className="repo-diff-find-label">{t("Find in diff")}</span>
-              <input ref={findInput} className="input" type="search" value={query} maxLength={DIFF_FIND_MAX_QUERY} disabled={patch === null} spellCheck={false}
-                onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
+            <div className="find-bar-query">
+              <span className="repo-diff-find-label" aria-hidden="true">{t("Find in diff")}</span>
+              <SearchField inputRef={findInput} clearable={false} value={query} maxLength={DIFF_FIND_MAX_QUERY} disabled={patch === null} spellCheck={false} label={t("Find in diff")}
+                onValue={(next) => { setQuery(next); setActiveIndex(0); }}
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
                   if (event.key === "Enter") { event.preventDefault(); step(event.shiftKey ? -1 : 1); }
                 }} />
-            </label>
+            </div>
             <span className="find-bar-count" role="status">
               {findCount}
               {activeMatch !== null && <span className="repo-diff-find-place">{matchPlace(t, activeMatch)}</span>}

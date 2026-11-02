@@ -184,6 +184,9 @@
   --keybar-h: 48px;
   --row-h: 56px;
   --chip-h: 20px;
+  /* a filter pill (PillMenu.tsx) and the search field beside it (SearchField.tsx): one height, so a
+     row of both shares its edges */
+  --pill-h: 36px;
   --icon-size: 18px;
   --mark-size: 22px;
   --avatar-size: 32px;
@@ -2615,11 +2618,6 @@ button {
   opacity: 1;
 }
 
-/* the sidebar's filter offers the rows' names as it is typed in (a datalist, MachineSidebar.tsx): the
-   browser draws its picker arrow beside the field's own clear with an inline style, which only an
-   important rule hides. Two rules: a browser drops a whole list for a pseudo-element it does not know */
-.sidebar-filter-input::-webkit-calendar-picker-indicator { display: none !important; }
-.sidebar-filter-input::-webkit-list-button { display: none !important; }
 
 /* a bordered field shows focus on its own border; the offset ring is for controls without one */
 .input:focus,

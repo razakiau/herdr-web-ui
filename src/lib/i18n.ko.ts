@@ -383,6 +383,7 @@ const BASE: Record<string, string> = {
   "Show all {n} in Groups": "그룹에서 {n}개 모두 보기",
   "Search groups": "그룹 검색",
   "Show groups on: {pc}": "그룹을 표시할 PC: {pc}",
+  "Clear search": "검색어 지우기",
   "Show less": "접기",
   "More for {title}": "{title} 더보기",
   "All agents on {pc}": "{pc}의 모든 에이전트",

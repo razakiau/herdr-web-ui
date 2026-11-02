@@ -387,6 +387,7 @@ const BASE: Record<string, string> = {
   "Show all {n} in Groups": "在分组中查看全部 {n} 个",
   "Search groups": "搜索分组",
   "Show groups on: {pc}": "显示哪台电脑的分组：{pc}",
+  "Clear search": "清除搜索",
   "Show less": "收起",
   "More for {title}": "{title} 的更多操作",
   "All agents on {pc}": "{pc} 上的所有代理",

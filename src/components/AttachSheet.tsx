@@ -7,9 +7,10 @@
  */
 import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
-import { Camera, ChevronLeft, ChevronRight, Clipboard, FileText, FolderOpen, Image, Search, Upload, X } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Clipboard, FileText, FolderOpen, Image, Upload, X } from "lucide-react";
 
 import type { AttachApi } from "./Composer.tsx";
+import { SearchField } from "./SearchField.tsx";
 import { useT } from "../lib/i18n.ts";
 import { fetchHostFiles } from "../lib/hostChats.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -130,10 +131,7 @@ export function AttachSheet({ machineId, session, api, onClose }: Props) {
             </section>}
           </> : <>
             <div className="host-picker-head">
-              <label className="host-picker-search">
-                <Search aria-hidden="true" />
-                <input className="input" type="search" value={query} placeholder={t("Search files")} aria-label={t("Search files")} onChange={(event) => setQuery(event.target.value)} />
-              </label>
+              <SearchField className="host-picker-search" value={query} onValue={setQuery} label={t("Search files")} placeholder={t("Search files")} />
             </div>
             {files === null && <p className="host-picker-state" role="status">{t("Loading…")}</p>}
             {failed && <p className="host-picker-error" role="alert">{t("Couldn't list this folder's files")}</p>}

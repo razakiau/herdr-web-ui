@@ -80,8 +80,6 @@ export const MACHINES_JA: Record<string, string> = {
   "The computer this app runs on": "このアプリが動作しているコンピューター",
   "Host": "ホスト",
   "Filter workspaces and agents": "ワークスペースとエージェントを絞り込む",
-  "Filter": "絞り込み",
-  "Groups and their chats": "グループとそのチャット",
   "Agents and groups": "エージェントとグループ",
   "Workspaces and agents": "ワークスペースとエージェント",
   "No workspaces or agents match": "一致するワークスペースやエージェントはありません",

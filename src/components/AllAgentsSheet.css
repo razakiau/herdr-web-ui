@@ -13,28 +13,8 @@
 /* the dialog takes the focus on opening (AllAgentsSheet.tsx): it is no control, so no ring */
 .all-agents:focus { outline: none; }
 .all-agents .modal-body { display: flex; flex-direction: column; gap: 10px; padding-top: 0; }
-/* a search field of the app's own: a lens inside it, and a phone's thumb-sized height (the app's
-   34 px control reads cramped as the sheet's one field) */
-.all-agents-search {
-  position: relative;
-  display: flex;
-  flex: none;
-  align-items: center;
-}
-.all-agents-search > svg {
-  position: absolute;
-  inset-inline-start: var(--space-3);
-  width: var(--space-4);
-  height: var(--space-4);
-  color: var(--text-dim);
-  pointer-events: none;
-}
-.all-agents-search .input {
-  width: 100%;
-  height: 44px;
-  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
-  border-radius: var(--radius-lg);
-}
+/* the sheet's search is the app's one SearchField (SearchField.css), the pills' height under it */
+.all-agents-search { flex: none; }
 .all-agents-group { min-width: 0; }
 .all-agents-age { padding-top: var(--space-2); }
 /* a row keeps its state cell's room at its right edge (after a chat's ⋯), as an Agents row does: the glyph never sits on the cost */
@@ -82,7 +62,7 @@
   align-items: center;
   gap: 6px;
   max-width: 16rem;
-  height: 36px;
+  height: var(--pill-h);
   padding-inline: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);

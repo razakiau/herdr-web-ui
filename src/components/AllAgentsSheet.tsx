@@ -14,7 +14,7 @@
  */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Hourglass, Search, X } from "lucide-react";
+import { ArrowUpDown, ChevronDown, ChevronRight, Clock, Ellipsis, Hourglass, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -42,6 +42,7 @@ import { PillMenu } from "./PillMenu.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 import { CostStack } from "./CostParts.tsx";
 import { onRowContextMenu } from "./Sidebar.tsx";
+import { SearchField } from "./SearchField.tsx";
 import "./SessionSheet.css";
 
 export interface AllAgentsSheetProps {
@@ -243,11 +244,8 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
           <button type="button" className="icon-button" aria-label={t("Close dialog")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body all-agents-body">
-          <label className="all-agents-search">
-            <Search aria-hidden="true" />
-            <input className="input" type="search" value={query} aria-label={t("Search agents")} placeholder={t("Search agents")}
-              autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(event) => setQuery(event.target.value)} />
-          </label>
+          <SearchField className="all-agents-search" value={query} onValue={setQuery} label={t("Search agents")} placeholder={t("Search agents")}
+            autoComplete="off" autoCapitalize="off" spellCheck={false} />
           {line && <p className="field-hint" role="status">{line}</p>}
           {/* the sort chip first, then a folder's chats only, as VS Code's sessions view filters by workspace; All is every folder */}
           {(costed || pills.length > 1) && <div ref={pillRow} className={`all-agents-pills${moreRight ? " has-more" : ""}`} onScroll={measurePills}>

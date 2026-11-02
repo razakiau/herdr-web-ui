@@ -9,6 +9,7 @@ import { cliProxyRequest, fetchOmniRouteStatus, omniRouteRequest } from "../lib/
 import { UsageAccountDialog } from "./UsageAccountDialog.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { Segmented, SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
+import { SearchField } from "./SearchField.tsx";
 import "./UsageSettings.css";
 
 function ProviderAccounts({ id, providers }: { readonly id: UsageProviderName; readonly providers: readonly ProviderUsage[] }) {
@@ -196,7 +197,7 @@ function OmniRouteProviders({ status, providers, onEdit, onRemove }: {
       <span className="settings-hint">{t("{shown} of {count} shown", { shown: String(shownCount), count: String(groups.length) })}{fresh.length > 0 ? ` · ${t("{count} new", { count: String(fresh.length) })}` : ""}</span>
     </div>
     {searchable && <div className="settings-item usage-gateway-tools">
-      <input className="input" type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search providers")} placeholder={t("Search providers")} />
+      <SearchField value={query} onValue={setQuery} label={t("Search providers")} placeholder={t("Search providers")} />
       <Segmented label={t("Providers listed")} value={filter} onChange={setFilter} options={[{ value: "all", label: t("All") }, { value: "shown", label: t("Shown") }]} />
     </div>}
     {groups.length === 0 && <p className="settings-item settings-hint">{t("OmniRoute reports no plan limits yet.")}</p>}

@@ -80,8 +80,6 @@ export const MACHINES_KO: Record<string, string> = {
   "The computer this app runs on": "이 앱이 실행되는 컴퓨터",
   "Host": "호스트",
   "Filter workspaces and agents": "워크스페이스와 에이전트 필터",
-  "Filter": "필터",
-  "Groups and their chats": "그룹과 채팅",
   "Agents and groups": "에이전트와 그룹",
   "Workspaces and agents": "워크스페이스와 에이전트",
   "No workspaces or agents match": "일치하는 워크스페이스나 에이전트가 없습니다",

@@ -53,6 +53,7 @@ import { useSheetSwipe } from "../lib/sheets.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
+import { SearchField } from "./SearchField.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
 
 export interface SettingsDialogProps {
@@ -179,15 +180,14 @@ function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null }: { val
       {unavailable && <p className="settings-font-note" role="status">{t("Installed fonts could not be listed. Type the name instead.")}</p>}
       {browsing && families !== null && (
         <div className="settings-font-picker">
-          <input
-            className="input settings-font-search"
-            type="search"
+          <SearchField
+            className="settings-font-search"
             value={query}
+            onValue={setQuery}
             placeholder={t("Search fonts")}
-            aria-label={t("Search fonts")}
+            label={t("Search fonts")}
             spellCheck={false}
             autoFocus
-            onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape" && !event.nativeEvent.isComposing) {
                 // closes the list, not the dialog behind it
@@ -966,15 +966,14 @@ function ShortcutsPage() {
   });
   return (
     <>
-      <input
-        type="search"
-        className="input settings-shortcut-search"
+      <SearchField
+        className="settings-shortcut-search"
         value={query}
+        onValue={setQuery}
         placeholder={t("Search shortcuts")}
-        aria-label={t("Search shortcuts")}
+        label={t("Search shortcuts")}
         autoComplete="off"
         spellCheck={false}
-        onChange={(event) => setQuery(event.target.value)}
       />
       {visible.length === 0 && <p className="settings-hint" role="status">{t("No shortcuts match.")}</p>}
       <SettingsGroup className="settings-shortcuts" section="shortcuts" note={<>{t("Bindings apply to this browser and device. Mod+Shift chords leave the terminal its keys; Record also takes other chords with Ctrl, Alt or (on a Mac) ⌘, exactly as pressed.")} {t("Text selection in focused fields stays native; Tab/list keys are UI-local, not global shortcuts.")} {t("The mobile key bar sends terminal keys, not app actions.")}</>}>

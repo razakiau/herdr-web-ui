@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
-import { Folder, FolderOpen, Search, X } from "lucide-react";
+import { Folder, FolderOpen, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
@@ -30,6 +30,7 @@ import { hostFolders, type PcHostWorkspaces } from "../lib/hostWorkspaces.ts";
 import "./AllAgentsSheet.css";
 import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import { NewHostChatFields, type NewHostChatHandle } from "./NewHostChatFields.tsx";
+import { SearchField } from "./SearchField.tsx";
 
 /** The dialog as New tab: the workspace the tab joins, whose folder it uses, and the number herdr will give it. */
 export interface NewTabTarget {
@@ -409,11 +410,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
           )}
           {hostFolderList.length > 0 && <div className="field new-host-folders">
             <span className="field-label" id="new-host-folders">{t("Folders with chats")}</span>
-            {hostFolderList.length > 5 && <label className="all-agents-search new-host-folders-search">
-              <Search aria-hidden="true" />
-              <input className="input" type="search" value={folderQuery} aria-label={t("Search folders")} placeholder={t("Search folders")}
-                autoComplete="off" autoCapitalize="off" spellCheck={false} disabled={fieldsDisabled} onChange={(event) => setFolderQuery(event.target.value)} />
-            </label>}
+            {hostFolderList.length > 5 && <SearchField className="new-host-folders-search" value={folderQuery} onValue={setFolderQuery} label={t("Search folders")} placeholder={t("Search folders")}
+              autoComplete="off" autoCapitalize="off" spellCheck={false} disabled={fieldsDisabled} />}
             <ul className="new-host-folder-list" role="radiogroup" aria-labelledby="new-host-folders">
               {listedFolders.map((folder) => {
                 const on = opensWorkspace && pickedFolder === folder.cwd;

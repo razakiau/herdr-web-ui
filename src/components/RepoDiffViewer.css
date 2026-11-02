@@ -262,7 +262,7 @@
 }
 
 @media (min-width: 641px) {
-  .repo-diff-find .input {
+  .repo-diff-find .search-field-input {
     font-size: var(--fs-md);
   }
 }

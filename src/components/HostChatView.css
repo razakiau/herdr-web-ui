@@ -313,25 +313,8 @@
 }
 
 /* the picker's search box, provider tabs and one-line model rows (ModelPicker.tsx) */
-.host-picker-search {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.host-picker-search > svg {
-  position: absolute;
-  inset-inline-start: var(--space-3);
-  width: var(--space-4);
-  height: var(--space-4);
-  color: var(--text-dim);
-  pointer-events: none;
-}
-
-.host-picker-search .input {
-  width: 100%;
-  padding-inline-start: calc(var(--space-3) * 2 + var(--space-4));
-}
+/* the app's one SearchField (SearchField.css) */
+.host-picker-search { flex: none; }
 
 /* pinned under the sheet's header: a 30-model list scrolls under the search */
 .host-picker-head {

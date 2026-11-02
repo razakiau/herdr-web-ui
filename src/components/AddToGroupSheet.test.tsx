@@ -74,9 +74,11 @@ describe("Add to group: the PC filter and the search, one row", () => {
     it(`${mode}: the PC pill comes first in the search row, the search after it; New group… is its own row`, async () => {
       const root = await sheet(mode === "merge" ? group(3, "FICTIONAL source", [["local", "s"]]) : null);
       const line = classed(root, "add-to-group-search-line")[0]!;
-      // the row's own elements in order: All agents' sort pill (a menu button, no native select), then the field
-      const kids = line.findAll((each) => (each.type === "button" && each.props["aria-haspopup"] === "menu") || each.type === "label");
-      expect(kids.map((each) => each.type)).toEqual(["button", "label"]);
+      // the row's own elements in order: All agents' sort pill (a menu button, no native select), then the app's one search field
+      const kids = line.findAll((each) => (each.type === "button" && each.props["aria-haspopup"] === "menu")
+        || (typeof each.type === "string" && typeof each.props["className"] === "string" && (each.props["className"] as string).split(" ").includes("search-field")));
+      expect(kids.map((each) => each.type)).toEqual(["button", "div"]);
+      expect(kids[1]!.props["className"]).toContain("add-to-group-search");
       expect(kids[0]!.props["className"]).toContain("group-pc-filter");
       expect(kids[0]!.props["className"]).toContain("all-agents-sort");
       expect(root.findAll((each) => each.type === "select")).toHaveLength(0);

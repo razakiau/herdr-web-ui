@@ -385,6 +385,7 @@ const BASE: Record<string, string> = {
   "Show all {n} in Groups": "グループで {n} 件すべて表示",
   "Search groups": "グループを検索",
   "Show groups on: {pc}": "表示するPCのグループ: {pc}",
+  "Clear search": "検索語を消去",
   "Show less": "折りたたむ",
   "More for {title}": "{title} のその他",
   "All agents on {pc}": "{pc} のすべてのエージェント",

@@ -10,7 +10,7 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Boxes, Check, ChevronDown, Hand, ListChecks, MessageSquare, Pin, Rocket, Scale, Search, ShieldCheck, Sparkles, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Boxes, Check, ChevronDown, Hand, ListChecks, MessageSquare, Pin, Rocket, Scale, ShieldCheck, Sparkles, TriangleAlert, X, type LucideIcon } from "lucide-react";
 
 import type { HostAgent, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
@@ -20,6 +20,7 @@ import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { formatTokenCount } from "./HostChatStatus.tsx";
+import { SearchField } from "./SearchField.tsx";
 import { formatUsd } from "../lib/chatCost.ts";
 
 /** A model's mark: the provider's, or VS Code's sparkle for one it cannot name. */
@@ -140,10 +141,7 @@ function ModelList({ machineId, models, model, onModel, switchCost }: Pick<Model
   return <>
     {/* the search stays at the top while a long list scrolls under it; the captions name the providers */}
     <div className="host-picker-head">
-    <label className="host-picker-search">
-      <Search aria-hidden="true" />
-      <input className="input" type="search" value={query} placeholder={t("Search models")} aria-label={t("Search models")} autoFocus onChange={(event) => setQuery(event.target.value)} />
-    </label>
+    <SearchField className="host-picker-search" value={query} onValue={setQuery} label={t("Search models")} placeholder={t("Search models")} autoFocus />
     {sources.length > 0 && <div className="host-picker-sources" role="group" aria-label={t("Sources")}>
       {[null, ...sources].map((each) => <button key={each ?? ""} type="button" className={`host-picker-chip host-picker-source${source === each ? " is-picked" : ""}`} aria-pressed={source === each} data-group={each ?? ""}
         onClick={() => setSource(each)}>
@@ -229,10 +227,7 @@ function SettingsList({ config, agents, agent, onConfig, onAgent }: Pick<ModelPi
     <section className="host-picker-group" aria-label={t("Agent")}>
       <p className="host-picker-provider">{t("Agent")}</p>
       <div className="host-picker-rows">
-      {all.length > AGENT_SEARCH_FROM && <label className="host-picker-search">
-        <Search aria-hidden="true" />
-        <input className="input" type="search" value={query} placeholder={t("Search agents")} aria-label={t("Search agents")} onChange={(event) => setQuery(event.target.value)} />
-      </label>}
+      {all.length > AGENT_SEARCH_FROM && <SearchField className="host-picker-search" value={query} onValue={setQuery} label={t("Search agents")} placeholder={t("Search agents")} />}
       {option({ key: "", data: { "data-agent": "" }, picked: agent === null, name: t("Agent"), onPick: () => onAgent(null) })}
       {shown.map((each) => option({ key: each.uri, data: { "data-agent": each.uri }, picked: each.uri === agent, name: each.name, line: each.description ?? undefined, onPick: () => onAgent(each.uri) }))}
       </div>

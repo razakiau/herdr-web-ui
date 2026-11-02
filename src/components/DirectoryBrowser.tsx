@@ -3,6 +3,7 @@ import { ArrowUp, FolderPlus, House } from "lucide-react";
 
 import "./DirectoryBrowser.css";
 import { FileGlyph } from "./FileGlyph.tsx";
+import { SearchField } from "./SearchField.tsx";
 
 import type { DirectoryListing } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -180,13 +181,13 @@ export function DirectoryBrowser({ start, onPick, onOpenFile, onFolder }: Direct
         </div>
       )}
       {onPick !== undefined && (
-        <label className="field dir-browser-search">
-          <span className="field-label">{t("Filter folders")}</span>
+        <div className="field dir-browser-search">
+          <span className="field-label" aria-hidden="true">{t("Filter folders")}</span>
           {/* a touch screen would raise its keyboard over the list just opened; Escape clears the
               filter before it reaches the dialog's own Escape, which closes the dialog */}
-          <input type="search" className="input" value={query} autoFocus={window.matchMedia?.("(pointer: coarse)").matches !== true}
+          <SearchField label={t("Filter folders")} value={query} autoFocus={window.matchMedia?.("(pointer: coarse)").matches !== true}
             autoComplete="off" spellCheck={false}
-            onChange={(event) => { setQuery(event.target.value); listRef.current?.scrollTo({ top: 0 }); }}
+            onValue={(next) => { setQuery(next); listRef.current?.scrollTo({ top: 0 }); }}
             onKeyDown={(event) => {
               // Enter confirms an IME candidate; Escape dismisses it, not this dialog.
               if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
@@ -200,7 +201,7 @@ export function DirectoryBrowser({ start, onPick, onOpenFile, onFolder }: Direct
                 setQuery("");
               }
             }} />
-        </label>
+        </div>
       )}
       {error !== null ? <p className="dir-browser-note dir-browser-error" role="alert">{error}</p> : (
         <ul className="dir-browser-list" ref={listRef}>

@@ -10,7 +10,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Plus, Search, Split } from "lucide-react";
+import { Check, Plus, Split } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./AllAgentsSheet.css";
@@ -32,6 +32,7 @@ import { GroupNameSheet, groupActive, groupFolder, rowsByKey } from "./GroupsShe
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { GroupPcFilter, groupPcs } from "./GroupPcFilter.tsx";
 import { GroupStateSummary, useMemberStates } from "./GroupState.tsx";
+import { SearchField } from "./SearchField.tsx";
 
 /** How a group's chats are doing, as its card and page say it ("1 working · 2 warm"); nothing when all are idle and cold. */
 function GroupRowState({ group, rows, feed }: { group: ChatGroup; rows: ReadonlyMap<string, HostChatRow>; feed: CostsFeed | null }) {
@@ -161,11 +162,8 @@ export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, mac
           {/* one row: the PC filter, compact, then the search taking the rest (round 11: the same in a merge and in the sidebar) */}
           {anyGroup && <div className="add-to-group-search-line">
             <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} onOpenChange={setPcMenu} />
-            <label className="all-agents-search add-to-group-search">
-              <Search aria-hidden="true" />
-              <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups")}
-                autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} />
-            </label>
+            <SearchField className="add-to-group-search" inputRef={search} value={query} onValue={setQuery} label={t("Search groups and their chats")} placeholder={t("Search groups")}
+              autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" />
           </div>}
           {/* always in reach: a new group under the search, above any list */}
           {!merging && <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>

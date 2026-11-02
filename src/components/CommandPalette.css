@@ -22,10 +22,6 @@
   border-bottom: var(--hairline) solid var(--border);
 }
 
-.palette-search .input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 
 .palette-search .icon-button svg {
   width: var(--icon-size);
