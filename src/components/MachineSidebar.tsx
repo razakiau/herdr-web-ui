@@ -279,7 +279,7 @@ export function MachineSidebar(props: Props) {
 const KEPT_KEY = "ovis:pcs-kept-open";
 const LENS_KEY = "ovis:sidebar-lens";
 export type SidebarLens = "agents" | "groups" | "pcs";
-/** The sidebar head's designs under review (ZAC-265 round 5): a dev switch, never a setting. */
+/** Each lens's icon in the quiet tabs (owner, ZAC-265: V1 with the icons from V3's menu). */
 const LENS_ICON = { agents: Bot, groups: GalleryVerticalEnd, pcs: Monitor } as const satisfies Record<SidebarLens, typeof Bot>;
 
 /** The head's lenses in order, each with how many rows (or groups) it holds; Groups only while
