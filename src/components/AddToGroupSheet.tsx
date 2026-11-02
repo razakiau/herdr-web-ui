@@ -161,7 +161,7 @@ export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, mac
             <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} />
             <label className="all-agents-search add-to-group-search">
               <Search aria-hidden="true" />
-              <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups and their chats")}
+              <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups")}
                 autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} />
             </label>
           </div>}

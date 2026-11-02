@@ -1,4 +1,4 @@
 /* GroupPcFilter.tsx: the app's .select, compact, left of a search field of the same height (All
    agents' field: 44px, --radius-lg), which takes the rest of the row; one pattern in Add to group,
    Merge into… and the sidebar's Groups lens */
-.group-pc-filter { flex: 0 1 auto; min-width: 0; max-width: 40%; height: 44px; border-radius: var(--radius-lg); text-overflow: ellipsis; }
+.group-pc-filter { flex: none; min-width: 0; max-width: 40%; height: 44px; border-radius: var(--radius-lg); text-overflow: ellipsis; }

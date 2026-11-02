@@ -81,6 +81,8 @@ export const MACHINES_ZH: Record<string, string> = {
   "Host": "主机",
   "Filter workspaces and agents": "筛选工作区和代理",
   "Filter": "筛选",
+  "Groups and their chats": "分组及其聊天",
+  "Agents, workspaces and groups": "智能体、工作区和分组",
   "Workspaces and agents": "工作区和代理",
   "No workspaces or agents match": "没有匹配的工作区或代理",
   "No workspaces or agents match on the PCs that answered": "已响应的 PC 上没有匹配的工作区或代理",

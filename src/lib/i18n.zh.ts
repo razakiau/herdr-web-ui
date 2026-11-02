@@ -384,6 +384,8 @@ const BASE: Record<string, string> = {
   "Its chats move for good: a hand-off won't take them back. Its digest is dropped.": "聊天将永久移动，交接不会把它们移回。它的摘要会被丢弃。",
   "Merge": "合并",
   "Split into new group from here": "从这里拆分为新分组",
+  "Show all {n} in Groups": "在分组中查看全部 {n} 个",
+  "Search groups": "搜索分组",
   "Show less": "收起",
   "More for {title}": "{title} 的更多操作",
   "All agents on {pc}": "{pc} 上的所有代理",

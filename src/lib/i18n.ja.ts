@@ -382,6 +382,8 @@ const BASE: Record<string, string> = {
   "Its chats move for good: a hand-off won't take them back. Its digest is dropped.": "チャットは完全に移動し、引き継ぎで戻ることはありません。ダイジェストは破棄されます。",
   "Merge": "統合",
   "Split into new group from here": "ここから新しいグループに分ける",
+  "Show all {n} in Groups": "グループで {n} 件すべて表示",
+  "Search groups": "グループを検索",
   "Show less": "折りたたむ",
   "More for {title}": "{title} のその他",
   "All agents on {pc}": "{pc} のすべてのエージェント",

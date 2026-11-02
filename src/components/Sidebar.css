@@ -945,15 +945,15 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 /* the Groups lens (GroupsLens.tsx): the sheet's cards in the rows' gutter */
 .groups-lens { display: flex; flex-direction: column; padding: var(--space-2) var(--side-gutter) 0; }
 .groups-lens .agent-empty { padding-inline-start: 0; }
-/* its head (round 10): the PC filter, stuck to the scroll's top on the panel's fill as the Agents chips are */
-.groups-lens-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  margin: calc(var(--space-2) * -1) calc(var(--side-gutter) * -1) 0;
-  padding: var(--space-1) var(--side-gutter) var(--space-2);
-  background: var(--bg-panel);
-}
-.groups-lens-head .group-pc-filter { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+/* round 11: the Groups lens's PC filter left of the sidebar's search (Add to group's pattern), at the
+   field's own height; the search's magnifier label follows it */
+.sidebar-filter .sidebar-filter-pc { flex: none; height: var(--side-row); max-width: 45%; border-radius: var(--radius-md); }
+/* with the select first, the field needs no magnifier beside it: the select already opens the row */
+.sidebar-filter:has(.sidebar-filter-pc) .sidebar-filter-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* an Agents or PCs search's Groups: the PCs section's own caption, then the lens's cards */
+.sidebar-group-hits { padding-top: var(--space-2); }
+.sidebar-hits-label { display: flex; align-items: center; cursor: default; }
+.sidebar-hits-label .agent-section-caret { visibility: hidden; }
+.sidebar-group-hits .groups-lens { padding-top: var(--space-1); }
+.groups-lens-more { padding-inline: 0; }
 .machine-list[hidden] { display: none; }

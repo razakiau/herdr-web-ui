@@ -29,6 +29,7 @@ import { machineErrorText, saysHerdrAway } from "../lib/userError.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { groupsView, liveGroups, useGroups } from "../lib/groups.ts";
 import { GroupsLens } from "./GroupsLens.tsx";
+import { GroupPcFilter, groupPcs } from "./GroupPcFilter.tsx";
 import { useSettings } from "../lib/settings.ts";
 
 /** The PC header's state word; "connected" is the quiet default and shows as a dot alone, every other state also writes its word under the name. */
@@ -169,9 +170,15 @@ export function MachineSidebar(props: Props) {
   const lens = shownLens(storedPick, chatGroups);
   // a chat its host says is gone (deleted) is not counted in the lens's cards (lib/groups.ts liveGroups)
   const liveAnswer = useMemo(() => liveGroups(groups?.answer ?? null, hostChats), [groups?.answer, hostChats]);
-  const showAgents = searching || lens === "agents";
-  const showPcs = searching || lens === "pcs";
-  const showGroups = !searching && lens === "groups";
+  // a search in the Groups lens looks through the groups (their names and chats' titles); in the others,
+  // through agents and workspaces, with the groups that match in a short section of their own (round 11)
+  const searchView = sidebarSearchView(lens, chatGroups, searching, query);
+  const groupsSearch = chatGroups && lens === "groups";
+  const { agents: showAgents, pcs: showPcs, groups: showGroups, groupHits } = searchView;
+  // the Groups lens's PC filter, left of the search field as in Add to group: shown when the groups span PCs
+  const [groupPc, setGroupPc] = useState<string | null>(null);
+  const groupPcList = useMemo(() => groupPcs(liveAnswer?.groups ?? []), [liveAnswer]);
+  const pcNameOf = (id: string): string => props.machines.find((machine) => machine.id === id)?.name ?? id;
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
   // the PCs placed by hand on this device (lib/hostPlacement.ts foldPcs): kept open from "Other PCs",
@@ -221,8 +228,11 @@ export function MachineSidebar(props: Props) {
   // filter above the lists is a row of the same grid, one field and its clear, never taller than a row.
   return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div className="sidebar-shell">
     {searching && <div className="sidebar-filter" role="search" aria-label={t("Filter workspaces and agents")}>
+      {groupsSearch && <GroupPcFilter pcs={groupPcList} value={groupPc} pcName={pcNameOf} onChange={setGroupPc} className="sidebar-filter-pc" />}
       <label className="sidebar-filter-label" htmlFor={filterId}><Search aria-hidden="true" /><span className="visually-hidden">{t("Filter")}</span></label>
-      <input ref={filterInput} id={filterId} className="input sidebar-filter-input" type="search" value={query} aria-label={t("Filter workspaces and agents")} placeholder={t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
+      {/* the words say what a search here finds: the groups in their lens, else agents and workspaces, and groups while they are on */}
+      <input ref={filterInput} id={filterId} className="input sidebar-filter-input" type="search" value={query} aria-label={t("Filter workspaces and agents")}
+        placeholder={searchView.placeholder === "Groups and their chats" ? t("Groups and their chats") : searchView.placeholder === "Agents, workspaces and groups" ? t("Agents, workspaces and groups") : t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
       <datalist id={suggestionsId}>{suggestions.map((label) => <option key={label} value={label} />)}</datalist>
       <button type="button" className="sidebar-filter-clear" aria-label={query === "" ? t("Close search") : t("Clear filter")} title={query === "" ? t("Close search") : t("Clear filter")} onClick={clearOrClose}><X aria-hidden="true" /></button>
     </div>}
@@ -241,7 +251,13 @@ export function MachineSidebar(props: Props) {
     <div className="sidebar-scroll">
       {showAgents && <AgentSidebar lens machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
         hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat} />}
-      {showGroups && <GroupsLens answer={liveAnswer} failed={groups?.failed ?? false} machines={props.machines} hostChats={hostChats} />}
+      {/* under an Agents or PCs search, the groups that match: a short section, a tap opens the group's page */}
+      {groupHits && <div className="sidebar-group-hits">
+        {/* the PCs caption's own shape below it (caret box, words), so both captions sit on one column */}
+        <h2 className="sidebar-pcs-head"><span className="sidebar-section-label agent-section-toggle sidebar-hits-label"><ChevronDown className="agent-section-caret" aria-hidden="true" /><span>{t("Groups")}</span></span></h2>
+        <GroupsLens answer={liveAnswer} failed={groups?.failed ?? false} machines={props.machines} hostChats={hostChats} query={query} limit={3} onMore={() => { setLens("groups"); }} />
+      </div>}
+      {showGroups && <GroupsLens answer={liveAnswer} failed={groups?.failed ?? false} machines={props.machines} hostChats={hostChats} query={searching ? query : ""} pc={searching ? groupPc : null} />}
       <div className="machine-list" aria-label={t("PCs and workspaces")} hidden={!showPcs}>
         {/* the PCs fold as the Agents above them do (owner, ZAC-233), for this page */}
         {searching && <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>
@@ -292,6 +308,24 @@ export function sidebarLenses(on: { chatGroups: boolean; agents: number; groups:
     ...(on.chatGroups ? [{ id: "groups" as const, count: on.groups }] : []),
     { id: "pcs", count: on.pcs },
   ];
+}
+
+/**
+ * What the sidebar's one scroll shows (round 11): a lens's list, and under a search the Groups lens's
+ * own groups, or agents and workspaces with a short Groups section while chat groups are on; and what
+ * the search field says it finds.
+ */
+export function sidebarSearchView(lens: SidebarLens, chatGroups: boolean, searching: boolean, query: string): {
+  agents: boolean; pcs: boolean; groups: boolean; groupHits: boolean; placeholder: "Groups and their chats" | "Agents, workspaces and groups" | "Workspaces and agents";
+} {
+  const groupsSearch = chatGroups && lens === "groups";
+  return {
+    agents: (searching && !groupsSearch) || lens === "agents",
+    pcs: (searching && !groupsSearch) || lens === "pcs",
+    groups: lens === "groups",
+    groupHits: chatGroups && searching && !groupsSearch && query.trim() !== "",
+    placeholder: groupsSearch ? "Groups and their chats" : chatGroups ? "Agents, workspaces and groups" : "Workspaces and agents",
+  };
 }
 
 /** The lens shown: a kept Groups pick reads as Agents while chat groups are off. */

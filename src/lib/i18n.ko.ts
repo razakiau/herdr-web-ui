@@ -380,6 +380,8 @@ const BASE: Record<string, string> = {
   "Its chats move for good: a hand-off won't take them back. Its digest is dropped.": "채팅은 영구히 옮겨지며 인계로 되돌아가지 않습니다. 다이제스트는 삭제됩니다.",
   "Merge": "합치기",
   "Split into new group from here": "여기서부터 새 그룹으로 나누기",
+  "Show all {n} in Groups": "그룹에서 {n}개 모두 보기",
+  "Search groups": "그룹 검색",
   "Show less": "접기",
   "More for {title}": "{title} 더보기",
   "All agents on {pc}": "{pc}의 모든 에이전트",

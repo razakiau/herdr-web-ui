@@ -9,7 +9,7 @@ import type { HostPc } from "../lib/hostChats.ts";
 import { groupsView } from "../lib/groups.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { GroupsLens } from "./GroupsLens.tsx";
-import { shownLens, sidebarLenses } from "./MachineSidebar.tsx";
+import { shownLens, sidebarLenses, sidebarSearchView } from "./MachineSidebar.tsx";
 
 const row = (session: string, title: string): HostChatRow =>
   ({ session, title, status: "idle", modified_at: new Date().toISOString(), cwd: "/w/fictional", unread: false, archived: false });
@@ -61,8 +61,8 @@ afterEach(async () => {
 
 const textOf = (node: ReactTestInstance | string): string => typeof node === "string" ? node : node.children.map(textOf).join("");
 
-async function lens(answer: GroupsAnswer | null): Promise<ReactTestRenderer> {
-  const view = createElement(GroupsLens, { answer, failed: false, machines: MACHINES, hostChats: HOST_CHATS });
+async function lens(answer: GroupsAnswer | null, over: Partial<Parameters<typeof GroupsLens>[0]> = {}): Promise<ReactTestRenderer> {
+  const view = createElement(GroupsLens, { answer, failed: false, machines: MACHINES, hostChats: HOST_CHATS, ...over });
   await act(async () => { renderer = create(createElement(SettingsProvider, { children: view })); });
   return renderer!;
 }
@@ -74,6 +74,17 @@ describe("the sidebar's Groups lens", () => {
       { id: "agents", count: 16 }, { id: "groups", count: 2 }, { id: "pcs", count: 1 }]);
     // not answered yet: no number rather than a wrong 0
     expect(sidebarLenses({ chatGroups: true, agents: 16, groups: null, pcs: 1 })[1]).toEqual({ id: "groups", count: null });
+  });
+
+  it("the sidebar search: in Groups it searches the groups; in Agents, agents plus a Groups section; the field says what it finds", () => {
+    expect(sidebarSearchView("groups", true, true, "zac")).toEqual({ agents: false, pcs: false, groups: true, groupHits: false, placeholder: "Groups and their chats" });
+    expect(sidebarSearchView("agents", true, true, "zac")).toEqual({ agents: true, pcs: true, groups: false, groupHits: true, placeholder: "Agents, workspaces and groups" });
+    // nothing typed yet: no Groups section
+    expect(sidebarSearchView("agents", true, true, " ").groupHits).toBe(false);
+    // chat groups off: as before
+    expect(sidebarSearchView("agents", false, true, "zac")).toEqual({ agents: true, pcs: true, groups: false, groupHits: false, placeholder: "Workspaces and agents" });
+    // no search: the lens alone
+    expect(sidebarSearchView("groups", true, false, "")).toMatchObject({ agents: false, pcs: false, groups: true });
   });
 
   it("reads a kept Groups pick as Agents once chat groups are off", () => {
@@ -91,21 +102,37 @@ describe("the sidebar's Groups lens", () => {
     expect(groupsView.read().group).toBe(9);
   });
 
-  it("filters by PC with a select, shown only when the groups span more than one PC", async () => {
-    const select = (page: ReactTestRenderer) => page.root.findAll((each) => each.type === "select");
-    expect(select(await lens(ANSWER))).toHaveLength(0);
+  it("shows the groups on the PC the search row picked, and none of its own select", async () => {
+    const desk = { ...group(11, "FICTIONAL desk work", []), members: [{ pc: "desk", session: "d-1", joined: "link" as const, addedAt: "2026-10-30T09:00:00Z" }] };
+    const answer = { ...ANSWER, groups: [...ANSWER.groups, desk] };
+    const cards = (page: ReactTestRenderer) => page.root.findAll((each) => each.type === "button" && each.props["className"] === "groups-card").map(textOf);
+    const all = await lens(answer);
+    expect(all.root.findAll((each) => each.type === "select")).toHaveLength(0);
+    expect(cards(all)).toHaveLength(3);
     await act(async () => { renderer?.unmount(); });
-    const desk = { ...group(11, "FICTIONAL desk work", []), members: [{ pc: "desk", session: "d-1", joined: "link" as const, addedAt: "2026-10-30T09:00:00Z" }, { pc: "local", session: "s-z", joined: "manual" as const, addedAt: "2026-10-30T09:00:00Z" }] };
-    const page = await lens({ ...ANSWER, groups: [...ANSWER.groups, desk] });
-    const pick = select(page)[0]!;
-    expect(pick.findAllByType("option").map((each) => each.props["value"])).toEqual(["", "desk", "local"]);
-    const cards = () => page.root.findAll((each) => each.type === "button" && each.props["className"] === "groups-card").map(textOf);
-    expect(cards()).toHaveLength(3);
-    await act(async () => { pick.props["onChange"]({ target: { value: "desk" } }); });
-    expect(cards()).toHaveLength(1);
-    expect(cards()[0]).toContain("FICTIONAL desk work");
-    await act(async () => { select(page)[0]!.props["onChange"]({ target: { value: "" } }); });
-    expect(cards()).toHaveLength(3);
+    const page = await lens(answer, { pc: "desk" });
+    expect(cards(page)).toHaveLength(1);
+    expect(cards(page)[0]).toContain("FICTIONAL desk work");
+  });
+
+  it("a search finds groups by name and by their chats' titles, every word; none says so", async () => {
+    const cards = (page: ReactTestRenderer) => page.root.findAll((each) => each.type === "button" && each.props["className"] === "groups-card").map(textOf);
+    expect(cards(await lens(ANSWER, { query: "mounts" }))).toHaveLength(1);
+    await act(async () => { renderer?.unmount(); });
+    // "C" is s-c's title, in FICTIONAL mounts; "keep-warm b": the name and chat B
+    expect(cards(await lens(ANSWER, { query: "keep-warm b" }))[0]).toContain("FICTIONAL keep-warm");
+    await act(async () => { renderer?.unmount(); });
+    expect(textOf((await lens(ANSWER, { query: "nothing here" })).root)).toContain("No group has “nothing here” in its name or its chats.");
+  });
+
+  it("a short section: at most `limit` cards, then a way to all of them", async () => {
+    let more = 0;
+    const page = await lens(ANSWER, { query: "fictional", limit: 1, onMore: () => { more++; } });
+    expect(page.root.findAll((each) => each.type === "button" && each.props["className"] === "groups-card")).toHaveLength(1);
+    const all = page.root.find((each) => each.type === "button" && typeof each.props["className"] === "string" && each.props["className"].includes("groups-lens-more"));
+    expect(textOf(all)).toBe("Show all 2 in Groups");
+    await act(async () => { all.props["onClick"](); });
+    expect(more).toBe(1);
   });
 
   it("says there are no groups yet with the sheet's words", async () => {
