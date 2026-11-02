@@ -129,11 +129,23 @@ const GROUP_SYSTEM = `You write the digest of a group of coding-agent chats that
 - perChat: one line per chat, its "session" exactly as the CHAT line names it.
 Short items, plain words.`;
 
-function parseJson(text: string): Record<string, unknown> {
+/**
+ * A model's JSON object. A model may still wrap it (`response_format` is a request, and a provider may
+ * ignore it): a line of prose before or after, or a ``` fence. When the whole text does not parse, the
+ * outermost {…} span (the first "{" to the last "}") is tried. Anything else throws.
+ */
+export function parseJson(text: string): Record<string, unknown> {
+  const object = (value: unknown): Record<string, unknown> => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("not an object");
+    return value as Record<string, unknown>;
+  };
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  const value: unknown = JSON.parse(trimmed);
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("not an object");
-  return value as Record<string, unknown>;
+  try { return object(JSON.parse(trimmed)); } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("no JSON object");
+    return object(JSON.parse(text.slice(start, end + 1)));
+  }
 }
 
 const str = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;

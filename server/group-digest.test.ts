@@ -201,6 +201,25 @@ describe("refreshing a group's digest", () => {
     expect(await refreshDigest(id, CHOICE, deps({ complete: bad.complete })).catch((caught: unknown) => caught)).toEqual(new DigestError("claude-haiku-5-5", "answered something that is not JSON"));
   });
 
+  it("reads a JSON answer wrapped in prose or a fenced block; truly non-JSON still fails", async () => {
+    const GOOD = JSON.stringify({ direction: "Wrapped.", open: [], done: [], perChat: [] });
+    const answers = [
+      `Here is the digest:\n${GOOD}`,
+      `${GOOD}\n\nLet me know if you want changes.`,
+      `Sure, the digest:\n\`\`\`json\n${GOOD}\n\`\`\`\nHope this helps.`,
+    ];
+    for (const groupAnswer of answers) {
+      const { id, deps } = setup();
+      const wrapped = fakeOmniRoute({ groupAnswer });
+      expect((await refreshDigest(id, CHOICE, deps({ complete: wrapped.complete }))).direction).toBe("Wrapped.");
+    }
+    for (const groupAnswer of ["I could not write a digest for these chats.", "{ direction: not json }", "[1, 2]"]) {
+      const { id, deps } = setup();
+      const bad = fakeOmniRoute({ groupAnswer });
+      expect(await refreshDigest(id, CHOICE, deps({ complete: bad.complete })).catch((caught: unknown) => caught)).toEqual(new DigestError("claude-haiku-5-5", "answered something that is not JSON"));
+    }
+  });
+
   it("an OmniRoute failure names OmniRoute", async () => {
     const { id, deps } = setup();
     const error = await refreshDigest(id, CHOICE, deps({ complete: async () => { throw new Error("502 Bad Gateway"); } })).catch((caught: unknown) => caught);
