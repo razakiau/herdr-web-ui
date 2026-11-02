@@ -30,6 +30,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding-bottom: var(--space-4);
+  /* the Agents lens's sticky chips cover the top: a row reached by keyboard lands below them */
+  scroll-padding-top: calc(var(--control-h) + var(--space-1) + var(--space-2));
 }
 
 .sidebar-scroll::after {
