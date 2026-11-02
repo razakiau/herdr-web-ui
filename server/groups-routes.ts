@@ -22,8 +22,8 @@ import { badRequest, isJsonObject, jsonResponse, readJsonObject, setRequestRoute
  * Haiku on OpenCode Go as `opencode-go/claude-haiku-5-5` (measured 2026-11-02 with the herdr-digest
  * key: the dashed `opencode-go-claude-haiku-5-5` answers 400 "Unable to determine provider for model").
  */
-// effort high: the owner's call (2026-11-02); a Haiku digest at high still costs cents
-export const DIGEST_DEFAULTS: GroupsAnswer["digestDefaults"] = { model: "opencode-go/claude-haiku-5-5", effort: "high" };
+// effort medium: the owner's call (2026-11-02, round 10)
+export const DIGEST_DEFAULTS: GroupsAnswer["digestDefaults"] = { model: "opencode-go/claude-haiku-5-5", effort: "medium" };
 /** The store's `settings` keys for the digest's defaults, once the owner picks (Task 8). */
 export const DIGEST_MODEL_KEY = "digestModel";
 export const DIGEST_EFFORT_KEY = "digestEffort";
