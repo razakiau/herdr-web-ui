@@ -184,3 +184,30 @@
 }
 .refresh-digest-estimate strong { color: var(--text-strong); font-weight: var(--fw-semibold); }
 .refresh-digest-note { margin: var(--space-1) var(--space-4) 0; color: var(--text-dim); font-size: var(--fs-xs); line-height: 1.45; }
+
+/* round 8: the facts as one phrase, "1 issue · 2 PRs · 3 threads open" */
+.digest-fact-line { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) 0; }
+.digest-fact-sep { margin-inline: var(--space-2); }
+.digest-fact-tail { margin-inline-start: var(--space-1); }
+.digest-fact-line > .digest-fact:first-child:not(:has(svg)) { margin-inline-end: var(--space-1); }
+.digest-fact .session-pill-icon:not([data-tone]) { color: var(--text-dim); }
+/* Show less at the digest's foot: a quiet text button, the caption's colour, a row high to a finger */
+.digest-less {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.digest-less svg { width: 14px; height: 14px; }
+@media (hover: hover) { .digest-less:hover { background: var(--bg-hover); color: var(--text); } }
+.digest-less:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.digest-card { scroll-margin-top: var(--space-2); }

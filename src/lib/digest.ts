@@ -34,16 +34,18 @@ const prOpen = (state: ReferenceState | undefined): boolean => state === "open" 
 const issueOpen = (state: ReferenceState | undefined): boolean => state === "open" || state === undefined || state === "unknown";
 
 /**
- * The card's facts from the digest's Open items' own artifacts and their live states: open issues,
- * and PRs in review (open, draft or flagged). A PR merged since the digest no longer counts.
+ * The card's facts from the digest's Still open items: open issues and PRs in review (open, draft
+ * or flagged) from their own artifacts and live states, and the threads still waiting (an item with
+ * no artifact: something an agent meant to do). A PR merged or an issue closed since no longer counts.
  */
-export function digestFacts(digest: GroupDigest, states: Readonly<Record<string, ReferenceState>>): { issues: number; prs: number } {
+export function digestFacts(digest: GroupDigest, states: Readonly<Record<string, ReferenceState>>): { issues: number; prs: number; threads: number } {
   const seen = new Set<string>();
   let issues = 0;
   let prs = 0;
+  let threads = 0;
   for (const item of digest.open) {
     const artifact = item.artifact;
-    if (!artifact) continue;
+    if (!artifact) { threads += 1; continue; }
     const key = artifact.link ?? artifact.id;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -51,7 +53,7 @@ export function digestFacts(digest: GroupDigest, states: Readonly<Record<string,
     if (artifact.type === "issue" && issueOpen(state)) issues += 1;
     if (artifact.type === "pullRequest" && prOpen(state)) prs += 1;
   }
-  return { issues, prs };
+  return { issues, prs, threads };
 }
 
 /** Every artifact the digest links, for one state read. */

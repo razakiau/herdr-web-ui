@@ -52,6 +52,8 @@ const textOf = (node: ReactTestInstance | string): string => typeof node === "st
 const classed = (root: ReactTestInstance, name: string): ReactTestInstance[] =>
   root.findAll((each) => typeof each.type === "string" && typeof each.props["className"] === "string" && (each.props["className"] as string).split(" ").includes(name));
 
+// the facts line's parts, each as its own text (the gaps between them are the stylesheet's)
+const factWords = (root: ReactTestInstance): string[] => classed(classed(root, "digest-fact-line")[0]!, "digest-fact").map(textOf);
 async function card(over: Partial<DigestCardProps> = {}): Promise<{ root: ReactTestInstance; opened: unknown[]; refreshed: number[] }> {
   const opened: unknown[] = [];
   const refreshed: number[] = [];
@@ -73,9 +75,9 @@ describe("the digest's sums", () => {
     expect(staleCount(DIGEST, [member("a"), member("b")], new Map())).toBe(0);
   });
 
-  it("counts open issues and PRs in review from the items' own artifacts, a merged PR no longer", () => {
-    expect(digestFacts(DIGEST, {})).toEqual({ issues: 1, prs: 1 });
-    expect(digestFacts(DIGEST, { [pr(30).link]: "merged" })).toEqual({ issues: 1, prs: 0 });
+  it("counts open issues, PRs in review and waiting threads, a merged PR no longer", () => {
+    expect(digestFacts(DIGEST, {})).toEqual({ issues: 1, prs: 1, threads: 1 });
+    expect(digestFacts(DIGEST, { [pr(30).link]: "merged" })).toEqual({ issues: 1, prs: 0, threads: 1 });
   });
 
   it("folds Per chat into weeks only past twenty chats", () => {
@@ -106,8 +108,7 @@ describe("the digest card", () => {
     expect(text).toContain("$0.004");
     expect(text).toContain("2 h ago");
     expect(text).toContain("FICTIONAL: the groups ship");
-    expect(text).toContain("1 issue open");
-    expect(text).toContain("1 PR in review");
+    expect(factWords(root)).toEqual(["1 issue", "1 PR", "1 thread", "open"]);
     expect(text).not.toContain("Still open");
     expect(text).not.toContain("moved on");
   });
@@ -135,6 +136,23 @@ describe("the digest card", () => {
     expect(linked.type).toBe("button");
     await act(async () => { linked.props["onClick"](); });
     expect(opened).toEqual([pr(30)]);
+  });
+
+  it("facts: a zero part left out, and Nothing open when nothing is", async () => {
+    const threadsOnly = await card({ digest: { ...DIGEST, open: [{ text: "a" }, { text: "b" }] } });
+    expect(factWords(threadsOnly.root)).toEqual(["2 threads", "open"]);
+    await act(async () => { renderer?.unmount(); });
+    const none = await card({ digest: { ...DIGEST, open: [] } });
+    expect(classed(none.root, "digest-fact-line")).toHaveLength(0);
+    expect(textOf(none.root)).toContain("Nothing open");
+  });
+
+  it("Show less at the expanded digest's foot folds it", async () => {
+    const { root } = await card({ expanded: true });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: () => 0 });
+    await act(async () => { classed(root, "digest-less")[0]!.props["onClick"](); });
+    expect(textOf(root)).not.toContain("Still open");
+    expect(classed(root, "digest-body")[0]!.props["aria-expanded"]).toBe(false);
   });
 
   it("stale: says how many chats moved on, with one Refresh", async () => {

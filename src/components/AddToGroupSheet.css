@@ -39,3 +39,17 @@
 .add-to-group-divider { width: 100%; margin: var(--space-1) 0; border: 0; border-top: var(--hairline) solid var(--border); }
 .add-to-group-body .confirm-error { margin-inline: var(--space-4); }
 .add-to-group-footer .add-to-group-go { flex: 1 1 auto; }
+
+/* round 8: the search (All agents' field) and New group… on the rows' gutter, then Suggested and
+   All groups under the page's small captions; a row is one line of name over one dim line, how its
+   chats are doing at its end (GroupState.tsx, as a group's card says it) */
+.add-to-group-search { margin: 0 var(--space-4) var(--space-1); }
+.add-to-group-new { flex: none; }
+.add-to-group-label { margin: var(--space-3) var(--space-4) var(--space-1); }
+.add-to-group-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-to-group-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-to-group-state { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
+.add-to-group-none { margin: var(--space-2) var(--space-4); color: var(--text-dim); font-size: var(--fs-sm); line-height: 1.45; }
+/* a row's state in the Agents head's narrow form (the trail's phone form): each count behind its mark, the words kept for a screen reader, so the name keeps its room */
+.add-to-group-state .agent-summary-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.add-to-group-state .agent-summary-short { display: inline; }

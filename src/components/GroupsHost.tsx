@@ -46,7 +46,7 @@ export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
       onOpenGroup={(id) => groupsView.openGroup(id)} onClose={() => groupsView.closeList()} />}
     {group !== null && answer !== null && <GroupPage key={group.id} group={group} answer={answer} machines={machines} hostChats={hostChats} costs={costs} feed={feed} from={view.from}
       onOpenChat={openChat} onOpenFile={onOpenFile ? (target) => { groupsView.closeAll(); onOpenFile(target); } : undefined} onClose={() => groupsView.closeGroup()} />}
-    {view.addTo !== null && <AddToGroupSheet key={`${view.addTo.pc} ${view.addTo.session}`} chat={view.addTo} answer={answer} hostChats={hostChats}
+    {view.addTo !== null && <AddToGroupSheet key={`${view.addTo.pc} ${view.addTo.session}`} chat={view.addTo} answer={answer} hostChats={hostChats} feed={feed}
       onClose={() => groupsView.closeAddTo()} />}
   </>;
 }

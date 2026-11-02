@@ -9,8 +9,8 @@
  * Writing shows its progress and dims the digest it replaces; a failure keeps the old one with the
  * error under its header. With no digest, the card says so and offers to write one, with its cost.
  */
-import { useId, useState } from "react";
-import { ChevronDown, CircleDashed, CircleDot, GitPullRequest, History, LoaderCircle, TriangleAlert } from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, CircleDashed, CircleDot, GitPullRequest, History, LoaderCircle, TriangleAlert } from "lucide-react";
 
 import "./DigestCard.css";
 
@@ -72,6 +72,12 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
   const locale = useLocale();
   const id = useId();
   const [open, setOpen] = useState(expanded);
+  const top = useRef<HTMLElement>(null);
+  // Show less: the digest folds, and the card's top comes back into view (the reader was at its bottom)
+  const showLess = (): void => {
+    setOpen(false);
+    requestAnimationFrame(() => top.current?.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
+  };
   const [weeksOpen, setWeeksOpen] = useState<ReadonlySet<number>>(new Set());
   const writing = progress !== null;
   const progressLine = progress === null ? null
@@ -96,6 +102,14 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
   const written = Date.parse(digest.writtenAt);
   const age = ageWords(written, now, t);
   const facts = digestFacts(digest, states);
+  const factParts = [
+    facts.issues > 0 ? { kind: "issues", icon: <CircleDot className="session-pill-icon" data-tone="green" aria-hidden="true" />, words: t(facts.issues === 1 ? "1 issue" : "{n} issues", { n: facts.issues }) } : null,
+    facts.prs > 0 ? { kind: "prs", icon: <GitPullRequest className="session-pill-icon" data-tone="green" aria-hidden="true" />, words: t(facts.prs === 1 ? "1 PR" : "{n} PRs", { n: facts.prs }) } : null,
+    facts.threads > 0 ? { kind: "threads", icon: <CircleDashed className="session-pill-icon" aria-hidden="true" />, words: t(facts.threads === 1 ? "1 thread" : "{n} threads", { n: facts.threads }) } : null,
+  ].filter((part) => part !== null);
+  const open_ = facts.issues + facts.prs + facts.threads;
+  // "{facts} open" in the reader's language, its words around the parts wherever the language puts them
+  const [factsBefore = "", factsAfter = ""] = t("{facts} open", { facts: "\u0000" }).split("\u0000");
   const weeks = perChatWeeks(perChat);
   const stateOf = (artifact: HostArtifact): ReferenceState | undefined => artifact.link ? states[artifact.link] : undefined;
   const items = (list: GroupDigest["open"]) => <ul className="digest-items">{list.map((item, index) => {
@@ -121,7 +135,7 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
     </button>
   </li>;
 
-  return <section className={`digest-card${writing ? " is-writing" : ""}`} aria-label={t("Digest")}>
+  return <section ref={top} className={`digest-card${writing ? " is-writing" : ""}`} aria-label={t("Digest")}>
     {stale > 0 && !writing && failure === null && <div className="digest-stale">
       <History aria-hidden="true" />
       <span>{t(stale === 1 ? "1 chat moved on since this digest" : "{n} chats moved on since this digest", { n: stale })}</span>
@@ -146,9 +160,15 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
     <button type="button" className="digest-body" aria-expanded={open} aria-controls={`${id}-more`} onClick={() => setOpen(!open)}>
       <span className="digest-direction">{digest.direction}</span>
       <span className="digest-facts">
-        {facts.issues > 0 && <span className="digest-fact"><CircleDot className="session-pill-icon" data-tone="green" aria-hidden="true" />{t(facts.issues === 1 ? "1 issue open" : "{n} issues open", { n: facts.issues })}</span>}
-        {facts.prs > 0 && <span className="digest-fact"><GitPullRequest className="session-pill-icon" data-tone="green" aria-hidden="true" />{t(facts.prs === 1 ? "1 PR in review" : "{n} PRs in review", { n: facts.prs })}</span>}
-        {facts.issues === 0 && facts.prs === 0 && <span className="digest-fact">{t("Nothing open")}</span>}
+        {/* "1 issue · 2 PRs · 3 threads open": each kind with its glyph, a zero left out, "open" once at the end */}
+        {open_ === 0 ? <span className="digest-fact">{t("Nothing open")}</span> : <span className="digest-fact-line">
+          {factsBefore && <span className="digest-fact">{factsBefore.trim()}</span>}
+          {factParts.flatMap((part, index) => [
+            ...(index > 0 ? [<span key={`sep-${part.kind}`} className="digest-fact-sep" aria-hidden="true">·</span>] : []),
+            <span key={part.kind} className="digest-fact">{part.icon}{part.words}</span>,
+          ])}
+          {factsAfter && <span className="digest-fact digest-fact-tail">{factsAfter.trim()}</span>}
+        </span>}
         <ChevronDown className="digest-caret" aria-hidden="true" />
       </span>
     </button>
@@ -178,6 +198,7 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
             </li>;
           })}</ul>}
       </section>}
+      <button type="button" className="digest-less" aria-controls={`${id}-more`} onClick={showLess}><ChevronUp aria-hidden="true" />{t("Show less")}</button>
     </div>}
   </section>;
 }
