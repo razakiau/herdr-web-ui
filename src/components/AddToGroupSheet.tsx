@@ -82,10 +82,12 @@ export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, mac
   const dialog = useRef<HTMLDivElement | null>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: coarse ? dialog : search });
   useSheetSwipe(surface, onClose);
-  usePhoneSheetBack(() => onClose(), !naming && !confirming);
+  // the PC pill's menu, while up, takes the sheet's Back entry and its Escape (as All agents' sort does)
+  const [pcMenu, setPcMenu] = useState(false);
+  usePhoneSheetBack(() => onClose(), !naming && !confirming && !pcMenu);
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || naming || confirming || nativeModalOver(surface.current)) return;
+      if (event.key !== "Escape" || naming || confirming || pcMenu || nativeModalOver(surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
       onClose();
@@ -158,7 +160,7 @@ export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, mac
             : t("This chat isn't in a group. Pick one, or start a new group with it.")}</p>
           {/* one row: the PC filter, compact, then the search taking the rest (round 11: the same in a merge and in the sidebar) */}
           {anyGroup && <div className="add-to-group-search-line">
-            <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} />
+            <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} onOpenChange={setPcMenu} />
             <label className="all-agents-search add-to-group-search">
               <Search aria-hidden="true" />
               <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups")}

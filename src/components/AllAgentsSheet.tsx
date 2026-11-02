@@ -38,6 +38,7 @@ import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
 import { hostChatNow } from "../lib/agentNow.ts";
 import { hostChatItems, hostChatTitle, useHostChatActions } from "./HostChatActions.tsx";
+import { PillMenu } from "./PillMenu.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 import { CostStack } from "./CostParts.tsx";
 import { onRowContextMenu } from "./Sidebar.tsx";
@@ -138,7 +139,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   const actions = useHostChatActions();
   const [menu, setMenu] = useState<{ session: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null } | null>(null);
   const menuRow = menu ? pc.chats.find((row) => row.session === menu.session) : undefined;
-  const [sortMenu, setSortMenu] = useState<HTMLElement | null>(null);
+  const [sortMenu, setSortMenu] = useState(false);
   // the sheet opens focused on itself, not on the close button, whose ring said "press me" to every
   // tap that opened it, nor on the search field, which would raise a phone's keyboard; Tab still
   // reaches each control, ringed
@@ -147,7 +148,7 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
   useSheetSwipe(surface, onClose);
   // a chat's menu, or the rename or delete it opened, takes the sheet's Back entry while it is up:
   // its close would otherwise step back off the sheet's entry and close the sheet with it
-  usePhoneSheetBack(() => onClose(), menu === null && sortMenu === null && !(actions?.asking ?? false));
+  usePhoneSheetBack(() => onClose(), menu === null && !sortMenu && !(actions?.asking ?? false));
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       // a chat's menu, or the rename or delete it opened over the sheet, takes its own Escape
@@ -250,10 +251,12 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
           {line && <p className="field-hint" role="status">{line}</p>}
           {/* the sort chip first, then a folder's chats only, as VS Code's sessions view filters by workspace; All is every folder */}
           {(costed || pills.length > 1) && <div ref={pillRow} className={`all-agents-pills${moreRight ? " has-more" : ""}`} onScroll={measurePills}>
-            {costed && <button type="button" className={`all-agents-pill all-agents-sort${sortMenu ? " is-open" : ""}`} aria-haspopup="menu" aria-expanded={sortMenu !== null}
-              aria-label={t("Sort: {order}", { order: t(SORT_LABEL[sort]) })} onClick={(event) => setSortMenu(sortMenu ? null : event.currentTarget)}>
-              <ArrowUpDown aria-hidden="true" /><span>{t(SORT_LABEL[sort])}</span><ChevronDown aria-hidden="true" />
-            </button>}
+            {costed && <PillMenu<Sort> icon={ArrowUpDown} value={sort} title={t("Sort by")} ariaLabel={t("Sort: {order}", { order: t(SORT_LABEL[sort]) })}
+              onChange={setSort} onOpenChange={setSortMenu} items={[
+                { value: "recent", label: t("Recent"), icon: Clock },
+                { value: "cost", label: t("Cost, highest first"), short: t(SORT_LABEL.cost), icon: ArrowUpDown },
+                { value: "cold", label: t("Going cold"), icon: Hourglass },
+              ]} />}
             {pills.length > 1 && <div className="all-agents-folders" role="radiogroup" aria-label={t("Folders")}>
               {[{ cwd: "all" as Pick, count: pills.reduce((sum, pill) => sum + pill.count, 0) }, ...pills].map((pill) => {
                 const name = pill.cwd === "all" ? t("All") : pill.cwd ? basename(pill.cwd) : t("No folder");
@@ -306,11 +309,6 @@ export function AllAgentsSheet({ machineId, machineName, pc, selected, folder: o
           </section>}
         </div>
       </div>
-      {sortMenu && <RowMenu anchor={sortMenu} align="start" popover title={t("Sort by")} onClose={() => setSortMenu(null)} items={[
-        { id: "recent", label: t("Recent"), icon: Clock, checked: sort === "recent", run: () => setSort("recent") },
-        { id: "cost", label: t("Cost, highest first"), icon: ArrowUpDown, checked: sort === "cost", run: () => setSort("cost") },
-        { id: "cold", label: t("Going cold"), icon: Hourglass, checked: sort === "cold", run: () => setSort("cold") },
-      ]} />}
       {menu && menuRow && actions && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={hostChatTitle(menuRow, t)} subtitle={menuRow.cwd ?? undefined}
         items={hostChatItems(actions, { machineId, chat: menuRow }, t)} onClose={() => setMenu(null)} />}
     </div>,

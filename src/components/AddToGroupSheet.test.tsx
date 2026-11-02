@@ -71,24 +71,36 @@ async function sheet(mergeFrom: ChatGroup | null = null): Promise<ReactTestInsta
 
 describe("Add to group: the PC filter and the search, one row", () => {
   for (const mode of ["add", "merge"] as const) {
-    it(`${mode}: the PC select comes first in the search row, the search after it; New group… is its own row`, async () => {
+    it(`${mode}: the PC pill comes first in the search row, the search after it; New group… is its own row`, async () => {
       const root = await sheet(mode === "merge" ? group(3, "FICTIONAL source", [["local", "s"]]) : null);
       const line = classed(root, "add-to-group-search-line")[0]!;
-      // the row's own elements in order (a component's instance stands for the element it draws)
-      const kids = line.findAll((each) => each.type === "select" || each.type === "label");
-      expect(kids.map((each) => each.type)).toEqual(["select", "label"]);
+      // the row's own elements in order: All agents' sort pill (a menu button, no native select), then the field
+      const kids = line.findAll((each) => (each.type === "button" && each.props["aria-haspopup"] === "menu") || each.type === "label");
+      expect(kids.map((each) => each.type)).toEqual(["button", "label"]);
       expect(kids[0]!.props["className"]).toContain("group-pc-filter");
+      expect(kids[0]!.props["className"]).toContain("all-agents-sort");
+      expect(root.findAll((each) => each.type === "select")).toHaveLength(0);
       const news = classed(root, "add-to-group-new");
       expect(news).toHaveLength(mode === "add" ? 1 : 0);
-      if (news[0]) expect(news[0].findAll((each) => each.type === "select")).toHaveLength(0);
+      if (news[0]) expect(classed(news[0], "group-pc-filter")).toHaveLength(0);
     });
   }
 
-  it("filters the lists by the PC picked", async () => {
+  it("filters the lists by the PC picked in the pill's menu: All PCs, then each PC by name, the pick checked", async () => {
     const root = await sheet();
     const names = () => root.findAll((each) => each.props["role"] === "radio").map((each) => classed(each, "add-to-group-name")[0]!.children.join(""));
+    const text = (node: ReactTestInstance): string => node.children.map((each) => typeof each === "string" ? each : text(each)).join("");
+    const pill = () => classed(root, "group-pc-filter")[0]!;
     expect(names().sort()).toEqual(["FICTIONAL desk work", "FICTIONAL mac work"]);
-    await act(async () => { root.findByType("select").props["onChange"]({ target: { value: "desk" } }); });
+    expect(text(pill())).toBe("All PCs");
+    expect(pill().props["aria-label"]).toBe("Show groups on: All PCs");
+    await act(async () => { pill().props["onClick"]({ currentTarget: nodeMock() }); });
+    expect(pill().props["aria-expanded"]).toBe(true);
+    const items = () => root.findAll((each) => each.type === "button" && each.props["role"] === "menuitemcheckbox");
+    expect(items().map((item) => [text(item), item.props["aria-checked"]])).toEqual([["All PCs", true], ["Desk", false], ["Mac", false]]);
+    await act(async () => { items()[1]!.props["onClick"](); });
+    expect(items()).toEqual([]);
     expect(names()).toEqual(["FICTIONAL desk work"]);
+    expect(text(pill())).toBe("Desk");
   });
 });

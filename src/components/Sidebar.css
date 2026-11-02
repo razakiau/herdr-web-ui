@@ -947,8 +947,8 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 .groups-lens .agent-empty { padding-inline-start: 0; }
 /* round 11: the Groups lens's PC filter left of the sidebar's search (Add to group's pattern), at the
    field's own height; the search's magnifier label follows it */
-.sidebar-filter .sidebar-filter-pc { flex: none; height: var(--side-row); max-width: 45%; border-radius: var(--radius-md); }
-/* with the select first, the field needs no magnifier beside it: the select already opens the row */
+.sidebar-filter .sidebar-filter-pc { max-width: 45%; }
+/* with the PC pill first, the field needs no magnifier beside it: the pill already opens the row */
 .sidebar-filter:has(.sidebar-filter-pc) .sidebar-filter-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 /* an Agents or PCs search's Groups: the PCs section's own caption, then the lens's cards */
 .sidebar-group-hits { padding-top: var(--space-2); }

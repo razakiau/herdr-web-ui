@@ -384,6 +384,7 @@ const BASE: Record<string, string> = {
   "Split into new group from here": "ここから新しいグループに分ける",
   "Show all {n} in Groups": "グループで {n} 件すべて表示",
   "Search groups": "グループを検索",
+  "Show groups on: {pc}": "表示するPCのグループ: {pc}",
   "Show less": "折りたたむ",
   "More for {title}": "{title} のその他",
   "All agents on {pc}": "{pc} のすべてのエージェント",

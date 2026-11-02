@@ -382,6 +382,7 @@ const BASE: Record<string, string> = {
   "Split into new group from here": "여기서부터 새 그룹으로 나누기",
   "Show all {n} in Groups": "그룹에서 {n}개 모두 보기",
   "Search groups": "그룹 검색",
+  "Show groups on: {pc}": "그룹을 표시할 PC: {pc}",
   "Show less": "접기",
   "More for {title}": "{title} 더보기",
   "All agents on {pc}": "{pc}의 모든 에이전트",
