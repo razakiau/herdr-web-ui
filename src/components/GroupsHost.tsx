@@ -52,6 +52,7 @@ export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
         const state = digestStore.state();
         const meta = answer.digests.find((each) => each.groupId === group.id);
         return { digest: state.digest, progress: state.progress, failure: state.failure, spentUsd: Math.max(state.spentUsd, meta?.spentUsd ?? 0),
+          spendIncomplete: state.spendIncomplete || meta?.spendIncomplete === true,
           models: digestStore.models() ?? undefined, estimate: digestStore.estimate, onWrite: (pick) => { void digestStore.write(pick); } };
       })() : undefined}
       onOpenChat={openChat} onOpenFile={onOpenFile ? (target) => { groupsView.closeAll(); onOpenFile(target); } : undefined} onClose={() => groupsView.closeGroup()} />}

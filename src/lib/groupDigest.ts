@@ -17,14 +17,16 @@ export interface DigestState {
   progress: DigestProgress | null;
   failure: DigestFailure | null;
   spentUsd: number;
+  /** some call had no price: the spend is a floor */
+  spendIncomplete: boolean;
 }
 
 /** The server's answer as the card reads it: the run's phase as its stage, the failure as it is. */
 export function digestStateOf(answer: GroupDigestAnswer | null): DigestState {
-  if (!answer) return { digest: null, progress: null, failure: null, spentUsd: 0 };
+  if (!answer) return { digest: null, progress: null, failure: null, spentUsd: 0, spendIncomplete: false };
   const writing = answer.writing;
   const progress: DigestProgress | null = !writing ? null : writing.phase === "group" ? { stage: "digest" } : { stage: "summaries", done: writing.done, total: writing.total };
-  return { digest: answer.digest, progress, failure: answer.error ?? null, spentUsd: answer.spentUsd };
+  return { digest: answer.digest, progress, failure: answer.error ?? null, spentUsd: answer.spentUsd, spendIncomplete: answer.spendIncomplete === true };
 }
 
 export interface DigestTransport {

@@ -824,6 +824,7 @@ const BASE: Record<string, string> = {
   "Refresh the digest": "ダイジェストを更新",
   "Working out the cost…": "費用を計算中…",
   "No price for this model": "このモデルの料金は不明",
+  "Some digest calls used a model with no price": "料金不明のモデルで書いたダイジェストがあります",
   "1 chat summary": "チャット要約 1 件",
   "{n} chat summaries": "チャット要約 {n} 件",
   "1 group pass": "グループ処理 1 回",

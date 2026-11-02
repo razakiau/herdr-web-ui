@@ -87,6 +87,14 @@ describe("refreshing a group's digest", () => {
     expect(store.digest(id)?.direction).toBe("Where it goes.\nLine two.\nLine three.");
   });
 
+  it("a model with no price: the spend is marked incomplete, not a silent $0", async () => {
+    const { store, id, deps } = setup();
+    expect(store.spendIncomplete(id)).toBe(false);
+    await refreshDigest(id, { model: "unpriced/model", effort: "low" }, deps());
+    expect(store.spent(id)).toBe(0);
+    expect(store.spendIncomplete(id)).toBe(true);
+  });
+
   it("second refresh makes no call", async () => {
     const { id, omni, deps } = setup();
     await refreshDigest(id, CHOICE, deps());

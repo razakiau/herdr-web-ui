@@ -54,6 +54,8 @@ export interface GroupDigestMeta {
   staleCount: number;
   /** every digest and chat summary call this group has made, failed runs' too */
   spentUsd: number;
+  /** some call's model had no price: `spentUsd` is a floor */
+  spendIncomplete: boolean;
 }
 
 /** GET /api/groups/<id>/digest: the digest, the refresh running (its stage), and the last refresh's failure. */
@@ -62,6 +64,7 @@ export interface GroupDigestAnswer {
   writing?: { phase: "summaries" | "group"; done: number; total: number };
   error?: DigestFailure;
   spentUsd: number;
+  spendIncomplete: boolean;
 }
 
 /** A refresh in progress: the chats' summaries first, then the group pass. */

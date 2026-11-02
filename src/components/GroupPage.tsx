@@ -82,6 +82,8 @@ export interface DigestControls {
   estimate?(model: string, effort: DigestEffort): DigestEstimate | null;
   /** what every digest of this group has cost so far (the header's "digests $x"); the last one's when not known */
   spentUsd?: number;
+  /** some digest call had no price: the spend shows as a floor, "digests $x+" */
+  spendIncomplete?: boolean;
   /** the card open at first (the harness's shots) */
   expanded?: boolean;
   onWrite?(pick: { model: string; effort: DigestEffort }): void;
@@ -349,7 +351,8 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
               <span>{t("{date} – now", { date: shortDate(first, locale) })}</span>
               {total && <><span aria-hidden="true">·</span><span>{listUsd(total.usd, total.floor)}</span></>}
               {/* the digests' own calls, apart from the PCs' chat costs (spec §3 Honesty) */}
-              {digestSpent > 0 && <><span aria-hidden="true">·</span><span>{t("digests {usd}", { usd: digestUsd(digestSpent) })}</span></>}
+              {(digestSpent > 0 || controls.spendIncomplete) && <><span aria-hidden="true">·</span>
+                <span title={controls.spendIncomplete ? t("Some digest calls used a model with no price") : undefined}>{t("digests {usd}", { usd: `${digestUsd(digestSpent)}${controls.spendIncomplete ? "+" : ""}` })}</span></>}
             </span>
           </div>
           <button type="button" className="icon-button" aria-label={t("More for {title}", { title: group.name })} aria-haspopup="menu" aria-expanded={menu !== null}

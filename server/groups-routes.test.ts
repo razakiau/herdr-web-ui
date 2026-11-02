@@ -311,7 +311,7 @@ describe("the digest's routes", () => {
     expect(again.status).toBe(409);
     expect(((await again.json()) as { error: { code: string } }).error.code).toBe("digest_running");
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(await (await ask(`/api/groups/${id}/digest`)).json()).toEqual({ digest: null, spentUsd: 0, writing: { phase: "summaries", done: 0, total: 1 } });
+    expect(await (await ask(`/api/groups/${id}/digest`)).json()).toEqual({ digest: null, spentUsd: 0, spendIncomplete: false, writing: { phase: "summaries", done: 0, total: 1 } });
     release();
     await new Promise((resolve) => setTimeout(resolve, 20));
     const done = await (await ask(`/api/groups/${id}/digest`)).json() as GroupDigestAnswer;

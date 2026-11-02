@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS decided (pc TEXT NOT NULL, session TEXT NOT NULL, at 
 CREATE TABLE IF NOT EXISTS chat_summaries (pc TEXT NOT NULL, session TEXT NOT NULL, text TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL DEFAULT '', cost REAL, last_call_seen TEXT, written_at TEXT NOT NULL, PRIMARY KEY (pc, session));
 CREATE TABLE IF NOT EXISTS digests (group_id INTEGER PRIMARY KEY, text TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL, cost REAL, written_at TEXT NOT NULL, chats_seen TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS digest_spend (group_id INTEGER PRIMARY KEY, usd REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS digest_spend (group_id INTEGER PRIMARY KEY, usd REAL NOT NULL, unpriced INTEGER NOT NULL DEFAULT 0);
 `;
 
 type MemberRow = { group_id: number; pc: string; session: string; joined: "link" | "manual"; added_at: string };
@@ -40,6 +40,8 @@ export class GroupStore {
     // a summary keeps the chat's artifacts it was written with: the group pass links its items to them (Task 8)
     const columns = this.db.query<{ name: string }, []>("PRAGMA table_info(chat_summaries)").all().map((column) => column.name);
     if (!columns.includes("artifacts")) this.db.exec("ALTER TABLE chat_summaries ADD COLUMN artifacts TEXT NOT NULL DEFAULT '[]'");
+    const spend = this.db.query<{ name: string }, []>("PRAGMA table_info(digest_spend)").all().map((column) => column.name);
+    if (!spend.includes("unpriced")) this.db.exec("ALTER TABLE digest_spend ADD COLUMN unpriced INTEGER NOT NULL DEFAULT 0");
   }
 
   close(): void { this.db.close(); }
@@ -199,9 +201,19 @@ export class GroupStore {
     return this.db.query<{ usd: number }, [number]>("SELECT usd FROM digest_spend WHERE group_id = ?").get(groupId)?.usd ?? 0;
   }
 
-  addSpent(groupId: number, usd: number): void {
+  /** One call's cost; null when its model has no price: the spend is then a floor (spendIncomplete). */
+  addSpent(groupId: number, usd: number | null): void {
+    if (usd === null) {
+      this.db.query("INSERT INTO digest_spend (group_id, usd, unpriced) VALUES (?, 0, 1) ON CONFLICT (group_id) DO UPDATE SET unpriced = unpriced + 1").run(groupId);
+      return;
+    }
     if (!(usd > 0)) return;
     this.db.query("INSERT INTO digest_spend (group_id, usd) VALUES (?, ?) ON CONFLICT (group_id) DO UPDATE SET usd = usd + excluded.usd").run(groupId, usd);
+  }
+
+  /** Whether some digest call of the group had no price: `spent` leaves it out. */
+  spendIncomplete(groupId: number): boolean {
+    return (this.db.query<{ unpriced: number }, [number]>("SELECT unpriced FROM digest_spend WHERE group_id = ?").get(groupId)?.unpriced ?? 0) > 0;
   }
 
   /** One digest per group, replaced. */

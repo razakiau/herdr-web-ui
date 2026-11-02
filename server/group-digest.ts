@@ -202,8 +202,8 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
     try { answer = await deps.complete({ model: choice.model, effort: choice.effort, system, user }); } catch (error) {
       throw new DigestError("OmniRoute", error instanceof Error ? error.message : "Could not reach OmniRoute");
     }
-    const usd = callCost(choice.model, answer.usage, prices, fallback) ?? 0;
-    spent += usd;
+    const usd = callCost(choice.model, answer.usage, prices, fallback);
+    spent += usd ?? 0;
     store.addSpent(groupId, usd);
     try { return parseJson(answer.text); } catch { throw new DigestError(modelName(choice.model), "answered something that is not JSON"); }
   };

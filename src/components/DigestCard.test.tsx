@@ -206,9 +206,9 @@ describe("the digest's store (lib/groupDigest.ts) drives the card", () => {
 
   it("a run's stage renders as the card's progress, then the digest", async () => {
     const fake = transport([
-      { digest: null, spentUsd: 0, writing: { phase: "summaries", done: 1, total: 3 } },
-      { digest: null, spentUsd: 0, writing: { phase: "group", done: 0, total: 1 } },
-      { digest: DIGEST, spentUsd: 0.004 },
+      { digest: null, spentUsd: 0, spendIncomplete: false, writing: { phase: "summaries", done: 1, total: 3 } },
+      { digest: null, spentUsd: 0, spendIncomplete: false, writing: { phase: "group", done: 0, total: 1 } },
+      { digest: DIGEST, spentUsd: 0.004, spendIncomplete: false },
     ]);
     let changes = 0;
     const store = createDigestStore(1, fake.transport, () => { changes += 1; });
@@ -223,13 +223,13 @@ describe("the digest's store (lib/groupDigest.ts) drives the card", () => {
     expect(store.state().progress).toEqual({ stage: "digest" });
     store.read();
     await settle();
-    expect(store.state()).toEqual({ digest: DIGEST, progress: null, failure: null, spentUsd: 0.004 });
+    expect(store.state()).toEqual({ digest: DIGEST, progress: null, failure: null, spentUsd: 0.004, spendIncomplete: false });
     expect(changes).toBe(3);
   });
 
   it("a failed run renders its error under the kept digest; a refused write too", async () => {
     const failure = { source: "OmniRoute", message: "502 Bad Gateway", at: new Date(NOW - 60_000).toISOString() };
-    const fake = transport([{ digest: DIGEST, spentUsd: 0.006, error: failure }], async () => { throw new Error("This group's digest is being written"); });
+    const fake = transport([{ digest: DIGEST, spentUsd: 0.006, spendIncomplete: false, error: failure }], async () => { throw new Error("This group's digest is being written"); });
     const store = createDigestStore(1, fake.transport, () => {});
     store.read();
     await settle();
@@ -242,7 +242,7 @@ describe("the digest's store (lib/groupDigest.ts) drives the card", () => {
   });
 
   it("models and estimates are asked once and kept; an estimate without a price says the tokens", async () => {
-    const fake = transport([{ digest: null, spentUsd: 0 }]);
+    const fake = transport([{ digest: null, spentUsd: 0, spendIncomplete: false }]);
     const store = createDigestStore(1, fake.transport, () => {});
     expect(store.models()).toBeNull();
     expect(store.estimate("m2", "low")).toBeNull();

@@ -97,6 +97,16 @@ const classed = (node: ReactTestInstance, name: string): ReactTestInstance[] =>
   node.findAll((each) => typeof each.type === "string" && typeof each.props["className"] === "string" && (each.props["className"] as string).split(" ").includes(name));
 
 describe("the group page", () => {
+  it("says the digests' spend, with + when some call had no price", async () => {
+    const sub = async (over: Partial<Parameters<typeof GroupPage>[0]>) => textOf(classed((await open(over)).root, "group-page-sub")[0]!);
+    expect(await sub({ digest: { spentUsd: 0.011 } })).toContain("digests $0.011");
+    await act(async () => { renderer?.unmount(); });
+    expect(await sub({ digest: { spentUsd: 0.011, spendIncomplete: true } })).toContain("digests $0.011+");
+    await act(async () => { renderer?.unmount(); });
+    // nothing priced at all: the + alone says calls were made
+    expect(await sub({ digest: { spentUsd: 0, spendIncomplete: true } })).toContain("digests $0+");
+  });
+
   it("draws every member as a tree: a hand-off under who handed off, the one added by hand a root of its own", async () => {
     const page = await open();
     const keys = page.root.findAll((each) => each.type === "li" && typeof each.props["data-member"] === "string").map((each) => each.props["data-member"] as string);

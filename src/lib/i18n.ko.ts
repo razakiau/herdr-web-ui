@@ -822,6 +822,7 @@ const BASE: Record<string, string> = {
   "Refresh the digest": "요약 새로 고침",
   "Working out the cost…": "비용 계산 중…",
   "No price for this model": "이 모델의 가격 정보 없음",
+  "Some digest calls used a model with no price": "가격 정보가 없는 모델로 쓴 다이제스트가 있습니다",
   "1 chat summary": "채팅 요약 1개",
   "{n} chat summaries": "채팅 요약 {n}개",
   "1 group pass": "그룹 처리 1회",

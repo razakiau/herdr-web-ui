@@ -106,7 +106,7 @@ function answerOf(store: GroupStore, digests: DigestJobs | null): GroupsAnswer {
   const members = new Map(snapshot.groups.map((group) => [group.id, group.members]));
   const metas: GroupDigestMeta[] = snapshot.digests.map((digest) => ({
     groupId: digest.groupId, writtenAt: digest.writtenAt, costUsd: digest.costUsd, model: digest.model, effort: digest.effort,
-    direction: firstLines(digest.direction), staleCount: staleCount(digest, members.get(digest.groupId) ?? [], lastCalls), spentUsd: store.spent(digest.groupId),
+    direction: firstLines(digest.direction), staleCount: staleCount(digest, members.get(digest.groupId) ?? [], lastCalls), spentUsd: store.spent(digest.groupId), spendIncomplete: store.spendIncomplete(digest.groupId),
   }));
   return {
     ...snapshot,
@@ -228,7 +228,7 @@ async function digestRequest(request: Request, address: URL, match: RegExpExecAr
   if (request.method === "GET") {
     const writing = jobs.writing(id);
     const error = jobs.failure(id);
-    const answer: GroupDigestAnswer = { digest: store.digest(id), spentUsd: store.spent(id), ...(writing ? { writing } : {}), ...(error ? { error } : {}) };
+    const answer: GroupDigestAnswer = { digest: store.digest(id), spentUsd: store.spent(id), spendIncomplete: store.spendIncomplete(id), ...(writing ? { writing } : {}), ...(error ? { error } : {}) };
     return reply(answer);
   }
   if (request.method !== "POST") return notAllowed("Use GET or POST /api/groups/<id>/digest");
