@@ -9,10 +9,11 @@
  * repeat costs a few KB and changes nothing. A PC that does not answer (offline, a timeout, an old
  * bundle without the route) changes nothing either: its members stay.
  */
-import type { GroupsAnswer } from "../shared/groups.ts";
+import type { DigestEffort, GroupDigestAnswer, GroupDigestMeta, GroupsAnswer } from "../shared/groups.ts";
 import type { HostLink, LinkKind } from "../shared/host-chats.ts";
 import { createCostsPoller, type CostsPoller } from "./costs-poller.ts";
 import type { GroupStore } from "./groups-store.ts";
+import { staleCount, type DigestJobs } from "./group-digest.ts";
 import { badRequest, isJsonObject, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
 
 /** The digest's model and effort until the owner picks others (spec, section 3). */
@@ -94,9 +95,21 @@ export class GroupsSignal {
   }
 }
 
-function answerOf(store: GroupStore): GroupsAnswer {
+/** Direction's first two lines, for a Groups card. */
+const firstLines = (text: string): string => text.split(/\n+/).slice(0, 2).join("\n");
+
+function answerOf(store: GroupStore, digests: DigestJobs | null): GroupsAnswer {
+  const snapshot = store.snapshot();
+  // the PCs' last calls are read (every PC's costs) only while some group has a digest to call stale
+  const lastCalls = snapshot.digests.length > 0 ? digests?.factsCache.cached().lastCalls ?? new Map<string, string | null>() : new Map<string, string | null>();
+  const members = new Map(snapshot.groups.map((group) => [group.id, group.members]));
+  const metas: GroupDigestMeta[] = snapshot.digests.map((digest) => ({
+    groupId: digest.groupId, writtenAt: digest.writtenAt, costUsd: digest.costUsd, model: digest.model, effort: digest.effort,
+    direction: firstLines(digest.direction), staleCount: staleCount(digest, members.get(digest.groupId) ?? [], lastCalls), spentUsd: store.spent(digest.groupId),
+  }));
   return {
-    ...store.snapshot(),
+    ...snapshot,
+    digests: metas,
     digestDefaults: { model: store.getSetting(DIGEST_MODEL_KEY) ?? DIGEST_DEFAULTS.model, effort: store.getSetting(DIGEST_EFFORT_KEY) ?? DIGEST_DEFAULTS.effort },
   };
 }
@@ -114,13 +127,14 @@ const notAllowed = (use: string) => jsonResponse({ error: { code: "method_not_al
  * `{ ok: true }` (or `{ id }` for a new group) and calls `changed`. A change naming a group that
  * does not exist is 404 `group_not_found`; a split of a chat in no group is 400 `not_in_group`.
  */
-export async function handleGroupsRequest(request: Request, pathname: string, store: GroupStore, changed: () => void): Promise<Response> {
+export async function handleGroupsRequest(request: Request, pathname: string, store: GroupStore, changed: () => void,
+  digest: { on(): boolean; jobs: DigestJobs | null } = { on: () => true, jobs: null }): Promise<Response> {
   const reply = (body: unknown, status = 200) => jsonResponse(body, status, { "cache-control": "no-store" });
   const done = (body: unknown = { ok: true }) => { changed(); return reply(body); };
   const exists = (id: number) => store.snapshot().groups.some((group) => group.id === id);
   if (pathname === "/api/groups") {
     setRequestRoute("/api/groups");
-    if (request.method === "GET") return reply(answerOf(store));
+    if (request.method === "GET") return reply(answerOf(store, digest.jobs));
     if (request.method !== "POST") return notAllowed("Use GET or POST /api/groups");
     const body = await readJsonObject(request);
     if (body instanceof Response) return body;
@@ -131,6 +145,8 @@ export async function handleGroupsRequest(request: Request, pathname: string, st
     return done({ id: store.create(name, first) });
   }
   const rest = pathname.slice("/api/groups/".length);
+  const digestRoute = /^(?:models|([1-9][0-9]{0,15})\/digest(\/estimate)?)$/.exec(rest);
+  if (digestRoute) return digestRequest(request, url(request), digestRoute, store, digest);
   if (rest === "remove" || rest === "split") {
     setRequestRoute(`/api/groups/${rest}`);
     if (request.method !== "POST") return notAllowed(`Use POST /api/groups/${rest}`);
@@ -169,4 +185,56 @@ export async function handleGroupsRequest(request: Request, pathname: string, st
   if (!exists(id)) return noGroup();
   store.add(id, chat.pc, chat.session);
   return done();
+}
+
+const url = (request: Request): URL => new URL(request.url, "http://localhost");
+const EFFORTS: readonly DigestEffort[] = ["low", "medium", "high"];
+const MAX_MODEL = 200;
+const modelOf = (value: unknown): string | null => typeof value === "string" && /^[A-Za-z0-9._:/@+-]{1,200}$/.test(value) && value.length <= MAX_MODEL ? value : null;
+const effortOf = (value: unknown): DigestEffort | null => EFFORTS.includes(value as DigestEffort) ? value as DigestEffort : null;
+
+/**
+ * The digest's routes (ZAC-265 PR 2), only while Settings → Chat groups is on (404 `groups_off`):
+ *   GET  /api/groups/models                          `{ models }`, OmniRoute's ids (kept 10 min)
+ *   GET  /api/groups/<id>/digest                     GroupDigestAnswer: the digest, the run's stage, its failure, the spend
+ *   POST /api/groups/<id>/digest {model, effort}     starts a refresh, `{ job }` at once; 409 `digest_running` while one runs
+ *   GET  /api/groups/<id>/digest/estimate?model=&effort=   DigestEstimate
+ * A watching device's POST is refused before this (server/index.ts, read_only).
+ */
+async function digestRequest(request: Request, address: URL, match: RegExpExecArray, store: GroupStore, digest: { on(): boolean; jobs: DigestJobs | null }): Promise<Response> {
+  const reply = (body: unknown, status = 200) => jsonResponse(body, status, { "cache-control": "no-store" });
+  const jobs = digest.jobs;
+  setRequestRoute(match[1] === undefined ? "/api/groups/models" : match[2] ? "/api/groups/:id/digest/estimate" : "/api/groups/:id/digest");
+  if (!digest.on()) return jsonResponse({ error: { code: "groups_off", message: "Chat groups are off" } }, 404);
+  if (!jobs) return notFound();
+  if (match[1] === undefined) {
+    if (request.method !== "GET") return notAllowed("Use GET /api/groups/models");
+    try { return reply({ models: await jobs.models() }); } catch (error) {
+      return jsonResponse({ error: { code: "models_unavailable", message: error instanceof Error ? error.message : "Could not reach OmniRoute" } }, 502);
+    }
+  }
+  const id = Number(match[1]);
+  if (!store.snapshot().groups.some((group) => group.id === id)) return noGroup();
+  if (match[2]) {
+    if (request.method !== "GET") return notAllowed("Use GET /api/groups/<id>/digest/estimate");
+    const model = modelOf(address.searchParams.get("model"));
+    const effort = effortOf(address.searchParams.get("effort"));
+    if (!model || !effort) return badRequest("invalid_query", "Send ?model=<id>&effort=low|medium|high");
+    return reply(await jobs.estimate(id, { model, effort }));
+  }
+  if (request.method === "GET") {
+    const writing = jobs.writing(id);
+    const error = jobs.failure(id);
+    const answer: GroupDigestAnswer = { digest: store.digest(id), spentUsd: store.spent(id), ...(writing ? { writing } : {}), ...(error ? { error } : {}) };
+    return reply(answer);
+  }
+  if (request.method !== "POST") return notAllowed("Use GET or POST /api/groups/<id>/digest");
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const model = modelOf(body["model"]);
+  const effort = effortOf(body["effort"]);
+  if (!model || !effort) return badRequest("invalid_body", "Send { model, effort: low|medium|high }");
+  const started = jobs.start(id, { model, effort });
+  if (!started) return jsonResponse({ error: { code: "digest_running", message: "This group's digest is being written" } }, 409);
+  return reply({ job: started.job });
 }

@@ -9,7 +9,7 @@
  */
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import type { HostLink, LinkKind } from "../shared/host-chats.ts";
+import type { HostArtifact, HostLink, LinkKind } from "../shared/host-chats.ts";
 import type { ChatGroup, ChatSummary, DigestEffort, DigestItem, GroupDigest, GroupMember, GroupsAnswer } from "../shared/groups.ts";
 
 /** A group's name when its first chat's title is not known. */
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS decided (pc TEXT NOT NULL, session TEXT NOT NULL, at 
 CREATE TABLE IF NOT EXISTS chat_summaries (pc TEXT NOT NULL, session TEXT NOT NULL, text TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL DEFAULT '', cost REAL, last_call_seen TEXT, written_at TEXT NOT NULL, PRIMARY KEY (pc, session));
 CREATE TABLE IF NOT EXISTS digests (group_id INTEGER PRIMARY KEY, text TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL, cost REAL, written_at TEXT NOT NULL, chats_seen TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS digest_spend (group_id INTEGER PRIMARY KEY, usd REAL NOT NULL);
 `;
 
 type MemberRow = { group_id: number; pc: string; session: string; joined: "link" | "manual"; added_at: string };
@@ -36,6 +37,9 @@ export class GroupStore {
     this.db = new Database(join(stateDir, "groups.sqlite"), { create: true });
     this.db.exec("PRAGMA busy_timeout = 2000");
     this.db.exec(SCHEMA);
+    // a summary keeps the chat's artifacts it was written with: the group pass links its items to them (Task 8)
+    const columns = this.db.query<{ name: string }, []>("PRAGMA table_info(chat_summaries)").all().map((column) => column.name);
+    if (!columns.includes("artifacts")) this.db.exec("ALTER TABLE chat_summaries ADD COLUMN artifacts TEXT NOT NULL DEFAULT '[]'");
   }
 
   close(): void { this.db.close(); }
@@ -117,6 +121,7 @@ export class GroupStore {
       for (const member of this.membersOf(id)) this.decide(member.pc, member.session, now);
       this.db.query("DELETE FROM members WHERE group_id = ?").run(id);
       this.db.query("DELETE FROM digests WHERE group_id = ?").run(id);
+      this.db.query("DELETE FROM digest_spend WHERE group_id = ?").run(id);
       this.db.query("DELETE FROM groups WHERE id = ?").run(id);
     })();
   }
@@ -150,7 +155,7 @@ export class GroupStore {
     })();
   }
 
-  snapshot(): Omit<GroupsAnswer, "digestDefaults"> {
+  snapshot(): Omit<GroupsAnswer, "digestDefaults" | "digests"> & { digests: GroupDigest[] } {
     const members = new Map<number, GroupMember[]>();
     for (const row of this.db.query<MemberRow, []>("SELECT * FROM members ORDER BY added_at, rowid").all()) {
       const list = members.get(row.group_id) ?? [];
@@ -168,9 +173,35 @@ export class GroupStore {
     return { groups, links, summaries, digests };
   }
 
-  setSummary(summary: ChatSummary): void {
-    this.db.query("INSERT OR REPLACE INTO chat_summaries (pc, session, text, model, last_call_seen, written_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(summary.pc, summary.session, summary.text, summary.model, summary.lastCallSeen, summary.writtenAt);
+  /** A chat's summary, replaced; `effort`, `cost` and `artifacts` as it was written (Task 8). */
+  setSummary(summary: ChatSummary, extra: { effort?: string; costUsd?: number | null; artifacts?: HostArtifact[] } = {}): void {
+    this.db.query("INSERT OR REPLACE INTO chat_summaries (pc, session, text, model, effort, cost, last_call_seen, written_at, artifacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(summary.pc, summary.session, summary.text, summary.model, extra.effort ?? "", extra.costUsd ?? null, summary.lastCallSeen, summary.writtenAt, JSON.stringify(extra.artifacts ?? []));
+  }
+
+  /** One chat's summary and the artifacts it was written with; null when it has none. */
+  summary(pc: string, session: string): (ChatSummary & { artifacts: HostArtifact[] }) | null {
+    const row = this.db.query<{ text: string; model: string; last_call_seen: string | null; written_at: string; artifacts: string }, [string, string]>(
+      "SELECT text, model, last_call_seen, written_at, artifacts FROM chat_summaries WHERE pc = ? AND session = ?").get(pc, session);
+    if (!row) return null;
+    let artifacts: HostArtifact[] = [];
+    try { const value: unknown = JSON.parse(row.artifacts); if (Array.isArray(value)) artifacts = value as HostArtifact[]; } catch { artifacts = []; }
+    return { pc, session, text: row.text, model: row.model, lastCallSeen: row.last_call_seen, writtenAt: row.written_at, artifacts };
+  }
+
+  /** A group's digest; null when it has none. */
+  digest(groupId: number): GroupDigest | null {
+    return this.snapshot().digests.find((each) => each.groupId === groupId) ?? null;
+  }
+
+  /** What a group's digest calls have cost, every call counted, a failed run's too (spec §3 Honesty). */
+  spent(groupId: number): number {
+    return this.db.query<{ usd: number }, [number]>("SELECT usd FROM digest_spend WHERE group_id = ?").get(groupId)?.usd ?? 0;
+  }
+
+  addSpent(groupId: number, usd: number): void {
+    if (!(usd > 0)) return;
+    this.db.query("INSERT INTO digest_spend (group_id, usd) VALUES (?, ?) ON CONFLICT (group_id) DO UPDATE SET usd = usd + excluded.usd").run(groupId, usd);
   }
 
   /** One digest per group, replaced. */

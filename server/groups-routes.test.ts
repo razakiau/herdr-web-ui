@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GroupsAnswer } from "../shared/groups.ts";
-import type { HostLink } from "../shared/host-chats.ts";
+import type { DigestEstimate, GroupDigestAnswer, GroupsAnswer } from "../shared/groups.ts";
+import type { HostChatRead, HostLink } from "../shared/host-chats.ts";
+import { ChatFactsCache, DigestJobs } from "./group-digest.ts";
 import type { MachineEvent } from "../shared/machines.ts";
 import { DIGEST_DEFAULTS, GroupsSignal, createGroupsPoller, handleGroupsRequest, pullGroups, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { GroupStore } from "./groups-store.ts";
@@ -262,6 +264,105 @@ it("serves /api/groups behind sign-in and the same-origin check, as /api/prefere
     const created = await fetch(`${base}/api/groups`, { method: "POST", headers: { ...auth, ...json, "x-herdr-machine": "1" }, body: JSON.stringify({ name: "Plan" }) });
     expect(created.status).toBe(200);
     expect((await (await fetch(`${base}/api/groups`, { headers: auth })).json() as GroupsAnswer).groups.map((group) => group.name)).toEqual(["Plan"]);
+  } finally {
+    server.stop();
+  }
+});
+
+describe("the digest's routes", () => {
+  function routes(options: { on?: boolean; models?: () => Promise<string[]> } = {}) {
+    const store = open();
+    const id = store.create("Group");
+    store.add(id, "local", "a");
+    let told = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const facts = new ChatFactsCache(async () => ({ lastCalls: new Map([["local a", "2026-10-31T10:00:00.000Z"]]), contexts: new Map([["local a", 4_000]]), archived: new Set<string>() }), 60_000, () => {});
+    const jobs = new DigestJobs({
+      store: () => store,
+      readChat: async (_pc, session) => { await gate; return { session, title: session, status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, pending: [], commands: [], background: { subagents: 0, commands: 0 }, confirmations: 0, context: null } as unknown as HostChatRead; },
+      complete: async (request) => ({ text: request.system.includes("one coding-agent chat") ? JSON.stringify({ text: "did a" }) : JSON.stringify({ direction: "D1\nD2\nD3", open: [], done: [], perChat: [] }), usage: { input: 1000, cached: 0, output: 100 } }),
+      prices: async () => ({ prices: { "opencode-go": { "claude-haiku-5-5": { input: 1, output: 5 } } }, fallback: null }),
+      facts, models: options.models ?? (async () => ["opencode-go-claude-haiku-5-5", "m2"]), changed: () => { told += 1; },
+    });
+    const on = { value: options.on ?? true };
+    const ask = (path: string, init: RequestInit = {}) => handleGroupsRequest(new Request(`http://localhost${path}`, init), new URL(`http://localhost${path}`).pathname, store, () => {}, { on: () => on.value, jobs });
+    return { store, id, jobs, ask, release, told: () => told, on };
+  }
+  const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const CHOICE = { model: "opencode-go-claude-haiku-5-5", effort: "low" };
+
+  it("404 groups_off with the switch off, on every digest route", async () => {
+    const { id, ask } = routes({ on: false });
+    for (const [path, init] of [[`/api/groups/${id}/digest`, {}], [`/api/groups/${id}/digest`, post(CHOICE)], [`/api/groups/${id}/digest/estimate?model=m&effort=low`, {}], ["/api/groups/models", {}]] as const) {
+      const response = await ask(path, init);
+      expect(response.status).toBe(404);
+      expect(((await response.json()) as { error: { code: string } }).error.code).toBe("groups_off");
+    }
+  });
+
+  it("POST starts a job and answers at once; a second POST while it runs is 409 digest_running; GET shows its stage, then the digest", async () => {
+    const { id, ask, release, store } = routes();
+    const started = await ask(`/api/groups/${id}/digest`, post(CHOICE));
+    expect(started.status).toBe(200);
+    expect(await started.json()).toEqual({ job: 1 });
+    const again = await ask(`/api/groups/${id}/digest`, post(CHOICE));
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { code: string } }).error.code).toBe("digest_running");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(await (await ask(`/api/groups/${id}/digest`)).json()).toEqual({ digest: null, spentUsd: 0, writing: { phase: "summaries", done: 0, total: 1 } });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const done = await (await ask(`/api/groups/${id}/digest`)).json() as GroupDigestAnswer;
+    expect(done.writing).toBeUndefined();
+    expect(done.digest?.direction).toBe("D1\nD2\nD3");
+    expect(done.spentUsd).toBeCloseTo(0.003, 10);
+    // the Groups cards: the first two lines, the spend, and nothing moved on
+    const answer = await (await ask("/api/groups")).json() as GroupsAnswer;
+    expect(answer.digests).toEqual([expect.objectContaining({ groupId: id, direction: "D1\nD2", staleCount: 0, model: CHOICE.model, effort: "low" })]);
+    expect(answer.digests[0]!.spentUsd).toBeCloseTo(0.003, 10);
+    expect(answer.digestDefaults).toEqual(CHOICE);
+    // a chat that joined since counts as moved on
+    store.add(id, "local", "b");
+    expect(((await (await ask("/api/groups")).json()) as GroupsAnswer).digests[0]!.staleCount).toBe(1);
+  });
+
+  it("the estimate's shape; a bad query is 400; an unknown group 404", async () => {
+    const { id, ask } = routes();
+    const estimate = await (await ask(`/api/groups/${id}/digest/estimate?model=opencode-go-claude-haiku-5-5&effort=low`)).json() as DigestEstimate;
+    expect(Object.keys(estimate).sort()).toEqual(["chats", "groupPasses", "tokensIn", "usd"]);
+    expect(estimate.chats).toBe(1);
+    expect(estimate.groupPasses).toBe(1);
+    expect(typeof estimate.usd).toBe("number");
+    expect((await ask(`/api/groups/${id}/digest/estimate?model=m&effort=extreme`)).status).toBe(400);
+    expect((await ask("/api/groups/99/digest")).status).toBe(404);
+    expect((await ask(`/api/groups/${id}/digest`, post({ model: "", effort: "low" }))).status).toBe(400);
+  });
+
+  it("models: OmniRoute's ids, and its failure in fixed words", async () => {
+    expect(await (await routes().ask("/api/groups/models")).json()).toEqual({ models: ["opencode-go-claude-haiku-5-5", "m2"] });
+    const failing = routes({ models: async () => { throw new Error("Could not reach OmniRoute"); } });
+    const response = await failing.ask("/api/groups/models");
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: { code: "models_unavailable", message: "Could not reach OmniRoute" } });
+  });
+});
+
+it("a watching device cannot start a digest; the switch off is groups_off", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-groups-digest-server-"));
+  dirs.push(stateDir);
+  const WATCH = "e".repeat(64);
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: new Date().toISOString(), devices: [{ id: "0123456789abcdee", label: "Watch", role: "watch", token_hash: createHash("sha256").update(WATCH).digest("hex"), created_at: new Date().toISOString(), last_seen_at: null }] }), { mode: 0o600 });
+  const server = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "test-groups", tailscaleOwner: null, machines: false, sidecar: false });
+  const base = `http://127.0.0.1:${server.port}`;
+  const json = { "content-type": "application/json", "x-herdr-machine": "1" };
+  try {
+    const watching = await fetch(`${base}/api/groups/1/digest`, { method: "POST", headers: { ...json, "x-forwarded-for": "100.64.0.9", cookie: `ovis_device=${WATCH}` }, body: JSON.stringify({ model: "m", effort: "low" }) });
+    expect(watching.status).toBe(403);
+    expect(((await watching.json()) as { error: { code: string } }).error.code).toBe("read_only");
+    const off = await fetch(`${base}/api/groups/models`, { headers: { authorization: "Bearer test-groups" } });
+    expect(off.status).toBe(404);
+    expect(((await off.json()) as { error: { code: string } }).error.code).toBe("groups_off");
   } finally {
     server.stop();
   }

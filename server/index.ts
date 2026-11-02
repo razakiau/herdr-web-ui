@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 
 import type { HealthAuth, PendingMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import type { HostChatCost, HostChatRow, HostCostsAnswer } from "../shared/host-chats.ts";
+import type { HostChatCost, HostChatRow, HostCostsAnswer, HostChatRead } from "../shared/host-chats.ts";
 import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
@@ -67,6 +67,7 @@ import { hostChatsRoute, hostCosts, hostCostsPolled, hostLinks } from "./agent-h
 import { createDigestScheduler, type DigestPc, digestRunner, DigestStore, handleDigestRequest } from "./digest.ts";
 import { createCostsPoller } from "./costs-poller.ts";
 import { GroupStore } from "./groups-store.ts";
+import { ChatFactsCache, DigestJobs, type ChatFacts } from "./group-digest.ts";
 import { createGroupsPoller, GroupsSignal, handleGroupsRequest, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { COSTS_POLL_MS } from "./machines.ts";
@@ -411,6 +412,38 @@ export function createServer(
     changed: () => groupsSignal.tell(),
   });
   groupsPoller.start();
+  /**
+   * A group's digest (ZAC-265 PR 2, server/group-digest.ts): on demand, through OmniRoute. The chats'
+   * facts (last calls, last prompts, archived bits) are every PC's costs and rows as the weekly digest
+   * reads them, kept for one cost poll; a member's chat is read through its PC's chat GET, this PC's
+   * through its own route.
+   */
+  const chatFacts = new ChatFactsCache(async (): Promise<ChatFacts> => {
+    const facts: ChatFacts = { lastCalls: new Map(), contexts: new Map(), archived: new Set() };
+    for (const pc of await digestPcs()) {
+      for (const chat of pc.costs?.chats ?? []) {
+        facts.lastCalls.set(`${pc.machineId} ${chat.session}`, chat.lastCallAt);
+        facts.contexts.set(`${pc.machineId} ${chat.session}`, chat.context);
+      }
+      for (const row of pc.rows) if (row.archived) facts.archived.add(`${pc.machineId} ${row.session}`);
+    }
+    return facts;
+  }, COSTS_POLL_MS, () => groupsSignal.tell());
+  const readMemberChat = async (pc: string, session: string): Promise<HostChatRead | null> => {
+    const path = `/api/host-chats/chat?session=${encodeURIComponent(session)}`;
+    if (pc === "local") {
+      if (!agentHostConnection) return null;
+      const response = await hostChatsRoute(new Request(`http://localhost${path}`), "/api/host-chats/chat", agentHostConnection)?.catch(() => null);
+      if (!response?.ok) { await response?.body?.cancel(); return null; }
+      return await response.json().catch(() => null) as HostChatRead | null;
+    }
+    const endpoint = machines?.endpoint(pc);
+    return endpoint ? remoteJson<HostChatRead>(endpoint, path, 60_000) : null;
+  };
+  const digestJobs = new DigestJobs({
+    store: groupsStore, readChat: readMemberChat, complete: (request) => omniRoute.complete(request), prices: coldPrices,
+    facts: chatFacts, models: () => omniRoute.models(), changed: () => groupsSignal.tell(),
+  });
 
   const digestScheduler = options.weeklyDigest ? createDigestScheduler({
     store: digests,
@@ -630,7 +663,8 @@ export function createServer(
       // the finishes read in some browser of this server; a watching device reads them and cannot add to them (above)
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
       // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)
-      if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell());
+      if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell(),
+        { on: () => preferences.get().settings.chatGroups === true, jobs: digestJobs });
 
       if (pathname === "/api/usage") { setRequestRoute(pathname); return handleUsageRequest(request, url, usage); }
       if (pathname === "/api/usage/omniroute") { setRequestRoute(pathname); return handleOmniRouteRequest(request, omniRoute); }

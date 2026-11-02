@@ -127,8 +127,20 @@ export function pricesFrom(raw: unknown): ModelPrices {
   return table;
 }
 
-/** `writeToken`: a write-scope token, only for the keep-warm plugin's settings (ZAC-260); from the environment only */
-export interface OmniRouteConfig { url: string; token: string; writeToken?: string }
+/**
+ * `writeToken`: a write-scope token, only for the keep-warm plugin's settings (ZAC-260); from the environment only.
+ * `apiKey`: an OmniRoute API key for its `/v1` routes (a chat group's digest, ZAC-265), from the environment
+ * only; without one the read token is sent, which a gateway that takes access tokens on `/v1` accepts.
+ */
+export interface OmniRouteConfig { url: string; token: string; writeToken?: string; apiKey?: string }
+
+/** One model call's answer: the reply's text and its token counts as OmniRoute's `usage` gives them. */
+export interface OmniRouteCompletion { text: string; usage: { input: number; cached: number; output: number } }
+
+/** How long the `/v1/models` list is reused for the digest's picker (ZAC-265). */
+export const MODELS_FRESH_MS = 10 * 60_000;
+/** A digest call writes a few hundred lines at most; a slow provider still answers in this. */
+const COMPLETION_TIMEOUT_MS = 180_000;
 
 /** How long the keep-warm plugin's state is reused: it syncs it once a minute */
 const KEEP_WARM_FRESH_MS = 30_000;
@@ -150,6 +162,8 @@ export class OmniRouteUsage {
   private keepWarmAnswer: KeepWarmAnswer | null = null;
   private keepWarmAt = 0;
   private keepWarmPending: Promise<KeepWarmAnswer> | null = null;
+  private modelIds: string[] | null = null;
+  private modelsAt = 0;
 
   constructor(private readonly config: OmniRouteConfig,
     private readonly fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
@@ -259,6 +273,57 @@ export class OmniRouteUsage {
   }
 
   /**
+   * The model ids OmniRoute routes (GET /v1/models), for the digest's picker (ZAC-265): read at most
+   * every MODELS_FRESH_MS; a failed read keeps the last list, else throws fixed words.
+   */
+  async models(): Promise<string[]> {
+    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    if (this.modelIds !== null && this.now() < this.modelsAt + MODELS_FRESH_MS) return this.modelIds;
+    try {
+      const raw = record(await this.get("/v1/models", this.config.apiKey || this.config.token));
+      const data = Array.isArray(raw?.["data"]) ? raw["data"] : [];
+      this.modelIds = [...new Set(data.flatMap((each) => { const id = text(record(each)?.["id"]); return id ? [id] : []; }))].sort();
+      this.modelsAt = this.now();
+      return this.modelIds;
+    } catch (error) {
+      if (this.modelIds !== null) return this.modelIds;
+      throw new OmniRouteError("models_unavailable", 502, error instanceof OmniRouteRefused ? "OmniRoute refused the token" : "Could not reach OmniRoute");
+    }
+  }
+
+  /**
+   * One model call (POST /v1/chat/completions) asking for a JSON object, at the given reasoning
+   * effort (ZAC-265's digest). Throws an OmniRouteError with fixed words, or the provider's own short
+   * message when OmniRoute passes one on (never the token).
+   */
+  async complete(request: { model: string; effort: string; system: string; user: string }): Promise<OmniRouteCompletion> {
+    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    const response = await this.fetcher(`${this.url}/v1/chat/completions`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
+      headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${this.config.apiKey || this.config.token}` },
+      body: JSON.stringify({ model: request.model, reasoning_effort: request.effort, response_format: { type: "json_object" }, stream: false,
+        messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }] }),
+    }).catch(() => null);
+    if (!response) throw new OmniRouteError("completion_unavailable", 502, "Could not reach OmniRoute");
+    const raw = await response.text().catch(() => "");
+    let body: Json | null = null;
+    try { body = record(JSON.parse(raw)); } catch { body = null; }
+    if (!response.ok) {
+      const said = text(record(body?.["error"])?.["message"]);
+      throw new OmniRouteError("completion_failed", 502, response.status === 401 || response.status === 403 ? "OmniRoute refused the token"
+        : said ? `${response.status} ${said.slice(0, 160)}` : `${response.status} ${response.statusText || "error"}`.trim());
+    }
+    const choice = record(Array.isArray(body?.["choices"]) ? body["choices"][0] : null);
+    const content = record(choice?.["message"])?.["content"];
+    const usage = record(body?.["usage"]);
+    const details = record(usage?.["prompt_tokens_details"]);
+    return {
+      text: typeof content === "string" ? content : "",
+      usage: { input: number(usage?.["prompt_tokens"]) ?? 0, cached: number(details?.["cached_tokens"]) ?? 0, output: number(usage?.["completion_tokens"]) ?? 0 },
+    };
+  }
+
+  /**
    * Makes OmniRoute forget one chat's frozen checkpoint list (ZAC-272): it keeps each chat's
    * `<session_context>` as first sent until the chat compacts, so the prompt's cache survives a new
    * checkpoint; the next call after this sends the list as it is now and stores the chat again.
@@ -283,10 +348,10 @@ export class OmniRouteUsage {
     return { removed: removed ?? 0 };
   }
 
-  private async get(path: string): Promise<unknown> {
+  private async get(path: string, credential = this.config.token): Promise<unknown> {
     const response = await this.fetcher(`${this.url}${path}`, {
       method: "GET", redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: { accept: "application/json", authorization: `Bearer ${this.config.token}` },
+      headers: { accept: "application/json", authorization: `Bearer ${credential}` },
     });
     if (response.status === 404) { await response.body?.cancel(); throw new OmniRouteMissing(); }
     if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new OmniRouteRefused(); }
@@ -304,7 +369,7 @@ class OmniRouteMissing extends Error {}
 export const omniRouteFromEnv = (env: Record<string, string | undefined> = process.env,
   fetcher?: (url: string, init: RequestInit) => Promise<Response>, now?: () => number): OmniRouteUsage =>
   new OmniRouteUsage({ url: env["HERDR_WEB_OMNIROUTE_URL"]?.trim() ?? "", token: env["HERDR_WEB_OMNIROUTE_TOKEN"]?.trim() ?? "",
-    writeToken: env["HERDR_WEB_OMNIROUTE_WRITE_TOKEN"]?.trim() ?? "" }, fetcher, now);
+    writeToken: env["HERDR_WEB_OMNIROUTE_WRITE_TOKEN"]?.trim() ?? "", apiKey: env["HERDR_WEB_OMNIROUTE_API_KEY"]?.trim() ?? "" }, fetcher, now);
 
 export class OmniRouteError extends Error {
   constructor(readonly code: string, readonly status: number, message: string) { super(message); }
@@ -361,6 +426,10 @@ export class OmniRouteLink {
   saveKeepWarm(value: unknown): Promise<KeepWarmAnswer> { return this.usage.saveKeepWarm(value); }
 
   refreshSessionContext(session: string): Promise<{ removed: number }> { return this.usage.refreshSessionContext(session); }
+
+  models(): Promise<string[]> { return this.usage.models(); }
+
+  complete(request: { model: string; effort: string; system: string; user: string }): Promise<OmniRouteCompletion> { return this.usage.complete(request); }
 
   /** Saves `{url, token?}` and reads the gateway once; a blank token keeps the saved one for the same URL. */
   async save(value: unknown): Promise<OmniRouteStatus> {

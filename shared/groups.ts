@@ -38,8 +38,31 @@ export interface GroupDigest {
   chatsSeen: string[];
 }
 
-/** What a refresh would cost before it runs (the Refresh sheet's line). */
-export interface DigestEstimate { chats: number; groupPasses: number; tokensIn: number; usd: number }
+/** What a refresh would cost before it runs (the Refresh sheet's line); `usd` null when the model has no price. */
+export interface DigestEstimate { chats: number; groupPasses: number; tokensIn: number; usd: number | null }
+
+/**
+ * A group's digest as GET /api/groups answers it, for the Groups cards: what wrote it, its first two
+ * lines of Direction, how many chats moved on since (spec §3 Honesty, counted by the server from each
+ * PC's `lastCallAt` and the members it saw), and what all its digests have cost. The page reads the
+ * whole digest from GET /api/groups/<id>/digest.
+ */
+export interface GroupDigestMeta {
+  groupId: number; writtenAt: string; costUsd: number; model: string; effort: DigestEffort;
+  /** Direction's first two lines */
+  direction: string;
+  staleCount: number;
+  /** every digest and chat summary call this group has made, failed runs' too */
+  spentUsd: number;
+}
+
+/** GET /api/groups/<id>/digest: the digest, the refresh running (its stage), and the last refresh's failure. */
+export interface GroupDigestAnswer {
+  digest: GroupDigest | null;
+  writing?: { phase: "summaries" | "group"; done: number; total: number };
+  error?: DigestFailure;
+  spentUsd: number;
+}
 
 /** A refresh in progress: the chats' summaries first, then the group pass. */
 export type DigestProgress = { stage: "summaries"; done: number; total: number } | { stage: "digest" };
@@ -54,6 +77,6 @@ export interface GroupsAnswer {
   groups: ChatGroup[];
   links: (HostLink & { pc: string })[];
   summaries: ChatSummary[];
-  digests: GroupDigest[];
+  digests: GroupDigestMeta[];
   digestDefaults: { model: string; effort: string };
 }

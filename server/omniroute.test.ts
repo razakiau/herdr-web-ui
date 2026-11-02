@@ -419,3 +419,47 @@ describe("refresh a chat's checkpoint list (ZAC-272)", () => {
     expect(await (await handleSessionContextRefresh(post(JSON.stringify({ session: "abc" })), old)).text()).toContain("This OmniRoute freezes no checkpoint list");
   });
 });
+
+describe("the digest's calls (ZAC-265)", () => {
+  it("lists /v1/models' ids, kept 10 minutes, the last list kept when a read fails", async () => {
+    let now = 0;
+    let reads = 0;
+    let fail = false;
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: "read-token" }, async (url) => {
+      reads += 1;
+      expect(url).toBe("http://omniroute.test/v1/models");
+      if (fail) return new Response("no", { status: 502 });
+      return Response.json({ data: [{ id: "opencode-go-claude-haiku-5-5" }, { id: "cc/claude-opus-5-5" }, { id: "opencode-go-claude-haiku-5-5" }, { nope: 1 }] });
+    }, () => now);
+    expect(await service.models()).toEqual(["cc/claude-opus-5-5", "opencode-go-claude-haiku-5-5"]);
+    now = 9 * 60_000;
+    await service.models();
+    expect(reads).toBe(1);
+    now = 11 * 60_000;
+    fail = true;
+    expect(await service.models()).toEqual(["cc/claude-opus-5-5", "opencode-go-claude-haiku-5-5"]);
+    expect(reads).toBe(2);
+  });
+
+  it("asks a JSON object at the effort, with the API key when one is set, and reads usage", async () => {
+    const seen: { url: string; auth: string | null; body: Record<string, unknown> }[] = [];
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: "read-token", apiKey: "api-key" }, async (url, init) => {
+      seen.push({ url, auth: new Headers(init.headers).get("authorization"), body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return Response.json({ choices: [{ message: { content: "{\"text\":\"hi\"}" } }], usage: { prompt_tokens: 1200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 200 } } });
+    });
+    const answer = await service.complete({ model: "m", effort: "low", system: "S", user: "U" });
+    expect(answer).toEqual({ text: "{\"text\":\"hi\"}", usage: { input: 1200, cached: 200, output: 80 } });
+    expect(seen[0]!.url).toBe("http://omniroute.test/v1/chat/completions");
+    expect(seen[0]!.auth).toBe("Bearer api-key");
+    expect(seen[0]!.body).toMatchObject({ model: "m", reasoning_effort: "low", response_format: { type: "json_object" }, messages: [{ role: "system", content: "S" }, { role: "user", content: "U" }] });
+  });
+
+  it("a refusal or an error answers fixed or provider words, never the token", async () => {
+    const refused = new OmniRouteUsage({ url: "http://omniroute.test", token: "secret-token" }, async () => new Response("", { status: 401 }));
+    await expect(refused.complete({ model: "m", effort: "low", system: "", user: "" })).rejects.toThrow("OmniRoute refused the token");
+    const failing = new OmniRouteUsage({ url: "http://omniroute.test", token: "secret-token" }, async () => Response.json({ error: { message: "upstream overloaded" } }, { status: 503 }));
+    const error = await failing.complete({ model: "m", effort: "low", system: "", user: "" }).then(() => new Error("answered"), (caught: unknown) => caught as Error);
+    expect(error.message).toBe("503 upstream overloaded");
+    expect(error.message).not.toContain("secret-token");
+  });
+});
