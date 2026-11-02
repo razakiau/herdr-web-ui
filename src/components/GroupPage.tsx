@@ -15,7 +15,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronLeft, ChevronRight, CircleDot, Ellipsis, GitCommitHorizontal, GitPullRequest, Globe, Link, Package, Pencil, Trash2, type LucideProps } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, CircleDot, Ellipsis, GitCommitHorizontal, GitPullRequest, Globe, Link, Merge, Package, Pencil, Split, Trash2, type LucideProps } from "lucide-react";
 
 import "./NewSessionDialog.css";
 import "./Sidebar.css";
@@ -33,10 +33,10 @@ import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { pathOfFileUri } from "../lib/artifacts.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { chatKey, costOf, creditArtifacts, defaultFolds, groupsApi, groupTree, rerootTree, shortChatName, treeLines, type ChatRef, type TreeLine, type TreeNode } from "../lib/groups.ts";
+import { chatKey, costOf, creditArtifacts, defaultFolds, groupsApi, groupsView, groupTree, rerootTree, shortChatName, treeLines, type ChatRef, type TreeLine, type TreeNode } from "../lib/groups.ts";
 import { hostChatStatus } from "../lib/hostPlacement.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { basename, chatAge, fetchHostChat, type HostPc } from "../lib/hostChats.ts";
+import { basename, chatAge, errorText, fetchHostChat, type HostPc } from "../lib/hostChats.ts";
 import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { daysBack } from "../lib/hostChatGroups.ts";
 import { chatLog, type CostsFeed } from "../lib/rowCache.ts";
@@ -47,6 +47,7 @@ import type { CostSplit } from "../lib/sessionCost.ts";
 import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
 import { RowCostCell } from "./AllAgentsSheet.tsx";
 import { ClampText } from "./ClampText.tsx";
+import { AddToGroupSheet } from "./AddToGroupSheet.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RichText } from "./RichText.tsx";
 import { DigestCard } from "./DigestCard.tsx";
@@ -55,6 +56,7 @@ import { GroupNameSheet, rowsByKey, shortDate } from "./GroupsSheet.tsx";
 import { GroupStateSummary, hasGroupState, useMemberStates } from "./GroupState.tsx";
 import { ArtifactList, useReferenceStates } from "./HostSessionPills.tsx";
 import { RowMenu } from "./RowMenu.tsx";
+import { onRowContextMenu } from "./Sidebar.tsx";
 
 export interface GroupPageProps {
   group: ChatGroup;
@@ -188,7 +190,10 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const locale = useLocale();
   const id = useId();
   const [menu, setMenu] = useState<HTMLElement | null>(null);
-  const [asking, setAsking] = useState<"rename" | "delete" | "refresh" | null>(null);
+  const [asking, setAsking] = useState<"rename" | "delete" | "refresh" | "merge" | null>(null);
+  // a chat row's ⋯ (round 10): Split into new group from here
+  const [rowMenu, setRowMenu] = useState<{ key: string; chat: ChatRef; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null } | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
   const [kind, setKind] = useState<HostArtifactType | null>(null);
   const [more, setMore] = useState(false);
   // the branches the owner folded or opened (by the chat at their top), over the default folds
@@ -210,10 +215,10 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const shown = useMemo(() => rerootTree(tree, root), [tree, root]);
   // Back (and the header's ‹, and Escape) goes up a level first (to where the thread was continued), then closes
   const back = (): boolean => { if (root !== null) { setRoots((last) => last.slice(0, -1)); return false; } onClose(); return true; };
-  usePhoneSheetBack(back, menu === null && asking === null);
+  usePhoneSheetBack(back, menu === null && asking === null && rowMenu === null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || menu !== null || asking !== null || nativeModalOver(surface.current)) return;
+      if (event.key !== "Escape" || menu !== null || asking !== null || rowMenu !== null || nativeModalOver(surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
       back();
@@ -288,6 +293,9 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     const { node } = line;
     const key = chatKey(node.pc, node.session);
     const row = rowOf(node);
+    // one menu for the ⋯ and a right-click, as a sidebar row's (AgentSidebar.tsx)
+    const toggleRowMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
+      setRowMenu(rowMenu?.key === key ? null : { key, chat: { pc: node.pc, session: node.session }, anchor, point, previousFocus });
     const machine = machineOf(node.pc);
     const offline = machine?.state !== "connected";
     const pc = hostChats.get(node.pc);
@@ -319,13 +327,18 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
           <ChevronRight aria-hidden="true" /><span>{relationLine}</span>
         </button> : relationLine}
       </p>
-      <div className={`agent-item host-chat-item${selected ? " is-selected" : ""}${offline || gone ? " is-offline" : ""}${row?.archived ? " is-archived" : ""}`} data-host-session={node.session}>
+      <div className={`agent-item host-chat-item${selected ? " is-selected" : ""}${offline || gone ? " is-offline" : ""}${row?.archived ? " is-archived" : ""}`} data-host-session={node.session}
+        onContextMenu={(event) => onRowContextMenu(event, toggleRowMenu)}>
         <button type="button" className="agent-select agent-row" aria-current={selected ? "true" : undefined} title={[title, row?.cwd].filter(Boolean).join("\n")}
           onClick={() => onOpenChat({ machineId: node.pc, session: node.session })}>
           <AgentRowBody mark="copilot" markKind="Copilot" title={title} name={null} place={pcNames ? machine?.name ?? node.pc : null} context={context} tokens={[]}
             status={row ? hostChatStatus(row) : undefined} cacheRing={mark} cacheWords={mark ? cacheWords(mark, t) : null} />
           {cost && <RowCostCell cost={cost} />}
         </button>
+        <div className="agent-actions">
+          <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={rowMenu?.key === key}
+            onClick={(event) => toggleRowMenu(event.currentTarget)}><Ellipsis aria-hidden="true" /></button>
+        </div>
       </div>
       {summary && !line.folded && <ClampText className="group-summary"><RichText text={summary} lead /></ClampText>}
       {/* a folded branch: one line, its live state still said, so a warm or working chat is never hidden without a sign */}
@@ -380,6 +393,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
               })}</ol>
             </nav>}
             <ol className="agent-list group-tree">{lines.map(member)}</ol>
+            {rowError && <p className="confirm-error group-row-error" role="alert">{rowError}</p>}
           </section>
           {chips.length > 0 && <section className="all-agents-group group-made" aria-label={t("Made in this group")}>
             <h3 className="sidebar-section-label all-agents-age">{t("Made in this group")}</h3>
@@ -405,8 +419,15 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
       </div>
       {menu && <RowMenu anchor={menu} title={group.name} onClose={() => setMenu(null)} items={[
         { id: "rename-group", label: t("Rename…"), icon: Pencil, run: () => setAsking("rename") },
+        ...(answer.groups.length > 1 ? [{ id: "merge-group", label: t("Merge into…"), icon: Merge, run: () => setAsking("merge") }] : []),
         { id: "delete-group", label: t("Delete group…"), icon: Trash2, danger: true, divider: true, run: () => setAsking("delete") },
       ]} />}
+      {rowMenu && <RowMenu anchor={rowMenu.anchor} point={rowMenu.point} restoreFocusTo={rowMenu.previousFocus ?? undefined} title={nameOfKey(rowMenu.key)} onClose={() => setRowMenu(null)} items={[
+        { id: "split-group", label: t("Split into new group from here"), title: t("this chat and the ones after it start a new group"), icon: Split,
+          run: () => { setRowError(null); groupsApi.split(rowMenu.chat).catch((cause: unknown) => setRowError(errorText(cause))); } },
+      ]} />}
+      {asking === "merge" && <AddToGroupSheet chat={group.members[0] ?? { pc: "", session: "" }} mergeFrom={group} answer={answer} hostChats={hostChats} machines={machines} feed={feed}
+        onClose={() => setAsking(null)} onMerged={(into) => groupsView.openGroup(into)} />}
       {asking === "refresh" && <RefreshDigestSheet models={controls.models ?? [answer.digestDefaults.model]} model={answer.digestDefaults.model} effort={digestEffortOf(answer.digestDefaults.effort)}
         estimate={controls.estimate ?? (() => null)} onClose={() => setAsking(null)} onSave={(pick) => controls.onWrite?.(pick)} />}
       {asking === "rename" && <GroupNameSheet title={t("Rename group")} name={group.name} action={t("Save")} onClose={() => setAsking(null)}

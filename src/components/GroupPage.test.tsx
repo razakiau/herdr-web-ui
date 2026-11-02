@@ -284,4 +284,36 @@ describe("the group page", () => {
     await act(async () => { back.props["onClick"](); });
     expect(closed).toBe(1);
   });
+
+  it("⋯ offers Merge into… when there is another group; it opens the picker without this group, and asks before merging", async () => {
+    const other: ChatGroup = { ...GROUP, id: 9, name: "FICTIONAL other", members: [{ pc: "local", session: "s-x", joined: "manual", addedAt: "2026-10-31T09:00:00Z" }] };
+    const items = (page: ReactTestRenderer) => page.root.findAll((each) => each.props["role"] === "menuitem").map(textOf);
+    const more = (page: ReactTestRenderer) => page.root.find((each) => each.type === "button" && each.props["aria-label"] === `More for ${GROUP.name}`);
+    const alone = await open();
+    await act(async () => { more(alone).props["onClick"]({ currentTarget: nodeMock() }); });
+    expect(items(alone)).not.toContain("Merge into…");
+    await act(async () => { renderer?.unmount(); });
+    const page = await open({ answer: { ...ANSWER, groups: [GROUP, other] } });
+    await act(async () => { more(page).props["onClick"]({ currentTarget: nodeMock() }); });
+    expect(items(page)).toEqual(["Rename…", "Merge into…", "Delete group…"]);
+    await act(async () => { page.root.find((each) => each.props["role"] === "menuitem" && textOf(each) === "Merge into…").props["onClick"](); });
+    const picker = classed(page.root, "add-to-group")[0]!;
+    expect(textOf(picker)).toContain("Merge into…");
+    expect(textOf(picker)).toContain("FICTIONAL other");
+    expect(picker.findAll((each) => each.props["role"] === "radio").map(textOf).some((each) => each.includes(GROUP.name))).toBe(false);
+    expect(textOf(picker)).not.toContain("New group…");
+    expect(textOf(picker)).not.toContain("Split here");
+    await act(async () => { picker.find((each) => each.props["role"] === "radio").props["onClick"](); });
+    await act(async () => { classed(page.root, "add-to-group-go")[0]!.props["onClick"](); });
+    expect(textOf(page.root)).toContain(`Merge ${GROUP.name} into FICTIONAL other?`);
+    // asked, nothing sent yet
+    expect(urls.some((url) => url.includes("/merge"))).toBe(false);
+  });
+
+  it("a chat row's ⋯ offers Split into new group from here", async () => {
+    const page = await open();
+    const toggle = card(page, "local s-new").find((each) => each.type === "button" && each.props["aria-haspopup"] === "menu");
+    await act(async () => { toggle.props["onClick"]({ currentTarget: nodeMock() }); });
+    expect(page.root.findAll((each) => each.props["role"] === "menuitem").map(textOf)).toEqual(["Split into new group from here"]);
+  });
 });

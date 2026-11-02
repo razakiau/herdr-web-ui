@@ -79,6 +79,30 @@ describe("GroupStore", () => {
     expect(sessionsOf(store, old)).toEqual(["a", "m"]);
   });
 
+  it("merge: every member moves to the target, the source goes with its digest and spend, and links never undo it", () => {
+    const store = open();
+    store.addLinks("pc1", [link("a", "b")]);
+    store.addLinks("pc2", [link("x", "y")]);
+    const source = groupOf(store, "a")!.id;
+    const target = groupOf(store, "x")!.id;
+    store.setDigest({ groupId: source, direction: "d", open: [], done: [], perChat: [], model: "m", effort: "low", costUsd: 0.1, writtenAt: "t", chatsSeen: ["pc1 a"] });
+    store.addSpent(source, 0.1);
+    store.merge(source, target);
+    expect(store.snapshot().groups.map((group) => group.id)).toEqual([target]);
+    expect(sessionsOf(store, target)).toEqual(["a", "b", "x", "y"]);
+    expect(store.digest(source)).toBeNull();
+    expect(store.spent(source)).toBe(0);
+    // the links seen again (and a new one from a moved chat) leave them where the merge put them
+    store.addLinks("pc1", [link("a", "b"), link("b", "c")]);
+    expect(store.snapshot().groups.map((group) => group.id)).toEqual([target]);
+    expect(groupOf(store, "a")!.id).toBe(target);
+    // a new chat a moved one hands off to follows it into the target
+    expect(sessionsOf(store, target)).toEqual(["a", "b", "c", "x", "y"]);
+    expect(() => store.merge(target, target)).toThrow();
+    expect(() => store.merge(999, target)).toThrow();
+    expect(() => store.merge(target, 999)).toThrow();
+  });
+
   it("ids not reused", () => {
     const store = open();
     store.create("one");

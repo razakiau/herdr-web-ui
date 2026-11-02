@@ -57,3 +57,6 @@
 .add-to-group-new-line { display: flex; flex: none; align-items: center; gap: var(--space-2); padding-inline-end: var(--space-4); }
 .add-to-group-new-line .add-to-group-new { flex: 1 1 auto; min-width: 0; }
 .add-to-group-pc { flex: 0 1 auto; min-width: 0; max-width: 50%; text-overflow: ellipsis; }
+/* a merge has no New group…: its PC filter alone, at the line's end on the rows' gutter */
+.add-to-group-new-line.is-merge { justify-content: flex-end; padding-block: 0 var(--space-1); }
+.add-to-group-new-line.is-merge:not(:has(select)) { display: none; }

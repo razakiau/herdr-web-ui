@@ -129,6 +129,27 @@ export class GroupStore {
   }
 
   /**
+   * Merge a group into another (owner, round 10): every member moves to `into`, each recorded as a
+   * hand decision (`decided`) so no link files it back, and the source group goes with its digest
+   * and spend. Throws when either group does not exist or they are the same.
+   */
+  merge(source: number, into: number): void {
+    this.db.transaction(() => {
+      if (source === into) throw new Error("a group cannot merge into itself");
+      const exists = this.db.query<{ id: number }, [number]>("SELECT id FROM groups WHERE id = ?");
+      if (exists.get(source) === null || exists.get(into) === null) throw new Error("no such group");
+      const now = new Date().toISOString();
+      for (const member of this.membersOf(source)) this.decide(member.pc, member.session, now);
+      // each keeps how it joined and when, so the target's tree still follows its links
+      this.db.query("UPDATE members SET group_id = ? WHERE group_id = ?").run(into, source);
+      this.db.query("DELETE FROM digests WHERE group_id = ?").run(source);
+      this.db.query("DELETE FROM digest_spend WHERE group_id = ?").run(source);
+      this.db.query("DELETE FROM groups WHERE id = ?").run(source);
+      this.touch(into, now);
+    })();
+  }
+
+  /**
    * Move the chat, and every member its links lead to (forward, inside the group), to a new group
    * named as the old one. Members placed by hand stay. Throws when the chat is in no group.
    */

@@ -29,6 +29,7 @@ import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { GroupNameSheet, groupActive, groupFolder, rowsByKey } from "./GroupsSheet.tsx";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { GroupPcFilter, groupPcs } from "./GroupPcFilter.tsx";
 import { GroupStateSummary, useMemberStates } from "./GroupState.tsx";
 
@@ -47,8 +48,16 @@ function reasonWords(reason: SuggestReason, now: number, t: Translate): string {
   }
 }
 
-export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed = null, onClose }: {
+export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, machines = [], feed = null, onMerged, onClose }: {
+  /** the chat to place; for a merge, the source group's first chat (only its title and folder steer Suggested) */
   chat: ChatRef;
+  /**
+   * "Merge into…" (round 10, the group page's ⋯): the same picker for a target group, the source left
+   * out, no New group or Split; the primary asks first, then every chat of the source moves
+   */
+  mergeFrom?: ChatGroup | null;
+  /** after a merge, the group it went into */
+  onMerged?(into: number): void;
   answer: GroupsAnswer | null;
   hostChats: ReadonlyMap<string, HostPc>;
   /** the PCs, for the PC filter's names */
@@ -63,18 +72,20 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
   const search = useRef<HTMLInputElement>(null);
   // beside a mouse the search takes the caret; a phone keeps its keyboard down until the field is tapped
   const coarse = useMediaQuery("(pointer: coarse)");
-  const current = groupOf(answer, chat.pc, chat.session);
-  const [picked, setPicked] = useState<number | null>(current?.id ?? null);
+  const current = mergeFrom ?? groupOf(answer, chat.pc, chat.session);
+  const merging = mergeFrom !== null;
+  const [picked, setPicked] = useState<number | null>(merging ? null : current?.id ?? null);
   const [naming, setNaming] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialog = useRef<HTMLDivElement | null>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: coarse ? dialog : search });
   useSheetSwipe(surface, onClose);
-  usePhoneSheetBack(() => onClose(), !naming);
+  usePhoneSheetBack(() => onClose(), !naming && !confirming);
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || naming || nativeModalOver(surface.current)) return;
+      if (event.key !== "Escape" || naming || confirming || nativeModalOver(surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
       onClose();
@@ -90,12 +101,16 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
   const [onPc, setOnPc] = useState<string | null>(null);
   const pcs = useMemo(() => groupPcs(answer?.groups ?? []), [answer]);
   const pcName = (pc: string): string => machines.find((machine) => machine.id === pc)?.name ?? pc;
-  const groups: GroupFacts[] = useMemo(() => (answer?.groups ?? []).filter((group) => groupOnPc(group, onPc))
+  const groups: GroupFacts[] = useMemo(() => (answer?.groups ?? []).filter((group) => groupOnPc(group, onPc) && group.id !== mergeFrom?.id)
     .map((group) => ({ group, folder: groupFolder(group, rows), active: groupActive(group, rows) }))
-    .sort((a, b) => b.active - a.active), [answer, rows, onPc]);
+    .sort((a, b) => b.active - a.active), [answer, rows, onPc, mergeFrom]);
   const searching = query.trim() !== "";
   // under a search: the groups that answer it, by activity; else Suggested, then every group but those
-  const suggested = useMemo(() => searching ? [] : suggestGroups({ title: own?.title ?? "", folder: here }, groups, rows, current?.id ?? null), [searching, own, here, groups, rows, current]);
+  // a merge is steered by the source group: its name and its chats' titles (their ticket keys), its folder
+  const steer = useMemo(() => mergeFrom
+    ? { title: [mergeFrom.name, ...mergeFrom.members.map((member) => rows.get(chatKey(member.pc, member.session))?.title ?? "")].join("\n"), folder: groupFolder(mergeFrom, rows) }
+    : { title: own?.title ?? "", folder: here }, [mergeFrom, rows, own, here]);
+  const suggested = useMemo(() => searching ? [] : suggestGroups(steer, groups, rows, current?.id ?? null), [searching, steer, groups, rows, current]);
   const suggestedIds = new Set(suggested.map((each) => each.facts.group.id));
   const listed = searching ? groups.filter((each) => groupMatches(each.group, rows, query)) : groups.filter((each) => !suggestedIds.has(each.group.id));
   const now = Date.now();
@@ -111,6 +126,7 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
     }
   };
   const add = (): void => {
+    if (merging) { if (picked !== null) setConfirming(true); return; }
     if (picked === null || picked === current?.id) { onClose(); return; }
     void run(() => groupsApi.add(picked, chat));
   };
@@ -131,9 +147,11 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
   return createPortal(<>
     <div className="modal-scrim new-session-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={(node) => { surface.current = node; dialog.current = node; }} className="modal new-session-modal add-to-group" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-hint`} tabIndex={-1}>
-        <header className="modal-header"><h2 className="modal-title" id={`${id}-title`}>{t("Add to group")}</h2></header>
+        <header className="modal-header"><h2 className="modal-title" id={`${id}-title`}>{merging ? t("Merge into…") : t("Add to group")}</h2></header>
         <div className="modal-body add-to-group-body">
-          <p className="add-to-group-hint" id={`${id}-hint`}>{current
+          <p className="add-to-group-hint" id={`${id}-hint`}>{mergeFrom
+            ? t("Every chat of {name} moves to the group you pick, and {name} goes.", { name: mergeFrom.name })
+            : current
             ? t("This chat is in {name}. Pick another group to move it, or split the group here.", { name: current.name })
             : t("This chat isn't in a group. Pick one, or start a new group with it.")}</p>
           {groups.length > 0 && <label className="all-agents-search add-to-group-search">
@@ -142,11 +160,11 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
               autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} />
           </label>}
           {/* always in reach: a new group under the search, above any list; the PC filter at its end */}
-          <div className="add-to-group-new-line">
-            <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>
+          <div className={`add-to-group-new-line${merging ? " is-merge" : ""}`}>
+            {!merging && <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>
               <Plus className="add-to-group-icon is-accent" aria-hidden="true" />
               <span className="add-to-group-text">{t("New group…")}</span>
-            </button>
+            </button>}
             <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} className="add-to-group-pc" />
           </div>
           {onPc !== null && groups.length === 0 && <p className="add-to-group-none" role="status">{t("No group has a chat on {pc}.", { pc: pcName(onPc) })}</p>}
@@ -157,8 +175,8 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
             {listed.map((facts) => row(facts, null))}
             {searching && listed.length === 0 && <p className="add-to-group-none" role="status">{t("No group has “{query}” in its name or its chats.", { query: query.trim() })}</p>}
           </div>}
-          {current && <hr className="add-to-group-divider" />}
-          {current && <button type="button" className="add-to-group-row" disabled={busy} onClick={() => void run(() => groupsApi.split(chat))}>
+          {current && !merging && <hr className="add-to-group-divider" />}
+          {current && !merging && <button type="button" className="add-to-group-row" disabled={busy} onClick={() => void run(() => groupsApi.split(chat))}>
             <Split className="add-to-group-icon" aria-hidden="true" />
             <span className="add-to-group-text">{t("Split here")}<small>{t("this chat and the ones after it start a new group")}</small></span>
           </button>}
@@ -166,11 +184,14 @@ export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed =
         </div>
         <footer className="modal-footer add-to-group-footer">
           <button type="button" className="btn btn-primary add-to-group-go" disabled={busy || picked === null} onClick={add}>
-            {picked !== null && current !== null && picked !== current.id ? t("Move") : t("Add")}
+            {merging ? t("Merge…") : picked !== null && current !== null && picked !== current.id ? t("Move") : t("Add")}
           </button>
         </footer>
       </div>
     </div>
+    {confirming && mergeFrom && picked !== null && <ConfirmDialog title={t("Merge {from} into {into}?", { from: mergeFrom.name, into: answer?.groups.find((each) => each.id === picked)?.name ?? "" })}
+      body={t("Its chats move for good: a hand-off won't take them back. Its digest is dropped.")} confirmLabel={t("Merge")}
+      onClose={() => setConfirming(false)} onConfirm={async () => { await groupsApi.merge(mergeFrom.id, picked); setConfirming(false); onClose(); onMerged?.(picked); }} />}
     {naming && <GroupNameSheet title={t("New group")} name="" action={t("Create")} onClose={() => setNaming(false)}
       onSave={async (name) => { await groupsApi.create(name, chat); onClose(); }} />}
   </>, document.body);

@@ -135,6 +135,7 @@ const notAllowed = (use: string) => jsonResponse({ error: { code: "method_not_al
  * /api/groups and /api/groups/…: GET the groups (GroupsAnswer); POST a change, which answers
  * `{ ok: true }` (or `{ id }` for a new group) and calls `changed`. A change naming a group that
  * does not exist is 404 `group_not_found`; a split of a chat in no group is 400 `not_in_group`.
+ * POST /api/groups/<id>/merge `{ into }` moves every chat to `into` and deletes the group.
  */
 export async function handleGroupsRequest(request: Request, pathname: string, store: GroupStore, changed: () => void,
   digest: { on(): boolean; jobs: DigestJobs | null } = { on: () => true, jobs: null }): Promise<Response> {
@@ -169,7 +170,7 @@ export async function handleGroupsRequest(request: Request, pathname: string, st
     }
     return done({ id: store.split(chat.pc, chat.session) });
   }
-  const match = /^([1-9][0-9]{0,15})\/(rename|delete|add)$/.exec(rest);
+  const match = /^([1-9][0-9]{0,15})\/(rename|delete|add|merge)$/.exec(rest);
   if (!match) return notFound();
   const action = match[2]!;
   setRequestRoute(`/api/groups/:id/${action}`);
@@ -187,6 +188,13 @@ export async function handleGroupsRequest(request: Request, pathname: string, st
     if (name === null) return badRequest("invalid_body", `Send { name: 1 to ${MAX_NAME} characters }`);
     if (!exists(id)) return noGroup();
     store.rename(id, name);
+    return done();
+  }
+  if (action === "merge") {
+    const into = body["into"];
+    if (typeof into !== "number" || !Number.isSafeInteger(into) || into < 1 || into === id) return badRequest("invalid_body", "Send { into: another group's id }");
+    if (!exists(id) || !exists(into)) return noGroup();
+    store.merge(id, into);
     return done();
   }
   const chat = chatOf(body);

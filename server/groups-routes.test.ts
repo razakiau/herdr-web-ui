@@ -176,6 +176,22 @@ describe("/api/groups", () => {
     expect(told).toBe(8);
   });
 
+  it("merges a group into another: its chats move, it goes; a bad target is 400, a missing group 404", async () => {
+    const store = open();
+    let told = 0;
+    const changed = () => { told++; };
+    const source = store.create("Source", { pc: "pc1", session: "a" });
+    store.add(source, "pc2", "b");
+    const target = store.create("Target", { pc: "pc1", session: "c" });
+    for (const into of [source, "2", 0, 1.5, undefined]) expect((await call(store, "POST", `/api/groups/${source}/merge`, { into }, changed)).status).toBe(400);
+    expect(await code(await call(store, "POST", `/api/groups/${source}/merge`, { into: 99 }, changed))).toEqual([404, "group_not_found"]);
+    expect(await code(await call(store, "POST", `/api/groups/99/merge`, { into: target }, changed))).toEqual([404, "group_not_found"]);
+    expect(told).toBe(0);
+    expect((await call(store, "POST", `/api/groups/${source}/merge`, { into: target }, changed)).status).toBe(200);
+    expect(told).toBe(1);
+    expect((await answer(store)).groups.map((group) => [group.name, group.members.map((member) => member.session).sort()])).toEqual([["Target", ["a", "b", "c"]]]);
+  });
+
   it("refuses a missing or wrong field with 400 and changes nothing", async () => {
     const store = open();
     const id = store.create("G");

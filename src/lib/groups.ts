@@ -411,6 +411,8 @@ export const groupsApi = {
   ungroup: (chat: ChatRef) => change<{ ok: true }>("/api/groups/remove", chat),
   /** the chat and the ones linked after it start a new group */
   split: (chat: ChatRef) => change<{ id: number }>("/api/groups/split", chat),
+  /** every chat of the group moves to `into`, by hand for good; the group goes */
+  merge: (id: number, into: number) => change<{ ok: true }>(`/api/groups/${id}/merge`, { into }),
 };
 
 // ─── Which view is open ──────────────────────────────────────────────────────
