@@ -44,7 +44,7 @@ function fakeOmniRoute(options: { groupAnswer?: string; summaryChars?: number } 
     if (kind === "week") return { text: JSON.stringify({ text: "week digest" }), usage };
     return { text: options.groupAnswer ?? JSON.stringify({
       direction: "Where it goes.\nLine two.\nLine three.",
-      open: [{ text: "Picker in review", artifactId: "pr-30" }, { text: "Invented link", artifactId: "pr-999" }, { text: "Move the cost note", kind: "thread" }],
+      open: [{ text: "Picker in review", artifactId: "A1" }, { text: "Invented link", artifactId: "pr-30" }, { text: "Move the cost note", kind: "thread" }],
       done: [{ text: "Groups shipped" }],
       perChat: [{ session: "local a", line: "a line" }, { session: "b", line: "b line" }, { session: "nobody", line: "x" }],
     }), usage };
@@ -152,6 +152,25 @@ describe("refreshing a group's digest", () => {
     const digest = await refreshDigest(id, CHOICE, deps());
     expect(digest.open).toEqual([{ text: "Picker in review", artifact: PR }, { text: "Invented link" }, { text: "Move the cost note" }]);
     expect(digest.perChat).toEqual([{ pc: "local", session: "a", line: "a line" }, { pc: "local", session: "b", line: "b line" }]);
+  });
+
+  it("two chats' artifacts with the same id (a1) both reach the model, each under its own digest index", async () => {
+    const { id, deps } = setup();
+    const mine: HostArtifact = { id: "a1", type: "pullRequest", label: "repo#1 from a", isArtifact: true, link: "https://github.com/example/repo/pull/1" };
+    const theirs: HostArtifact = { id: "a1", type: "issue", label: "ZAC-2 from b", isArtifact: false, link: "https://github.com/example/repo/issues/2" };
+    let listed = "";
+    const complete: Complete = async (request) => {
+      const usage = { input: 10, cached: 0, output: 10 };
+      if (request.system.includes("one coding-agent chat")) return { text: JSON.stringify({ text: "summary" }), usage };
+      listed = request.user.slice(request.user.indexOf("ARTIFACTS:"));
+      const named = [...listed.matchAll(/\[(A\d+)\]/g)].map((match) => match[1]!);
+      return { text: JSON.stringify({ direction: "D", open: named.map((each) => ({ text: `item ${each}`, artifactId: each })), done: [], perChat: [] }), usage };
+    };
+    const digest = await refreshDigest(id, CHOICE, deps({ complete, readChat: async (_pc, session) => chat(session, session === "a" ? [mine] : [theirs]) }));
+    expect(listed).toContain("[A1]");
+    expect(listed).toContain("[A2]");
+    expect(listed).not.toContain("[a1]");
+    expect(digest.open.map((item) => item.artifact)).toEqual([mine, theirs]);
   });
 
   it("weekly batches: 30 summaries over 60K tokens go week by week, then one final call", async () => {

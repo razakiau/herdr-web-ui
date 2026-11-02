@@ -58,8 +58,30 @@ export const tokensOf = (text: string): number => Math.ceil(text.length / CHARS_
 const key = (pc: string, session: string): string => `${pc} ${session}`;
 
 /** The artifact list as the model sees it: its id first, so it can name it. */
-const artifactLines = (artifacts: readonly HostArtifact[]): string =>
-  artifacts.map((artifact) => `- [${artifact.id}] ${artifact.type}: ${artifact.label}${artifact.link ? ` (${artifact.link})` : ""}`).join("\n");
+const artifactLine = (id: string, artifact: HostArtifact): string => `- [${id}] ${artifact.type}: ${artifact.label}${artifact.link ? ` (${artifact.link})` : ""}`;
+const artifactLines = (artifacts: readonly HostArtifact[]): string => artifacts.map((artifact) => artifactLine(artifact.id, artifact)).join("\n");
+
+/**
+ * The group pass's artifact list: an id is only a chat's own (a1, a2… in each chat), so each
+ * member's artifacts get a per-digest index (A1, A2…) mapped back to that chat's artifact. Two chats'
+ * `a1` are two entries; one artifact two chats share (the same link) is one.
+ */
+export function indexArtifacts(lists: readonly { key: string; artifacts: readonly HostArtifact[] }[]): { lines: string; byIndex: Map<string, HostArtifact> } {
+  const byIndex = new Map<string, HostArtifact>();
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const { key: chat, artifacts } of lists) {
+    for (const artifact of artifacts) {
+      const same = artifact.link ?? artifact.uri ?? `${chat} ${artifact.id}`;
+      if (seen.has(same)) continue;
+      seen.add(same);
+      const index = `A${byIndex.size + 1}`;
+      byIndex.set(index, artifact);
+      lines.push(artifactLine(index, artifact));
+    }
+  }
+  return { lines: lines.join("\n"), byIndex };
+}
 
 /**
  * A chat as the summary call reads it: each user message, each turn's final reply (its
@@ -103,7 +125,7 @@ const GROUP_SYSTEM = `You write the digest of a group of coding-agent chats that
 - direction: 3 to 4 lines on where the group is going.
 - open: open PRs and issues, AND pending threads: things an agent said it would do, or left to do, that no later chat finished. A thread has no artifactId.
 - done: finished work, each with the PR or issue it landed in when there is one.
-- artifactId: only an id from the ARTIFACTS list, exactly as written there; leave it out otherwise. Never invent links.
+- artifactId: only an index from the ARTIFACTS list (A1, A2…), exactly as written there; leave it out otherwise. Never invent links.
 - perChat: one line per chat, its "session" exactly as the CHAT line names it.
 Short items, plain words.`;
 
@@ -214,8 +236,7 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
 
   deps.onProgress?.({ phase: "group", done: 0, total: 1 });
   const summaries = members.flatMap((member) => { const summary = store.summary(member.pc, member.session); return summary ? [{ member, summary }] : []; });
-  const artifacts = new Map<string, HostArtifact>();
-  for (const { summary } of summaries) for (const artifact of summary.artifacts) if (!artifacts.has(artifact.id)) artifacts.set(artifact.id, artifact);
+  const { lines: artifactList, byIndex: artifacts } = indexArtifacts(summaries.map(({ member, summary }) => ({ key: member.key, artifacts: summary.artifacts })));
   const chatBlock = (each: (typeof summaries)[number]): string => `CHAT ${each.member.key}:\n${each.summary.text}`;
   const all = summaries.map(chatBlock).join("\n\n");
   let material = all;
@@ -232,7 +253,7 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
     }
     material = parts.join("\n\n");
   }
-  const json = await call(GROUP_SYSTEM, `${material}\n\nARTIFACTS:\n${artifactLines([...artifacts.values()]) || "(none)"}`);
+  const json = await call(GROUP_SYSTEM, `${material}\n\nARTIFACTS:\n${artifactList || "(none)"}`);
   const direction = str(json["direction"]);
   if (!direction) throw new DigestError(modelName(choice.model), "answered a digest with no direction");
   const items = (value: unknown): DigestItem[] => (Array.isArray(value) ? value : []).flatMap((item): DigestItem[] => {
