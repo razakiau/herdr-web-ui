@@ -9,7 +9,7 @@ import { useEffect, useMemo } from "react";
 
 import type { Machine } from "../../shared/machines.ts";
 import { useGroupDigest } from "../lib/groupDigest.ts";
-import { chatCosts, groupsView, useGroups, useGroupsView } from "../lib/groups.ts";
+import { chatCosts, groupsView, liveGroups, useGroups, useGroupsView } from "../lib/groups.ts";
 import type { HostPc } from "../lib/hostChats.ts";
 import { useCostsFeed } from "../lib/rowCache.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -32,7 +32,8 @@ export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
   const machineIds = useMemo(() => machines.filter((machine) => machine.state === "connected").map((machine) => machine.id), [machines]);
   const feed = useCostsFeed(machineIds, open && settings.trackCosts);
   const costs = useMemo(() => chatCosts(feed), [feed]);
-  const answer = groups?.answer ?? null;
+  // a chat its host says is gone (deleted) is hidden from every group sheet; an offline PC's stay
+  const answer = useMemo(() => liveGroups(groups?.answer ?? null, hostChats), [groups?.answer, hostChats]);
   // the open group deleted (here or elsewhere): its page goes, back to what was under it
   const gone = view.group !== null && answer !== null && !answer.groups.some((each) => each.id === view.group);
   useEffect(() => { if (gone) groupsView.closeGroup(); }, [gone]);

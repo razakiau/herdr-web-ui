@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChatGroup } from "../../shared/groups.ts";
 import type { HostArtifact, HostChatRow, HostLink } from "../../shared/host-chats.ts";
-import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, defaultFolds, groupTree, rerootTree, shortChatName, trailName, treeLines } from "./groups.ts";
+import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, defaultFolds, groupTree, liveGroups, memberGone, rerootTree, shortChatName, trailName, treeLines } from "./groups.ts";
+import type { HostPc } from "./hostChats.ts";
 
 const PC = "mac";
 const row = (session: string, title: string, modified: string, over: Partial<HostChatRow> = {}): HostChatRow =>
@@ -58,6 +59,25 @@ describe("chainOrder", () => {
     const rows = new Map(ROWS);
     rows.delete(chatKey(PC, "s266"));
     expect(chainOrder(GROUP, LINKS, rows).map((each) => each.session)).toEqual(["s262", "s265", "s266", "h"]);
+  });
+});
+
+describe("liveGroups: a chat its host says is gone", () => {
+  const up = { state: "connected" as const, signed_in: true, protocol: "1" };
+  const answer = { groups: [GROUP], links: LINKS, summaries: [], digests: [], digestDefaults: { model: "m", effort: "medium" } };
+  const listed = (sessions: string[], over: Partial<HostPc> = {}): HostPc => ({ host: up, chats: sessions.map((session) => ROWS.get(chatKey(PC, session))!), ...over });
+
+  it("hides a deleted chat (its PC answered without it) from the group and its count", () => {
+    const live = liveGroups(answer, new Map([[PC, listed(["s262", "s265", "h"])]]))!;
+    expect(live.groups[0]!.members.map((each) => each.session)).toEqual(["s262", "s265", "h"]);
+    expect(memberGone(listed(["s262"]), "s266")).toBe(true);
+  });
+
+  it("keeps every chat of a PC that is offline, not read yet, reconnecting or with no host", () => {
+    for (const pc of [undefined, listed([], { stale: true }), { host: { state: "no_server" as const }, chats: [] }, { host: null, chats: [] }]) {
+      const hostChats = new Map<string, HostPc>(pc ? [[PC, pc]] : []);
+      expect(liveGroups(answer, hostChats)).toBe(answer);
+    }
   });
 });
 

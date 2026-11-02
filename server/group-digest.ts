@@ -35,6 +35,11 @@ export interface DigestDeps {
   lastCalls(): Promise<ReadonlyMap<string, string | null>>;
   /** each chat's archived bit by `pc session`, from the PCs' rows */
   archived(): Promise<ReadonlySet<string>>;
+  /**
+   * the chats each PC listed, by PC, for the PCs whose list answered: a member missing from its PC's
+   * list is gone (deleted) and left out; a PC not in the map (offline, not read) keeps its members
+   */
+  listed?(): Promise<ReadonlyMap<string, ReadonlySet<string>>>;
   complete: Complete;
   prices(): Promise<{ prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null }>;
   now?(): number;
@@ -187,10 +192,17 @@ function needsSummary(store: GroupStore, member: Member, lastCalls: ReadonlyMap<
   return summary.lastCallSeen === null || Date.parse(last) > Date.parse(summary.lastCallSeen);
 }
 
-function membersOf(store: GroupStore, groupId: number): Member[] {
+/** A member its PC's answered list does not have: deleted, so out of the digest; an unread PC proves nothing. */
+export const goneFrom = (listed: ReadonlyMap<string, ReadonlySet<string>>, pc: string, session: string): boolean => {
+  const chats = listed.get(pc);
+  return chats !== undefined && !chats.has(session);
+};
+
+function membersOf(store: GroupStore, groupId: number, listed: ReadonlyMap<string, ReadonlySet<string>> = new Map()): Member[] {
   const group = store.snapshot().groups.find((each) => each.id === groupId);
   if (!group) throw new DigestError("Ovis", "No such group");
-  return group.members.map((member) => ({ pc: member.pc, session: member.session, key: key(member.pc, member.session) }));
+  return group.members.filter((member) => !goneFrom(listed, member.pc, member.session))
+    .map((member) => ({ pc: member.pc, session: member.session, key: key(member.pc, member.session) }));
 }
 
 /**
@@ -205,8 +217,8 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
   const now = deps.now ?? Date.now;
   store.setSetting(DIGEST_MODEL_KEY, choice.model);
   store.setSetting(DIGEST_EFFORT_KEY, choice.effort);
-  const members = membersOf(store, groupId);
-  const [lastCalls, archived, { prices, fallback }] = await Promise.all([deps.lastCalls(), deps.archived(), deps.prices()]);
+  const [lastCalls, archived, listed, { prices, fallback }] = await Promise.all([deps.lastCalls(), deps.archived(), deps.listed?.() ?? new Map(), deps.prices()]);
+  const members = membersOf(store, groupId, listed);
   const due = members.filter((member) => needsSummary(store, member, lastCalls, archived));
   let spent = 0;
   const call = async (system: string, user: string): Promise<Record<string, unknown>> => {
@@ -307,12 +319,12 @@ const PROMPT_TOKENS = 400;
  * (`context`, capped at the chat budget: the reduced chat is smaller); a summary not yet written as
  * ~SUMMARY_OUT tokens. `usd` null when the model has no price.
  */
-export async function estimateDigest(groupId: number, choice: DigestChoice, deps: Pick<DigestDeps, "store" | "lastCalls" | "archived" | "prices"> & {
+export async function estimateDigest(groupId: number, choice: DigestChoice, deps: Pick<DigestDeps, "store" | "lastCalls" | "archived" | "listed" | "prices"> & {
   contexts(): Promise<ReadonlyMap<string, number | null>>;
 }): Promise<DigestEstimate> {
   const { store } = deps;
-  const members = membersOf(store, groupId);
-  const [lastCalls, archived, contexts, { prices, fallback }] = await Promise.all([deps.lastCalls(), deps.archived(), deps.contexts(), deps.prices()]);
+  const [lastCalls, archived, contexts, listed, { prices, fallback }] = await Promise.all([deps.lastCalls(), deps.archived(), deps.contexts(), deps.listed?.() ?? new Map(), deps.prices()]);
+  const members = membersOf(store, groupId, listed);
   const due = new Set(members.filter((member) => needsSummary(store, member, lastCalls, archived)).map((member) => member.key));
   let tokensIn = 0;
   let output = 0;
@@ -362,7 +374,8 @@ export function digestModels(live: readonly string[], allow: string | undefined)
 // ─── Jobs, and what the server knows of the chats ────────────────────────────
 
 /** What the server knows of every PC's chats for the digest: last calls, last prompts, archived bits, by `pc session`. */
-export interface ChatFacts { lastCalls: Map<string, string | null>; contexts: Map<string, number | null>; archived: Set<string> }
+/** `listed`: each PC's chats, for the PCs whose list answered (DigestDeps.listed) */
+export interface ChatFacts { lastCalls: Map<string, string | null>; contexts: Map<string, number | null>; archived: Set<string>; listed?: Map<string, Set<string>> }
 
 /**
  * The chats' facts read from every PC (costs and rows), kept for `freshMs`. `cached()` answers at
@@ -370,7 +383,7 @@ export interface ChatFacts { lastCalls: Map<string, string | null>; contexts: Ma
  * something different: GET /api/groups never waits on a PC.
  */
 export class ChatFactsCache {
-  private facts: ChatFacts = { lastCalls: new Map(), contexts: new Map(), archived: new Set() };
+  private facts: ChatFacts = { lastCalls: new Map(), contexts: new Map(), archived: new Set(), listed: new Map() };
   private readAt = 0;
   private pending: Promise<ChatFacts> | null = null;
   constructor(private readonly read: () => Promise<ChatFacts>, private readonly freshMs: number, private readonly changed: () => void, private readonly now: () => number = Date.now) {}
@@ -436,7 +449,7 @@ export class DigestJobs {
     const done = (async () => {
       try {
         const facts = await this.deps.facts.fresh().catch(() => this.deps.facts.cached());
-        await refreshDigest(groupId, choice, { ...this.deps, store: this.deps.store(), lastCalls: async () => facts.lastCalls, archived: async () => facts.archived,
+        await refreshDigest(groupId, choice, { ...this.deps, store: this.deps.store(), lastCalls: async () => facts.lastCalls, archived: async () => facts.archived, listed: async () => facts.listed ?? new Map(),
           onProgress: (progress) => { this.running.set(groupId, progress); this.deps.changed(); } });
       } catch (error) {
         const failure = error instanceof DigestError ? error : new DigestError("Ovis", "The digest could not be written");
@@ -456,6 +469,7 @@ export class DigestJobs {
     return estimateDigest(groupId, choice, {
       store: this.deps.store(), prices: this.deps.prices,
       lastCalls: async () => (await this.facts()).lastCalls, archived: async () => (await this.facts()).archived, contexts: async () => (await this.facts()).contexts,
+      listed: async () => (await this.facts()).listed ?? new Map(),
     });
   }
 

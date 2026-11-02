@@ -12,7 +12,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { ChatGroup, GroupsAnswer } from "../../shared/groups.ts";
 import type { HostArtifact, HostChatRow, HostLink, LinkKind } from "../../shared/host-chats.ts";
 import { getJson } from "./api.ts";
-import { onHostChatResume } from "./hostChats.ts";
+import { onHostChatResume, type HostPc } from "./hostChats.ts";
 import type { CostsFeed } from "./rowCache.ts";
 import { addSplit, costSplit, emptySplit, type CostSplit } from "./sessionCost.ts";
 
@@ -278,6 +278,32 @@ export function shortChatName(title: string): string {
   const ticket = /^[A-Za-z][A-Za-z0-9]*-(\d+)$/.exec(words[0]!.replace(/[:,.]$/, ""));
   if (ticket) return ticket[1]!;
   return words.length > 2 ? `${words.slice(0, 2).join(" ")}…` : words.join(" ");
+}
+
+/**
+ * Whether a member's chat is gone: its PC's host answered its list (connected, not a stale read
+ * while it reconnects) and the chat is not in it. A PC that is offline or not read yet proves
+ * nothing, so its chats stay (offline is not deleted).
+ */
+export function memberGone(pc: HostPc | undefined, session: string): boolean {
+  return pc !== undefined && pc.stale !== true && pc.host?.state === "connected" && !pc.chats.some((row) => row.session === session);
+}
+
+/**
+ * The answer without the chats their hosts say no longer exist (a deleted fork's row titled
+ * "Copilot chat", "gone"): not in a group's tree, its "N chats", its state or its digest's facts.
+ * Only hidden, never dropped from the group: a chat seen again is back.
+ */
+export function liveGroups(answer: GroupsAnswer | null, hostChats: ReadonlyMap<string, HostPc>): GroupsAnswer | null {
+  if (answer === null) return null;
+  let changed = false;
+  const groups = answer.groups.map((group) => {
+    const members = group.members.filter((member) => !memberGone(hostChats.get(member.pc), member.session));
+    if (members.length === group.members.length) return group;
+    changed = true;
+    return { ...group, members };
+  });
+  return changed ? { ...answer, groups } : answer;
 }
 
 /** The group a chat is in, if any. */

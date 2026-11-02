@@ -278,7 +278,9 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const meta = answer.digests.find((each) => each.groupId === group.id);
   const stale = !digest ? 0 : feed ? staleCount(digest, group.members, lastCalls) : meta?.staleCount ?? 0;
   // Per chat newest first, by when each chat last changed; a chat gone from its PC keeps its place by the digest's order
-  const perChat = (digest?.perChat ?? []).map((line, index) => ({ ...line, name: shortChatName(titleOf(line)), at: Date.parse(rowOf(line)?.modified_at ?? "") || Date.parse(digest!.writtenAt) - index }))
+  // a chat gone since (deleted: GroupsHost's liveGroups took it out of the members) has no line
+  const memberKeys = new Set(group.members.map((each) => chatKey(each.pc, each.session)));
+  const perChat = (digest?.perChat ?? []).filter((line) => memberKeys.has(chatKey(line.pc, line.session))).map((line, index) => ({ ...line, name: shortChatName(titleOf(line)), at: Date.parse(rowOf(line)?.modified_at ?? "") || Date.parse(digest!.writtenAt) - index }))
     .sort((a, b) => b.at - a.at);
   const digestSpent = controls.spentUsd ?? digest?.costUsd ?? 0;
 

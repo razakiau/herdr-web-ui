@@ -278,7 +278,8 @@ describe("the digest's routes", () => {
     let told = 0;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const facts = new ChatFactsCache(async () => ({ lastCalls: new Map([["local a", "2026-10-31T10:00:00.000Z"]]), contexts: new Map([["local a", 4_000]]), archived: new Set<string>() }), 60_000, () => {});
+    const listed = new Map<string, Set<string>>();
+    const facts = new ChatFactsCache(async () => ({ lastCalls: new Map([["local a", "2026-10-31T10:00:00.000Z"]]), contexts: new Map([["local a", 4_000]]), archived: new Set<string>(), listed }), 60_000, () => {});
     const jobs = new DigestJobs({
       store: () => store,
       readChat: async (_pc, session) => { await gate; return { session, title: session, status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, pending: [], commands: [], background: { subagents: 0, commands: 0 }, confirmations: 0, context: null } as unknown as HostChatRead; },
@@ -288,7 +289,7 @@ describe("the digest's routes", () => {
     });
     const on = { value: options.on ?? true };
     const ask = (path: string, init: RequestInit = {}) => handleGroupsRequest(new Request(`http://localhost${path}`, init), new URL(`http://localhost${path}`).pathname, store, () => {}, { on: () => on.value, jobs });
-    return { store, id, jobs, ask, release, told: () => told, on };
+    return { store, id, jobs, ask, release, told: () => told, on, listed };
   }
   const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const CHOICE = { model: "opencode-go/claude-haiku-5-5", effort: "low" };
@@ -303,7 +304,7 @@ describe("the digest's routes", () => {
   });
 
   it("POST starts a job and answers at once; a second POST while it runs is 409 digest_running; GET shows its stage, then the digest", async () => {
-    const { id, ask, release, store } = routes();
+    const { id, ask, release, store, listed } = routes();
     const started = await ask(`/api/groups/${id}/digest`, post(CHOICE));
     expect(started.status).toBe(200);
     expect(await started.json()).toEqual({ job: 1 });
@@ -326,6 +327,9 @@ describe("the digest's routes", () => {
     // a chat that joined since counts as moved on
     store.add(id, "local", "b");
     expect(((await (await ask("/api/groups")).json()) as GroupsAnswer).digests[0]!.staleCount).toBe(1);
+    // ...unless its PC's list answered without it (deleted): gone, not moved on
+    listed.set("local", new Set(["a"]));
+    expect(((await (await ask("/api/groups")).json()) as GroupsAnswer).digests[0]!.staleCount).toBe(0);
   });
 
   it("the estimate's shape; a bad query is 400; an unknown group 404", async () => {

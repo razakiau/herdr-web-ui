@@ -25,7 +25,8 @@ type Counts = DigestCounts;
 type KeepWarmSums = DigestKeepWarm;
 export type { DigestSnapshot };
 
-export interface DigestPc { machineId: string; name: string; costs: HostCostsAnswer | null; rows: HostChatRow[] }
+/** `listed`: the PC's host answered its list (its rows are its every chat), for the chat groups' gone check */
+export interface DigestPc { machineId: string; name: string; costs: HostCostsAnswer | null; rows: HostChatRow[]; listed?: boolean }
 
 const DAY_MS = 86_400_000;
 const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);

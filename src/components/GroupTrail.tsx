@@ -42,7 +42,9 @@ function TrailBar({ group, machineId, session, chats }: { group: NonNullable<Ret
   const rows = useMemo(() => new Map((chats ?? []).map((row) => [chatKey(machineId, row.session), row])), [chats, machineId]);
   const { states } = useMemberStates(group, rows, feed);
   const shown = [...states.values()];
-  const count = group.members.length;
+  // a chat of this PC its list no longer has is gone (deleted): not counted (lib/groups.ts liveGroups; the
+  // bar is shown in an open chat of this PC: a list that has it is read)
+  const count = !rows.has(chatKey(machineId, session)) ? group.members.length : group.members.filter((member) => member.pc !== machineId || rows.has(chatKey(member.pc, member.session))).length;
   return <nav className="group-trail" aria-label={t("Group {name}", { name: group.name })}>
     <button type="button" className="group-trail-open" onClick={() => groupsView.openGroup(group.id, { pc: machineId, session })}>
       <GalleryVerticalEnd className="group-trail-icon" aria-hidden="true" />

@@ -13,7 +13,7 @@ import type { DigestEffort, GroupDigestAnswer, GroupDigestMeta, GroupsAnswer } f
 import type { HostLink, LinkKind } from "../shared/host-chats.ts";
 import { createCostsPoller, type CostsPoller } from "./costs-poller.ts";
 import type { GroupStore } from "./groups-store.ts";
-import { staleCount, type DigestJobs } from "./group-digest.ts";
+import { goneFrom, staleCount, type DigestJobs } from "./group-digest.ts";
 import { OmniRouteError } from "./omniroute.ts";
 import { badRequest, isJsonObject, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
 
@@ -107,8 +107,11 @@ const firstLines = (text: string): string => text.split(/\n+/).slice(0, 2).join(
 function answerOf(store: GroupStore, digests: DigestJobs | null): GroupsAnswer {
   const snapshot = store.snapshot();
   // the PCs' last calls are read (every PC's costs) only while some group has a digest to call stale
-  const lastCalls = snapshot.digests.length > 0 ? digests?.factsCache.cached().lastCalls ?? new Map<string, string | null>() : new Map<string, string | null>();
-  const members = new Map(snapshot.groups.map((group) => [group.id, group.members]));
+  const facts = snapshot.digests.length > 0 ? digests?.factsCache.cached() ?? null : null;
+  const lastCalls = facts?.lastCalls ?? new Map<string, string | null>();
+  // a chat its PC no longer lists (deleted) is not one that moved on: it left the digest's input
+  const listed = facts?.listed ?? new Map<string, Set<string>>();
+  const members = new Map(snapshot.groups.map((group) => [group.id, group.members.filter((member) => !goneFrom(listed, member.pc, member.session))]));
   const metas: GroupDigestMeta[] = snapshot.digests.map((digest) => ({
     groupId: digest.groupId, writtenAt: digest.writtenAt, costUsd: digest.costUsd, model: digest.model, effort: digest.effort,
     direction: firstLines(digest.direction), staleCount: staleCount(digest, members.get(digest.groupId) ?? [], lastCalls), spentUsd: store.spent(digest.groupId), spendIncomplete: store.spendIncomplete(digest.groupId),

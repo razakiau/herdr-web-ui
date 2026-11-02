@@ -27,7 +27,7 @@ import { useT, type Translate } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { machineErrorText, saysHerdrAway } from "../lib/userError.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { groupsView, useGroups } from "../lib/groups.ts";
+import { groupsView, liveGroups, useGroups } from "../lib/groups.ts";
 import { GroupsLens } from "./GroupsLens.tsx";
 import { useSettings } from "../lib/settings.ts";
 
@@ -167,6 +167,8 @@ export function MachineSidebar(props: Props) {
   const { settings: { chatGroups } } = useSettings();
   const groups = useGroups(chatGroups);
   const lens = shownLens(storedPick, chatGroups);
+  // a chat its host says is gone (deleted) is not counted in the lens's cards (lib/groups.ts liveGroups)
+  const liveAnswer = useMemo(() => liveGroups(groups?.answer ?? null, hostChats), [groups?.answer, hostChats]);
   const showAgents = searching || lens === "agents";
   const showPcs = searching || lens === "pcs";
   const showGroups = !searching && lens === "groups";
@@ -239,7 +241,7 @@ export function MachineSidebar(props: Props) {
     <div className="sidebar-scroll">
       {showAgents && <AgentSidebar lens machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
         hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat} />}
-      {showGroups && <GroupsLens answer={groups?.answer ?? null} failed={groups?.failed ?? false} machines={props.machines} hostChats={hostChats} />}
+      {showGroups && <GroupsLens answer={liveAnswer} failed={groups?.failed ?? false} machines={props.machines} hostChats={hostChats} />}
       <div className="machine-list" aria-label={t("PCs and workspaces")} hidden={!showPcs}>
         {/* the PCs fold as the Agents above them do (owner, ZAC-233), for this page */}
         {searching && <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>

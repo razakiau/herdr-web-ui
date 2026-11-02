@@ -361,7 +361,7 @@ export function createServer(
     if (agentHostConnection) {
       const connected = agentHostConnection.state().state === "connected";
       pcs.push(Promise.resolve({ machineId: "local", name: machines?.list().find((machine) => machine.id === "local")?.name ?? osHostname(),
-        costs: hostCosts(agentHostConnection), rows: connected ? rowsFrom(agentHostConnection.summaries()) : [] }));
+        costs: hostCosts(agentHostConnection), rows: connected ? rowsFrom(agentHostConnection.summaries()) : [], listed: connected }));
     }
     for (const machine of machines?.list() ?? []) {
       if (machine.id === "local" || !machine.enabled) continue;
@@ -372,7 +372,7 @@ export function createServer(
           remoteJson<HostCostsAnswer>(endpoint, "/api/host-chats/costs", 60_000),
           remoteJson<{ chats: HostChatRow[] }>(endpoint, "/api/host-chats/chats", 15_000),
         ]);
-        return { machineId: machine.id, name: machine.name, costs: costs && Array.isArray(costs.chats) ? costs : null, rows: Array.isArray(list?.chats) ? list.chats : [] };
+        return { machineId: machine.id, name: machine.name, costs: costs && Array.isArray(costs.chats) ? costs : null, rows: Array.isArray(list?.chats) ? list.chats : [], listed: Array.isArray(list?.chats) };
       })());
     }
     return Promise.all(pcs);
@@ -419,8 +419,10 @@ export function createServer(
    * through its own route.
    */
   const chatFacts = new ChatFactsCache(async (): Promise<ChatFacts> => {
-    const facts: ChatFacts = { lastCalls: new Map(), contexts: new Map(), archived: new Set() };
+    const facts: ChatFacts = { lastCalls: new Map(), contexts: new Map(), archived: new Set(), listed: new Map() };
     for (const pc of await digestPcs()) {
+      // a PC whose host answered its list: what it does not list is deleted (digestPcs gives [] for one that did not)
+      if (pc.listed) facts.listed!.set(pc.machineId, new Set(pc.rows.map((row) => row.session)));
       for (const chat of pc.costs?.chats ?? []) {
         facts.lastCalls.set(`${pc.machineId} ${chat.session}`, chat.lastCallAt);
         facts.contexts.set(`${pc.machineId} ${chat.session}`, chat.context);

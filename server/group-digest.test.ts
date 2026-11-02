@@ -108,6 +108,17 @@ describe("refreshing a group's digest", () => {
     expect(group).toContain("each sentence on its own line");
   });
 
+  it("a chat its PC no longer lists (deleted) is left out of the digest; a PC not read keeps its chats", async () => {
+    const { id, omni, deps } = setup(["a", "b"]);
+    const digest = await refreshDigest(id, CHOICE, deps({ listed: async () => new Map([["local", new Set(["a"])]]) }));
+    expect(digest.chatsSeen).toEqual(["local a"]);
+    expect(omni.calls.filter((call) => call.kind === "summary")).toHaveLength(1);
+    expect(omni.calls.at(-1)!.user).not.toContain("CHAT local b");
+    // the PC offline (its list not read): no proof, both chats stay
+    const offline = setup(["a", "b"]);
+    expect((await refreshDigest(offline.id, CHOICE, offline.deps({ listed: async () => new Map() }))).chatsSeen).toEqual(["local a", "local b"]);
+  });
+
   it("second refresh makes no call", async () => {
     const { id, omni, deps } = setup();
     await refreshDigest(id, CHOICE, deps());
