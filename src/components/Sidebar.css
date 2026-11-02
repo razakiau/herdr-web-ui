@@ -945,4 +945,15 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 /* the Groups lens (GroupsLens.tsx): the sheet's cards in the rows' gutter */
 .groups-lens { display: flex; flex-direction: column; padding: var(--space-2) var(--side-gutter) 0; }
 .groups-lens .agent-empty { padding-inline-start: 0; }
+/* its head (round 10): the PC filter, stuck to the scroll's top on the panel's fill as the Agents chips are */
+.groups-lens-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  margin: calc(var(--space-2) * -1) calc(var(--side-gutter) * -1) 0;
+  padding: var(--space-1) var(--side-gutter) var(--space-2);
+  background: var(--bg-panel);
+}
+.groups-lens-head .group-pc-filter { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 .machine-list[hidden] { display: none; }

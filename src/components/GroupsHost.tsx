@@ -57,7 +57,7 @@ export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
           models: digestStore.models() ?? undefined, estimate: digestStore.estimate, onWrite: (pick) => { void digestStore.write(pick); } };
       })() : undefined}
       onOpenChat={openChat} onOpenFile={onOpenFile ? (target) => { groupsView.closeAll(); onOpenFile(target); } : undefined} onClose={() => groupsView.closeGroup()} />}
-    {view.addTo !== null && <AddToGroupSheet key={`${view.addTo.pc} ${view.addTo.session}`} chat={view.addTo} answer={answer} hostChats={hostChats} feed={feed}
+    {view.addTo !== null && <AddToGroupSheet key={`${view.addTo.pc} ${view.addTo.session}`} chat={view.addTo} answer={answer} hostChats={hostChats} machines={machines} feed={feed}
       onClose={() => groupsView.closeAddTo()} />}
   </>;
 }

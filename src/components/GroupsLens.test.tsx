@@ -91,6 +91,23 @@ describe("the sidebar's Groups lens", () => {
     expect(groupsView.read().group).toBe(9);
   });
 
+  it("filters by PC with a select, shown only when the groups span more than one PC", async () => {
+    const select = (page: ReactTestRenderer) => page.root.findAll((each) => each.type === "select");
+    expect(select(await lens(ANSWER))).toHaveLength(0);
+    await act(async () => { renderer?.unmount(); });
+    const desk = { ...group(11, "FICTIONAL desk work", []), members: [{ pc: "desk", session: "d-1", joined: "link" as const, addedAt: "2026-10-30T09:00:00Z" }, { pc: "local", session: "s-z", joined: "manual" as const, addedAt: "2026-10-30T09:00:00Z" }] };
+    const page = await lens({ ...ANSWER, groups: [...ANSWER.groups, desk] });
+    const pick = select(page)[0]!;
+    expect(pick.findAllByType("option").map((each) => each.props["value"])).toEqual(["", "desk", "local"]);
+    const cards = () => page.root.findAll((each) => each.type === "button" && each.props["className"] === "groups-card").map(textOf);
+    expect(cards()).toHaveLength(3);
+    await act(async () => { pick.props["onChange"]({ target: { value: "desk" } }); });
+    expect(cards()).toHaveLength(1);
+    expect(cards()[0]).toContain("FICTIONAL desk work");
+    await act(async () => { select(page)[0]!.props["onChange"]({ target: { value: "" } }); });
+    expect(cards()).toHaveLength(3);
+  });
+
   it("says there are no groups yet with the sheet's words", async () => {
     const page = await lens({ ...ANSWER, groups: [] });
     expect(textOf(page.root)).toContain("No groups yet.");

@@ -53,3 +53,7 @@
 /* a row's state in the Agents head's narrow form (the trail's phone form): each count behind its mark, the words kept for a screen reader, so the name keeps its room */
 .add-to-group-state .agent-summary-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .add-to-group-state .agent-summary-short { display: inline; }
+/* round 10: the PC filter at the end of New group…'s line, the app's select on the rows' gutter */
+.add-to-group-new-line { display: flex; flex: none; align-items: center; gap: var(--space-2); padding-inline-end: var(--space-4); }
+.add-to-group-new-line .add-to-group-new { flex: 1 1 auto; min-width: 0; }
+.add-to-group-pc { flex: 0 1 auto; min-width: 0; max-width: 50%; text-overflow: ellipsis; }

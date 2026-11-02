@@ -4,7 +4,7 @@
  * active first, in the sidebar's one scroll. A card opens the group's page (GroupsHost.tsx). Only
  * while Settings → Chat groups is on; MachineSidebar.tsx leaves the tab out otherwise.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import "./NewSessionDialog.css";
 import "./AllAgentsSheet.css";
@@ -12,11 +12,12 @@ import "./GroupsSheet.css";
 
 import type { GroupsAnswer } from "../../shared/groups.ts";
 import type { Machine } from "../../shared/machines.ts";
-import { chatCosts, chatKey, costOf, groupsView } from "../lib/groups.ts";
+import { chatCosts, chatKey, costOf, groupOnPc, groupsView } from "../lib/groups.ts";
 import type { HostPc } from "../lib/hostChats.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
 import { useCostsFeed } from "../lib/rowCache.ts";
 import { useSettings } from "../lib/settings.ts";
+import { GroupPcFilter, groupPcs } from "./GroupPcFilter.tsx";
 import { GroupCard, groupActive, rowsByKey } from "./GroupsSheet.tsx";
 
 export function GroupsLens({ answer, failed, machines, hostChats }: {
@@ -31,11 +32,17 @@ export function GroupsLens({ answer, failed, machines, hostChats }: {
   const feed = useCostsFeed(machineIds, settings.trackCosts);
   const costs = useMemo(() => chatCosts(feed), [feed]);
   const rows = useMemo(() => rowsByKey(hostChats), [hostChats]);
-  const groups = useMemo(() => [...answer?.groups ?? []].sort((a, b) => groupActive(b, rows) - groupActive(a, rows)), [answer, rows]);
+  // the PC filter (round 10), in the lens's head as the Agents lens has its chips: only when the groups span PCs
+  const [onPc, setOnPc] = useState<string | null>(null);
+  const pcs = useMemo(() => groupPcs(answer?.groups ?? []), [answer]);
+  const shownPc = onPc !== null && pcs.includes(onPc) ? onPc : null;
+  const groups = useMemo(() => [...answer?.groups ?? []].filter((group) => groupOnPc(group, shownPc)).sort((a, b) => groupActive(b, rows) - groupActive(a, rows)), [answer, rows, shownPc]);
   const pcName = (pc: string): string => machines.find((machine) => machine.id === pc)?.name ?? pc;
   return <section className="groups-lens" aria-label={t("Groups")}>
+    {pcs.length > 1 && <div className="groups-lens-head"><GroupPcFilter pcs={pcs} value={shownPc} pcName={pcName} onChange={setOnPc} /></div>}
     {answer === null && <p className="agent-empty" role="status">{t(failed ? "Couldn't read the groups." : "Loading groups…")}</p>}
-    {answer !== null && groups.length === 0 && <p className="agent-empty" role="status">{t("No groups yet. A chat that hands off to another starts one, or tap + to make one.")}</p>}
+    {answer !== null && groups.length === 0 && shownPc !== null && <p className="agent-empty" role="status">{t("No group has a chat on {pc}.", { pc: pcName(shownPc) })}</p>}
+    {answer !== null && groups.length === 0 && shownPc === null && <p className="agent-empty" role="status">{t("No groups yet. A chat that hands off to another starts one, or tap + to make one.")}</p>}
     {groups.length > 0 && <ul className="groups-list">
       {groups.map((group) => <GroupCard key={group.id} group={group} answer={answer!} rows={rows} pcName={pcName} locale={locale}
         total={costOf(group.members.map((member) => chatKey(member.pc, member.session)), costs)} onOpen={() => groupsView.openGroup(group.id)} />)}

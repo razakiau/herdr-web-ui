@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChatGroup } from "../../shared/groups.ts";
 import type { HostArtifact, HostChatRow, HostLink } from "../../shared/host-chats.ts";
-import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, defaultFolds, groupTree, liveGroups, memberGone, rerootTree, shortChatName, trailName, treeLines } from "./groups.ts";
+import { chainOrder, chatKey, createGroupsFeed, creditArtifacts, dedupArtifacts, defaultFolds, groupOnPc, groupTree, liveGroups, memberGone, rerootTree, shortChatName, trailName, treeLines } from "./groups.ts";
 import type { HostPc } from "./hostChats.ts";
 
 const PC = "mac";
@@ -78,6 +78,14 @@ describe("liveGroups: a chat its host says is gone", () => {
       const hostChats = new Map<string, HostPc>(pc ? [[PC, pc]] : []);
       expect(liveGroups(answer, hostChats)).toBe(answer);
     }
+  });
+});
+
+describe("groupOnPc", () => {
+  it("passes a group with a chat on the PC, and every group for no PC", () => {
+    expect(groupOnPc(GROUP, PC)).toBe(true);
+    expect(groupOnPc(GROUP, "desk")).toBe(false);
+    expect(groupOnPc(GROUP, null)).toBe(true);
   });
 });
 

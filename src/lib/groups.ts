@@ -306,6 +306,11 @@ export function liveGroups(answer: GroupsAnswer | null, hostChats: ReadonlyMap<s
   return changed ? { ...answer, groups } : answer;
 }
 
+/** Whether a group has a chat on `pc` (null: every group passes), the PC filter of its lists. */
+export function groupOnPc(group: ChatGroup, pc: string | null): boolean {
+  return pc === null || group.members.some((member) => member.pc === pc);
+}
+
 /** The group a chat is in, if any. */
 export function groupOf(answer: GroupsAnswer | null, pc: string, session: string): ChatGroup | null {
   return answer?.groups.find((group) => group.members.some((member) => member.pc === pc && member.session === session)) ?? null;

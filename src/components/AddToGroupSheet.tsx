@@ -18,8 +18,9 @@ import "./AddToGroupSheet.css";
 
 import type { ChatGroup, GroupsAnswer } from "../../shared/groups.ts";
 import type { HostChatRow } from "../../shared/host-chats.ts";
+import type { Machine } from "../../shared/machines.ts";
 import type { CostsFeed } from "../lib/rowCache.ts";
-import { chatKey, groupOf, groupsApi, type ChatRef } from "../lib/groups.ts";
+import { chatKey, groupOf, groupOnPc, groupsApi, type ChatRef } from "../lib/groups.ts";
 import { groupMatches, suggestGroups, type GroupFacts, type SuggestReason } from "../lib/groupSuggest.ts";
 import { ageWords, basename, errorText, type HostPc } from "../lib/hostChats.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -28,6 +29,7 @@ import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { GroupNameSheet, groupActive, groupFolder, rowsByKey } from "./GroupsSheet.tsx";
+import { GroupPcFilter, groupPcs } from "./GroupPcFilter.tsx";
 import { GroupStateSummary, useMemberStates } from "./GroupState.tsx";
 
 /** How a group's chats are doing, as its card and page say it ("1 working · 2 warm"); nothing when all are idle and cold. */
@@ -45,10 +47,12 @@ function reasonWords(reason: SuggestReason, now: number, t: Translate): string {
   }
 }
 
-export function AddToGroupSheet({ chat, answer, hostChats, feed = null, onClose }: {
+export function AddToGroupSheet({ chat, answer, hostChats, machines = [], feed = null, onClose }: {
   chat: ChatRef;
   answer: GroupsAnswer | null;
   hostChats: ReadonlyMap<string, HostPc>;
+  /** the PCs, for the PC filter's names */
+  machines?: readonly Machine[];
   /** the page's costs feed (lib/rowCache.ts), for each group's live state as its card says it; null while costs are not tracked */
   feed?: CostsFeed | null;
   onClose(): void;
@@ -82,8 +86,13 @@ export function AddToGroupSheet({ chat, answer, hostChats, feed = null, onClose 
   const own = rows.get(chatKey(chat.pc, chat.session));
   const ownFolder = own?.repo ?? own?.cwd;
   const here = ownFolder ? basename(ownFolder) : null;
-  const groups: GroupFacts[] = useMemo(() => (answer?.groups ?? []).map((group) => ({ group, folder: groupFolder(group, rows), active: groupActive(group, rows) }))
-    .sort((a, b) => b.active - a.active), [answer, rows]);
+  // the PC filter (round 10): the groups with a chat on the PC picked, Suggested among them too
+  const [onPc, setOnPc] = useState<string | null>(null);
+  const pcs = useMemo(() => groupPcs(answer?.groups ?? []), [answer]);
+  const pcName = (pc: string): string => machines.find((machine) => machine.id === pc)?.name ?? pc;
+  const groups: GroupFacts[] = useMemo(() => (answer?.groups ?? []).filter((group) => groupOnPc(group, onPc))
+    .map((group) => ({ group, folder: groupFolder(group, rows), active: groupActive(group, rows) }))
+    .sort((a, b) => b.active - a.active), [answer, rows, onPc]);
   const searching = query.trim() !== "";
   // under a search: the groups that answer it, by activity; else Suggested, then every group but those
   const suggested = useMemo(() => searching ? [] : suggestGroups({ title: own?.title ?? "", folder: here }, groups, rows, current?.id ?? null), [searching, own, here, groups, rows, current]);
@@ -132,11 +141,15 @@ export function AddToGroupSheet({ chat, answer, hostChats, feed = null, onClose 
             <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups and their chats")}
               autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} />
           </label>}
-          {/* always in reach: a new group under the search, above any list */}
-          <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>
-            <Plus className="add-to-group-icon is-accent" aria-hidden="true" />
-            <span className="add-to-group-text">{t("New group…")}</span>
-          </button>
+          {/* always in reach: a new group under the search, above any list; the PC filter at its end */}
+          <div className="add-to-group-new-line">
+            <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>
+              <Plus className="add-to-group-icon is-accent" aria-hidden="true" />
+              <span className="add-to-group-text">{t("New group…")}</span>
+            </button>
+            <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} className="add-to-group-pc" />
+          </div>
+          {onPc !== null && groups.length === 0 && <p className="add-to-group-none" role="status">{t("No group has a chat on {pc}.", { pc: pcName(onPc) })}</p>}
           {groups.length > 0 && <div className="add-to-group-list" role="radiogroup" aria-label={t("Groups")}>
             {suggested.length > 0 && <h3 className="sidebar-section-label add-to-group-label" aria-hidden="true">{t("Suggested")}</h3>}
             {suggested.map(({ facts, reason }) => row(facts, reasonWords(reason, now, t)))}
