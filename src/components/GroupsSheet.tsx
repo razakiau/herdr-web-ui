@@ -152,7 +152,8 @@ export function GroupsSheet({ answer, failed, machines, hostChats, costs, onOpen
 /** The dots of a group's rail: at most this many, then "… N more". */
 const RAIL_DOTS = 8;
 
-function GroupCard({ group, answer, rows, total, pcName, locale, onOpen }: {
+/** One group as a card: the Groups sheet's, and the sidebar's Groups lens (GroupsLens.tsx). */
+export function GroupCard({ group, answer, rows, total, pcName, locale, onOpen }: {
   group: ChatGroup; answer: GroupsAnswer; rows: ReadonlyMap<string, HostChatRow>; total: CostSplit | null; pcName(pc: string): string; locale: string; onOpen(): void;
 }) {
   const t = useT();

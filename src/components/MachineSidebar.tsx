@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, GalleryVerticalEnd, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Copy, Download, Ellipsis, FoldVertical, GalleryVerticalEnd, ListTree, MessageSquarePlus, Monitor, Pin, PinOff, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import type { Machine, MachineState, MachineUpdate } from "../../shared/machines.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { answerMachineSetup, machineRequest } from "../lib/api.ts";
@@ -27,7 +27,8 @@ import { useT, type Translate } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { machineErrorText, saysHerdrAway } from "../lib/userError.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { groupsView } from "../lib/groups.ts";
+import { groupsView, useGroups } from "../lib/groups.ts";
+import { GroupsLens } from "./GroupsLens.tsx";
 import { useSettings } from "../lib/settings.ts";
 
 /** The PC header's state word; "connected" is the quiet default and shows as a dot alone, every other state also writes its word under the name. */
@@ -57,6 +58,8 @@ interface Props {
   /** the PC whose "All agents on <PC>…" is open (with `folder`, "Chats in <folder>…"), held by the app so the header's ⋯ opens it too; this sidebar keeps its own without them */
   allAgentsOn?: AllAgentsOn | null;
   onAllAgents?(on: AllAgentsOn | null): void;
+  /** the sidebar head's design under review (ZAC-265 round 5, dev only: the harness sets it, App does not): V1 quiet tabs, V2 search first, V3 one merged row */
+  headVariant?: SidebarHeadVariant;
   /** an agent host workspace closed (its ⋯ or the header's); the app moves off it when it is on screen */
   onCloseHostWorkspace?(machineId: string, cwd: string): void;
 }
@@ -157,13 +160,20 @@ export function MachineSidebar(props: Props) {
   const [pcsFolded, setPcsFolded] = useState(false);
   // one list, two lenses (owner, ZAC-233 option B): what the agents do, or the PCs' places; kept per device.
   // A search looks through both, and the lens is back once it closes
-  const [lens, setLensState] = useState<SidebarLens>(storedLens);
+  const [storedPick, setLensState] = useState<SidebarLens>(storedLens);
   const setLens = (next: SidebarLens): void => {
     setLensState(next);
     try { localStorage.setItem(LENS_KEY, next); } catch { /* storage denied: for the page */ }
   };
+  // Groups is the third lens while Settings → Chat groups is on (owner, 2026-11-01); off, a kept Groups pick reads as Agents
+  const { settings: { chatGroups } } = useSettings();
+  const groups = useGroups(chatGroups);
+  const lens = shownLens(storedPick, chatGroups);
   const showAgents = searching || lens === "agents";
   const showPcs = searching || lens === "pcs";
+  const showGroups = !searching && lens === "groups";
+  const variant = props.headVariant ?? "V1";
+  const [lensMenu, setLensMenu] = useState<HTMLElement | null>(null);
   const allOn = props.onAllAgents ? props.allAgentsOn ?? null : ownAllOn;
   const setAllOn = props.onAllAgents ?? setOwnAllOn;
   // the PCs placed by hand on this device (lib/hostPlacement.ts foldPcs): kept open from "Other PCs",
@@ -189,6 +199,10 @@ export function MachineSidebar(props: Props) {
   // the Agents tab says how many rows its list holds, like the PCs tab (owner, ZAC-233: the asking count is the Needs you facet's)
   const listPins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const agentCount = agentListCount(props.machines, hostChats, listPins);
+  // the lenses, each with how many rows (or groups) it holds; Groups only while chat groups are on
+  const lensItems = sidebarLenses({ chatGroups, agents: agentCount, groups: groups?.answer ? groups.answer.groups.length : null, pcs: props.machines.length })
+    .map((item) => ({ ...item, icon: LENS_ICON[item.id],
+      label: item.id === "agents" ? t("Agents") : item.id === "groups" ? t("Groups") : t("PCs") }));
   const allPc = allOn !== null ? hostChats.get(allOn.machineId) : undefined;
   const allMachine = props.machines.find((machine) => machine.id === allOn?.machineId);
   // the PCs the costs chip asks: those with host chats, the only ones whose bridge can have a Copilot log
@@ -198,28 +212,42 @@ export function MachineSidebar(props: Props) {
   }), [props.machines, hostChats]);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs. The
   // filter above the lists is a row of the same grid, one field and its clear, never taller than a row.
-  return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div className="sidebar-shell">
+  return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div className="sidebar-shell" data-head-variant={variant}>
     {searching && <div className="sidebar-filter" role="search" aria-label={t("Filter workspaces and agents")}>
       <label className="sidebar-filter-label" htmlFor={filterId}><Search aria-hidden="true" /><span className="visually-hidden">{t("Filter")}</span></label>
       <input ref={filterInput} id={filterId} className="input sidebar-filter-input" type="search" value={query} aria-label={t("Filter workspaces and agents")} placeholder={t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
       <datalist id={suggestionsId}>{suggestions.map((label) => <option key={label} value={label} />)}</datalist>
       <button type="button" className="sidebar-filter-clear" aria-label={query === "" ? t("Close search") : t("Clear filter")} title={query === "" ? t("Close search") : t("Clear filter")} onClick={clearOrClose}><X aria-hidden="true" /></button>
     </div>}
-    {!searching && <div className="sidebar-lens-row">
-      <div className="sidebar-lens" role="tablist" aria-label={t("Sidebar view")}>
-        <button type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === "agents"} onClick={() => setLens("agents")}>
-          {t("Agents")}<span className="sidebar-lens-count">{agentCount}</span>
-        </button>
-        <button type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === "pcs"} onClick={() => setLens("pcs")}>
-          {t("PCs")}<span className="sidebar-lens-count">{props.machines.length}</span>
-        </button>
+    {!searching && <div className="sidebar-head">
+      {/* V2: the search leads, a field to tap (it opens the same filter row in its place) */}
+      {variant === "V2" && <button ref={searchToggle} type="button" className="sidebar-search-field" aria-label={t("Search workspaces and agents")} onClick={openSearch}>
+        <Search aria-hidden="true" /><span>{t("Search workspaces and agents")}</span>
+      </button>}
+      <div className="sidebar-lens-row">
+        {variant === "V3"
+          // V3: the lens is the row's title, a menu of the three; the facets under it are the only selector row
+          ? <button type="button" className="sidebar-lens-menu" aria-haspopup="menu" aria-expanded={lensMenu !== null} aria-label={`${t("Sidebar view")}: ${lensItems.find((item) => item.id === lens)!.label}`}
+            onClick={(event) => setLensMenu(lensMenu ? null : event.currentTarget)}>
+            <span className="sidebar-lens-menu-name">{lensItems.find((item) => item.id === lens)!.label}</span>
+            {lensItems.find((item) => item.id === lens)!.count !== null && <span className="sidebar-lens-count">{lensItems.find((item) => item.id === lens)!.count}</span>}
+            <ChevronDown className="sidebar-lens-menu-caret" aria-hidden="true" />
+          </button>
+          : <div className="sidebar-lens" role="tablist" aria-label={t("Sidebar view")}>
+            {lensItems.map((item) => <button key={item.id} type="button" role="tab" className="sidebar-lens-tab" aria-selected={lens === item.id} onClick={() => setLens(item.id)}>
+              {item.label}{item.count !== null && <span className="sidebar-lens-count">{item.count}</span>}
+            </button>)}
+          </div>}
+        {variant !== "V2" && <button ref={searchToggle} type="button" className="sidebar-row-action sidebar-search-toggle" aria-label={t("Search workspaces and agents")} title={t("Search workspaces and agents")} onClick={openSearch}><Search aria-hidden="true" /></button>}
       </div>
-      <button ref={searchToggle} type="button" className="sidebar-row-action sidebar-search-toggle" aria-label={t("Search workspaces and agents")} title={t("Search workspaces and agents")} onClick={openSearch}><Search aria-hidden="true" /></button>
     </div>}
+    {lensMenu && <RowMenu anchor={lensMenu} title={t("Sidebar view")} align="start" popover onClose={() => setLensMenu(null)}
+      items={lensItems.map((item) => ({ id: item.id, label: item.label, hint: item.count === null ? undefined : String(item.count), icon: item.icon, current: lens === item.id, run: () => setLens(item.id) }))} />}
     {/* one scroll: the lens's list, or both under a search */}
     <div className="sidebar-scroll">
       {showAgents && <AgentSidebar lens machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect}
         hostChats={hostChats} selectedHostChat={props.selectedHostChat} onSelectHostChat={props.onSelectHostChat} />}
+      {showGroups && <GroupsLens answer={groups?.answer ?? null} failed={groups?.failed ?? false} machines={props.machines} hostChats={hostChats} />}
       <div className="machine-list" aria-label={t("PCs and workspaces")} hidden={!showPcs}>
         {/* the PCs fold as the Agents above them do (owner, ZAC-233), for this page */}
         {searching && <h2 className="sidebar-pcs-head"><button type="button" className="sidebar-section-label agent-section-toggle" aria-expanded={!pcsFolded} onClick={() => setPcsFolded(!pcsFolded)}>
@@ -258,9 +286,28 @@ export function MachineSidebar(props: Props) {
 
 const KEPT_KEY = "ovis:pcs-kept-open";
 const LENS_KEY = "ovis:sidebar-lens";
-export type SidebarLens = "agents" | "pcs";
+export type SidebarLens = "agents" | "groups" | "pcs";
+/** The sidebar head's designs under review (ZAC-265 round 5): a dev switch, never a setting. */
+export type SidebarHeadVariant = "V1" | "V2" | "V3";
+const LENS_ICON = { agents: Bot, groups: GalleryVerticalEnd, pcs: Monitor } as const satisfies Record<SidebarLens, typeof Bot>;
+
+/** The head's lenses in order, each with how many rows (or groups) it holds; Groups only while
+ *  Settings → Chat groups is on (owner, 2026-11-01). A null count is one not known yet. */
+export function sidebarLenses(on: { chatGroups: boolean; agents: number; groups: number | null; pcs: number }): { id: SidebarLens; count: number | null }[] {
+  return [
+    { id: "agents", count: on.agents },
+    ...(on.chatGroups ? [{ id: "groups" as const, count: on.groups }] : []),
+    { id: "pcs", count: on.pcs },
+  ];
+}
+
+/** The lens shown: a kept Groups pick reads as Agents while chat groups are off. */
+export function shownLens(stored: SidebarLens, chatGroups: boolean): SidebarLens {
+  return stored === "groups" && !chatGroups ? "agents" : stored;
+}
+
 function storedLens(): SidebarLens {
-  try { return localStorage.getItem(LENS_KEY) === "pcs" ? "pcs" : "agents"; } catch { return "agents"; }
+  try { const kept = localStorage.getItem(LENS_KEY); return kept === "pcs" || kept === "groups" ? kept : "agents"; } catch { return "agents"; }
 }
 const FOLDED_KEY = "ovis:pcs-kept-folded";
 

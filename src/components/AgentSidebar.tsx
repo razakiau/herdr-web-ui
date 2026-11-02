@@ -311,6 +311,15 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   }, [roster, filter, selectedHostChat]);
   // the lens's facet (lib/agentFacets.ts): one status at a time, pinned rows too; for the page only
   const [facet, setFacet] = useState<AgentFacet>("all");
+  // the facet row fades at its end only while it has more to scroll to (All agents' pill row does the same)
+  const facetRow = useRef<HTMLDivElement>(null);
+  const [facetsMore, setFacetsMore] = useState(false);
+  const measureFacets = (): void => {
+    const node = facetRow.current;
+    const more = node !== null && node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
+    setFacetsMore((was) => was === more ? was : more);
+  };
+  useLayoutEffect(measureFacets);
   const faceted = useMemo(() => !lens || facet === "all" ? split
     : { pinned: split.pinned.filter((row) => inFacet(facet, shown(row))), rest: split.rest.filter((row) => inFacet(facet, shown(row))) },
   [split, lens, facet, activity]);
@@ -500,12 +509,16 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       {!lens && allAgents.length > 0 && <button type="button" className="sidebar-row-action agent-section-more" aria-label={t("More for {title}", { title: t("Agents") })} aria-haspopup="menu" aria-expanded={allMenu !== null} onClick={(event) => setAllMenu(allMenu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>}
     </div>
     {allMenu && <RowMenu anchor={allMenu} title={t("Agents")} items={allAgents} onClose={() => setAllMenu(null)} />}
-    {lens && allRows.length > 0 && <div className="agent-facets" role="radiogroup" aria-label={t("Show agents")}>
-      {AGENT_FACETS.map((each) => <button key={each} type="button" role="radio" className="agent-facet" data-status={each} aria-checked={facet === each} onClick={() => setFacet(each)}>
-        {each !== "all" && <FacetMark status={each} />}
-        <span>{facetLabel(each, t)}</span>
-        <span className="agent-facet-count">{counts[each]}</span>
-      </button>)}
+    {/* the facets: one row of quiet text chips, a finger's height to tap, the picked one in the sidebar's
+        selection; a row too long for the sidebar scrolls sideways and fades at its end, never cut */}
+    {lens && allRows.length > 0 && <div className="agent-facets">
+      <div ref={facetRow} className={`agent-facets-row${facetsMore ? " has-more" : ""}`} role="radiogroup" aria-label={t("Show agents")} onScroll={measureFacets}>
+        {AGENT_FACETS.map((each) => <button key={each} type="button" role="radio" className="agent-facet" data-status={each} aria-checked={facet === each} onClick={() => setFacet(each)}>
+          {each !== "all" && <FacetMark status={each} />}
+          <span>{facetLabel(each, t)}</span>
+          <span className="agent-facet-count">{counts[each]}</span>
+        </button>)}
+      </div>
     </div>}
     <div className="agent-list-contents" id={listId} hidden={folded}>
       <p className={shownEmpty === null ? "visually-hidden" : "agent-empty"} role="status">{shownEmpty}</p>

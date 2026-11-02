@@ -382,50 +382,63 @@
 .agent-group[data-rank="1"] .agent-group-label { color: var(--status-working); }
 .agent-group[data-rank="2"] .agent-group-label { color: var(--status-done); }
 
-/* the Agents lens's facets (owner, ZAC-233): All | Needs you | Working | Done, one at a time, each in its
-   status colour. Sized so all four fit a 390px phone's drawer; a narrower sidebar scrolls them sideways. */
-/* Stuck to the top of the sidebar's one scroll (ZAC-265 round 4, owner), as the Agents | PCs tabs above
-   it stay put: the panel's own solid fill, edge to edge over the list's gutter, so a row passes under
-   it whole and nothing shows through. No rule under it (DESIGN.md: no rule separates sections). The
-   Pinned caption is not part of it: it is the card's own label, on the card's top edge, and goes with it. */
+/* the Agents lens's facets (owner, ZAC-233): All | Needs you | Working | Done, one at a time. Round 5 of
+   ZAC-265 (owner: two stacked selector rows of different shapes looked cheap): quiet text chips with no
+   outline, the picked one in the sidebar's selection fill (--side-selected, as a selected row), each
+   status's mark in its colour. Stuck to the top of the sidebar's one scroll on the panel's solid fill,
+   edge to edge, so a row passes under it whole (round 4); no rule under it (DESIGN.md). The first
+   chip's box starts at the rows' own edge (--side-gutter), so its words sit on the marks' column. A
+   row too long for the sidebar scrolls sideways and fades at its end; the fade is on the inner row
+   only, so the sticky fill stays opaque. The Pinned caption is the card's own label and scrolls with it. */
 .agent-facets {
   position: sticky;
   top: 0;
   z-index: 2;
-  display: flex;
-  gap: var(--space-1);
   margin-inline: calc(var(--side-gutter) * -1);
-  padding: var(--space-1) calc(var(--side-gutter) + var(--space-2)) var(--space-2);
+  padding: var(--space-1) 0 var(--space-2);
   background: var(--bg-panel);
+}
+/* the chips touch box to box, their words a chip's two paddings apart; the first one's words on the
+   rows' glyph column (gutter + --space-2), so all four fit a phone's drawer at 390 */
+.agent-facets-row {
+  --facet-pad: calc(var(--space-1) * 1.5);
+  display: flex;
+  gap: 0;
+  padding-inline: calc(var(--side-gutter) + var(--space-2) - var(--facet-pad)) var(--side-gutter);
   overflow-x: auto;
   scrollbar-width: none;
+  overscroll-behavior-x: contain;
 }
-.agent-facets::-webkit-scrollbar { display: none; }
+.agent-facets-row.has-more { mask-image: linear-gradient(to right, currentColor calc(100% - var(--space-8)), transparent); }
+.agent-facets-row::-webkit-scrollbar { display: none; }
 .agent-facet {
-  --facet: var(--border-strong);
-  --facet-tint: var(--bg-hover);
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
   flex: none;
-  min-height: 28px;
-  padding: 2px 6px;
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-pill);
+  min-height: calc(var(--chip-h) + var(--space-2));
+  padding: 0 var(--facet-pad);
+  border: 0;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text);
+  color: var(--text-dim);
   font: inherit;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   white-space: nowrap;
   cursor: pointer;
 }
-.agent-facet[data-status="blocked"] { --facet: var(--status-blocked); --facet-tint: var(--status-blocked-tint); }
-.agent-facet[data-status="working"] { --facet: var(--status-working); --facet-tint: var(--status-working-tint); }
-.agent-facet[data-status="done"] { --facet: var(--status-done); --facet-tint: var(--status-done-tint); }
-.agent-facet-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.agent-facet[aria-checked="true"] { border-color: var(--facet); background: var(--facet-tint); color: var(--text-strong); }
-.agent-facet[aria-checked="true"] .agent-facet-count { color: var(--text-strong); }
-.agent-facet:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.agent-facet-count { color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+@media (hover: hover) { .agent-facet:hover { background: var(--side-hover); color: var(--text); } }
+.agent-facet[aria-checked="true"] { background: var(--side-selected); color: var(--text-strong); }
+.agent-facet:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* drawn smaller than a finger, tapped at a finger's height: on a touch screen the row is a finger
+   high and each chip's tap area fills it (the scroller clips anything taller) */
+@media (pointer: coarse) {
+  .agent-facets { padding-block: 0 var(--space-1); }
+  .agent-facets-row { padding-block: calc((var(--touch-target) - var(--chip-h) - var(--space-2)) / 2); }
+  .agent-facet::before { content: ""; position: absolute; inset: calc((var(--touch-target) - var(--chip-h) - var(--space-2)) / -2) 0; }
+}
 /* the row's mark, tight to its word: not the row's status column, no pill of its own */
 .agent-facet .agent-facet-mark { flex: 0 0 auto; width: auto; height: auto; background: none; padding: 0; }
 /* a facet is a filter, not a live agent: its working mark holds still (only rows breathe) */
