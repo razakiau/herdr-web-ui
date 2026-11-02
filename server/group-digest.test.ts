@@ -106,6 +106,23 @@ describe("refreshing a group's digest", () => {
     expect(reads).toEqual(["b"]);
   });
 
+  it("a summary written after the digest (its group pass failed) is not skipped on the next refresh", async () => {
+    const { id, lastCalls, deps } = setup();
+    let clock = Date.parse("2026-11-01T12:00:00.000Z");
+    const now = () => clock;
+    await refreshDigest(id, CHOICE, deps({ now }));
+    clock += 60_000;
+    lastCalls.set("local a", "2026-11-01T11:00:00.000Z");
+    const failing = fakeOmniRoute({ groupAnswer: "not json" });
+    await refreshDigest(id, CHOICE, deps({ complete: failing.complete, now })).catch(() => undefined);
+    expect(failing.calls.map((call) => call.kind)).toEqual(["summary", "group"]);
+    clock += 60_000;
+    const omni = fakeOmniRoute();
+    const digest = await refreshDigest(id, CHOICE, deps({ complete: omni.complete, now }));
+    expect(omni.calls.map((call) => call.kind)).toEqual(["group"]);
+    expect(digest.writtenAt).toBe(new Date(clock).toISOString());
+  });
+
   it("archived once: an archived member with a summary is never summarised again", async () => {
     const { id, omni, lastCalls, archived, deps } = setup();
     await refreshDigest(id, CHOICE, deps());

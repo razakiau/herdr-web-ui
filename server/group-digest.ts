@@ -205,7 +205,12 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
   const old = store.digest(groupId);
   const seen = new Set(old?.chatsSeen ?? []);
   const sameChats = old !== null && seen.size === members.length && members.every((member) => seen.has(member.key));
-  if (old && written === 0 && sameChats && old.model === choice.model && old.effort === choice.effort) return old;
+  // and no summary newer than the digest: one written by a run whose group pass failed is not in it yet
+  const summarisedBefore = old !== null && members.every((member) => {
+    const summary = store.summary(member.pc, member.session);
+    return !summary || Date.parse(summary.writtenAt) <= Date.parse(old.writtenAt);
+  });
+  if (old && written === 0 && sameChats && summarisedBefore && old.model === choice.model && old.effort === choice.effort) return old;
 
   deps.onProgress?.({ phase: "group", done: 0, total: 1 });
   const summaries = members.flatMap((member) => { const summary = store.summary(member.pc, member.session); return summary ? [{ member, summary }] : []; });
