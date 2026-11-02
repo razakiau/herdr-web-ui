@@ -81,7 +81,7 @@ export function RefreshDigestSheet({ models, model, effort, estimate, onSave, on
           </div>
           <p className="refresh-digest-estimate" role="status">{guess && parts
             ? <>
-              <strong>{parts.usd}</strong>
+              {parts.usd !== null ? <strong>{parts.usd}</strong> : <span>{t("No price for this model")}</span>}
               <span aria-hidden="true">·</span>
               <span>{t(guess.chats === 1 ? "1 chat summary" : "{n} chat summaries", { n: guess.chats })} + {t(guess.groupPasses === 1 ? "1 group pass" : "{n} group passes", { n: guess.groupPasses })}</span>
               <span aria-hidden="true">·</span>

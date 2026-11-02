@@ -93,7 +93,7 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
           <p className="digest-empty">{t("No digest yet. {chats} since {date}.", { chats: chatsWord, date: shortDate(since, locale) })}</p>
           {failure && <p className="digest-error" role="alert"><TriangleAlert aria-hidden="true" /><span>{`${failure.source}: ${failure.message}`}</span></p>}
           <button type="button" className="btn digest-write" onClick={onRefresh}>
-            {estimate ? t("Write digest ({usd})", { usd: `≈ ${digestUsd(estimate.usd)}` }) : t("Write digest")}
+            {estimate && estimate.usd !== null ? t("Write digest ({usd})", { usd: `≈ ${digestUsd(estimate.usd)}` }) : t("Write digest")}
           </button>
         </>}
     </section>;

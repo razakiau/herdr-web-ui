@@ -96,7 +96,8 @@ export function digestUsd(usd: number): string {
 }
 
 /** The estimate's numbers, apart from its words: "≈ $0.003", "~38K". */
-export function estimateParts(estimate: DigestEstimate): { usd: string; tokens: string } {
+export function estimateParts(estimate: DigestEstimate): { usd: string | null; tokens: string } {
   const k = estimate.tokensIn >= 1_000_000 ? `${(estimate.tokensIn / 1_000_000).toFixed(1)}M` : estimate.tokensIn >= 1000 ? `${Math.round(estimate.tokensIn / 1000)}K` : String(estimate.tokensIn);
-  return { usd: `≈ ${digestUsd(estimate.usd)}`, tokens: `~${k}` };
+  // a model with no price: the tokens still say how big the run is
+  return { usd: estimate.usd === null ? null : `≈ ${digestUsd(estimate.usd)}`, tokens: `~${k}` };
 }

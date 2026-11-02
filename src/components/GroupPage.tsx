@@ -27,7 +27,7 @@ import "./GroupsSheet.css";
 import "./GroupTrail.css";
 import "./GroupPage.css";
 
-import type { ChatGroup, DigestEffort, DigestEstimate, DigestFailure, DigestProgress, GroupsAnswer } from "../../shared/groups.ts";
+import type { ChatGroup, DigestEffort, DigestEstimate, DigestFailure, DigestProgress, GroupsAnswer, GroupDigest } from "../../shared/groups.ts";
 import type { HostArtifact, HostArtifactType, HostChatRow } from "../../shared/host-chats.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
@@ -69,11 +69,13 @@ export interface GroupPageProps {
   /** a file artifact, in herdr's viewer on its chat's PC */
   onOpenFile?(target: { machineId: string; path: string }): void;
   onClose(): void;
-  /** the digest's refresh (ZAC-265 PR 2, no server yet): its progress or failure, the models to pick from, the estimate, and the write */
+  /** the digest (ZAC-265 PR 2, lib/groupDigest.ts): the digest itself, its refresh's progress or failure, the models to pick from, the estimate, and the write */
   digest?: DigestControls;
 }
 
 export interface DigestControls {
+  /** the whole digest (GET /api/groups/<id>/digest); undefined while it is read, the card then empty */
+  digest?: GroupDigest | null;
   progress?: DigestProgress | null;
   failure?: DigestFailure | null;
   models?: readonly string[];
@@ -234,7 +236,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const shownListed = more ? listed : listed.slice(0, ARTIFACTS_SHOWN);
   // the PR and issue states, asked of this server as the chat's pills ask them (any connected PC stands for the page)
   const anyPc = machines.find((machine) => machine.state === "connected")?.id;
-  const digest = answer.digests.find((each) => each.groupId === group.id) ?? null;
+  const digest = controls.digest ?? null;
   const references = useMemo(() => [...credited.map((entry) => entry.artifact), ...digestArtifacts(digest)], [credited, digest]);
   const referenceStates = useReferenceStates(anyPc, references);
   const creditOf = new Map(credited.map((entry) => [entry.artifact, entry.from]));
@@ -268,7 +270,9 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
     const at = chatLog(feed, member.pc, member.session)?.lastCallAt;
     return at ? [[chatKey(member.pc, member.session), at] as const] : [];
   }));
-  const stale = digest ? staleCount(digest, group.members, lastCalls) : 0;
+  // without the costs feed (costs not tracked) the server's count (GET /api/groups), from the PCs' own polls
+  const meta = answer.digests.find((each) => each.groupId === group.id);
+  const stale = !digest ? 0 : feed ? staleCount(digest, group.members, lastCalls) : meta?.staleCount ?? 0;
   // Per chat newest first, by when each chat last changed; a chat gone from its PC keeps its place by the digest's order
   const perChat = (digest?.perChat ?? []).map((line, index) => ({ ...line, name: shortChatName(titleOf(line)), at: Date.parse(rowOf(line)?.modified_at ?? "") || Date.parse(digest!.writtenAt) - index }))
     .sort((a, b) => b.at - a.at);

@@ -8,6 +8,7 @@
 import { useEffect, useMemo } from "react";
 
 import type { Machine } from "../../shared/machines.ts";
+import { useGroupDigest } from "../lib/groupDigest.ts";
 import { chatCosts, groupsView, useGroups, useGroupsView } from "../lib/groups.ts";
 import type { HostPc } from "../lib/hostChats.ts";
 import { useCostsFeed } from "../lib/rowCache.ts";
@@ -35,6 +36,8 @@ export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
   // the open group deleted (here or elsewhere): its page goes, back to what was under it
   const gone = view.group !== null && answer !== null && !answer.groups.some((each) => each.id === view.group);
   useEffect(() => { if (gone) groupsView.closeGroup(); }, [gone]);
+  // the open group's digest (lib/groupDigest.ts): read as its page opens, and on each groups nudge
+  const digestStore = useGroupDigest(on && view.group !== null ? view.group : null);
   if (!open) return null;
   const group = view.group === null ? null : answer?.groups.find((each) => each.id === view.group) ?? null;
   const openChat = (target: { machineId: string; session: string }): void => {
@@ -45,6 +48,12 @@ export function GroupsHost({ machines, hostChats, onOpenChat, onOpenFile }: {
     {view.list && <GroupsSheet answer={answer} failed={groups?.failed ?? false} machines={machines} hostChats={hostChats} costs={costs}
       onOpenGroup={(id) => groupsView.openGroup(id)} onClose={() => groupsView.closeList()} />}
     {group !== null && answer !== null && <GroupPage key={group.id} group={group} answer={answer} machines={machines} hostChats={hostChats} costs={costs} feed={feed} from={view.from}
+      digest={digestStore ? (() => {
+        const state = digestStore.state();
+        const meta = answer.digests.find((each) => each.groupId === group.id);
+        return { digest: state.digest, progress: state.progress, failure: state.failure, spentUsd: Math.max(state.spentUsd, meta?.spentUsd ?? 0),
+          models: digestStore.models() ?? undefined, estimate: digestStore.estimate, onWrite: (pick) => { void digestStore.write(pick); } };
+      })() : undefined}
       onOpenChat={openChat} onOpenFile={onOpenFile ? (target) => { groupsView.closeAll(); onOpenFile(target); } : undefined} onClose={() => groupsView.closeGroup()} />}
     {view.addTo !== null && <AddToGroupSheet key={`${view.addTo.pc} ${view.addTo.session}`} chat={view.addTo} answer={answer} hostChats={hostChats} feed={feed}
       onClose={() => groupsView.closeAddTo()} />}

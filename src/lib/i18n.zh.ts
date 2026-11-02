@@ -825,6 +825,7 @@ const BASE: Record<string, string> = {
   "{source}: {message} · kept the digest from {age}": "{source}：{message} · 保留了 {age} 的摘要",
   "Refresh the digest": "刷新摘要",
   "Working out the cost…": "正在估算费用…",
+  "No price for this model": "此模型没有价格",
   "1 chat summary": "1 个聊天摘要",
   "{n} chat summaries": "{n} 个聊天摘要",
   "1 group pass": "1 次分组处理",

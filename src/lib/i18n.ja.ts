@@ -823,6 +823,7 @@ const BASE: Record<string, string> = {
   "{source}: {message} · kept the digest from {age}": "{source}: {message} · {age} のダイジェストを残しました",
   "Refresh the digest": "ダイジェストを更新",
   "Working out the cost…": "費用を計算中…",
+  "No price for this model": "このモデルの料金は不明",
   "1 chat summary": "チャット要約 1 件",
   "{n} chat summaries": "チャット要約 {n} 件",
   "1 group pass": "グループ処理 1 回",

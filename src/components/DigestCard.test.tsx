@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
-import type { GroupDigest, GroupMember } from "../../shared/groups.ts";
+import type { GroupDigest, GroupDigestAnswer, GroupMember } from "../../shared/groups.ts";
+import { createDigestStore, type DigestTransport } from "../lib/groupDigest.ts";
 import { digestFacts, digestUsd, estimateParts, perChatWeeks, staleCount } from "../lib/digest.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { DigestCard, digestModelName, type DigestCardProps } from "./DigestCard.tsx";
@@ -184,5 +185,70 @@ describe("the digest card", () => {
     expect(textOf(root)).toContain("Summarising 3 of 11 chats…");
     expect(classed(root, "digest-card")[0]!.props["className"]).toContain("is-writing");
     expect(classed(root, "digest-link")).toHaveLength(0);
+  });
+});
+
+describe("the digest's store (lib/groupDigest.ts) drives the card", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  function transport(answers: GroupDigestAnswer[], write: () => Promise<void> = async () => {}) {
+    const reads: number[] = [];
+    let index = 0;
+    return {
+      reads,
+      transport: {
+        read: async (groupId: number) => { reads.push(groupId); return answers[Math.min(index++, answers.length - 1)]!; },
+        write: async () => write(),
+        models: async () => ["opencode-go-claude-haiku-5-5", "m2"],
+        estimate: async () => ({ chats: 1, groupPasses: 1, tokensIn: 12_000, usd: null }),
+      } satisfies DigestTransport,
+    };
+  }
+
+  it("a run's stage renders as the card's progress, then the digest", async () => {
+    const fake = transport([
+      { digest: null, spentUsd: 0, writing: { phase: "summaries", done: 1, total: 3 } },
+      { digest: null, spentUsd: 0, writing: { phase: "group", done: 0, total: 1 } },
+      { digest: DIGEST, spentUsd: 0.004 },
+    ]);
+    let changes = 0;
+    const store = createDigestStore(1, fake.transport, () => { changes += 1; });
+    store.read();
+    await settle();
+    expect(store.state().progress).toEqual({ stage: "summaries", done: 1, total: 3 });
+    const { root } = await card({ digest: null, progress: store.state().progress });
+    expect(textOf(classed(root, "digest-progress")[0]!)).toBe("Summarising 2 of 3 chats…");
+    await act(async () => { renderer?.unmount(); });
+    store.read();
+    await settle();
+    expect(store.state().progress).toEqual({ stage: "digest" });
+    store.read();
+    await settle();
+    expect(store.state()).toEqual({ digest: DIGEST, progress: null, failure: null, spentUsd: 0.004 });
+    expect(changes).toBe(3);
+  });
+
+  it("a failed run renders its error under the kept digest; a refused write too", async () => {
+    const failure = { source: "OmniRoute", message: "502 Bad Gateway", at: new Date(NOW - 60_000).toISOString() };
+    const fake = transport([{ digest: DIGEST, spentUsd: 0.006, error: failure }], async () => { throw new Error("This group's digest is being written"); });
+    const store = createDigestStore(1, fake.transport, () => {});
+    store.read();
+    await settle();
+    const { root } = await card({ failure: store.state().failure });
+    expect(textOf(classed(root, "digest-error")[0]!)).toContain("OmniRoute: 502 Bad Gateway · kept the digest from");
+    await act(async () => { renderer?.unmount(); });
+    await store.write({ model: "m2", effort: "high" });
+    await settle();
+    expect(store.state().failure).toMatchObject({ source: "Ovis", message: "This group's digest is being written" });
+  });
+
+  it("models and estimates are asked once and kept; an estimate without a price says the tokens", async () => {
+    const fake = transport([{ digest: null, spentUsd: 0 }]);
+    const store = createDigestStore(1, fake.transport, () => {});
+    expect(store.models()).toBeNull();
+    expect(store.estimate("m2", "low")).toBeNull();
+    await settle();
+    expect(store.models()).toEqual(["opencode-go-claude-haiku-5-5", "m2"]);
+    const estimate = store.estimate("m2", "low")!;
+    expect(estimateParts(estimate)).toEqual({ usd: null, tokens: "~12K" });
   });
 });
