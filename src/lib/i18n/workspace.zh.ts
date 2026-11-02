@@ -56,7 +56,6 @@ export const WORKSPACE_ZH: Record<string, string> = {
   "model, effort": "模型、推理强度",
   "Empty: the agent's own model.": "留空则使用代理自身的模型。",
   "One model name, without spaces.": "填写一个不含空格的模型名称。",
-  "Effort": "推理强度",
   "Levels depend on the model.": "可选的级别取决于模型。",
   "First message": "第一条消息",
   "Optional": "可选",

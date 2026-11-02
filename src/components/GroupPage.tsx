@@ -27,7 +27,7 @@ import "./GroupsSheet.css";
 import "./GroupTrail.css";
 import "./GroupPage.css";
 
-import type { ChatGroup, GroupsAnswer } from "../../shared/groups.ts";
+import type { ChatGroup, DigestEffort, DigestEstimate, DigestFailure, DigestProgress, GroupsAnswer } from "../../shared/groups.ts";
 import type { HostArtifact, HostArtifactType, HostChatRow } from "../../shared/host-chats.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
@@ -39,13 +39,16 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { basename, chatAge, fetchHostChat, type HostPc } from "../lib/hostChats.ts";
 import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { daysBack } from "../lib/hostChatGroups.ts";
-import type { CostsFeed } from "../lib/rowCache.ts";
+import { chatLog, type CostsFeed } from "../lib/rowCache.ts";
+import { digestArtifacts, digestUsd, staleCount } from "../lib/digest.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import type { CostSplit } from "../lib/sessionCost.ts";
 import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
 import { RowCostCell } from "./AllAgentsSheet.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
+import { DigestCard } from "./DigestCard.tsx";
+import { RefreshDigestSheet } from "./RefreshDigestSheet.tsx";
 import { GroupNameSheet, rowsByKey, shortDate } from "./GroupsSheet.tsx";
 import { GroupStateSummary, hasGroupState, useMemberStates } from "./GroupState.tsx";
 import { ArtifactList, useReferenceStates } from "./HostSessionPills.tsx";
@@ -66,6 +69,20 @@ export interface GroupPageProps {
   /** a file artifact, in herdr's viewer on its chat's PC */
   onOpenFile?(target: { machineId: string; path: string }): void;
   onClose(): void;
+  /** the digest's refresh (ZAC-265 PR 2, no server yet): its progress or failure, the models to pick from, the estimate, and the write */
+  digest?: DigestControls;
+}
+
+export interface DigestControls {
+  progress?: DigestProgress | null;
+  failure?: DigestFailure | null;
+  models?: readonly string[];
+  estimate?(model: string, effort: DigestEffort): DigestEstimate | null;
+  /** what every digest of this group has cost so far (the header's "digests $x"); the last one's when not known */
+  spentUsd?: number;
+  /** the card open at first (the harness's shots) */
+  expanded?: boolean;
+  onWrite?(pick: { model: string; effort: DigestEffort }): void;
 }
 
 const NO_COSTS: ReadonlyMap<string, CostSplit> = new Map();
@@ -145,6 +162,9 @@ const dayOf = (at: number, now: number, locale: string, t: Translate): string =>
 /** How many of a kind's artifacts show before "Show N more". */
 export const ARTIFACTS_SHOWN = 5;
 
+/** The server's default effort word as the sheet's three. */
+const digestEffortOf = (effort: string): DigestEffort => effort === "medium" || effort === "high" ? effort : "low";
+
 /** How a chat got into the tree, in plain words: "The first chat", "Started by 262", "Added by you". */
 function relation(node: TreeNode, name: (session: string) => string, t: Translate): string {
   switch (node.join.kind) {
@@ -157,12 +177,12 @@ function relation(node: TreeNode, name: (session: string) => string, t: Translat
   }
 }
 
-export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS, feed = null, from = null, onOpenChat, onOpenFile, onClose }: GroupPageProps) {
+export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS, feed = null, from = null, onOpenChat, onOpenFile, onClose, digest: controls = {} }: GroupPageProps) {
   const t = useT();
   const locale = useLocale();
   const id = useId();
   const [menu, setMenu] = useState<HTMLElement | null>(null);
-  const [asking, setAsking] = useState<"rename" | "delete" | null>(null);
+  const [asking, setAsking] = useState<"rename" | "delete" | "refresh" | null>(null);
   const [kind, setKind] = useState<HostArtifactType | null>(null);
   const [more, setMore] = useState(false);
   // the branches the owner folded or opened (by the chat at their top), over the default folds
@@ -214,7 +234,8 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const shownListed = more ? listed : listed.slice(0, ARTIFACTS_SHOWN);
   // the PR and issue states, asked of this server as the chat's pills ask them (any connected PC stands for the page)
   const anyPc = machines.find((machine) => machine.state === "connected")?.id;
-  const references = useMemo(() => credited.map((entry) => entry.artifact), [credited]);
+  const digest = answer.digests.find((each) => each.groupId === group.id) ?? null;
+  const references = useMemo(() => [...credited.map((entry) => entry.artifact), ...digestArtifacts(digest)], [credited, digest]);
   const referenceStates = useReferenceStates(anyPc, references);
   const creditOf = new Map(credited.map((entry) => [entry.artifact, entry.from]));
   const pcNames = new Set(group.members.map((member) => member.pc)).size > 1;
@@ -242,6 +263,16 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   const toggle = (key: string): void => setToggled((last) => new Map(last).set(key, !folds.has(key)));
   const nameOfNode = (node: TreeNode): string => shortChatName(titleOf(node));
   const nameOfKey = (key: string): string => { const at = key.indexOf(" "); return shortChatName(titleOf({ pc: key.slice(0, at), session: key.slice(at + 1) })); };
+  // the digest (ZAC-265 PR 2): stale by each member's last model call, as the costs feed has it
+  const lastCalls = new Map(group.members.flatMap((member) => {
+    const at = chatLog(feed, member.pc, member.session)?.lastCallAt;
+    return at ? [[chatKey(member.pc, member.session), at] as const] : [];
+  }));
+  const stale = digest ? staleCount(digest, group.members, lastCalls) : 0;
+  // Per chat newest first, by when each chat last changed; a chat gone from its PC keeps its place by the digest's order
+  const perChat = (digest?.perChat ?? []).map((line, index) => ({ ...line, name: shortChatName(titleOf(line)), at: Date.parse(rowOf(line)?.modified_at ?? "") || Date.parse(digest!.writtenAt) - index }))
+    .sort((a, b) => b.at - a.at);
+  const digestSpent = controls.spentUsd ?? digest?.costUsd ?? 0;
 
   const member = (line: TreeLine) => {
     const { node } = line;
@@ -313,13 +344,17 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
               <span aria-hidden="true">·</span>
               <span>{t("{date} – now", { date: shortDate(first, locale) })}</span>
               {total && <><span aria-hidden="true">·</span><span>{listUsd(total.usd, total.floor)}</span></>}
+              {/* the digests' own calls, apart from the PCs' chat costs (spec §3 Honesty) */}
+              {digestSpent > 0 && <><span aria-hidden="true">·</span><span>{t("digests {usd}", { usd: digestUsd(digestSpent) })}</span></>}
             </span>
           </div>
           <button type="button" className="icon-button" aria-label={t("More for {title}", { title: group.name })} aria-haspopup="menu" aria-expanded={menu !== null}
             onClick={(event) => setMenu(menu ? null : event.currentTarget)}><Ellipsis aria-hidden="true" /></button>
         </header>
         <div className="modal-body group-page-body">
-          {/* the digest card goes here (Task 9): nothing shows in its place yet */}
+          <DigestCard digest={digest} stale={stale} progress={controls.progress ?? null} failure={controls.failure ?? null} chats={count} since={first}
+            estimate={controls.estimate?.(answer.digestDefaults.model, digestEffortOf(answer.digestDefaults.effort)) ?? null} perChat={perChat} states={referenceStates} now={now}
+            expanded={controls.expanded} onRefresh={() => setAsking("refresh")} onOpenChat={(target) => onOpenChat({ machineId: target.pc, session: target.session })} onOpenArtifact={openArtifact} />
           <section className="all-agents-group" aria-label={t("Chats")}>
             <h3 className="sidebar-section-label all-agents-age">{t("Chats")}</h3>
             {shown.path.length > 0 && <nav className="group-crumbs" aria-label={t("Thread")}>
@@ -361,6 +396,8 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
         { id: "rename-group", label: t("Rename…"), icon: Pencil, run: () => setAsking("rename") },
         { id: "delete-group", label: t("Delete group…"), icon: Trash2, danger: true, divider: true, run: () => setAsking("delete") },
       ]} />}
+      {asking === "refresh" && <RefreshDigestSheet models={controls.models ?? [answer.digestDefaults.model]} model={answer.digestDefaults.model} effort={digestEffortOf(answer.digestDefaults.effort)}
+        estimate={controls.estimate ?? (() => null)} onClose={() => setAsking(null)} onSave={(pick) => controls.onWrite?.(pick)} />}
       {asking === "rename" && <GroupNameSheet title={t("Rename group")} name={group.name} action={t("Save")} onClose={() => setAsking(null)}
         onSave={async (name) => { await groupsApi.rename(group.id, name); }} />}
       {asking === "delete" && <ConfirmDialog title={t("Delete group?")} body={t("Its chats stay as they are, in no group; a hand-off won't put them back.")} confirmLabel={t("Delete")}

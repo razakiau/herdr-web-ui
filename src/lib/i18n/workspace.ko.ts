@@ -56,7 +56,6 @@ export const WORKSPACE_KO: Record<string, string> = {
   "model, effort": "모델, 노력 수준",
   "Empty: the agent's own model.": "비우면 에이전트 자체 모델을 씁니다.",
   "One model name, without spaces.": "띄어쓰기 없는 모델 이름 하나를 적으세요.",
-  "Effort": "노력 수준",
   "Levels depend on the model.": "고를 수 있는 수준은 모델에 따라 다릅니다.",
   "First message": "첫 메시지",
   "Optional": "선택",

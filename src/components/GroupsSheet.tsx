@@ -20,7 +20,7 @@ import type { HostChatRow } from "../../shared/host-chats.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { chainOrder, chatKey, costOf, groupsApi, type ChainStep } from "../lib/groups.ts";
-import { basename, errorText, type HostPc } from "../lib/hostChats.ts";
+import { ageWords, basename, errorText, type HostPc } from "../lib/hostChats.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
@@ -165,7 +165,7 @@ export function GroupCard({ group, answer, rows, total, pcName, locale, onOpen }
   const firstAt = Math.min(Date.parse(group.createdAt) || Date.now(), ...group.members.map((member) => modified(rows.get(chatKey(member.pc, member.session))) || Number.POSITIVE_INFINITY));
   const pcs = [...new Set(group.members.map((member) => pcName(member.pc)))].join(", ");
   const chats = t(count === 1 ? "1 chat" : "{n} chats", { n: count });
-  const meta = [chats, pcs, total ? listUsd(total.usd, total.floor) : null, digest ? t("digest {date}", { date: shortDate(Date.parse(digest.writtenAt), locale) }) : null].filter(Boolean).join(" · ");
+  const meta = [chats, pcs, total ? listUsd(total.usd, total.floor) : null, digest ? t("digest {age}", { age: ageWords(Date.parse(digest.writtenAt), Date.now(), t) }) : null].filter(Boolean).join(" · ");
   const linked = order.filter((step) => step.join?.kind !== "manual");
   const added = order.length - linked.length;
   const dots = linked.length > RAIL_DOTS ? linked.slice(0, RAIL_DOTS - 1) : linked;

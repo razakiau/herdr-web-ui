@@ -10,7 +10,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { HostLink, LinkKind } from "../shared/host-chats.ts";
-import type { ChatGroup, ChatSummary, DigestItem, GroupDigest, GroupMember, GroupsAnswer } from "../shared/groups.ts";
+import type { ChatGroup, ChatSummary, DigestEffort, DigestItem, GroupDigest, GroupMember, GroupsAnswer } from "../shared/groups.ts";
 
 /** A group's name when its first chat's title is not known. */
 export const UNNAMED_GROUP = "Chat group";
@@ -164,7 +164,7 @@ export class GroupStore {
     const summaries: ChatSummary[] = this.db.query<{ pc: string; session: string; text: string; model: string; last_call_seen: string | null; written_at: string }, []>("SELECT * FROM chat_summaries ORDER BY pc, session").all()
       .map((row) => ({ pc: row.pc, session: row.session, text: row.text, lastCallSeen: row.last_call_seen, model: row.model, writtenAt: row.written_at }));
     const digests: GroupDigest[] = this.db.query<{ group_id: number; text: string; model: string; effort: string; cost: number | null; written_at: string; chats_seen: string }, []>("SELECT * FROM digests ORDER BY group_id").all()
-      .map((row) => ({ groupId: row.group_id, ...digestBody(row.text), model: row.model, effort: row.effort, cost: row.cost, writtenAt: row.written_at, chatsSeen: parseRecord(row.chats_seen) }));
+      .map((row) => ({ groupId: row.group_id, ...digestBody(row.text), model: row.model, effort: digestEffort(row.effort), costUsd: row.cost ?? 0, writtenAt: row.written_at, chatsSeen: parseKeys(row.chats_seen) }));
     return { groups, links, summaries, digests };
   }
 
@@ -177,7 +177,7 @@ export class GroupStore {
   setDigest(digest: GroupDigest): void {
     const body: DigestBody = { direction: digest.direction, open: digest.open, done: digest.done, perChat: digest.perChat };
     this.db.query("INSERT OR REPLACE INTO digests (group_id, text, model, effort, cost, written_at, chats_seen) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(digest.groupId, JSON.stringify(body), digest.model, digest.effort, digest.cost, digest.writtenAt, JSON.stringify(digest.chatsSeen));
+      .run(digest.groupId, JSON.stringify(body), digest.model, digest.effort, digest.costUsd, digest.writtenAt, JSON.stringify(digest.chatsSeen));
   }
 
   getSetting(key: string): string | null {
@@ -227,9 +227,16 @@ function digestBody(text: string): DigestBody {
   } catch { return { direction: "", open: [], done: [], perChat: [] }; }
 }
 
-function parseRecord(text: string): Record<string, string> {
+/** The digest's effort as stored; anything else reads as the default, low. */
+function digestEffort(text: string): DigestEffort {
+  return text === "medium" || text === "high" ? text : "low";
+}
+
+/** The chats a digest saw: a list of `pc session` keys (an early row kept them as a record's keys). */
+function parseKeys(text: string): string[] {
   try {
     const value: unknown = JSON.parse(text);
-    return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, string> : {};
-  } catch { return {}; }
+    if (Array.isArray(value)) return value.filter((each): each is string => typeof each === "string");
+    return typeof value === "object" && value !== null ? Object.keys(value) : [];
+  } catch { return []; }
 }

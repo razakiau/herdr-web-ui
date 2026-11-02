@@ -66,7 +66,11 @@ export function hostLine(host: AgentHostState, t: Translate): string | null {
 
 /** When a chat last changed, as the Devices list says it. */
 export function chatAge(row: HostChatRow, now: number, t: Translate): string {
-  const at = modified(row);
+  return ageWords(modified(row), now, t);
+}
+
+/** How long ago `at` was, in the Devices list's words ("just now", "3 h ago", "Yesterday"). */
+export function ageWords(at: number, now: number, t: Translate): string {
   const minutes = Math.round((now - at) / 60_000);
   if (minutes < 2) return t("just now");
   if (minutes < 60) return t("{n} min ago", { n: minutes });

@@ -1,0 +1,186 @@
+/* Chat groups (ZAC-265 PR 2): a group's digest card (DigestCard.tsx), the Groups card's surface
+   (GroupsSheet.css .groups-card: --bg-panel, a hairline, --radius-xl) with the page's own text sizes.
+   The header and the facts are dim --fs-xs metadata; the Direction is the card's one body of prose. */
+.digest-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+/* the header: what wrote it, then Refresh at its end */
+.digest-head { display: flex; align-items: center; gap: var(--space-2); min-height: var(--chip-h); }
+.digest-head-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-1);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.digest-head-text strong { color: var(--text-strong); font-weight: var(--fw-semibold); }
+/* Refresh, Try again: the accent's words, a row's height to a finger */
+.digest-link {
+  flex: none;
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+.digest-link::before { content: ""; position: absolute; inset: calc((var(--touch-target) - 100%) / -2) calc(var(--space-2) * -1); }
+@media (hover: hover) { .digest-link:hover { text-decoration: underline; text-underline-offset: 2px; } }
+.digest-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* the Direction and its facts: one button, opening the rest */
+.digest-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+  padding: var(--space-1) var(--space-2);
+  box-sizing: content-box;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+@media (hover: hover) { .digest-body:hover { background: var(--bg-hover); } }
+.digest-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.digest-direction { color: var(--text); font-size: var(--fs-sm); line-height: 1.5; text-wrap: pretty; }
+.digest-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); color: var(--text-dim); font-size: var(--fs-xs); }
+.digest-fact { display: inline-flex; align-items: center; gap: var(--space-1); }
+.digest-caret { flex: none; width: 14px; height: 14px; margin-inline-start: auto; color: var(--text-dim); transition: transform var(--dur-fast); }
+.digest-body[aria-expanded="true"] .digest-caret,
+.digest-week-head[aria-expanded="true"] .digest-caret { transform: rotate(180deg); }
+
+/* the rest: Still open, Done, Per chat, each under the page's small caps label */
+.digest-more { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-1); border-top: var(--hairline) solid var(--border); }
+.digest-part { display: flex; flex-direction: column; gap: var(--space-1); }
+.digest-part-head {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.digest-items,
+.digest-chats { display: flex; flex-direction: column; margin: 0 calc(var(--space-2) * -1); padding: 0; list-style: none; }
+/* an item: its artifact's glyph in the live state's colour (HostSessionPills.tsx ArtifactGlyph), the line, the ref at the end */
+.digest-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  text-align: start;
+  cursor: pointer;
+}
+.digest-item-row.is-static { cursor: default; }
+.digest-item-row .session-pill-icon { width: 1.1em; height: 1.1em; margin-top: 0.175em; }
+.digest-item-row.is-static .session-pill-icon { color: var(--text-dim); }
+@media (hover: hover) { button.digest-item-row:hover, .digest-chat:hover { background: var(--bg-hover); } }
+.digest-item-row:focus-visible,
+.digest-chat:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.digest-item-text { flex: 1 1 auto; min-width: 0; text-wrap: pretty; }
+.digest-item-ref { flex: none; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; line-height: calc(var(--fs-sm) * 1.45); }
+/* Per chat: the tree's short name, then its line, one line each */
+.digest-chat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: start;
+  cursor: pointer;
+}
+.digest-chat-name { flex: none; min-width: 3ch; color: var(--text-strong); font-weight: var(--fw-medium); font-variant-numeric: tabular-nums; }
+.digest-chat-line { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }
+.digest-week-head { align-items: center; }
+.digest-chats.is-nested { margin: 0 0 0 var(--space-3); }
+
+/* on top: chats moved on since; the Direction stays readable under it */
+.digest-stale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: var(--accent-tint);
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+.digest-stale > svg { flex: none; width: 14px; height: 14px; color: var(--accent); }
+.digest-stale > span { flex: 1 1 auto; min-width: 0; }
+
+/* a failure: the old digest stays, this under its header */
+.digest-error { display: flex; align-items: flex-start; gap: var(--space-1); margin: 0; color: var(--danger-text, var(--status-blocked)); font-size: var(--fs-xs); line-height: 1.45; }
+.digest-error > svg { flex: none; width: 14px; height: 14px; margin-top: 0.1em; color: var(--status-blocked); }
+
+/* writing: its step, and the digest it replaces dimmed */
+.digest-progress { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--text); font-size: var(--fs-xs); }
+.digest-spin { flex: none; width: 14px; height: 14px; color: var(--accent); animation: digest-spin var(--dur-spin) var(--ease-spin) infinite; }
+@keyframes digest-spin { to { transform: rotate(360deg); } }
+.digest-card.is-writing .digest-body,
+.digest-card.is-writing .digest-more { opacity: 0.45; pointer-events: none; }
+.digest-card.is-writing .digest-head-text { opacity: 0.6; }
+
+/* none yet: what it would say, and the one action with its price */
+.digest-card.is-empty { align-items: flex-start; border-style: dashed; background: transparent; }
+.digest-empty { margin: 0; color: var(--text-dim); font-size: var(--fs-sm); line-height: 1.45; }
+.digest-write { min-height: var(--control-h); }
+
+@media (prefers-reduced-motion: reduce) {
+  .digest-caret { transition: none; }
+}
+
+/* the Refresh sheet (RefreshDigestSheet.tsx): Add to group's rows, captions on its gutter */
+.refresh-digest-label { margin: var(--space-2) var(--space-4) var(--space-1); }
+.refresh-digest-models .add-to-group-text { font-size: var(--fs-sm); }
+.refresh-digest-id { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.refresh-digest-effort { display: flex; margin: 0 var(--space-4); }
+.refresh-digest-effort > button { flex: 1 1 0; }
+.refresh-digest-estimate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-1);
+  margin: var(--space-4) var(--space-4) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.refresh-digest-estimate strong { color: var(--text-strong); font-weight: var(--fw-semibold); }
+.refresh-digest-note { margin: var(--space-1) var(--space-4) 0; color: var(--text-dim); font-size: var(--fs-xs); line-height: 1.45; }

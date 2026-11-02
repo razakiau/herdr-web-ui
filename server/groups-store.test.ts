@@ -112,7 +112,7 @@ describe("GroupStore", () => {
     first.rename(id, "Renamed");
     first.remove("pc1", "b");
     first.setSummary({ pc: "pc1", session: "a", text: "five lines", lastCallSeen: "t1", model: "m", writtenAt: "t2" });
-    first.setDigest({ groupId: id, direction: "on", open: [{ text: "x" }], done: [], perChat: [{ pc: "pc1", session: "a", line: "l" }], model: "m", effort: "low", cost: 0.1, writtenAt: "t3", chatsSeen: { "pc1 a": "t1" } });
+    first.setDigest({ groupId: id, direction: "on", open: [{ text: "x" }], done: [], perChat: [{ pc: "pc1", session: "a", line: "l" }], model: "m", effort: "low", costUsd: 0.1, writtenAt: "t3", chatsSeen: ["pc1 a"] });
     first.setSetting("digestModel", "m");
     first.close();
     stores.splice(stores.indexOf(first), 1);
@@ -121,7 +121,7 @@ describe("GroupStore", () => {
     const snap = again.snapshot();
     expect(snap.groups.map((group) => [group.name, group.members.map((member) => member.session)])).toEqual([["Renamed", ["a"]]]);
     expect(snap.summaries).toEqual([{ pc: "pc1", session: "a", text: "five lines", lastCallSeen: "t1", model: "m", writtenAt: "t2" }]);
-    expect(snap.digests[0]).toMatchObject({ groupId: id, direction: "on", open: [{ text: "x" }], cost: 0.1, chatsSeen: { "pc1 a": "t1" } });
+    expect(snap.digests[0]).toMatchObject({ groupId: id, direction: "on", open: [{ text: "x" }], costUsd: 0.1, chatsSeen: ["pc1 a"] });
     expect(again.getSetting("digestModel")).toBe("m");
     expect(again.getSetting("missing")).toBeNull();
   });
