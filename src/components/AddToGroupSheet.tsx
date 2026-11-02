@@ -100,6 +100,8 @@ export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, mac
   // the PC filter (round 10): the groups with a chat on the PC picked, Suggested among them too
   const [onPc, setOnPc] = useState<string | null>(null);
   const pcs = useMemo(() => groupPcs(answer?.groups ?? []), [answer]);
+  // the search row stays while a PC filter empties the lists (there are groups to search)
+  const anyGroup = (answer?.groups ?? []).some((group) => group.id !== mergeFrom?.id);
   const pcName = (pc: string): string => machines.find((machine) => machine.id === pc)?.name ?? pc;
   const groups: GroupFacts[] = useMemo(() => (answer?.groups ?? []).filter((group) => groupOnPc(group, onPc) && group.id !== mergeFrom?.id)
     .map((group) => ({ group, folder: groupFolder(group, rows), active: groupActive(group, rows) }))
@@ -154,23 +156,20 @@ export function AddToGroupSheet({ chat, mergeFrom = null, answer, hostChats, mac
             : current
             ? t("This chat is in {name}. Pick another group to move it, or split the group here.", { name: current.name })
             : t("This chat isn't in a group. Pick one, or start a new group with it.")}</p>
-          <div className={merging ? "add-to-group-search-line" : "add-to-group-search-wrap"}>
-          {groups.length > 0 && <label className="all-agents-search add-to-group-search">
-            <Search aria-hidden="true" />
-            <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups and their chats")}
-              autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} />
-          </label>}
-          {/* a merge has no New group…: its PC filter sits beside the search */}
-          {merging && <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} className="add-to-group-pc" />}
-          </div>
-          {/* always in reach: a new group under the search, above any list; the PC filter at its end */}
-          {!merging && <div className="add-to-group-new-line">
-            <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>
-              <Plus className="add-to-group-icon is-accent" aria-hidden="true" />
-              <span className="add-to-group-text">{t("New group…")}</span>
-            </button>
-            <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} className="add-to-group-pc" />
+          {/* one row: the PC filter, compact, then the search taking the rest (round 11: the same in a merge and in the sidebar) */}
+          {anyGroup && <div className="add-to-group-search-line">
+            <GroupPcFilter pcs={pcs} value={onPc} pcName={pcName} onChange={setOnPc} />
+            <label className="all-agents-search add-to-group-search">
+              <Search aria-hidden="true" />
+              <input ref={search} className="input" type="search" value={query} aria-label={t("Search groups and their chats")} placeholder={t("Search groups and their chats")}
+                autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} />
+            </label>
           </div>}
+          {/* always in reach: a new group under the search, above any list */}
+          {!merging && <button type="button" className="add-to-group-row add-to-group-new" disabled={busy} onClick={() => setNaming(true)}>
+            <Plus className="add-to-group-icon is-accent" aria-hidden="true" />
+            <span className="add-to-group-text">{t("New group…")}</span>
+          </button>}
           {onPc !== null && groups.length === 0 && <p className="add-to-group-none" role="status">{t("No group has a chat on {pc}.", { pc: pcName(onPc) })}</p>}
           {groups.length > 0 && <div className="add-to-group-list" role="radiogroup" aria-label={t("Groups")}>
             {suggested.length > 0 && <h3 className="sidebar-section-label add-to-group-label" aria-hidden="true">{t("Suggested")}</h3>}

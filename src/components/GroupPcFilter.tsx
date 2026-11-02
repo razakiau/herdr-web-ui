@@ -4,6 +4,8 @@
  * Shown only when the groups span more than one PC; a group passes when any of its chats is on the
  * PC picked (lib/groups.ts groupOnPc).
  */
+import "./GroupPcFilter.css";
+
 import type { ChatGroup } from "../../shared/groups.ts";
 import { useT } from "../lib/i18n.ts";
 

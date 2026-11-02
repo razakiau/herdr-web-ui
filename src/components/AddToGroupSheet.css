@@ -53,12 +53,7 @@
 /* a row's state in the Agents head's narrow form (the trail's phone form): each count behind its mark, the words kept for a screen reader, so the name keeps its room */
 .add-to-group-state .agent-summary-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .add-to-group-state .agent-summary-short { display: inline; }
-/* round 10: the PC filter at the end of New group…'s line, the app's select on the rows' gutter */
-.add-to-group-new-line { display: flex; flex: none; align-items: center; gap: var(--space-2); padding-inline-end: var(--space-4); }
-.add-to-group-new-line .add-to-group-new { flex: 1 1 auto; min-width: 0; }
-.add-to-group-pc { flex: 0 1 auto; min-width: 0; max-width: 50%; text-overflow: ellipsis; }
-/* a merge has no New group…: its PC filter beside the search, on the field's line */
-.add-to-group-search-wrap { display: contents; }
+/* round 11: one row, the PC filter (compact, the field's height) left of the search, which takes the rest;
+   in a merge too, and in the sidebar's Groups lens (Sidebar.css) */
 .add-to-group-search-line { display: flex; align-items: center; gap: var(--space-2); margin: 0 var(--space-4) var(--space-1); }
 .add-to-group-search-line .add-to-group-search { flex: 1 1 auto; min-width: 0; margin: 0; }
-.add-to-group-search-line .add-to-group-pc { flex: 0 1 auto; max-width: 40%; }
