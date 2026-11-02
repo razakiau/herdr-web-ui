@@ -224,6 +224,8 @@ export class GroupStore {
 
   /** One call's cost; null when its model has no price: the spend is then a floor (spendIncomplete). */
   addSpent(groupId: number, usd: number | null): void {
+    // a group merged or deleted while its digest was written: no row for an id that is gone
+    if (!this.hasGroup(groupId)) return;
     if (usd === null) {
       this.db.query("INSERT INTO digest_spend (group_id, usd, unpriced) VALUES (?, 0, 1) ON CONFLICT (group_id) DO UPDATE SET unpriced = unpriced + 1").run(groupId);
       return;
@@ -239,9 +241,14 @@ export class GroupStore {
 
   /** One digest per group, replaced. */
   setDigest(digest: GroupDigest): void {
+    if (!this.hasGroup(digest.groupId)) return;
     const body: DigestBody = { direction: digest.direction, open: digest.open, done: digest.done, perChat: digest.perChat };
     this.db.query("INSERT OR REPLACE INTO digests (group_id, text, model, effort, cost, written_at, chats_seen) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(digest.groupId, JSON.stringify(body), digest.model, digest.effort, digest.costUsd, digest.writtenAt, JSON.stringify(digest.chatsSeen));
+  }
+
+  private hasGroup(id: number): boolean {
+    return this.db.query("SELECT 1 FROM groups WHERE id = ?").get(id) !== null;
   }
 
   getSetting(key: string): string | null {

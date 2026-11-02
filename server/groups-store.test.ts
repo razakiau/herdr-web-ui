@@ -103,6 +103,19 @@ describe("GroupStore", () => {
     expect(() => store.merge(target, 999)).toThrow();
   });
 
+  it("a digest or spend for a group that is gone (merged or deleted mid-write) writes nothing", () => {
+    const store = open();
+    const id = store.create("Gone");
+    store.delete(id);
+    store.setDigest({ groupId: id, direction: "late", open: [], done: [], perChat: [], model: "m", effort: "low", costUsd: 0.1, writtenAt: "t", chatsSeen: [] });
+    store.addSpent(id, 0.1);
+    store.addSpent(id, null);
+    expect(store.digest(id)).toBeNull();
+    expect(store.spent(id)).toBe(0);
+    expect(store.spendIncomplete(id)).toBe(false);
+    expect(store.snapshot().digests).toEqual([]);
+  });
+
   it("ids not reused", () => {
     const store = open();
     store.create("one");

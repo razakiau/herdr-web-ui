@@ -348,6 +348,22 @@ describe("the digest's routes", () => {
     expect(((await (await ask("/api/groups")).json()) as GroupsAnswer).digests[0]!.staleCount).toBe(0);
   });
 
+  it("merge and delete are 409 digest_running while either group's digest is being written", async () => {
+    const { id, ask, release, store } = routes();
+    const other = store.create("Other", { pc: "local", session: "z" });
+    expect((await ask(`/api/groups/${id}/digest`, post(CHOICE))).status).toBe(200);
+    for (const [path, body] of [[`/api/groups/${id}/delete`, {}], [`/api/groups/${id}/merge`, { into: other }], [`/api/groups/${other}/merge`, { into: id }]] as const) {
+      const response = await ask(path, post(body));
+      expect([path, response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([path, 409, "digest_running"]);
+    }
+    // the other group, with no job of its own and no merge into a busy one, can still go
+    expect(store.snapshot().groups.map((group) => group.id)).toEqual([id, other]);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await ask(`/api/groups/${other}/merge`, post({ into: id }))).status).toBe(200);
+    expect((await ask(`/api/groups/${id}/delete`, post({}))).status).toBe(200);
+  });
+
   it("the estimate's shape; a bad query is 400; an unknown group 404", async () => {
     const { id, ask } = routes();
     const estimate = await (await ask(`/api/groups/${id}/digest/estimate?model=opencode-go/claude-haiku-5-5&effort=low`)).json() as DigestEstimate;

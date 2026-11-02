@@ -135,7 +135,8 @@ const notAllowed = (use: string) => jsonResponse({ error: { code: "method_not_al
  * /api/groups and /api/groups/…: GET the groups (GroupsAnswer); POST a change, which answers
  * `{ ok: true }` (or `{ id }` for a new group) and calls `changed`. A change naming a group that
  * does not exist is 404 `group_not_found`; a split of a chat in no group is 400 `not_in_group`.
- * POST /api/groups/<id>/merge `{ into }` moves every chat to `into` and deletes the group.
+ * POST /api/groups/<id>/merge `{ into }` moves every chat to `into` and deletes the group. A merge or a
+ * delete while a digest is being written for either group is 409 `digest_running`.
  */
 export async function handleGroupsRequest(request: Request, pathname: string, store: GroupStore, changed: () => void,
   digest: { on(): boolean; jobs: DigestJobs | null } = { on: () => true, jobs: null }): Promise<Response> {
@@ -176,8 +177,12 @@ export async function handleGroupsRequest(request: Request, pathname: string, st
   setRequestRoute(`/api/groups/:id/${action}`);
   if (request.method !== "POST") return notAllowed(`Use POST /api/groups/<id>/${action}`);
   const id = Number(match[1]);
+  // a digest being written for a group would land its spend and digest on a group that is gone
+  const running = (...ids: number[]) => ids.some((each) => digest.jobs?.writing(each) != null);
+  const busy = () => jsonResponse({ error: { code: "digest_running", message: "A digest is being written for this group; try again when it is done" } }, 409);
   if (action === "delete") {
     if (!exists(id)) return noGroup();
+    if (running(id)) return busy();
     store.delete(id);
     return done();
   }
@@ -194,6 +199,7 @@ export async function handleGroupsRequest(request: Request, pathname: string, st
     const into = body["into"];
     if (typeof into !== "number" || !Number.isSafeInteger(into) || into < 1 || into === id) return badRequest("invalid_body", "Send { into: another group's id }");
     if (!exists(id) || !exists(into)) return noGroup();
+    if (running(id, into)) return busy();
     store.merge(id, into);
     return done();
   }
