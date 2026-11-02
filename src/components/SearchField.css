@@ -5,8 +5,10 @@
 .search-field {
   position: relative;
   display: flex;
-  /* grows along a row (beside a pill), never shrinks in a column's height */
-  flex: 1 0 auto;
+  /* takes the row's room left beside a pill and gives it back: a 0 basis, never the input's own width,
+     so a narrow drawer never pushes its end (and the cross) past the edge; min-height keeps its
+     height in a column */
+  flex: 1 1 0;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
@@ -65,7 +67,11 @@
   .search-field-clear::before {
     content: "";
     position: absolute;
-    inset: calc((100% - var(--touch-target)) / 2);
+    /* --touch-target tall; as wide, grown toward the words and only by the field's end padding past
+       its own edge, so the area never pokes out of the field (nor makes a narrow row overflow) */
+    inset-block: calc((100% - var(--touch-target)) / 2);
+    inset-inline-start: calc(100% - var(--touch-target));
+    inset-inline-end: calc(var(--space-1) * -1);
   }
 }
 .search-field-clear svg { width: var(--space-4); height: var(--space-4); }

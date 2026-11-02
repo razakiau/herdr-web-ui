@@ -114,6 +114,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   min-height: calc(var(--side-row) + var(--space-2));
   padding: var(--space-2) var(--side-gutter) 0;
 }
@@ -871,7 +872,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 .groups-lens { display: flex; flex-direction: column; padding: var(--space-2) var(--side-gutter) 0; }
 .groups-lens .agent-empty { padding-inline-start: 0; }
 /* round 11: the Groups lens's PC filter left of the sidebar's search (Add to group's pattern) */
-.sidebar-filter .sidebar-filter-pc { max-width: 45%; }
+.sidebar-filter .sidebar-filter-pc { flex: none; max-width: 45%; }
 /* an Agents or PCs search's Groups: the PCs section's own caption, then the lens's cards */
 .sidebar-group-hits { padding-top: var(--space-2); }
 .sidebar-hits-label { display: flex; align-items: center; cursor: default; }
