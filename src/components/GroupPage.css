@@ -114,7 +114,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.group-summary { margin: 0; padding: 0 var(--space-2) var(--space-2) calc(var(--side-box) + var(--space-2)); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
+.group-summary { padding: 0 var(--space-2) var(--space-2) calc(var(--side-box) + var(--space-2)); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
 .group-node .agent-item.is-offline .agent-title { color: var(--text-dim); }
 /* the folded line's state wraps inside it, part by part (GroupState.tsx draws it one line elsewhere) */
 .group-fold .group-state,

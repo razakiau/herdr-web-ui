@@ -1,0 +1,26 @@
+/* ClampText.tsx: model prose held to four lines, the subagent brief's fold (ChatView.css
+   .subagent-asked-fold) for its toggle, so the page reads at one even height */
+.clamp-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.clamp-text-body { min-width: 0; max-width: 100%; }
+.clamp-text-body.is-clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+.clamp-text-toggle {
+  min-height: var(--chip-h);
+  margin-inline-start: calc(-1 * var(--space-1));
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.clamp-text-toggle:hover { background: var(--bg-hover); color: var(--text-strong); }
+.clamp-text-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (pointer: coarse) { .clamp-text-toggle { min-height: var(--touch-target); } }

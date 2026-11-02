@@ -373,6 +373,7 @@ const BASE: Record<string, string> = {
   "Recent": "最近",
   "All": "全部",
   "The chat opens in this folder: write your first message there.": "聊天将在此文件夹中打开：在那里写第一条消息。",
+  "Show more": "显示更多",
   "Show less": "收起",
   "More for {title}": "{title} 的更多操作",
   "All agents on {pc}": "{pc} 上的所有代理",

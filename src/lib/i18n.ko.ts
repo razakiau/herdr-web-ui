@@ -369,6 +369,7 @@ const BASE: Record<string, string> = {
   "Recent": "최근",
   "All": "전체",
   "The chat opens in this folder: write your first message there.": "이 폴더에서 채팅이 열립니다. 첫 메시지는 거기서 작성하세요.",
+  "Show more": "더 보기",
   "Show less": "접기",
   "More for {title}": "{title} 더보기",
   "All agents on {pc}": "{pc}의 모든 에이전트",

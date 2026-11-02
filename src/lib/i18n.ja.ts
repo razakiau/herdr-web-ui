@@ -371,6 +371,7 @@ const BASE: Record<string, string> = {
   "Recent": "最近",
   "All": "すべて",
   "The chat opens in this folder: write your first message there.": "このフォルダでチャットが開きます。最初のメッセージはそこで書いてください。",
+  "Show more": "もっと見る",
   "Show less": "折りたたむ",
   "More for {title}": "{title} のその他",
   "All agents on {pc}": "{pc} のすべてのエージェント",
