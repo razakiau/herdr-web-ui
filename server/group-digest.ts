@@ -365,6 +365,17 @@ const EFFORT_VARIANT = /-(?:low|medium|high|xhigh|max)$/i;
  * (comma-separated) that OmniRoute lists now, in that order, so an id that is not live is never
  * shown. Without a list: OmniRoute's ids under the providers above, without effort variants.
  */
+/**
+ * Whether a model id is one the picker may offer, judged without asking OmniRoute: in the allowlist
+ * when it is set, else under the providers and not an effort variant (digestModels' fallback rule).
+ * A saved pick from an older, unfiltered list fails it and falls back to the default.
+ */
+export function digestModelAllowed(id: string, allow: string | undefined): boolean {
+  const listed = (allow ?? "").split(",").map((each) => each.trim()).filter(Boolean);
+  if (listed.length > 0) return listed.includes(id);
+  return !EFFORT_VARIANT.test(id) && DIGEST_PROVIDERS.some((provider) => id.toLowerCase().startsWith(provider));
+}
+
 export function digestModels(live: readonly string[], allow: string | undefined): string[] {
   const listed = (allow ?? "").split(",").map((each) => each.trim()).filter(Boolean);
   const have = new Set(live);
@@ -445,8 +456,15 @@ export class DigestJobs {
     store(): GroupStore;
     facts: ChatFactsCache;
     models(): Promise<string[]>;
+    /** whether a model id may be used (digestModelAllowed with the server's list); every id when not given */
+    modelAllowed?(id: string): boolean;
     changed(): void;
   }) {}
+
+  /** a model id the picker offers; a saved or sent one it does not (an older list's pick) is the default's */
+  allowedModel(id: string, fallback: string): string {
+    return this.deps.modelAllowed?.(id) === false ? fallback : id;
+  }
 
   /** null when a refresh of the group is already running */
   start(groupId: number, choice: DigestChoice): { job: number; done: Promise<void> } | null {

@@ -104,6 +104,10 @@ export class GroupsSignal {
 /** Direction's first two lines, for a Groups card. */
 const firstLines = (text: string): string => text.split(/\n+/).slice(0, 2).join("\n");
 
+/** The model a refresh uses for a saved or sent id: the default when there is none or it is not allowed. */
+const digestModelOf = (id: string | null, digests: DigestJobs | null): string =>
+  id === null ? DIGEST_DEFAULTS.model : digests?.allowedModel(id, DIGEST_DEFAULTS.model) ?? id;
+
 function answerOf(store: GroupStore, digests: DigestJobs | null): GroupsAnswer {
   const snapshot = store.snapshot();
   // the PCs' last calls are read (every PC's costs) only while some group has a digest to call stale
@@ -119,7 +123,8 @@ function answerOf(store: GroupStore, digests: DigestJobs | null): GroupsAnswer {
   return {
     ...snapshot,
     digests: metas,
-    digestDefaults: { model: store.getSetting(DIGEST_MODEL_KEY) ?? DIGEST_DEFAULTS.model, effort: store.getSetting(DIGEST_EFFORT_KEY) ?? DIGEST_DEFAULTS.effort },
+    // the saved pick, unless the picker no longer offers it (chosen from an older list): then the default; the effort sticks
+    digestDefaults: { model: digestModelOf(store.getSetting(DIGEST_MODEL_KEY), digests), effort: store.getSetting(DIGEST_EFFORT_KEY) ?? DIGEST_DEFAULTS.effort },
   };
 }
 
@@ -259,7 +264,7 @@ async function digestRequest(request: Request, address: URL, match: RegExpExecAr
   const model = modelOf(body["model"]);
   const effort = effortOf(body["effort"]);
   if (!model || !effort) return badRequest("invalid_body", "Send { model, effort: low|medium|high }");
-  const started = jobs.start(id, { model, effort });
+  const started = jobs.start(id, { model: digestModelOf(model, jobs), effort });
   if (!started) return jsonResponse({ error: { code: "digest_running", message: "This group's digest is being written" } }, 409);
   return reply({ job: started.job });
 }

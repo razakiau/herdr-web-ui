@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DigestEstimate, GroupDigestAnswer, GroupsAnswer } from "../shared/groups.ts";
 import type { HostChatRead, HostLink } from "../shared/host-chats.ts";
-import { ChatFactsCache, DigestJobs } from "./group-digest.ts";
+import { ChatFactsCache, DigestJobs, digestModelAllowed } from "./group-digest.ts";
 import { OmniRouteError } from "./omniroute.ts";
 import type { MachineEvent } from "../shared/machines.ts";
-import { DIGEST_DEFAULTS, GroupsSignal, createGroupsPoller, handleGroupsRequest, pullGroups, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
+import { DIGEST_DEFAULTS, DIGEST_EFFORT_KEY, DIGEST_MODEL_KEY, GroupsSignal, createGroupsPoller, handleGroupsRequest, pullGroups, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { GroupStore } from "./groups-store.ts";
 import { createServer } from "./index.ts";
 import { handleMachineRequest } from "./machine-api.ts";
@@ -287,7 +287,7 @@ it("serves /api/groups behind sign-in and the same-origin check, as /api/prefere
 });
 
 describe("the digest's routes", () => {
-  function routes(options: { on?: boolean; models?: () => Promise<string[]> } = {}) {
+  function routes(options: { on?: boolean; models?: () => Promise<string[]>; modelAllowed?: (id: string) => boolean } = {}) {
     const store = open();
     const id = store.create("Group");
     store.add(id, "local", "a");
@@ -302,6 +302,7 @@ describe("the digest's routes", () => {
       complete: async (request) => ({ text: request.system.includes("one coding-agent chat") ? JSON.stringify({ text: "did a" }) : JSON.stringify({ direction: "D1\nD2\nD3", open: [], done: [], perChat: [] }), usage: { input: 1000, cached: 0, output: 100 } }),
       prices: async () => ({ prices: { "opencode-go": { "claude-haiku-5-5": { input: 1, output: 5 } } }, fallback: null }),
       facts, models: options.models ?? (async () => ["opencode-go/claude-haiku-5-5", "m2"]), changed: () => { told += 1; },
+      ...(options.modelAllowed ? { modelAllowed: options.modelAllowed } : {}),
     });
     const on = { value: options.on ?? true };
     const ask = (path: string, init: RequestInit = {}) => handleGroupsRequest(new Request(`http://localhost${path}`, init), new URL(`http://localhost${path}`).pathname, store, () => {}, { on: () => on.value, jobs });
@@ -362,6 +363,32 @@ describe("the digest's routes", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect((await ask(`/api/groups/${other}/merge`, post({ into: id }))).status).toBe(200);
     expect((await ask(`/api/groups/${id}/delete`, post({}))).status).toBe(200);
+  });
+
+  it("a saved pick the picker no longer offers reads as the default, and a refresh with it uses the default; the effort sticks", async () => {
+    const allow = "opencode-go/claude-haiku-5-5,claude/claude-opus-5-5";
+    const { id, ask, release, store } = routes({ modelAllowed: (model) => digestModelAllowed(model, allow) });
+    store.setSetting(DIGEST_MODEL_KEY, "cc/claude-haiku-5-5");
+    store.setSetting(DIGEST_EFFORT_KEY, "high");
+    expect(((await (await ask("/api/groups")).json()) as GroupsAnswer).digestDefaults).toEqual({ model: DIGEST_DEFAULTS.model, effort: "high" });
+    // an allowed pick stays
+    store.setSetting(DIGEST_MODEL_KEY, "claude/claude-opus-5-5");
+    expect(((await (await ask("/api/groups")).json()) as GroupsAnswer).digestDefaults.model).toBe("claude/claude-opus-5-5");
+    // a refresh sent with the old id runs with the default, and saves it
+    expect((await ask(`/api/groups/${id}/digest`, post({ model: "cc/claude-haiku-5-5", effort: "high" }))).status).toBe(200);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.digest(id)?.model).toBe(DIGEST_DEFAULTS.model);
+    expect(store.getSetting(DIGEST_MODEL_KEY)).toBe(DIGEST_DEFAULTS.model);
+    expect(store.getSetting(DIGEST_EFFORT_KEY)).toBe("high");
+  });
+
+  it("digestModelAllowed: the list when set, else the providers without effort variants", () => {
+    expect(digestModelAllowed("cc/claude-haiku-5-5", "opencode-go/claude-haiku-5-5")).toBe(false);
+    expect(digestModelAllowed("opencode-go/claude-haiku-5-5", " opencode-go/claude-haiku-5-5 , x")).toBe(true);
+    expect(digestModelAllowed("cc/claude-haiku-5-5", undefined)).toBe(false);
+    expect(digestModelAllowed("claude/claude-opus-5-5-high", "")).toBe(false);
+    expect(digestModelAllowed("claude/claude-opus-5-5", "")).toBe(true);
   });
 
   it("the estimate's shape; a bad query is 400; an unknown group 404", async () => {
