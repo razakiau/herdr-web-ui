@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DigestEstimate, GroupDigestAnswer, GroupsAnswer } from "../shared/groups.ts";
 import type { HostChatRead, HostLink } from "../shared/host-chats.ts";
-import { ChatFactsCache, DigestJobs, digestModelAllowed } from "./group-digest.ts";
+import { ChatFactsCache, DigestJobs, digestModelAllowed, modelPrice } from "./group-digest.ts";
 import { OmniRouteError } from "./omniroute.ts";
 import type { MachineEvent } from "../shared/machines.ts";
 import { DIGEST_DEFAULTS, DIGEST_EFFORT_KEY, DIGEST_MODEL_KEY, GroupsSignal, createGroupsPoller, handleGroupsRequest, pullGroups, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
@@ -142,7 +142,7 @@ describe("/api/groups", () => {
     store.addLinks("pc1", [link("262", "265")]);
     const body = await answer(store);
     expect(body.digestDefaults).toEqual(DIGEST_DEFAULTS);
-    expect(DIGEST_DEFAULTS).toEqual({ model: "opencode-go/claude-haiku-5-5", effort: "medium" });
+    expect(DIGEST_DEFAULTS).toEqual({ model: "claude/claude-haiku-5-5", effort: "medium" });
     expect(body.groups.length).toBe(1);
     expect(body.links).toEqual([{ pc: "pc1", ...link("262", "265") }]);
     store.setSetting("digestModel", "other-model");
@@ -366,7 +366,7 @@ describe("the digest's routes", () => {
   });
 
   it("a saved pick the picker no longer offers reads as the default, and a refresh with it uses the default; the effort sticks", async () => {
-    const allow = "opencode-go/claude-haiku-5-5,claude/claude-opus-5-5";
+    const allow = "claude/claude-haiku-5-5,claude/claude-opus-5-5";
     const { id, ask, release, store } = routes({ modelAllowed: (model) => digestModelAllowed(model, allow) });
     store.setSetting(DIGEST_MODEL_KEY, "cc/claude-haiku-5-5");
     store.setSetting(DIGEST_EFFORT_KEY, "high");
@@ -381,6 +381,12 @@ describe("the digest's routes", () => {
     expect(store.digest(id)?.model).toBe(DIGEST_DEFAULTS.model);
     expect(store.getSetting(DIGEST_MODEL_KEY)).toBe(DIGEST_DEFAULTS.model);
     expect(store.getSetting(DIGEST_EFFORT_KEY)).toBe("high");
+  });
+
+  it("the default model is Claude's Haiku, priced under the claude provider (not the OpenCode Go quota)", () => {
+    expect(DIGEST_DEFAULTS.model.startsWith("claude/")).toBe(true);
+    expect(modelPrice(DIGEST_DEFAULTS.model, { claude: { "claude-haiku-5-5": { input: 1, output: 5 } } }, null)).toEqual({ input: 1, output: 5 });
+    expect(digestModelAllowed(DIGEST_DEFAULTS.model, undefined)).toBe(true);
   });
 
   it("digestModelAllowed: the list when set, else the providers without effort variants", () => {

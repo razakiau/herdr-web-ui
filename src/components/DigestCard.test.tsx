@@ -98,6 +98,7 @@ describe("the digest's sums", () => {
   });
 
   it("names a router's route to a vendor's model by the model", () => {
+    expect(digestModelName("claude/claude-haiku-5-5")).toBe("Haiku 5.5");
     expect(digestModelName("opencode-go/claude-haiku-5-5")).toBe("Haiku 5.5");
     expect(digestModelName("opencode-go-claude-haiku-5-5")).toBe("Haiku 5.5");
     expect(digestModelName("omniroute/auto-cheap")).toBe("omniroute/auto-cheap");
