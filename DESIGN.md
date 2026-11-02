@@ -694,6 +694,8 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--row-h` | `56px` | `44px` | Palette, worktree, device and background-task list rows; chat and composer list height caps |
 | `--chip-h` | `20px` | `18px` | Badge/pill height |
 | `--pill-h` | `36px` | — | A filter pill (PillMenu) and the search field (SearchField): one height, so a row of both shares its edges |
+| `--pill-pad` | `14px` | — | A pill's and a search field's inline ends |
+| `--icon-size-sm` | `14px` | — | A glyph inside a pill or a search field (icon, chevron) |
 | `--icon-size` | `18px` | — | Standard icon |
 | `--mark-size` | `22px` | — | Brand mark |
 | `--avatar-size` | `32px` | `26px` | Command-palette mark box |
@@ -870,9 +872,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Add to group and Merge into, the model and agent pickers, Attach, the new chat's folders, the
   directory browser, Settings (fonts, shortcuts, providers), the command palette and both find bars.
 - It is the filter pill's family (`PillMenu.tsx`, `.all-agents-pill`): `--pill-h` tall with
-  `--radius-pill` ends, the pill's `--bg-elevated` ground and `--hairline` `--border` edge, a 14 px
-  `--text-dim` magnifier in the leading cell, then the words, then a round cross (**Clear search**)
-  only while there are words. Focus turns the hairline `--accent`, as the pill is while its menu is
+  `--radius-pill` ends and `--pill-pad` inline, the pill's `--bg-elevated` ground and `--hairline`
+  `--border` edge, an `--icon-size-sm` `--text-dim` magnifier in the leading cell, then the words, then
+  a round cross (**Clear search**) only while there are words; on a coarse pointer the cross reaches
+  `--touch-target` through a `::before` without looking bigger. Focus turns the hairline `--accent`, as the pill is while its menu is
   open: no thicker ring. A pointer's hover takes `--bg-hover`, as the pill's does.
 - Beside a pill (the PC filter left of it) the two share their top and bottom edges, `--space-2`
   apart. The field grows along its row and never shrinks in a column; a finger reaches 44 px through

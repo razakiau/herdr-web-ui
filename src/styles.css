@@ -187,7 +187,11 @@
   /* a filter pill (PillMenu.tsx) and the search field beside it (SearchField.tsx): one height, so a
      row of both shares its edges */
   --pill-h: 36px;
+  /* a pill's and a search field's ends: the room before the first glyph and after the last */
+  --pill-pad: 14px;
   --icon-size: 18px;
+  /* a glyph inside a pill or a search field (its icon, its chevron): smaller than a row's */
+  --icon-size-sm: 14px;
   --mark-size: 22px;
   --avatar-size: 32px;
   --dot-size: 7px;

@@ -12,7 +12,7 @@
   min-width: 0;
   height: var(--pill-h);
   min-height: var(--pill-h);
-  padding-inline: 14px var(--space-1);
+  padding-inline: var(--pill-pad) var(--space-1);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-pill);
   background: var(--bg-elevated);
@@ -21,10 +21,10 @@
 }
 /* the pill's own reach: drawn at --pill-h, a finger's 44 px through the field's band */
 .search-field::before { content: ""; position: absolute; inset: calc((var(--pill-h) - var(--touch-target)) / 2) 0; }
-.search-field:not(.has-clear) { padding-inline-end: 14px; }
+.search-field:not(.has-clear) { padding-inline-end: var(--pill-pad); }
 .search-field:focus-within { border-color: var(--accent); }
 .search-field.is-disabled { opacity: 0.6; cursor: default; }
-.search-field-icon { position: relative; flex: none; width: 14px; height: 14px; color: var(--text-dim); pointer-events: none; }
+.search-field-icon { position: relative; flex: none; width: var(--icon-size-sm); height: var(--icon-size-sm); color: var(--text-dim); pointer-events: none; }
 .search-field-input {
   position: relative;
   flex: 1 1 auto;
@@ -58,6 +58,15 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
+}
+/* a finger reaches the cross through --touch-target, past its drawn 28 px, without it looking bigger
+   (the sidebar's Close search has no other way out on a phone) */
+@media (pointer: coarse) {
+  .search-field-clear::before {
+    content: "";
+    position: absolute;
+    inset: calc((100% - var(--touch-target)) / 2);
+  }
 }
 .search-field-clear svg { width: var(--space-4); height: var(--space-4); }
 /* a pointer's hover, as the pill draws it; a finger's tap leaves no hover behind */

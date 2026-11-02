@@ -63,7 +63,7 @@
   gap: 6px;
   max-width: 16rem;
   height: var(--pill-h);
-  padding-inline: 14px;
+  padding-inline: var(--pill-pad);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   background: transparent;
@@ -82,7 +82,7 @@
 /* the sort chip: a pill of its own on the raised ground, outlined in amber while its menu is open */
 .all-agents-sort { gap: var(--space-1); background: var(--bg-elevated); }
 .all-agents-sort.is-open { border-color: var(--accent); color: var(--text-strong); }
-.all-agents-sort > svg { flex: none; width: 14px; height: 14px; color: var(--text-dim); }
+.all-agents-sort > svg { flex: none; width: var(--icon-size-sm); height: var(--icon-size-sm); color: var(--text-dim); }
 /* the list's summary: its total, how many chats of which folder, and the split of what it spent */
 .all-agents-summary {
   display: flex;
