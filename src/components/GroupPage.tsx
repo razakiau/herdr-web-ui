@@ -48,6 +48,7 @@ import { AgentRowBody, cacheWords } from "./AgentSidebar.tsx";
 import { RowCostCell } from "./AllAgentsSheet.tsx";
 import { ClampText } from "./ClampText.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
+import { RichText } from "./RichText.tsx";
 import { DigestCard } from "./DigestCard.tsx";
 import { RefreshDigestSheet } from "./RefreshDigestSheet.tsx";
 import { GroupNameSheet, rowsByKey, shortDate } from "./GroupsSheet.tsx";
@@ -324,7 +325,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
           {cost && <RowCostCell cost={cost} />}
         </button>
       </div>
-      {summary && !line.folded && <ClampText className="group-summary">{summary}</ClampText>}
+      {summary && !line.folded && <ClampText className="group-summary"><RichText text={summary} lead /></ClampText>}
       {/* a folded branch: one line, its live state still said, so a warm or working chat is never hidden without a sign */}
       {line.folded && <button type="button" className="group-fold" onClick={() => toggle(key)}>
         <span>{t(hiddenCount === 1 ? "+1 chat" : "+{n} chats", { n: hiddenCount })}</span>

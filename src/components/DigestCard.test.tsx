@@ -115,6 +115,15 @@ describe("the digest card", () => {
     expect(text).not.toContain("moved on");
   });
 
+  it("the Direction: a line per sentence, keys and refs as inline mono keys, no model HTML", async () => {
+    const { root } = await card({ digest: { ...DIGEST, direction: "FICTIONAL ZAC-265 ships.\nThen #30 lands, **soon**.\n<b>raw</b>" } });
+    const direction = classed(root, "digest-direction")[0]!;
+    expect(classed(direction, "rich-line").map(textOf)).toEqual(["FICTIONAL ZAC-265 ships.", "Then #30 lands, soon.", "<b>raw</b>"]);
+    expect(classed(direction, "rich-ref").map(textOf)).toEqual(["ZAC-265", "#30"]);
+    expect(direction.findAllByType("strong").map(textOf)).toEqual(["soon"]);
+    expect(direction.findAllByType("b")).toHaveLength(0);
+  });
+
   it("expanded: Still open, Done and Per chat; a tap on a chat opens it", async () => {
     const { root, opened } = await card();
     await act(async () => { classed(root, "digest-body")[0]!.props["onClick"](); });

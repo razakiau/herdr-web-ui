@@ -115,14 +115,14 @@ export function chatInput(read: HostChatRead, artifacts: readonly HostArtifact[]
 }
 
 const SUMMARY_SYSTEM = `You summarise one coding-agent chat for its owner. Answer a JSON object {"text": string}.
-"text" is at most 5 short lines: what the chat did, the decisions made, the PRs and issues it made or touched (by their ids), and what it left open or meant to do next. Plain words, no markdown headings.`;
+"text" starts with one short lead sentence on its own line saying what the chat did, then at most 4 short lines of details: the decisions made, the PRs and issues it made or touched (by their ids, e.g. ZAC-123, owner/repo#12), and what it left open or meant to do next. Plain words, no markdown, no HTML; **bold** at most for one key word.`;
 
 const WEEK_SYSTEM = `You digest one week of a group of coding-agent chats from their summaries. Answer a JSON object {"text": string}.
 "text" is at most 12 short lines: where the work went, what was finished, what is still open (PRs, issues, and things an agent meant to do but did not), naming artifact ids in [brackets] when a summary gives them.`;
 
 const GROUP_SYSTEM = `You write the digest of a group of coding-agent chats that hand work to each other, from their summaries. Answer one JSON object:
 {"direction": string, "open": [{"text": string, "artifactId"?: string, "kind"?: "pr"|"issue"|"thread"}], "done": [{"text": string, "artifactId"?: string}], "perChat": [{"session": string, "line": string}]}
-- direction: 3 to 4 lines on where the group is going.
+- direction: 2 to 3 short sentences on where the group is going, each sentence on its own line (separated by "\\n"). Plain words, no markdown, no HTML.
 - open: open PRs and issues, AND pending threads: things an agent said it would do, or left to do, that no later chat finished. A thread has no artifactId.
 - done: finished work, each with the PR or issue it landed in when there is one.
 - artifactId: only an index from the ARTIFACTS list (A1, A2…), exactly as written there; leave it out otherwise. Never invent links.

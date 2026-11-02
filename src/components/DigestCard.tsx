@@ -23,6 +23,7 @@ import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { modelLabel } from "../lib/modelName.ts";
 import { ArtifactGlyph } from "./HostSessionPills.tsx";
 import { ClampText } from "./ClampText.tsx";
+import { RichText } from "./RichText.tsx";
 import { shortDate } from "./GroupsSheet.tsx";
 
 export interface DigestCardProps {
@@ -161,7 +162,7 @@ export function DigestCard({ digest, stale, progress = null, failure = null, cha
       <span>{t("{source}: {message} · kept the digest from {age}", { source: failure.source, message: failure.message, age })}</span></p>}
     {writing && <p className="digest-progress" role="status"><LoaderCircle className="digest-spin" aria-hidden="true" />{progressLine}</p>}
     {/* the Direction, held to four lines with its own Show more; the facts below open the rest */}
-    <ClampText className="digest-direction">{digest.direction}</ClampText>
+    <ClampText className="digest-direction"><RichText text={digest.direction} /></ClampText>
     <button type="button" className="digest-body" aria-expanded={open} aria-controls={`${id}-more`} onClick={() => setOpen(!open)}>
       <span className="digest-facts">
         {/* "1 issue · 2 PRs · 3 threads open": each kind with its glyph, a zero left out, "open" once at the end */}

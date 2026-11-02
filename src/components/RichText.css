@@ -1,0 +1,6 @@
+/* RichText.tsx: a digest's prose line by line; a key or ref in the mono face at the chat's inline
+   code size (DESIGN.md: 0.87em, --font-mono for keys), strong as the chat's strong */
+.rich-line { display: block; }
+.rich-line.is-lead { color: var(--text-strong); font-weight: var(--fw-medium); }
+.rich-line strong { color: var(--text-strong); font-weight: var(--fw-semibold); }
+.rich-ref { font-family: var(--font-mono); font-size: 0.87em; color: var(--text-strong); white-space: nowrap; }

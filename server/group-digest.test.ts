@@ -96,6 +96,18 @@ describe("refreshing a group's digest", () => {
     expect(store.spendIncomplete(id)).toBe(true);
   });
 
+  it("asks for a direction of short lines and a summary led by one sentence, in plain words", async () => {
+    const systems: string[] = [];
+    const { id, omni, deps } = setup();
+    await refreshDigest(id, CHOICE, deps({ complete: async (request) => { systems.push(request.system); return omni.complete(request); } }));
+    const summary = systems.find((each) => each.includes("one coding-agent chat"))!;
+    const group = systems.find((each) => each.includes("digest of a group"))!;
+    expect(summary).toContain("one short lead sentence on its own line");
+    expect(summary).toContain("no markdown, no HTML");
+    expect(group).toContain("2 to 3 short sentences");
+    expect(group).toContain("each sentence on its own line");
+  });
+
   it("second refresh makes no call", async () => {
     const { id, omni, deps } = setup();
     await refreshDigest(id, CHOICE, deps());
