@@ -249,7 +249,8 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
   }
 
   const old = store.digest(groupId);
-  const seen = new Set(old?.chatsSeen ?? []);
+  // a chat the digest saw that was deleted since is no reason to call: the digest is still of the chats there are
+  const seen = new Set((old?.chatsSeen ?? []).filter((each) => !goneKey(listed, each)));
   const sameChats = old !== null && seen.size === members.length && members.every((member) => seen.has(member.key));
   // and no summary newer than the digest: one written by a run whose group pass failed is not in it yet
   const summarisedBefore = old !== null && members.every((member) => {
@@ -407,7 +408,8 @@ export class ChatFactsCache {
 }
 
 /** Members that moved on since the digest: a newer model call, joined after it, or left since (src/lib/digest.ts staleCount, server side). */
-export function staleCount(digest: GroupDigest, members: readonly { pc: string; session: string }[], lastCalls: ReadonlyMap<string, string | null>): number {
+export function staleCount(digest: GroupDigest, members: readonly { pc: string; session: string }[], lastCalls: ReadonlyMap<string, string | null>,
+  listed: ReadonlyMap<string, ReadonlySet<string>> = new Map()): number {
   const written = Date.parse(digest.writtenAt);
   const seen = new Set(digest.chatsSeen);
   const now = new Set(members.map((member) => key(member.pc, member.session)));
@@ -417,9 +419,16 @@ export function staleCount(digest: GroupDigest, members: readonly { pc: string; 
     const last = Date.parse(lastCalls.get(each) ?? "");
     if (Number.isFinite(last) && last > written) moved += 1;
   }
-  for (const each of seen) if (!now.has(each)) moved += 1;
+  // a seen chat its PC no longer lists was deleted: not one that moved on
+  for (const each of seen) if (!now.has(each) && !goneKey(listed, each)) moved += 1;
   return moved;
 }
+
+/** goneFrom for a `pc session` key */
+const goneKey = (listed: ReadonlyMap<string, ReadonlySet<string>>, chat: string): boolean => {
+  const at = chat.indexOf(" ");
+  return at > 0 && goneFrom(listed, chat.slice(0, at), chat.slice(at + 1));
+};
 
 export type JobState = { phase: "summaries" | "group"; done: number; total: number };
 

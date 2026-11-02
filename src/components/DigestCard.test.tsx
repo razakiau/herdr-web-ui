@@ -73,6 +73,8 @@ describe("the digest's sums", () => {
     expect(staleCount(DIGEST, [member("a"), member("b")], calls)).toBe(1);
     expect(staleCount(DIGEST, [member("a"), member("b"), member("c")], new Map())).toBe(1);
     expect(staleCount(DIGEST, [member("a")], new Map())).toBe(1);
+    // ...unless its host says it was deleted: gone, not moved on
+    expect(staleCount(DIGEST, [member("a")], new Map(), (key) => key === "local b")).toBe(0);
     expect(staleCount(DIGEST, [member("a"), member("b")], new Map())).toBe(0);
   });
 

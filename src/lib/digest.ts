@@ -11,10 +11,10 @@ import { chatKey } from "./groups.ts";
 
 /**
  * Members that moved on since the digest (spec §3 Honesty): a chat with a model call newer than the
- * digest, a chat that joined after it, and a chat it saw that has since left.
+ * digest, a chat that joined after it, and a chat it saw that has since left (not one deleted, `gone`).
  * `lastCalls` is each chat's `lastCallAt` by chatKey, from the costs feed.
  */
-export function staleCount(digest: GroupDigest, members: readonly GroupMember[], lastCalls: ReadonlyMap<string, string>): number {
+export function staleCount(digest: GroupDigest, members: readonly GroupMember[], lastCalls: ReadonlyMap<string, string>, gone: (key: string) => boolean = () => false): number {
   const written = Date.parse(digest.writtenAt);
   const seen = new Set(digest.chatsSeen);
   const now = new Set(members.map((member) => chatKey(member.pc, member.session)));
@@ -24,7 +24,8 @@ export function staleCount(digest: GroupDigest, members: readonly GroupMember[],
     const last = Date.parse(lastCalls.get(key) ?? "");
     if (Number.isFinite(last) && last > written) moved += 1;
   }
-  for (const key of seen) if (!now.has(key)) moved += 1;
+  // a seen chat deleted since (its host listed without it: lib/groups.ts memberGone) did not move on
+  for (const key of seen) if (!now.has(key) && !gone(key)) moved += 1;
   return moved;
 }
 

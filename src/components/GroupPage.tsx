@@ -33,7 +33,7 @@ import type { Machine } from "../../shared/machines.ts";
 import { listUsd } from "../lib/chatCost.ts";
 import { pathOfFileUri } from "../lib/artifacts.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { chatKey, costOf, creditArtifacts, defaultFolds, groupsApi, groupsView, groupTree, rerootTree, shortChatName, treeLines, type ChatRef, type TreeLine, type TreeNode } from "../lib/groups.ts";
+import { chatKey, costOf, creditArtifacts, defaultFolds, groupsApi, groupsView, groupTree, memberGone, rerootTree, shortChatName, treeLines, type ChatRef, type TreeLine, type TreeNode } from "../lib/groups.ts";
 import { hostChatStatus } from "../lib/hostPlacement.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { basename, chatAge, errorText, fetchHostChat, type HostPc } from "../lib/hostChats.ts";
@@ -281,7 +281,7 @@ export function GroupPage({ group, answer, machines, hostChats, costs = NO_COSTS
   }));
   // without the costs feed (costs not tracked) the server's count (GET /api/groups), from the PCs' own polls
   const meta = answer.digests.find((each) => each.groupId === group.id);
-  const stale = !digest ? 0 : feed ? staleCount(digest, group.members, lastCalls) : meta?.staleCount ?? 0;
+  const stale = !digest ? 0 : feed ? staleCount(digest, group.members, lastCalls, (key) => { const at = key.indexOf(" "); return memberGone(hostChats.get(key.slice(0, at)), key.slice(at + 1)); }) : meta?.staleCount ?? 0;
   // Per chat newest first, by when each chat last changed; a chat gone from its PC keeps its place by the digest's order
   // a chat gone since (deleted: GroupsHost's liveGroups took it out of the members) has no line
   const memberKeys = new Set(group.members.map((each) => chatKey(each.pc, each.session)));

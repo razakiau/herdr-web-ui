@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostArtifact, HostChatRead } from "../shared/host-chats.ts";
 import type { ConversationTurn } from "../shared/protocol.ts";
-import { digestModels, chatInput, DigestError, DigestJobs, ChatFactsCache, estimateDigest, isoWeek, refreshDigest, type Complete, type DigestDeps } from "./group-digest.ts";
+import { digestModels, chatInput, DigestError, DigestJobs, ChatFactsCache, estimateDigest, isoWeek, refreshDigest, staleCount, type Complete, type DigestDeps } from "./group-digest.ts";
 import { DIGEST_EFFORT_KEY, DIGEST_MODEL_KEY } from "./groups-routes.ts";
 import { GroupStore } from "./groups-store.ts";
 
@@ -117,6 +117,18 @@ describe("refreshing a group's digest", () => {
     // the PC offline (its list not read): no proof, both chats stay
     const offline = setup(["a", "b"]);
     expect((await refreshDigest(offline.id, CHOICE, offline.deps({ listed: async () => new Map() }))).chatsSeen).toEqual(["local a", "local b"]);
+  });
+
+  it("a member deleted after the digest: not counted as moved on, and Refresh makes no call", async () => {
+    const { store, id, omni, deps, lastCalls } = setup(["a", "b"]);
+    const digest = await refreshDigest(id, CHOICE, deps());
+    const before = omni.calls.length;
+    const listed = new Map([["local", new Set(["a"])]]);
+    expect(staleCount(digest, store.snapshot().groups[0]!.members.filter((member) => member.session === "a"), lastCalls, listed)).toBe(0);
+    // without the PC's list it is still one that left
+    expect(staleCount(digest, store.snapshot().groups[0]!.members.filter((member) => member.session === "a"), lastCalls)).toBe(1);
+    expect(await refreshDigest(id, CHOICE, deps({ listed: async () => listed }))).toEqual(digest);
+    expect(omni.calls.length).toBe(before);
   });
 
   it("second refresh makes no call", async () => {

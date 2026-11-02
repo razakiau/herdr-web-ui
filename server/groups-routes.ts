@@ -114,7 +114,7 @@ function answerOf(store: GroupStore, digests: DigestJobs | null): GroupsAnswer {
   const members = new Map(snapshot.groups.map((group) => [group.id, group.members.filter((member) => !goneFrom(listed, member.pc, member.session))]));
   const metas: GroupDigestMeta[] = snapshot.digests.map((digest) => ({
     groupId: digest.groupId, writtenAt: digest.writtenAt, costUsd: digest.costUsd, model: digest.model, effort: digest.effort,
-    direction: firstLines(digest.direction), staleCount: staleCount(digest, members.get(digest.groupId) ?? [], lastCalls), spentUsd: store.spent(digest.groupId), spendIncomplete: store.spendIncomplete(digest.groupId),
+    direction: firstLines(digest.direction), staleCount: staleCount(digest, members.get(digest.groupId) ?? [], lastCalls, listed), spentUsd: store.spent(digest.groupId), spendIncomplete: store.spendIncomplete(digest.groupId),
   }));
   return {
     ...snapshot,
