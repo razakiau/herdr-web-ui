@@ -429,15 +429,15 @@ describe("the digest's calls (ZAC-265)", () => {
       reads += 1;
       expect(url).toBe("http://omniroute.test/v1/models");
       if (fail) return new Response("no", { status: 502 });
-      return Response.json({ data: [{ id: "opencode-go-claude-haiku-5-5" }, { id: "cc/claude-opus-5-5" }, { id: "opencode-go-claude-haiku-5-5" }, { nope: 1 }] });
+      return Response.json({ data: [{ id: "opencode-go/claude-haiku-5-5" }, { id: "cc/claude-opus-5-5" }, { id: "opencode-go/claude-haiku-5-5" }, { nope: 1 }] });
     }, () => now);
-    expect(await service.models()).toEqual(["cc/claude-opus-5-5", "opencode-go-claude-haiku-5-5"]);
+    expect(await service.models()).toEqual(["cc/claude-opus-5-5", "opencode-go/claude-haiku-5-5"]);
     now = 9 * 60_000;
     await service.models();
     expect(reads).toBe(1);
     now = 11 * 60_000;
     fail = true;
-    expect(await service.models()).toEqual(["cc/claude-opus-5-5", "opencode-go-claude-haiku-5-5"]);
+    expect(await service.models()).toEqual(["cc/claude-opus-5-5", "opencode-go/claude-haiku-5-5"]);
     expect(reads).toBe(2);
   });
 

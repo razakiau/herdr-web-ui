@@ -142,7 +142,7 @@ describe("/api/groups", () => {
     store.addLinks("pc1", [link("262", "265")]);
     const body = await answer(store);
     expect(body.digestDefaults).toEqual(DIGEST_DEFAULTS);
-    expect(DIGEST_DEFAULTS).toEqual({ model: "opencode-go-claude-haiku-5-5", effort: "low" });
+    expect(DIGEST_DEFAULTS).toEqual({ model: "opencode-go/claude-haiku-5-5", effort: "low" });
     expect(body.groups.length).toBe(1);
     expect(body.links).toEqual([{ pc: "pc1", ...link("262", "265") }]);
     store.setSetting("digestModel", "other-model");
@@ -284,14 +284,14 @@ describe("the digest's routes", () => {
       readChat: async (_pc, session) => { await gate; return { session, title: session, status: "idle", turns: [], cursor: null, prompt: null, model: null, agent: null, busy: false, pending: [], commands: [], background: { subagents: 0, commands: 0 }, confirmations: 0, context: null } as unknown as HostChatRead; },
       complete: async (request) => ({ text: request.system.includes("one coding-agent chat") ? JSON.stringify({ text: "did a" }) : JSON.stringify({ direction: "D1\nD2\nD3", open: [], done: [], perChat: [] }), usage: { input: 1000, cached: 0, output: 100 } }),
       prices: async () => ({ prices: { "opencode-go": { "claude-haiku-5-5": { input: 1, output: 5 } } }, fallback: null }),
-      facts, models: options.models ?? (async () => ["opencode-go-claude-haiku-5-5", "m2"]), changed: () => { told += 1; },
+      facts, models: options.models ?? (async () => ["opencode-go/claude-haiku-5-5", "m2"]), changed: () => { told += 1; },
     });
     const on = { value: options.on ?? true };
     const ask = (path: string, init: RequestInit = {}) => handleGroupsRequest(new Request(`http://localhost${path}`, init), new URL(`http://localhost${path}`).pathname, store, () => {}, { on: () => on.value, jobs });
     return { store, id, jobs, ask, release, told: () => told, on };
   }
   const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const CHOICE = { model: "opencode-go-claude-haiku-5-5", effort: "low" };
+  const CHOICE = { model: "opencode-go/claude-haiku-5-5", effort: "low" };
 
   it("404 groups_off with the switch off, on every digest route", async () => {
     const { id, ask } = routes({ on: false });
@@ -330,7 +330,7 @@ describe("the digest's routes", () => {
 
   it("the estimate's shape; a bad query is 400; an unknown group 404", async () => {
     const { id, ask } = routes();
-    const estimate = await (await ask(`/api/groups/${id}/digest/estimate?model=opencode-go-claude-haiku-5-5&effort=low`)).json() as DigestEstimate;
+    const estimate = await (await ask(`/api/groups/${id}/digest/estimate?model=opencode-go/claude-haiku-5-5&effort=low`)).json() as DigestEstimate;
     expect(Object.keys(estimate).sort()).toEqual(["chats", "groupPasses", "tokensIn", "usd"]);
     expect(estimate.chats).toBe(1);
     expect(estimate.groupPasses).toBe(1);
@@ -341,7 +341,7 @@ describe("the digest's routes", () => {
   });
 
   it("models: OmniRoute's ids, and its failure in fixed words", async () => {
-    expect(await (await routes().ask("/api/groups/models")).json()).toEqual({ models: ["opencode-go-claude-haiku-5-5", "m2"] });
+    expect(await (await routes().ask("/api/groups/models")).json()).toEqual({ models: ["opencode-go/claude-haiku-5-5", "m2"] });
     const failing = routes({ models: async () => { throw new Error("Could not reach OmniRoute"); } });
     const response = await failing.ask("/api/groups/models");
     expect(response.status).toBe(502);

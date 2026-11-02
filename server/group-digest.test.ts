@@ -65,13 +65,14 @@ function setup(sessions: string[] = ["a", "b"]) {
     readChat: async (_pc, session) => { reads.push(session); return chat(session, session === "a" ? [PR] : []); },
     lastCalls: async () => lastCalls, archived: async () => archived,
     complete: omni.complete,
+    // OmniRoute's table keys it under its provider: the route `opencode-go/claude-haiku-5-5` prices directly
     prices: async () => ({ prices: { "opencode-go": { "claude-haiku-5-5": { input: 1, output: 5 } } }, fallback: null }),
     now: () => Date.parse("2026-11-01T12:00:00.000Z"),
     ...over,
   });
   return { store, id, lastCalls, archived, reads, omni, deps };
 }
-const CHOICE = { model: "opencode-go-claude-haiku-5-5", effort: "low" as const };
+const CHOICE = { model: "opencode-go/claude-haiku-5-5", effort: "low" as const };
 
 describe("refreshing a group's digest", () => {
   it("summarises each chat, then one group pass; prices the calls; saves the choice as the default", async () => {
@@ -192,6 +193,12 @@ describe("refreshing a group's digest", () => {
     expect(omni.calls.filter((call) => call.kind === "week")).toHaveLength(3);
     expect(omni.calls.at(-1)?.kind).toBe("group");
     expect(omni.calls.filter((call) => call.kind === "group")).toHaveLength(1);
+  });
+
+  it("a model's answer that is not JSON names the model by its short name", async () => {
+    const { id, deps } = setup();
+    const bad = fakeOmniRoute({ groupAnswer: "nope" });
+    expect(await refreshDigest(id, CHOICE, deps({ complete: bad.complete })).catch((caught: unknown) => caught)).toEqual(new DigestError("claude-haiku-5-5", "answered something that is not JSON"));
   });
 
   it("an OmniRoute failure names OmniRoute", async () => {

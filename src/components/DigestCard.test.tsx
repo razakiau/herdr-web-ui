@@ -17,7 +17,7 @@ const DIGEST: GroupDigest = {
   open: [{ text: "FICTIONAL picker", artifact: pr(30) }, { text: "FICTIONAL cost note", artifact: issue(274) }, { text: "FICTIONAL unfinished thread" }],
   done: [{ text: "FICTIONAL groups", artifact: pr(23) }],
   perChat: [{ pc: "local", session: "a", line: "FICTIONAL first" }, { pc: "local", session: "b", line: "FICTIONAL second" }],
-  model: "opencode-go-claude-haiku-5-5", effort: "low", costUsd: 0.004, writtenAt: new Date(NOW - 2 * 3_600_000).toISOString(),
+  model: "opencode-go/claude-haiku-5-5", effort: "low", costUsd: 0.004, writtenAt: new Date(NOW - 2 * 3_600_000).toISOString(),
   chatsSeen: ["local a", "local b"],
 };
 const member = (session: string): GroupMember => ({ pc: "local", session, joined: "link", addedAt: "2026-10-30T09:00:00Z" });
@@ -96,6 +96,7 @@ describe("the digest's sums", () => {
   });
 
   it("names a router's route to a vendor's model by the model", () => {
+    expect(digestModelName("opencode-go/claude-haiku-5-5")).toBe("Haiku 5.5");
     expect(digestModelName("opencode-go-claude-haiku-5-5")).toBe("Haiku 5.5");
     expect(digestModelName("omniroute/auto-cheap")).toBe("omniroute/auto-cheap");
   });
@@ -198,7 +199,7 @@ describe("the digest's store (lib/groupDigest.ts) drives the card", () => {
       transport: {
         read: async (groupId: number) => { reads.push(groupId); return answers[Math.min(index++, answers.length - 1)]!; },
         write: async () => write(),
-        models: async () => ["opencode-go-claude-haiku-5-5", "m2"],
+        models: async () => ["opencode-go/claude-haiku-5-5", "m2"],
         estimate: async () => ({ chats: 1, groupPasses: 1, tokensIn: 12_000, usd: null }),
       } satisfies DigestTransport,
     };
@@ -247,7 +248,7 @@ describe("the digest's store (lib/groupDigest.ts) drives the card", () => {
     expect(store.models()).toBeNull();
     expect(store.estimate("m2", "low")).toBeNull();
     await settle();
-    expect(store.models()).toEqual(["opencode-go-claude-haiku-5-5", "m2"]);
+    expect(store.models()).toEqual(["opencode-go/claude-haiku-5-5", "m2"]);
     const estimate = store.estimate("m2", "low")!;
     expect(estimateParts(estimate)).toEqual({ usd: null, tokens: "~12K" });
   });

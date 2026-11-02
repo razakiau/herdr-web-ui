@@ -51,13 +51,15 @@ export interface DigestCardProps {
 
 /**
  * A model as a person names it: lib/modelName.ts's rule, and for a router's route to a vendor's id
- * (OmniRoute's `opencode-go-claude-haiku-5-5`) the vendor's id inside it, when that reads whole.
- * The id stays in the title either way.
+ * (OmniRoute's `opencode-go/claude-haiku-5-5`, or an older dashed `opencode-go-claude-haiku-5-5`) the
+ * vendor's id inside it, when that reads whole. The id stays in the title either way.
  */
 export function digestModelName(id: string): string {
   const own = modelLabel(id);
   if (own.named) return own.text;
-  const parts = id.split("-");
+  const parts = id.slice(id.lastIndexOf("/") + 1).split("-");
+  const whole = modelLabel(parts.join("-"));
+  if (whole.named) return whole.text;
   for (let at = 1; at < parts.length; at++) {
     const inner = modelLabel(parts.slice(at).join("-"));
     if (inner.named) return inner.text;

@@ -28,7 +28,7 @@ export interface GroupDigest {
   done: DigestItem[];
   /** one line per chat, newest first */
   perChat: { pc: string; session: string; line: string }[];
-  /** the model id as OmniRoute routes it (opencode-go-claude-haiku-5-5) */
+  /** the model id as OmniRoute routes it (opencode-go/claude-haiku-5-5) */
   model: string;
   effort: DigestEffort;
   /** what this digest's calls cost, chat summaries included */

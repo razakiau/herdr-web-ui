@@ -146,7 +146,7 @@ export function callCost(model: string, usage: { input: number; cached: number; 
   return ((usage.input - cached) * price.input + cached * (price.cached ?? price.input) + usage.output * price.output) / 1_000_000;
 }
 
-/** A digest model's price: as named, then an OmniRoute alias `opencode-go-<model>` as its route `opencode-go/<model>`. */
+/** A digest model's price: its route (`opencode-go/claude-haiku-5-5`) as named; an older dashed alias `opencode-go-<model>` as that route. */
 export function modelPrice(model: string, prices: ModelPrices | null, fallback: Record<string, ModelPrice> | null): ModelPrice | null {
   const table = prices ?? {};
   const routed = /^opencode-go-(.+)$/.exec(model);
@@ -281,7 +281,7 @@ export async function refreshDigest(groupId: number, choice: DigestChoice, deps:
   return digest;
 }
 
-/** A model id's short name for an error's source (`opencode-go-claude-haiku-5-5` → `claude-haiku-5-5`). */
+/** A model id's short name for an error's source (`opencode-go/claude-haiku-5-5` → `claude-haiku-5-5`). */
 const modelName = (model: string): string => model.replace(/^.*\//, "").replace(/^opencode-go-/, "");
 
 /** What a summary's answer and the group pass's answer run to, for the estimate. */
