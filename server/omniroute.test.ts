@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleKeepWarmRequest, handleOmniRoutePricing, handleSessionContextRefresh, handleOmniRouteRequest, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
+import { handleKeepWarmRequest, handleOmniRoutePricing, handleSessionContextRefresh, handleOmniRouteRequest, OmniRouteError, OmniRouteLink, OmniRouteUsage, omniRouteUsages, pricesFrom } from "./omniroute.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -425,7 +425,7 @@ describe("the digest's calls (ZAC-265)", () => {
     let now = 0;
     let reads = 0;
     let fail = false;
-    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: "read-token" }, async (url) => {
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: "read-token", apiKey: "api-key" }, async (url) => {
       reads += 1;
       expect(url).toBe("http://omniroute.test/v1/models");
       if (fail) return new Response("no", { status: 502 });
@@ -455,11 +455,25 @@ describe("the digest's calls (ZAC-265)", () => {
   });
 
   it("a refusal or an error answers fixed or provider words, never the token", async () => {
-    const refused = new OmniRouteUsage({ url: "http://omniroute.test", token: "secret-token" }, async () => new Response("", { status: 401 }));
+    const refused = new OmniRouteUsage({ url: "http://omniroute.test", token: "read-token", apiKey: "secret-token" }, async () => new Response("", { status: 401 }));
     await expect(refused.complete({ model: "m", effort: "low", system: "", user: "" })).rejects.toThrow("OmniRoute refused the token");
-    const failing = new OmniRouteUsage({ url: "http://omniroute.test", token: "secret-token" }, async () => Response.json({ error: { message: "upstream overloaded" } }, { status: 503 }));
+    const failing = new OmniRouteUsage({ url: "http://omniroute.test", token: "read-token", apiKey: "secret-token" }, async () => Response.json({ error: { message: "upstream overloaded" } }, { status: 503 }));
     const error = await failing.complete({ model: "m", effort: "low", system: "", user: "" }).then(() => new Error("answered"), (caught: unknown) => caught as Error);
     expect(error.message).toBe("503 upstream overloaded");
     expect(error.message).not.toContain("secret-token");
+  });
+
+  it("without an API key: 409 digest_unavailable, and the read token never goes to /v1", async () => {
+    const sent: string[] = [];
+    const service = new OmniRouteUsage({ url: "http://omniroute.test", token: "oma_read" }, async (url, init) => {
+      sent.push(`${url} ${new Headers(init.headers).get("authorization")}`);
+      return Response.json({ data: [{ id: "m" }], choices: [{ message: { content: "{}" } }] });
+    });
+    for (const call of [() => service.models(), () => service.complete({ model: "m", effort: "low", system: "", user: "" })]) {
+      const error = await call().then(() => null, (caught: unknown) => caught);
+      expect(error).toBeInstanceOf(OmniRouteError);
+      expect(error).toMatchObject({ code: "digest_unavailable", status: 409, message: "No OmniRoute API key (HERDR_WEB_OMNIROUTE_API_KEY)" });
+    }
+    expect(sent).toEqual([]);
   });
 });

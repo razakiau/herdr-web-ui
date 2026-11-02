@@ -130,7 +130,7 @@ export function pricesFrom(raw: unknown): ModelPrices {
 /**
  * `writeToken`: a write-scope token, only for the keep-warm plugin's settings (ZAC-260); from the environment only.
  * `apiKey`: an OmniRoute API key for its `/v1` routes (a chat group's digest, ZAC-265), from the environment
- * only; without one the read token is sent, which a gateway that takes access tokens on `/v1` accepts.
+ * only (HERDR_WEB_OMNIROUTE_API_KEY). Without one the digest is unavailable: the read token never goes to `/v1`.
  */
 export interface OmniRouteConfig { url: string; token: string; writeToken?: string; apiKey?: string }
 
@@ -277,10 +277,10 @@ export class OmniRouteUsage {
    * every MODELS_FRESH_MS; a failed read keeps the last list, else throws fixed words.
    */
   async models(): Promise<string[]> {
-    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    const key = this.digestKey();
     if (this.modelIds !== null && this.now() < this.modelsAt + MODELS_FRESH_MS) return this.modelIds;
     try {
-      const raw = record(await this.get("/v1/models", this.config.apiKey || this.config.token));
+      const raw = record(await this.get("/v1/models", key));
       const data = Array.isArray(raw?.["data"]) ? raw["data"] : [];
       this.modelIds = [...new Set(data.flatMap((each) => { const id = text(record(each)?.["id"]); return id ? [id] : []; }))].sort();
       this.modelsAt = this.now();
@@ -297,10 +297,10 @@ export class OmniRouteUsage {
    * message when OmniRoute passes one on (never the token).
    */
   async complete(request: { model: string; effort: string; system: string; user: string }): Promise<OmniRouteCompletion> {
-    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    const key = this.digestKey();
     const response = await this.fetcher(`${this.url}/v1/chat/completions`, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
-      headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${this.config.apiKey || this.config.token}` },
+      headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({ model: request.model, reasoning_effort: request.effort, response_format: { type: "json_object" }, stream: false,
         messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }] }),
     }).catch(() => null);
@@ -321,6 +321,13 @@ export class OmniRouteUsage {
       text: typeof content === "string" ? content : "",
       usage: { input: number(usage?.["prompt_tokens"]) ?? 0, cached: number(details?.["cached_tokens"]) ?? 0, output: number(usage?.["completion_tokens"]) ?? 0 },
     };
+  }
+
+  /** The `/v1` API key; throws when there is no gateway or no key (the read token is never sent there). */
+  private digestKey(): string {
+    if (this.url === null) throw new OmniRouteError("omniroute_missing", 409, "No OmniRoute gateway");
+    if (!this.config.apiKey) throw new OmniRouteError("digest_unavailable", 409, "No OmniRoute API key (HERDR_WEB_OMNIROUTE_API_KEY)");
+    return this.config.apiKey;
   }
 
   /**

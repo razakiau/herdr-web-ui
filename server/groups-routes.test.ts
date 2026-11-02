@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { DigestEstimate, GroupDigestAnswer, GroupsAnswer } from "../shared/groups.ts";
 import type { HostChatRead, HostLink } from "../shared/host-chats.ts";
 import { ChatFactsCache, DigestJobs } from "./group-digest.ts";
+import { OmniRouteError } from "./omniroute.ts";
 import type { MachineEvent } from "../shared/machines.ts";
 import { DIGEST_DEFAULTS, GroupsSignal, createGroupsPoller, handleGroupsRequest, pullGroups, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { GroupStore } from "./groups-store.ts";
@@ -345,6 +346,10 @@ describe("the digest's routes", () => {
     const response = await failing.ask("/api/groups/models");
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: { code: "models_unavailable", message: "Could not reach OmniRoute" } });
+    const keyless = routes({ models: async () => { throw new OmniRouteError("digest_unavailable", 409, "No OmniRoute API key (HERDR_WEB_OMNIROUTE_API_KEY)"); } });
+    const unavailable = await keyless.ask("/api/groups/models");
+    expect(unavailable.status).toBe(409);
+    expect(await unavailable.json()).toEqual({ error: { code: "digest_unavailable", message: "No OmniRoute API key (HERDR_WEB_OMNIROUTE_API_KEY)" } });
   });
 });
 

@@ -14,6 +14,7 @@ import type { HostLink, LinkKind } from "../shared/host-chats.ts";
 import { createCostsPoller, type CostsPoller } from "./costs-poller.ts";
 import type { GroupStore } from "./groups-store.ts";
 import { staleCount, type DigestJobs } from "./group-digest.ts";
+import { OmniRouteError } from "./omniroute.ts";
 import { badRequest, isJsonObject, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
 
 /** The digest's model and effort until the owner picks others (spec, section 3). */
@@ -210,7 +211,9 @@ async function digestRequest(request: Request, address: URL, match: RegExpExecAr
   if (match[1] === undefined) {
     if (request.method !== "GET") return notAllowed("Use GET /api/groups/models");
     try { return reply({ models: await jobs.models() }); } catch (error) {
-      return jsonResponse({ error: { code: "models_unavailable", message: error instanceof Error ? error.message : "Could not reach OmniRoute" } }, 502);
+      // OmniRoute's own refusal as it said it (409 digest_unavailable: no API key), else a fixed 502
+      if (error instanceof OmniRouteError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
+      return jsonResponse({ error: { code: "models_unavailable", message: "Could not reach OmniRoute" } }, 502);
     }
   }
   const id = Number(match[1]);
