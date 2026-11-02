@@ -82,7 +82,7 @@ export const MACHINES_KO: Record<string, string> = {
   "Filter workspaces and agents": "워크스페이스와 에이전트 필터",
   "Filter": "필터",
   "Groups and their chats": "그룹과 채팅",
-  "Agents, workspaces and groups": "에이전트, 워크스페이스, 그룹",
+  "Agents and groups": "에이전트와 그룹",
   "Workspaces and agents": "워크스페이스와 에이전트",
   "No workspaces or agents match": "일치하는 워크스페이스나 에이전트가 없습니다",
   "No workspaces or agents match on the PCs that answered": "응답한 PC에는 일치하는 워크스페이스나 에이전트가 없습니다",

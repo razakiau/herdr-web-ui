@@ -232,7 +232,7 @@ export function MachineSidebar(props: Props) {
       <label className="sidebar-filter-label" htmlFor={filterId}><Search aria-hidden="true" /><span className="visually-hidden">{t("Filter")}</span></label>
       {/* the words say what a search here finds: the groups in their lens, else agents and workspaces, and groups while they are on */}
       <input ref={filterInput} id={filterId} className="input sidebar-filter-input" type="search" value={query} aria-label={t("Filter workspaces and agents")}
-        placeholder={searchView.placeholder === "Groups and their chats" ? t("Groups and their chats") : searchView.placeholder === "Agents, workspaces and groups" ? t("Agents, workspaces and groups") : t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
+        placeholder={searchView.placeholder === "Groups and their chats" ? t("Groups and their chats") : searchView.placeholder === "Agents and groups" ? t("Agents and groups") : t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
       <datalist id={suggestionsId}>{suggestions.map((label) => <option key={label} value={label} />)}</datalist>
       <button type="button" className="sidebar-filter-clear" aria-label={query === "" ? t("Close search") : t("Clear filter")} title={query === "" ? t("Close search") : t("Clear filter")} onClick={clearOrClose}><X aria-hidden="true" /></button>
     </div>}
@@ -316,7 +316,7 @@ export function sidebarLenses(on: { chatGroups: boolean; agents: number; groups:
  * the search field says it finds.
  */
 export function sidebarSearchView(lens: SidebarLens, chatGroups: boolean, searching: boolean, query: string): {
-  agents: boolean; pcs: boolean; groups: boolean; groupHits: boolean; placeholder: "Groups and their chats" | "Agents, workspaces and groups" | "Workspaces and agents";
+  agents: boolean; pcs: boolean; groups: boolean; groupHits: boolean; placeholder: "Groups and their chats" | "Agents and groups" | "Workspaces and agents";
 } {
   const groupsSearch = chatGroups && lens === "groups";
   return {
@@ -324,7 +324,7 @@ export function sidebarSearchView(lens: SidebarLens, chatGroups: boolean, search
     pcs: (searching && !groupsSearch) || lens === "pcs",
     groups: lens === "groups",
     groupHits: chatGroups && searching && !groupsSearch && query.trim() !== "",
-    placeholder: groupsSearch ? "Groups and their chats" : chatGroups ? "Agents, workspaces and groups" : "Workspaces and agents",
+    placeholder: groupsSearch ? "Groups and their chats" : chatGroups ? "Agents and groups" : "Workspaces and agents",
   };
 }
 

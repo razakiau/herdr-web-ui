@@ -82,7 +82,7 @@ export const MACHINES_JA: Record<string, string> = {
   "Filter workspaces and agents": "ワークスペースとエージェントを絞り込む",
   "Filter": "絞り込み",
   "Groups and their chats": "グループとそのチャット",
-  "Agents, workspaces and groups": "エージェント・ワークスペース・グループ",
+  "Agents and groups": "エージェントとグループ",
   "Workspaces and agents": "ワークスペースとエージェント",
   "No workspaces or agents match": "一致するワークスペースやエージェントはありません",
   "No workspaces or agents match on the PCs that answered": "応答した PC には一致するワークスペースやエージェントはありません",
