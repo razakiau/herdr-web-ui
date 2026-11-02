@@ -67,7 +67,7 @@ import { hostChatsRoute, hostCosts, hostCostsPolled, hostLinks } from "./agent-h
 import { createDigestScheduler, type DigestPc, digestRunner, DigestStore, handleDigestRequest } from "./digest.ts";
 import { createCostsPoller } from "./costs-poller.ts";
 import { GroupStore } from "./groups-store.ts";
-import { ChatFactsCache, DigestJobs, type ChatFacts } from "./group-digest.ts";
+import { ChatFactsCache, DigestJobs, digestModels, type ChatFacts } from "./group-digest.ts";
 import { createGroupsPoller, GroupsSignal, handleGroupsRequest, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
 import { COSTS_POLL_MS } from "./machines.ts";
@@ -442,7 +442,7 @@ export function createServer(
   };
   const digestJobs = new DigestJobs({
     store: groupsStore, readChat: readMemberChat, complete: (request) => omniRoute.complete(request), prices: coldPrices,
-    facts: chatFacts, models: () => omniRoute.models(), changed: () => groupsSignal.tell(),
+    facts: chatFacts, models: async () => digestModels(await omniRoute.models(), process.env["HERDR_WEB_DIGEST_MODELS"]), changed: () => groupsSignal.tell(),
   });
 
   const digestScheduler = options.weeklyDigest ? createDigestScheduler({

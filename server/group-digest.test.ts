@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostArtifact, HostChatRead } from "../shared/host-chats.ts";
 import type { ConversationTurn } from "../shared/protocol.ts";
-import { chatInput, DigestError, DigestJobs, ChatFactsCache, estimateDigest, isoWeek, refreshDigest, type Complete, type DigestDeps } from "./group-digest.ts";
+import { digestModels, chatInput, DigestError, DigestJobs, ChatFactsCache, estimateDigest, isoWeek, refreshDigest, type Complete, type DigestDeps } from "./group-digest.ts";
 import { DIGEST_EFFORT_KEY, DIGEST_MODEL_KEY } from "./groups-routes.ts";
 import { GroupStore } from "./groups-store.ts";
 
@@ -307,5 +307,18 @@ describe("the jobs", () => {
     const second = jobs.start(id, { ...CHOICE, effort: "high" });
     await second!.done;
     expect(jobs.failure(id)).toMatchObject({ source: "OmniRoute", message: "502 Bad Gateway" });
+  });
+});
+
+describe("the models the picker offers", () => {
+  const LIVE = ["aihorde/llama-3", "claude/claude-opus-5-5", "claude/claude-opus-5-5-high", "anthropic/claude-sonnet-5", "opencode-go/claude-haiku-5-5",
+    "opencode-go/glm-5.3-max", "github-copilot/gpt-5.6", "github-copilot/gpt-5.6-xhigh", "cc/claude-opus-5-5", "openrouter/x"];
+  it("an allowlist (HERDR_WEB_DIGEST_MODELS) intersected with what OmniRoute lists, in the list's order", () => {
+    expect(digestModels(LIVE, " opencode-go/claude-haiku-5-5, claude/claude-opus-5-5 ,gone/model,")).toEqual(["opencode-go/claude-haiku-5-5", "claude/claude-opus-5-5"]);
+  });
+  it("without one: no effort-suffixed ids, only claude/, anthropic/, opencode-go/ and github-copilot/", () => {
+    for (const allow of [undefined, "", " , "]) {
+      expect(digestModels(LIVE, allow)).toEqual(["anthropic/claude-sonnet-5", "claude/claude-opus-5-5", "github-copilot/gpt-5.6", "opencode-go/claude-haiku-5-5"]);
+    }
   });
 });

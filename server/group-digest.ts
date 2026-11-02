@@ -340,6 +340,25 @@ export async function estimateDigest(groupId: number, choice: DigestChoice, deps
   return { chats: due.size, groupPasses, tokensIn, usd: price ? (tokensIn * price.input + output * price.output) / 1_000_000 : null };
 }
 
+// ─── The picker's models ─────────────────────────────────────────────────────
+
+/** The routers the digest is run through when no list is set: the owner's subscriptions. */
+const DIGEST_PROVIDERS = ["claude/", "anthropic/", "opencode-go/", "github-copilot/"];
+/** An id with an effort in its name: effort is its own control, so the variant is not a model to pick. */
+const EFFORT_VARIANT = /-(?:low|medium|high|xhigh|max)$/i;
+
+/**
+ * The models the Refresh sheet offers (owner, round 10): the ids in HERDR_WEB_DIGEST_MODELS
+ * (comma-separated) that OmniRoute lists now, in that order, so an id that is not live is never
+ * shown. Without a list: OmniRoute's ids under the providers above, without effort variants.
+ */
+export function digestModels(live: readonly string[], allow: string | undefined): string[] {
+  const listed = (allow ?? "").split(",").map((each) => each.trim()).filter(Boolean);
+  const have = new Set(live);
+  if (listed.length > 0) return [...new Set(listed)].filter((each) => have.has(each));
+  return [...have].filter((id) => !EFFORT_VARIANT.test(id) && DIGEST_PROVIDERS.some((provider) => id.toLowerCase().startsWith(provider))).sort();
+}
+
 // ─── Jobs, and what the server knows of the chats ────────────────────────────
 
 /** What the server knows of every PC's chats for the digest: last calls, last prompts, archived bits, by `pc session`. */
