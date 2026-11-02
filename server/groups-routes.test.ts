@@ -142,11 +142,11 @@ describe("/api/groups", () => {
     store.addLinks("pc1", [link("262", "265")]);
     const body = await answer(store);
     expect(body.digestDefaults).toEqual(DIGEST_DEFAULTS);
-    expect(DIGEST_DEFAULTS).toEqual({ model: "opencode-go/claude-haiku-5-5", effort: "low" });
+    expect(DIGEST_DEFAULTS).toEqual({ model: "opencode-go/claude-haiku-5-5", effort: "high" });
     expect(body.groups.length).toBe(1);
     expect(body.links).toEqual([{ pc: "pc1", ...link("262", "265") }]);
     store.setSetting("digestModel", "other-model");
-    expect((await answer(store)).digestDefaults).toEqual({ model: "other-model", effort: "low" });
+    expect((await answer(store)).digestDefaults).toEqual({ model: "other-model", effort: "high" });
   });
 
   it("creates, renames, adds, moves, removes, splits and deletes, telling each change", async () => {
