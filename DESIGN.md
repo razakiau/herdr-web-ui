@@ -972,8 +972,19 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   apps keep it; the roster has only the label filter below, which the maintainer approved in #1043
   and which differs from the palette-only design on purpose: it narrows the lists in place, by the
   words the rows show, and holds no state.
+- The sidebar's head (`.sidebar-head`, MachineSidebar.tsx; ZAC-265, the owner's pick of three) is one
+  row of quiet text tabs in the family of a folder's TabStrip: **Agents · Groups · PCs**, Groups only
+  while Settings → Chat groups is on. Each tab is the lens's lucide icon (Bot, GalleryVerticalEnd,
+  Monitor; the icons the lens menu used) at `1em` in the word's colour, the word at `--fs-sm` medium,
+  then its count dim at `--fs-xs` (rows in the list, groups for Groups; none until known). The open
+  tab is `--text-strong` with a 2px `--accent` underline sitting on the head's hairline; the others
+  are `--text-dim`. The row is `--side-row` high (44 on a coarse pointer, 34 beside a mouse), and the
+  tabs sit box to box with the facets' rhythm, the first icon on the rows' glyph column (x 20). The
+  three tabs fit a 390 phone's drawer and a 300 sidebar exactly; a longer translation scrolls
+  sideways with the facets' end fade (`.sidebar-lens.has-more`), never clipped. The Groups lens
+  (GroupsLens.tsx) lists the Groups sheet's own cards across every PC, and a card opens its group's page.
 - **Search workspaces and agents** is a magnifier (`.sidebar-search-toggle`, a `.sidebar-row-action`) at the
-  right of the Agents head; there is no standing filter row (ZAC-233, 2026-10-25: the roster first).
+  right of the lens tabs; there is no standing filter row (ZAC-233, 2026-10-25: the roster first).
   Pressing it draws the field (`.sidebar-filter`, MachineSidebar.tsx) and puts the caret in it: the
   magnifier as its label (`.sidebar-filter-label`, the word **Filter** visually hidden), then one
   `.input` the height of a row (`--side-row`, so a finger's `--touch-target` on a phone) in the rows'
@@ -1327,7 +1338,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   or tab is as tall and wide as a bare one; the kept-warm flame sits off its top right in the same
   proportion. One rule for the sidebar, All agents, a group's page and a folder's tabs.
 - The Agents lens's filter chips (`.agent-facets`) stay at the top of the sidebar's one scroll, as
-  the Agents | PCs tabs above them stay put: sticky, on the panel's solid `--bg-panel` across the
+  the lens tabs above them stay put: sticky, on the panel's solid `--bg-panel` across the
   whole width, no rule under them. The **Pinned** caption is the card's own label and scrolls with it.
 
 ### Plan meters (`.usage*`)

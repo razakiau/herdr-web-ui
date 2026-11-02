@@ -882,21 +882,16 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 /* what a host folder's chats do now (Sidebar.tsx nowLine), after its branch or place: the ask in its colour */
 .workspace-now.is-ask { color: var(--status-blocked); }
 
-/* The sidebar's head (ZAC-265 round 5, owner: "the proportions look cheap"): the lenses (Agents | Groups |
-   PCs, Groups only with chat groups on) and the search, over the one scroll; the Agents lens's facets
-   under it are the only other selector row (AgentSidebar.css). One left edge for all of it: the rows'
-   gutter (--side-gutter) for every control's box, and --space-2 inside it, so a lens's words, a facet's,
-   a section's caption and a row's mark glyph all start on one column (x 20 in a 12px gutter). Three designs
-   under review, picked by .sidebar-shell[data-head-variant] (MachineSidebar.tsx, dev only):
-   V1 quiet tabs as the app's own TabStrip draws them (text, an amber underline, dim small counts);
-   V2 a search field first (Telegram, WhatsApp), the lenses a quiet segmented control under it;
-   V3 one row: the lens as a menu title ("Agents 16 ▾"), the search at its end. */
+/* The sidebar's head (ZAC-265, owner's pick of round 5's three: V1 quiet tabs, with the lens menu's
+   icons): the lenses (Agents | Groups | PCs, Groups only with chat groups on) as the app's own TabStrip
+   draws tabs (icon, word, dim small count; the open one underlined in amber on the head's hairline), the
+   search at the row's end, over the one scroll; the Agents lens's facets under it are the only other
+   selector row (AgentSidebar.css). One left edge for all of it: the rows' gutter (--side-gutter) for every
+   control's box, and --space-2 inside it, so a lens's icon, a facet's words, a section's caption and a
+   row's mark glyph all start on one column (x 20 in a 12px gutter). */
 .sidebar-head {
-  display: flex;
   flex: 0 0 auto;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--side-gutter) 0;
+  padding: 0 var(--side-gutter);
   background: var(--bg-panel);
 }
 .sidebar-lens-row {
@@ -904,19 +899,31 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   align-items: center;
   gap: var(--space-2);
   min-height: var(--side-row);
+  border-bottom: var(--hairline) solid var(--border);
 }
+/* too many lenses, or long words, for the row: it scrolls sideways and fades at its end, as the facets do */
+/* the tabs touch box to box, their words a tab's two paddings apart (the facets' rhythm), the first
+   one's icon on the glyph column: all three, with their counts, fit a 390 phone's drawer and a 300 sidebar */
 .sidebar-lens {
+  --lens-pad: calc(var(--space-1) * 1.5);
   display: flex;
   flex: 1 1 auto;
   align-self: stretch;
+  gap: 0;
   min-width: 0;
+  padding-inline-start: calc(var(--space-2) - var(--lens-pad));
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
 }
+.sidebar-lens::-webkit-scrollbar { display: none; }
+.sidebar-lens.has-more { mask-image: linear-gradient(to right, currentColor calc(100% - var(--space-8)), transparent); }
 .sidebar-lens-tab {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1);
-  min-width: 0;
-  padding: 0 var(--space-2);
+  padding: 0 var(--lens-pad);
   border: 0;
   background: transparent;
   color: var(--text-dim);
@@ -926,70 +933,14 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   white-space: nowrap;
   cursor: pointer;
 }
-.sidebar-lens-tab[aria-selected="true"] { color: var(--text-strong); }
+/* the lens menu's icon, at the word's size and in its colour: one em, on the line's centre */
+.sidebar-lens-icon { flex: none; width: 1em; height: 1em; }
+.sidebar-lens-tab[aria-selected="true"] { color: var(--text-strong); box-shadow: inset 0 -2px 0 var(--accent); }
 @media (hover: hover) { .sidebar-lens-tab:hover { color: var(--text-strong); } }
 .sidebar-lens-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sidebar-lens-count { color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-regular); font-variant-numeric: tabular-nums; }
 .sidebar-lens-count[data-status="blocked"] { color: var(--status-blocked); font-weight: var(--fw-semibold); }
 .sidebar-lens-row .sidebar-search-toggle { flex: none; margin-left: auto; }
-
-/* V1: the TabStrip's family: words on the panel, the open one underlined in amber on the head's hairline */
-.sidebar-shell[data-head-variant="V1"] .sidebar-head { padding-top: 0; }
-.sidebar-shell[data-head-variant="V1"] .sidebar-lens-row {
-  min-height: var(--side-row);
-  border-bottom: var(--hairline) solid var(--border);
-}
-.sidebar-shell[data-head-variant="V1"] .sidebar-lens { gap: var(--space-1); }
-.sidebar-shell[data-head-variant="V1"] .sidebar-lens-tab[aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--accent); }
-
-/* V2: the search as a field (a button that opens the filter in its place), the lenses a quiet segmented
-   control at a row's height under it: no outline, the open one in the selection fill */
-.sidebar-search-field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--side-row);
-  /* the magnifier on the glyph column, as the rows' marks and the facets' words */
-  padding: 0 var(--space-2);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
-  color: var(--text-dim);
-  font: inherit;
-  font-size: var(--fs-sm);
-  text-align: start;
-  cursor: text;
-}
-.sidebar-search-field > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-search-field svg { flex: none; width: var(--space-4); height: var(--space-4); }
-.sidebar-search-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-@media (hover: hover) { .sidebar-search-field:hover { border-color: var(--border-strong); } }
-.sidebar-shell[data-head-variant="V2"] .sidebar-lens { gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-md); background: var(--bg-elevated); }
-.sidebar-shell[data-head-variant="V2"] .sidebar-lens-tab { flex: 1 1 0; justify-content: center; border-radius: var(--radius-sm); }
-.sidebar-shell[data-head-variant="V2"] .sidebar-lens-tab[aria-selected="true"] { background: var(--bg-hover); }
-
-/* V3: the lens is the row's title, a menu of the three; the search at the row's end */
-.sidebar-lens-menu {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  min-height: var(--side-row);
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-strong);
-  font: inherit;
-  font-size: var(--fs-md);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-}
-.sidebar-lens-menu-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-lens-menu .sidebar-lens-count { font-size: var(--fs-sm); }
-.sidebar-lens-menu-caret { flex: none; width: var(--space-4); height: var(--space-4); color: var(--text-dim); }
-@media (hover: hover) { .sidebar-lens-menu:hover { background: var(--side-hover); } }
-.sidebar-lens-menu:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* the Groups lens (GroupsLens.tsx): the sheet's cards in the rows' gutter */
 .groups-lens { display: flex; flex-direction: column; padding: var(--space-2) var(--side-gutter) 0; }

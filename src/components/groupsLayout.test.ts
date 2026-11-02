@@ -30,3 +30,18 @@ describe("the group trail", () => {
     expect(rule(strip, ".tab-strip-tab")).toContain("padding: 0 var(--space-3);");
   });
 });
+
+describe("the sidebar's head", () => {
+  it("is one row of quiet tabs: the lens's icon at the word's size and colour, the open one underlined, a long row scrolling", () => {
+    const sidebar = css("Sidebar.css");
+    expect(rule(sidebar, ".sidebar-lens-icon")).toContain("width: 1em;");
+    expect(rule(sidebar, ".sidebar-lens-icon")).toContain("height: 1em;");
+    expect(rule(sidebar, '.sidebar-lens-tab[aria-selected="true"]')).toContain("box-shadow: inset 0 -2px 0 var(--accent);");
+    expect(rule(sidebar, ".sidebar-lens-row")).toContain("min-height: var(--side-row);");
+    expect(rule(sidebar, ".sidebar-lens")).toContain("overflow-x: auto;");
+    // the dev switch and the two designs not picked are gone
+    expect(sidebar).not.toContain("data-head-variant");
+    expect(sidebar).not.toContain("sidebar-lens-menu");
+    expect(sidebar).not.toContain("sidebar-search-field");
+  });
+});
