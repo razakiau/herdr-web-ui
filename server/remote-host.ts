@@ -47,6 +47,24 @@ export const INSTALL_UPLOAD_TIMEOUT_S = 25 * 60;
 export const POSIX_INSTALL_LOCK = `lock="$base/install.lock"; if ! mkdir "$lock" 2>/dev/null; then mkdir "$lock.reclaim" 2>/dev/null || { test -z "$(find "$lock.reclaim" -maxdepth 0 -mmin +2 2>/dev/null)" || rmdir "$lock.reclaim" 2>/dev/null; printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; }; owner=$(cat "$lock/pid" 2>/dev/null || true); if { test -n "$owner" && ! kill -0 "$owner" 2>/dev/null; } || test -n "$(find "$lock" -maxdepth 0 -mmin +35 2>/dev/null)"; then rm -rf "$lock"; mkdir "$lock" 2>/dev/null || { rmdir "$lock.reclaim"; printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; }; printf '%s' "$$" > "$lock/pid"; rmdir "$lock.reclaim"; else rmdir "$lock.reclaim"; printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; fi; fi; printf '%s' "$$" > "$lock/pid";`;
 /** the exit trap's release: only a lock this shell still owns, never a successor's */
 export const POSIX_INSTALL_RELEASE = `test "$(cat "$lock/pid" 2>/dev/null)" != "$$" || rm -rf "$lock"`;
+/** bundle versions an install leaves on the PC: the newest ones by number, the current one among them */
+export const KEPT_BUNDLE_VERSIONS = 3;
+/**
+ * Removes older bundles after an install. Each version leaves a `remote-vN` link and its
+ * `remote-vN-<sha>` dir (717 MB). Nothing removed them, so a PC kept every version it had
+ * ever run: on 2026-11-02, 8 Coder workspace homes held 82 versions each, 416 GiB on one
+ * disk, and a Mac held 59 dirs, 38 GB (ZAC-282).
+ *
+ * It keeps the `KEPT_BUNDLE_VERSIONS` newest versions (the current one and the two before
+ * it, for a rollback), the version given as the first argument, and every version a running
+ * process uses. In use means its path appears in a process's command line (`ps`; that is
+ * how start() launches a bridge, through the `remote-vN` link) or, where /proc exists, in
+ * its working directory or executable. The check is by version number across the host, so
+ * a process anywhere on the PC that uses version N keeps all of N. A name that has no
+ * version number, and the install's own staging dirs, are left alone. A failure here never
+ * fails the install. Expects `$base` and `$current` (the version just installed).
+ */
+export const POSIX_BUNDLE_PRUNE = `inuse=$({ ps axww -o command= 2>/dev/null || ps -eo args= 2>/dev/null || true; for p in /proc/[0-9]*; do readlink "$p/cwd" 2>/dev/null || true; readlink "$p/exe" 2>/dev/null || true; done; } | grep -o 'herdr-web-ui/remote-v[0-9][0-9]*' | sed 's#.*/remote-v##' | sort -un); versions=$(for d in "$base"/remote-v[0-9]*; do test -e "$d" || test -L "$d" || continue; n=\${d##*/remote-v}; n=\${n%%[!0-9]*}; printf '%s\\n' "$n"; done | sort -unr); keep=$(printf '%s\\n' "$versions" | head -n ${KEPT_BUNDLE_VERSIONS}); for n in $versions; do if printf '%s\\n' $keep $inuse "$current" | grep -qx "$n"; then continue; fi; for d in "$base/remote-v$n" "$base/remote-v$n"-*; do if test -e "$d" || test -L "$d"; then rm -rf "$d"; printf 'pruned %s\\n' "\${d##*/}"; fi; done; done`;
 
 export interface HostInspection {
   platform: "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64";
@@ -161,7 +179,7 @@ export const posixHost: RemoteHost = {
     const { asset, input } = await fetchBundle(platform, signal, options);
     // Verify on BOTH hosts, extract into staging and atomically rename. No user-wide
     // Bun/Node/herdr installation is changed; the complete runtime lives in this dir.
-    await ssh.run(`set -eu; umask 077; base="$HOME/.local/share/herdr-web-ui"; mkdir -p "$base"; ${POSIX_INSTALL_LOCK} tmp=$(mktemp -d "$base/install.XXXXXX"); trap 'rm -rf "$tmp"; ${POSIX_INSTALL_RELEASE}' EXIT HUP INT TERM; if command -v timeout >/dev/null; then timeout ${INSTALL_UPLOAD_TIMEOUT_S} cat > "$tmp/bundle.tgz"; else cat > "$tmp/bundle.tgz"; fi; if command -v sha256sum >/dev/null; then actual=$(sha256sum "$tmp/bundle.tgz" | cut -d ' ' -f 1); else actual=$(shasum -a 256 "$tmp/bundle.tgz" | cut -d ' ' -f 1); fi; test "$actual" = ${shellQuote(asset.sha256)}; mkdir "$tmp/runtime"; tar xzf "$tmp/bundle.tgz" -C "$tmp/runtime"; test -x "$tmp/runtime/bin/bun"; test -x "$tmp/runtime/bin/node"; test -x "$tmp/runtime/bin/herdr"; "$tmp/runtime/bin/bun" --version; "$tmp/runtime/bin/herdr" --version; "$tmp/runtime/bin/node" "$tmp/runtime/server/pty/smoke.mjs"; release="$HOME/${BUNDLE_DIR}-${asset.sha256.slice(0, 16)}"; if test ! -d "$release"; then mv "$tmp/runtime" "$release"; fi; ln -s "$release" "$tmp/current"; if test -d "$HOME/${BUNDLE_DIR}" && test ! -L "$HOME/${BUNDLE_DIR}"; then mv "$HOME/${BUNDLE_DIR}" "$HOME/${BUNDLE_DIR}-legacy-$(date +%s)"; fi; "$release/bin/bun" -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' "$tmp/current" "$HOME/${BUNDLE_DIR}"`, input, 30 * 60_000);
+    await ssh.run(`set -eu; umask 077; base="$HOME/.local/share/herdr-web-ui"; mkdir -p "$base"; ${POSIX_INSTALL_LOCK} tmp=$(mktemp -d "$base/install.XXXXXX"); trap 'rm -rf "$tmp"; ${POSIX_INSTALL_RELEASE}' EXIT HUP INT TERM; if command -v timeout >/dev/null; then timeout ${INSTALL_UPLOAD_TIMEOUT_S} cat > "$tmp/bundle.tgz"; else cat > "$tmp/bundle.tgz"; fi; if command -v sha256sum >/dev/null; then actual=$(sha256sum "$tmp/bundle.tgz" | cut -d ' ' -f 1); else actual=$(shasum -a 256 "$tmp/bundle.tgz" | cut -d ' ' -f 1); fi; test "$actual" = ${shellQuote(asset.sha256)}; mkdir "$tmp/runtime"; tar xzf "$tmp/bundle.tgz" -C "$tmp/runtime"; test -x "$tmp/runtime/bin/bun"; test -x "$tmp/runtime/bin/node"; test -x "$tmp/runtime/bin/herdr"; "$tmp/runtime/bin/bun" --version; "$tmp/runtime/bin/herdr" --version; "$tmp/runtime/bin/node" "$tmp/runtime/server/pty/smoke.mjs"; release="$HOME/${BUNDLE_DIR}-${asset.sha256.slice(0, 16)}"; if test ! -d "$release"; then mv "$tmp/runtime" "$release"; fi; ln -s "$release" "$tmp/current"; if test -d "$HOME/${BUNDLE_DIR}" && test ! -L "$HOME/${BUNDLE_DIR}"; then mv "$HOME/${BUNDLE_DIR}" "$HOME/${BUNDLE_DIR}-legacy-$(date +%s)"; fi; "$release/bin/bun" -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' "$tmp/current" "$HOME/${BUNDLE_DIR}"; current=${REMOTE_BUNDLE_VERSION}; (set +e; ${POSIX_BUNDLE_PRUNE}) || true`, input, 30 * 60_000);
   },
   stop: async (ssh, pid) => { await ssh.run(`kill -TERM ${pid}`); },
   async start(ssh, { session, herdrPath, inspection, agentHost }) {
