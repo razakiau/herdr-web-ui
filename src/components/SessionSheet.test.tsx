@@ -425,6 +425,19 @@ describe("SessionSheet", () => {
       expect(words).not.toContain("12 min left");
     });
 
+    it("a chat stopped by the daily fuse says so and when pings resume (ZAC-275), not 'until' as if kept", () => {
+      keepWarmFeed.set(answer({ kept: false, nextPingAt: null, fuseReason: "fuse" }));
+      const words = text(sheet());
+      // the plugin's day is the UTC date: pings resume at the next UTC midnight
+      const resume = new Date(NOW); resume.setUTCHours(24, 0, 0, 0);
+      expect(words).toContain(`Keep warm Daily ping limit reached, resumes ${clock(resume.getTime())} · 3 pings today, ~$0.18`);
+      expect(words).not.toContain("kept warm · next ping");
+      // a plugin before ZAC-275 sends no reason: the day's flag still says the cap was hit
+      const old = answer({ kept: false, nextPingAt: null });
+      keepWarmFeed.set({ ...old, state: { ...old.state!, today: { ...old.state!.today, fuseHit: true } } });
+      expect(text(sheet())).toContain(`Daily ping limit reached, resumes ${clock(resume.getTime())}`);
+    });
+
     it("a kept chat's bar drains from its last ping (ZAC-266): pinged 30 min ago, half its lifetime left", () => {
       keepWarmFeed.set(answer({ lastPingAt: NOW - 30 * 60_000 }));
       const html = sheet();

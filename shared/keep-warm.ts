@@ -33,6 +33,8 @@ export interface KeepWarmKey {
   disabled: boolean;
   /** kept warm now */
   kept: boolean;
+  /** why it is not kept although it would be: "fuse" when the day's ping cap is hit (ZAC-275); absent from older plugins */
+  fuseReason?: string | null;
   /** its restart costs at least the threshold, so it is kept by default; absent from a plugin before ZAC-267 (all keys were big) */
   big?: boolean;
   /** under the threshold, turned on by the owner (settings.forced, ZAC-267) */

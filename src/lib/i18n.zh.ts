@@ -659,7 +659,7 @@ const BASE: Record<string, string> = {
   "Off in Settings": "已在设置中关闭",
   "Stopped: a ping found the cache gone": "已停止：ping 发现缓存已失效",
   "Stopped {n} h after the last call": "最后一次调用后 {n} 小时已停止",
-  "Daily cap reached": "已达每日上限",
+  "Daily ping limit reached, resumes {time}": "已达每日 ping 上限，{time} 恢复",
   "Off by you": "已由你关闭",
   "Off: restart ~{usd} < {mark}": "关闭：重启 ~{usd} < {mark}",
   "a ping ~{usd}": "每次 ping ~{usd}",

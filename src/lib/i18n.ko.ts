@@ -655,7 +655,7 @@ const BASE: Record<string, string> = {
   "Off in Settings": "설정에서 꺼짐",
   "Stopped: a ping found the cache gone": "중지됨: 핑에서 캐시가 사라진 것을 확인",
   "Stopped {n} h after the last call": "마지막 호출 후 {n}시간에 중지됨",
-  "Daily cap reached": "일일 한도에 도달",
+  "Daily ping limit reached, resumes {time}": "일일 핑 한도에 도달, {time}에 재개",
   "Off by you": "직접 끔",
   "Off: restart ~{usd} < {mark}": "꺼짐: 재시작 ~{usd} < {mark}",
   "a ping ~{usd}": "핑 1회 ~{usd}",
