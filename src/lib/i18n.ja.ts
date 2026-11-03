@@ -657,7 +657,7 @@ const BASE: Record<string, string> = {
   "Off in Settings": "設定でオフ",
   "Stopped: a ping found the cache gone": "停止：ping でキャッシュの失効を検出",
   "Stopped {n} h after the last call": "最後の呼び出しから {n} 時間で停止",
-  "Daily cap reached": "1 日の上限に達しました",
+  "Daily ping limit reached, resumes {time}": "1 日の ping 上限に達しました。{time} に再開",
   "Off by you": "オフにしました",
   "Off: restart ~{usd} < {mark}": "オフ：再開 ~{usd} < {mark}",
   "a ping ~{usd}": "ping 1 回 ~{usd}",

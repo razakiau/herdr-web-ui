@@ -171,6 +171,8 @@ function ContextTab({ read, lastContext, cost, onClose, onCompact }: SessionShee
 }
 
 const clockTime = (ms: number): string => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+// the keep-warm plugin counts its daily fuse per UTC date, so pings resume at the next UTC midnight
+const nextUtcMidnight = (ms: number): number => { const d = new Date(ms); d.setUTCHours(24, 0, 0, 0); return d.getTime(); };
 
 /**
  * The Cache tab's keep-warm row (phase 2): its switch, until when and today's pings; why it stopped
@@ -198,7 +200,7 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
     : key.missed ? t("Stopped: a ping found the cache gone")
     : chosen && key.expired ? t("Cache already gone: kept from its next call")
     : now >= key.until ? t("Stopped {n} h after the last call", { n: hours })
-    : state.today.fuseHit && !keep.kept ? t("Daily cap reached")
+    : key.fuseReason === "fuse" || (state.today.fuseHit && !keep.kept) ? t("Daily ping limit reached, resumes {time}", { time: clockTime(nextUtcMidnight(now)) })
     : !chosen && big ? t("Off by you")
     : !chosen ? [t("Off: restart ~{usd} < {mark}", { usd: formatUsd(key.restartUsd), mark }), key.pingUsd ? t("a ping ~{usd}", { usd: formatUsd(key.pingUsd) }) : null].filter(Boolean).join(" · ")
     : null;
