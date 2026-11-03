@@ -29,6 +29,9 @@ export interface KeepWarmKey {
   restartUsd: number;
   /** a ping read nothing back (or failed twice): the cache is gone, pings stopped until a real call */
   missed: boolean;
+  /** why pings stopped (ZAC-275): "cache" read nothing, "account" its account answered 401/403/429 (out of quota,
+   * no credential: the cache may be fine), "failed" two 5xx/timeouts; absent from older plugins (read as "cache") */
+  missedReason?: "cache" | "account" | "failed" | null;
   /** turned off by the owner (settings.disabled) */
   disabled: boolean;
   /** kept warm now */

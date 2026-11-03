@@ -197,6 +197,8 @@ function KeepWarmRow({ keep, answer, now }: { keep: { key: KeepWarmKey; kept: bo
   // the chat's own window: one extended from the window-end alert ends later than the setting's hours
   const hours = Math.round((key.until - key.lastRealAt) / 3_600_000) || state.windowHours;
   const why = !state.enabled ? t("Off in Settings")
+    : key.missed && key.missedReason === "account" ? t("Stopped: its Claude account is out of quota or signed out")
+    : key.missed && key.missedReason === "failed" ? t("Stopped: two pings failed")
     : key.missed ? t("Stopped: a ping found the cache gone")
     : chosen && key.expired ? t("Cache already gone: kept from its next call")
     : now >= key.until ? t("Stopped {n} h after the last call", { n: hours })

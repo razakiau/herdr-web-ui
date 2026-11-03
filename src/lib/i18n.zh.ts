@@ -658,6 +658,8 @@ const BASE: Record<string, string> = {
   "Without keep-warm, after {time}": "不保持预热时，{time} 之后",
   "Off in Settings": "已在设置中关闭",
   "Stopped: a ping found the cache gone": "已停止：ping 发现缓存已失效",
+  "Stopped: its Claude account is out of quota or signed out": "已停止：Claude 账号额度用尽或已登出",
+  "Stopped: two pings failed": "已停止：ping 连续 2 次失败",
   "Stopped {n} h after the last call": "最后一次调用后 {n} 小时已停止",
   "Daily ping limit reached, resumes {time}": "已达每日 ping 上限，{time} 恢复",
   "Off by you": "已由你关闭",
