@@ -656,6 +656,8 @@ const BASE: Record<string, string> = {
   "Without keep-warm, after {time}": "ウォーム維持なしの場合、{time} 以降",
   "Off in Settings": "設定でオフ",
   "Stopped: a ping found the cache gone": "停止：ping でキャッシュの失効を検出",
+  "Stopped: its Claude account is out of quota or signed out": "停止：Claude アカウントの利用上限またはサインアウト",
+  "Stopped: two pings failed": "停止：ping が 2 回失敗",
   "Stopped {n} h after the last call": "最後の呼び出しから {n} 時間で停止",
   "Daily ping limit reached, resumes {time}": "1 日の ping 上限に達しました。{time} に再開",
   "Off by you": "オフにしました",

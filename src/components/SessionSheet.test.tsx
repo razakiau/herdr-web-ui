@@ -466,6 +466,19 @@ describe("SessionSheet", () => {
       expect(words).toContain("Hand off before it goes cold");
     });
 
+    it("a chat stopped because its account can't answer says that, not 'cache gone' (ZAC-275)", () => {
+      keepWarmFeed.set(answer({ missed: true, missedReason: "account", kept: false }));
+      let words = text(sheet());
+      expect(words).toContain("Stopped: its Claude account is out of quota or signed out");
+      expect(words).not.toContain("cache gone");
+      keepWarmFeed.set(answer({ missed: true, missedReason: "failed", kept: false }));
+      words = text(sheet());
+      expect(words).toContain("Stopped: two pings failed");
+      expect(words).not.toContain("cache gone");
+      keepWarmFeed.set(answer({ missed: true, missedReason: "cache", kept: false }));
+      expect(text(sheet())).toContain("Stopped: a ping found the cache gone");
+    });
+
     it("a small chat (under the mark) shows the switch off, with why and what a ping costs (ZAC-267)", () => {
       keepWarmFeed.set(answer({ big: false, forced: false, kept: false, restartUsd: 0.78, pingUsd: 0.0194, nextPingAt: null }));
       const html = sheet();

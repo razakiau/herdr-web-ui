@@ -654,6 +654,8 @@ const BASE: Record<string, string> = {
   "Without keep-warm, after {time}": "웜 유지 없이, {time} 이후",
   "Off in Settings": "설정에서 꺼짐",
   "Stopped: a ping found the cache gone": "중지됨: 핑에서 캐시가 사라진 것을 확인",
+  "Stopped: its Claude account is out of quota or signed out": "중지됨: Claude 계정 한도 소진 또는 로그아웃",
+  "Stopped: two pings failed": "중지됨: 핑 2회 실패",
   "Stopped {n} h after the last call": "마지막 호출 후 {n}시간에 중지됨",
   "Daily ping limit reached, resumes {time}": "일일 핑 한도에 도달, {time}에 재개",
   "Off by you": "직접 끔",
