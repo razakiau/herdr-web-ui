@@ -28,14 +28,19 @@ class FakePc implements GoalPc {
   input = 100_000;
   digestText: string | null | "offline" = "USER: FICTIONAL\nAGENT: done";
   offline = false;
+  /** the PC answers but lists no such chat, or has no cost for it */
+  chatMissing = false;
+  costMissing = false;
   sendOk = true;
   sent: { session: string; text: string; callAt?: string }[] = [];
   async row(session: string): Promise<HostChatRow | null | "offline"> {
     if (this.offline) return "offline";
+    if (this.chatMissing) return null;
     return { session, title: "FICTIONAL", status: this.status, modified_at: T1, cwd: null, unread: false, archived: this.archived };
   }
   async cost(session: string): Promise<HostChatCost | null | "offline"> {
     if (this.offline) return "offline";
+    if (this.costMissing) return null;
     return { session, models: [{ model: "fictional/work-x", input: this.input, cacheRead: 0, cacheWrite: 0, output: 0, calls: 1 }], lastCallAt: this.lastCallAt, context: null } as HostChatCost;
   }
   async digest(): Promise<string | null | "offline"> { return this.offline ? "offline" : this.digestText; }
@@ -48,6 +53,7 @@ describe("goal runner", () => {
   let answers: (() => Promise<{ text: string; usage: { input: number; cached: number; output: number } }>)[];
   let calls: number;
   let pricesCalls: number;
+  let lines: string[];
   const clock = Date.UTC(2026, 10, 13, 18, 10);
   const verdict = (v: string, reason: string) => async () => ({ text: JSON.stringify({ verdict: v, reason }), usage: { input: 1000, cached: 0, output: 100 } });
   const complete: JudgeComplete = async () => {
@@ -57,7 +63,7 @@ describe("goal runner", () => {
     return next();
   };
   const runner = (store: GoalStore, prices: () => Promise<{ prices: ModelPrices | null; fallback: null }> = async () => { pricesCalls += 1; return { prices: PRICES, fallback: null }; }) =>
-    createGoalRunner({ store, pcs: (id) => id === MACHINE ? pc : null, prices, complete, now: () => clock, log: () => {} });
+    createGoalRunner({ store, pcs: (id) => id === MACHINE ? pc : null, prices, complete, now: () => clock, log: (line) => { lines.push(line); } });
   const started = (overrides: Partial<{ capUsd: number; baselineUsd: number }> = {}): GoalStore => {
     const store = new GoalStore(stateDir, () => clock);
     store.start({ ...START, ...overrides, judge: { ...START.judge } });
@@ -70,6 +76,7 @@ describe("goal runner", () => {
     answers = [];
     calls = 0;
     pricesCalls = 0;
+    lines = [];
   });
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }); });
 
@@ -200,6 +207,39 @@ Spent $0.80 of $10.00.`);
     expect(pc.sent).toHaveLength(0);
   });
 
+  it("a judge cost that reaches the cap is budget_limited and sends nothing; a raise then sends that check's turn once, judging nothing again", async () => {
+    // the chat spent $0.80, under the cap; the judge's $0.0011 takes it to the cap
+    const store = started({ capUsd: 0.8005 });
+    answers.push(verdict("not_met", "FICTIONAL: still missing"), verdict("not_met", "FICTIONAL: never asked"));
+    const run = runner(store);
+    await run.tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(0);
+    const capped = store.get(MACHINE, SESSION)!;
+    expect(capped).toMatchObject({ status: "budget_limited", pauseReason: "cap", lastJudgedCallAt: T1 });
+    expect(capped.judge.checks.at(-1)).toMatchObject({ verdict: "not_met", callAt: T1, sent: false });
+    await run.tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(0);
+    store.raise(MACHINE, SESSION, 5);
+    await run.tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(1);
+    expect(pc.sent[0]!.text).toStartWith("[Goal, check 1] Not done yet: FICTIONAL: still missing");
+    expect(pc.sent[0]!.callAt).toBe(T1);
+    expect(store.get(MACHINE, SESSION)!.judge.checks.at(-1)!.sent).toBe(true);
+    await run.tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(1);
+  });
+
+  it("a met verdict whose judge cost reaches the cap is still met", async () => {
+    const store = started({ capUsd: 0.8005 });
+    answers.push(verdict("met", "FICTIONAL: shown"));
+    await runner(store).tick();
+    expect(store.get(MACHINE, SESSION)!.status).toBe("met");
+  });
+
   it("a spend that is no number fails closed: budget_limited and no judge", async () => {
     const store = started();
     const run = runner(store, async () => ({ prices: { fictional: { "work-x": { input: Number.POSITIVE_INFINITY, output: 1 } } }, fallback: null }));
@@ -217,22 +257,35 @@ Spent $0.80 of $10.00.`);
     expect(pc.sent[0]!.text).toEndWith("Spent $0.00 of $10.00.");
   });
 
-  it("an offline PC or a null digest changes nothing", async () => {
+  it("an offline PC changes nothing and logs nothing: the next tick tries again", async () => {
     const store = started();
     const before = store.get(MACHINE, SESSION);
     pc.offline = true;
     await runner(store).tick();
     expect(store.get(MACHINE, SESSION)).toEqual(before);
-    pc.offline = false;
-    pc.digestText = null;
-    await runner(store).tick();
-    const after = store.get(MACHINE, SESSION)!;
-    expect(after.lastJudgedCallAt).toBeNull();
-    expect(after.judge.checks).toHaveLength(0);
-    expect(after.status).toBe("active");
+    expect(lines).toEqual([]);
     expect(calls).toBe(0);
-    expect(pc.sent).toHaveLength(0);
   });
+
+  for (const [what, reason, set] of [
+    ["no chat", "no_chat", () => { pc.chatMissing = true; }],
+    ["no cost", "no_cost", () => { pc.costMissing = true; }],
+    ["no log", "no_log", () => { pc.digestText = null; }],
+  ] as const) {
+    it(`a PC that answers with ${what} pauses the goal ${reason}, logs it and judges nothing`, async () => {
+      const store = started();
+      set();
+      await runner(store).tick();
+      const after = store.get(MACHINE, SESSION)!;
+      expect(after).toMatchObject({ status: "paused", pauseReason: reason, lastJudgedCallAt: null });
+      expect(after.judge.checks).toHaveLength(0);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(`${MACHINE}/${SESSION}`);
+      expect(lines[0]).toContain(reason);
+      expect(calls).toBe(0);
+      expect(pc.sent).toHaveLength(0);
+    });
+  }
 
   it("prices that throw make the tick do nothing; a throwing step leaves the goal as it was", async () => {
     const store = started();

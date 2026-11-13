@@ -15,6 +15,11 @@ describe("budgetTone", () => {
     expect(budgetTone(25, 25)).toBe("over");
     expect(budgetTone(30, 25)).toBe("over");
   });
+
+  it("is over for a spend that is no number: it fails closed", () => {
+    expect(budgetTone(Number.NaN, 25)).toBe("over");
+    expect(budgetTone(Number.POSITIVE_INFINITY, 25)).toBe("over");
+  });
 });
 
 describe("suggestedRaises", () => {

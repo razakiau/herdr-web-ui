@@ -21,7 +21,7 @@ class FakePc implements GoalPc {
   chat = true;
   offline = false;
   input = 100_000;
-  lastModel: string | null = "cc/claude-work-x";
+  lastModel: string | null = "fictional/claude-work-x";
   async row(session: string): Promise<HostChatRow | null | "offline"> {
     if (this.offline) return "offline";
     return this.chat && session === SESSION ? { session, title: "FICTIONAL", status: "idle", modified_at: T1, cwd: null, unread: false, archived: false } : null;
@@ -85,6 +85,18 @@ describe("/api/goals", () => {
     pc.lastModel = null;
     expect(await call("/api/goals/start", START)).toMatchObject({ status: 400, json: { error: { code: "no_judge" } } });
     expect(store.list()).toEqual([]);
+  });
+
+  it("a chat whose last model has no price is 400 unpriced_model, unless the body allows it", async () => {
+    // a cap counts that model's spend as $0: it would never stop the goal
+    for (const model of ["fictional/claude-unpriced-x", "cc/claude-work-x"]) {
+      pc.lastModel = model;
+      expect(await call("/api/goals/start", START)).toMatchObject({ status: 400, json: { error: { code: "unpriced_model" } } });
+      expect(store.list()).toEqual([]);
+    }
+    expect(await call("/api/goals/start", { ...START, allowUnpriced: "yes" })).toMatchObject({ status: 400, json: { error: { code: "unpriced_model" } } });
+    const started = await call("/api/goals/start", { ...START, allowUnpriced: true });
+    expect(started).toMatchObject({ status: 200, json: { goal: { status: "active" } } });
   });
 
   it("start twice → 409 goal_running", async () => {
@@ -164,6 +176,9 @@ describe("goalPcOver", () => {
     expect(await pc.row(SESSION)).toMatchObject({ session: SESSION, status: "idle" });
     expect(await pc.row("session-unknown")).toBeNull();
     expect(await pc.cost(SESSION, null)).toMatchObject({ lastCallAt: T1 });
+    expect(asked.at(-1)!.path).toBe(`/api/host-chats/costs?session=${SESSION}`);
+    expect(await pc.cost(SESSION, "parent-fictional")).toMatchObject({ lastCallAt: T1 });
+    expect(asked.at(-1)!.path).toBe(`/api/host-chats/costs?session=${SESSION}&parent=parent-fictional`);
     expect(await pc.digest(SESSION, "parent-fictional")).toBeNull();
     expect(asked.at(-1)!.path).toBe(`/api/host-chats/goal-digest?session=${SESSION}&parent=parent-fictional`);
     expect(await pc.send(SESSION, "FICTIONAL next turn", T1)).toBe(true);
@@ -202,6 +217,21 @@ it("a watching device's POST to /api/goals is refused read_only; its GET is answ
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
     }
+  } finally {
+    server.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("a request with no credentials to /api/goals is 401, GET and POST", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ovis-goal-auth-"));
+  const server = createServer({ port: 0, stateDir: root, token: "test-goal-auth", tailscaleOwner: null, machines: false });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    expect((await fetch(`${base}/api/goals`, { headers: { "x-herdr-machine": "1" } })).status).toBe(401);
+    const response = await fetch(`${base}/api/goals/start`, { method: "POST", headers: { "x-herdr-machine": "1", "content-type": "application/json" }, body: JSON.stringify(START) });
+    expect(response.status).toBe(401);
+    expect(new GoalStore(root).list()).toEqual([]);
   } finally {
     server.stop();
     rmSync(root, { recursive: true, force: true });

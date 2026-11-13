@@ -4,8 +4,11 @@
  * model call (`lastCallAt`). The check and the call it judged are saved in one store update, so a
  * restart of the central server loses no turn and judges none twice.
  *
- * Per turn: price the chat, stop at the cap before the judge runs, judge, then mark the goal met,
- * pause it (impossible, judge error, failed send) or queue the next turn on the chat.
+ * Per turn: price the chat, stop at the cap before the judge runs, judge, stop at the cap again
+ * with the judge's cost, then mark the goal met, pause it (impossible, judge error, failed send) or
+ * queue the next turn on the chat. A PC that answers without the chat, its cost or its log pauses
+ * the goal (no_chat, no_cost, no_log) rather than leave it waiting unseen; one that does not answer
+ * is tried again on the next tick.
  */
 import { chatUsd, judgeUsd } from "../../shared/goal-budget.ts";
 import type { HostChatCost, HostChatRow } from "../../shared/host-chats.ts";
@@ -74,7 +77,8 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     if (!pc) return;
     const { machineId, session } = goal;
 
-    // 0. a judged turn whose next turn was saved but never reached the chat (central died in between): send it again, no new judge
+    // 0. a judged turn whose next turn was saved but never reached the chat: central died in between, or the
+    // judge's cost reached the cap and the cap was raised since. Send it now, no new judge
     const last = goal.judge.checks.at(-1);
     if (last && last.verdict === "not_met" && !last.sent && last.callAt === goal.lastJudgedCallAt) {
       await sendNext(pc, goal, last.reason);
@@ -83,10 +87,12 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
 
     // 1. a finished turn not judged yet ("error" ended the turn too)
     const row = await pc.row(session);
-    if (row === null || row === "offline") return;
+    if (row === "offline") return;
+    if (row === null) { pause(goal, "no_chat"); return; }
     if (row.archived || row.status === "working" || row.status === "asks") return;
     const cost = await pc.cost(session, goal.parent);
-    if (cost === null || cost === "offline") return;
+    if (cost === "offline") return;
+    if (cost === null) { pause(goal, "no_cost"); return; }
     const callAt = cost.lastCallAt;
     if (!callAt || notNewer(callAt, goal.lastJudgedCallAt)) return;
 
@@ -104,7 +110,8 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
 
     // 3. judge the turn; the check and the call it judged are saved in one update
     const digest = await pc.digest(session, goal.parent);
-    if (digest === null || digest === "offline") return;
+    if (digest === "offline") return;
+    if (digest === null) { pause(goal, "no_log"); return; }
     const answer = await judge(deps.complete, { model: goal.judge.model, doneWhen: goal.doneWhen, digest });
     const usd = answer.usage ? judgeUsd(goal.judge.model, answer.usage, prices, priced.fallback) : 0;
     const at = new Date(now()).toISOString();
@@ -121,11 +128,21 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
       if (!Number.isFinite(usd)) { each.status = "budget_limited"; each.pauseReason = "cap"; return; }
       if ("error" in answer) { each.status = "paused"; each.pauseReason = `judge_error: ${answer.error}`; return; }
       if (answer.verdict === "met") { each.status = "met"; each.pauseReason = null; return; }
-      if (answer.verdict === "impossible") { each.status = "paused"; each.pauseReason = answer.reason; }
+      if (answer.verdict === "impossible") { each.status = "paused"; each.pauseReason = answer.reason; return; }
+      // not_met: the judge's cost may have reached the cap; the check stays unsent, so a raise sends its turn (step 0)
+      if (!(spent(each) < each.capUsd)) { each.status = "budget_limited"; each.pauseReason = "cap"; }
     });
     if (!judged || judged.status !== "active" || "error" in answer || answer.verdict !== "not_met") return;
 
     await sendNext(pc, judged, answer.reason);
+  }
+
+  /** Pauses an active goal for `reason` and says so in the log. */
+  function pause(goal: HostGoal, reason: string): void {
+    const paused = store.update(goal.machineId, goal.session, (each) => {
+      if (each.status === "active") { each.status = "paused"; each.pauseReason = reason; }
+    });
+    if (paused?.status === "paused" && paused.pauseReason === reason) log(`goals: ${goal.machineId}/${goal.session} paused: ${reason}`);
   }
 
   /** Queues the next turn for the goal's last check (saved with sent: false), then marks it sent, or pauses on send_failed. */

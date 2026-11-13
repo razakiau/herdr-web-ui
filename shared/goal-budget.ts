@@ -33,9 +33,9 @@ export function judgeUsd(model: string, usage: { input: number; cached: number; 
   return ((usage.input - cached) * price.input + cached * (price.cached ?? price.input) + usage.output * price.output) / 1e6;
 }
 
-/** `notice` from 80 % of the cap, `over` from 100 %. */
+/** `notice` from 80 % of the cap, `over` from 100 %; `over` for a spend that is no number, so it fails closed. */
 export function budgetTone(spent: number, cap: number): "ok" | "notice" | "over" {
-  if (spent >= cap) return "over";
+  if (!Number.isFinite(spent) || spent >= cap) return "over";
   return spent >= cap * BUDGET_NOTICE ? "notice" : "ok";
 }
 

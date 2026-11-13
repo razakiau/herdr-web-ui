@@ -81,6 +81,13 @@ describe("GET /api/host-chats/goal-digest", () => {
     expect(((await response.json()) as { error: { code: string } }).error.code).toBe("no_log");
   });
 
+  it("answers 401 to a request with no token", async () => {
+    const { endpoint } = await bridge();
+    const response = await fetch(`${endpoint}/api/host-chats/goal-digest?session=${encodeURIComponent(SESSION)}`);
+    expect(response.status).toBe(401);
+    await response.body?.cancel();
+  });
+
   it("is the central server's to ask, never proxied for a browser", () => {
     expect(MACHINE_PROXY_PATH.test("host-chats/goal-digest")).toBe(false);
     expect(HOST_CHAT_ROUTES).not.toContain("goal-digest");

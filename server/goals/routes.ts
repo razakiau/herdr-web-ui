@@ -57,8 +57,8 @@ export function goalPcOver(machineId: string, ask: GoalPcAsk): GoalPc {
       if (status !== 200 || !isJsonObject(body) || !Array.isArray(body["chats"])) return "offline";
       return (body["chats"] as HostChatRow[]).find((row) => isJsonObject(row) && row.session === session) ?? null;
     },
-    async cost(session) {
-      const { status, body } = await read(ask, `/api/host-chats/costs${query(session)}`);
+    async cost(session, parent) {
+      const { status, body } = await read(ask, `/api/host-chats/costs${query(session, parent)}`);
       if (status !== 200 || !isJsonObject(body)) return "offline";
       const chat = body["chat"];
       return isJsonObject(chat) && Array.isArray(chat["models"]) ? chat as unknown as HostChatCost : null;
@@ -104,7 +104,8 @@ const isEnded = (goal: HostGoal) => goal.status === "met" || goal.status === "st
 
 /**
  *   GET  /api/goals                                                    `{ goals: GoalView[] }`
- *   POST /api/goals/start  { machine, session, parent?, objective, doneWhen, capUsd, judgeModel? }   `{ goal }`
+ *   POST /api/goals/start  { machine, session, parent?, objective, doneWhen, capUsd, judgeModel?, allowUnpriced? }   `{ goal }`;
+ *                          400 unpriced_model when the chat's last model has no price, unless allowUnpriced is true
  *   POST /api/goals/raise  { machine, session, capUsd }                `{ goal }`; 409 below_spent, goal_ended
  *   POST /api/goals/stop   { machine, session }                        `{ goal }`
  *   POST /api/goals/resume { machine, session }                        `{ goal }`, paused → active; 409 not_paused
@@ -183,6 +184,11 @@ async function start(deps: GoalRoutesDeps, machine: string, session: string, bod
   // the chat's cost so far is not the goal's: the spend starts from here
   const baselineUsd = cost === null ? 0 : chatUsd(cost.models, priced.prices ?? {}, priced.fallback).usd;
   const lastModel = cost?.lastModel ?? null;
+  // a model with no price (or a local one) counts $0, so the cap would never stop the goal: only on the owner's say-so
+  if (lastModel !== null && body["allowUnpriced"] !== true
+    && chatUsd([{ model: lastModel, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, calls: 0 }], priced.prices ?? {}, priced.fallback).unpriced.length > 0) {
+    return refuse("unpriced_model", `${lastModel} has no price, so the cap cannot count its spend; send allowUnpriced: true to start anyway`, 400);
+  }
   const model = picked ?? defaultJudge(lastModel, await deps.models().catch(() => []));
   if (model === null) return refuse("no_judge", "No model to judge with: pick one, or connect OmniRoute", 400);
   const warning = lastModel !== null && modelFamily(model) === modelFamily(lastModel) ? "same_family" : null;
