@@ -12,7 +12,7 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { ASYNC_TICK_MS, LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, startAwayAnswers, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
+import { ASYNC_SWEEP_TICKS, ASYNC_TICK_MS, LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, startAwayAnswers, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
 import { CostIndex } from "./costs.ts";
 import { LinkIndex } from "./links.ts";
 import { forgetSessionTodos } from "./todos.ts";
@@ -2347,6 +2347,8 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     const r = await rig();
     const t = away(r);
     // a chat this host does not have (deleted since it asked)
+    // the first tick is the minute's sweep; asked after it, the question meets the send's own check
+    await t.tick();
     const q = t.asks.add({ session: sessionUri(99), question: QUESTION, options: OPTIONS, recommended: 1, kind: "optional" });
     const warn = console.warn;
     const warned: string[] = [];
@@ -2355,7 +2357,7 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
       t.advance(61_000);
       await t.tick();
       expect(t.asks.get(q.id)).toBeNull();
-      expect(warned).toEqual([`[host-chats] away answer dropped (${q.id}: chat gone)`]);
+      expect(warned).toEqual([`[host-chats] async question dropped (${q.id}: chat gone)`]);
       // saved: a restart does not bring it back
       expect(new AsyncAskStore(t.file, () => 1_061_000).get(q.id)).toBeNull();
       warned.length = 0;
@@ -2368,6 +2370,50 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     }
     expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
     expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("a blocking question on a live chat never expires: 8 days on, it survives the load and every tick", async () => {
+    const r = await rig();
+    const t = away(r);
+    const q = ask(t.asks, "blocking", null);
+    t.advance(8 * 24 * 60 * 60_000);
+    expect(new AsyncAskStore(t.file, () => 1_000_000 + 8 * 24 * 60 * 60_000).pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    // two sweeps' worth of ticks: none drops it, none answers it
+    for (let i = 0; i < 2 * ASYNC_SWEEP_TICKS + 1; i += 1) { t.advance(ASYNC_TICK_MS); await t.tick(); }
+    expect(t.asks.get(q.id)).toMatchObject({ id: q.id, answer: null });
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("the minute's sweep drops a gone chat's questions, blocking ones too, and only those", async () => {
+    const r = await rig();
+    const t = away(r);
+    const gone = t.asks.add({ session: sessionUri(99), question: QUESTION, options: OPTIONS, recommended: null, kind: "blocking" });
+    const live = ask(t.asks, "blocking", null);
+    const warn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    try {
+      // no time has passed: the drop is for the chat, not the question's age
+      await t.tick();
+    } finally {
+      console.warn = warn;
+    }
+    expect(t.asks.get(gone.id)).toBeNull();
+    expect(new AsyncAskStore(t.file, () => 1_000_000).get(gone.id)).toBeNull();
+    expect(t.asks.get(live.id)).toMatchObject({ answer: null });
+    expect(warned).toEqual([`[host-chats] async question dropped (${gone.id}: chat gone)`]);
+    // between sweeps, a gone chat's blocking question (never due) waits for the next one
+    const later = t.asks.add({ session: sessionUri(98), question: QUESTION, options: OPTIONS, recommended: null, kind: "blocking" });
+    console.warn = () => {};
+    try {
+      for (let i = 1; i < ASYNC_SWEEP_TICKS; i += 1) await t.tick();
+      expect(t.asks.get(later.id)).not.toBeNull();
+      await t.tick();
+      expect(t.asks.get(later.id)).toBeNull();
+    } finally {
+      console.warn = warn;
+    }
   });
 
   it("a correction to the answer it already is is refused, and nothing is sent", async () => {

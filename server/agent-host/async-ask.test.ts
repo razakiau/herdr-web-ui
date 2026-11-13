@@ -133,15 +133,14 @@ describe("AsyncAskStore", () => {
     expect(new AsyncAskStore(file, now).get(q.id)).toBeNull();
   });
 
-  test("an unanswered question older than 7 days is pruned on load; a fresh one survives", () => {
+  test("an unanswered question never expires: a blocking one 8 days old survives the load", () => {
     const store = new AsyncAskStore(file, now);
-    const stale = ask(store, { kind: "blocking", recommended: null });
-    clock = 7 * 24 * 60 * 60_000;
-    const fresh = ask(store);
-    clock = 7 * 24 * 60 * 60_000 + 1;
+    const blocking = ask(store, { kind: "blocking", recommended: null });
+    const optional = ask(store);
+    clock = 8 * 24 * 60 * 60_000;
     const loaded = new AsyncAskStore(file, now);
-    expect(loaded.get(stale.id)).toBeNull();
-    expect(loaded.pending(SESSION).map((q) => q.id)).toEqual([fresh.id]);
+    expect(loaded.pending(SESSION).map((q) => q.id)).toEqual([blocking.id, optional.id]);
+    expect(loaded.unanswered().map((q) => q.id)).toEqual([blocking.id, optional.id]);
   });
 
   test("drop forgets a question and saves it; an unknown id is false", () => {

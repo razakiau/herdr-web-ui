@@ -27,8 +27,8 @@ export interface AsyncQuestion {
 
 export const AWAY_AFTER_MS = 60_000;
 /**
- * answered questions stay this long (the transcript shows them), then go on the next load; so do
- * unanswered ones that old, whose chat is most likely gone (a blocking one is never answered for it)
+ * answered questions stay this long (the transcript shows them), then go on the next load. An
+ * unanswered one never expires (a blocking question never times out): only its chat going drops it.
  */
 const KEEP_ANSWERED_MS = 7 * 24 * 60 * 60_000;
 
@@ -93,6 +93,11 @@ export class AsyncAskStore {
   /** The session's unanswered questions, oldest first. */
   pending(session: string): AsyncQuestion[] {
     return [...this.questions.values()].filter((q) => q.session === session && !q.answer).sort((a, b) => a.askedAt - b.askedAt).map(copy);
+  }
+
+  /** Every session's unanswered questions, blocking or optional, oldest first. */
+  unanswered(): AsyncQuestion[] {
+    return [...this.questions.values()].filter((q) => !q.answer).sort((a, b) => a.askedAt - b.askedAt).map(copy);
   }
 
   get(id: string): AsyncQuestion | null {
@@ -173,7 +178,7 @@ export class AsyncAskStore {
     const now = this.now();
     for (const value of parsed) {
       const q = questionOf(value);
-      if (q && now - (q.answer ? q.answer.at : q.askedAt) <= KEEP_ANSWERED_MS) this.questions.set(q.id, q);
+      if (q && !(q.answer && now - q.answer.at > KEEP_ANSWERED_MS)) this.questions.set(q.id, q);
     }
   }
 
