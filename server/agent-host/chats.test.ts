@@ -1103,6 +1103,49 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
     expect(said(`Answer to ${ID} ("${question}"): FICTIONAL keep`, storing(q)).parts[0]).toMatchObject({ text: question, chosen: ["FICTIONAL keep"] });
   });
 
+  describe("an answer steered into a turn that already held a steer: the host joins them with a blank line (routes.ts send)", () => {
+    const answer = `Answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`;
+    const part: ConversationPart = { kind: "question", text: "FICTIONAL keep the table?", options, chosen: ["FICTIONAL keep"], custom: null, skipped: false };
+    const kept = storing({ ...asked, answer: { label: "FICTIONAL keep", assumed: false, at: 1 } });
+
+    it("steer text then the answer: a bubble, then the question row", () => {
+      expect(said(`FICTIONAL also do X\n\n${answer}`, kept).parts).toEqual([{ kind: "text", text: "FICTIONAL also do X" }, part]);
+    });
+
+    it("the answer then steer text: the question row, then a bubble", () => {
+      expect(said(`${answer}\n\nFICTIONAL also do X`, kept).parts).toEqual([part, { kind: "text", text: "FICTIONAL also do X" }]);
+    });
+
+    it("an assumed answer between two steers, and two answers joined, keep their order", () => {
+      const other = { ...asked, id: "ask-11112222", question: "FICTIONAL which name?", options: [{ label: "FICTIONAL a" }], recommended: null, answer: { label: "FICTIONAL a", assumed: false, at: 1 } };
+      const context = storing(asked, other);
+      const assumed = `Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop (you were away)`;
+      expect(said(`FICTIONAL one\n\n${assumed}\n\nFICTIONAL two\n\nmore`, context).parts).toEqual([
+        { kind: "text", text: "FICTIONAL one" },
+        { ...part, chosen: ["FICTIONAL drop"], assumed: true, correctable: { session: asked.session, async_id: ID } },
+        { kind: "text", text: "FICTIONAL two\n\nmore" },
+      ]);
+      expect(said(`${assumed}\n\nAnswer to ask-11112222 ("FICTIONAL which name?"): FICTIONAL a`, context).parts.map((each) => each.kind === "question" ? each.chosen[0] : each.kind)).toEqual(["FICTIONAL drop", "FICTIONAL a"]);
+    });
+
+    it("a joined label or question holding a blank line still reads whole", () => {
+      const question = "FICTIONAL keep\n\nthe table?";
+      const label = "FICTIONAL keep it\n\nall of it";
+      const q = { ...asked, question, answer: { label, assumed: false, at: 1 } };
+      expect(said(`FICTIONAL steer\n\nAnswer to ${ID} ("${question}"): ${label}\n\nFICTIONAL after`, storing(q)).parts).toEqual([
+        { kind: "text", text: "FICTIONAL steer" },
+        { ...part, text: question, chosen: [label] },
+        { kind: "text", text: "FICTIONAL after" },
+      ]);
+    });
+
+    it("an answer not at a segment's start, or to an unknown id, stays inside the bubble", () => {
+      for (const text of [`FICTIONAL see ${answer}`, `FICTIONAL x\n\nAnswer to ask-99999999 ("FICTIONAL keep the table?"): FICTIONAL keep`]) {
+        expect(said(text, kept).parts).toEqual([{ kind: "text", text }]);
+      }
+    });
+  });
+
   it("with the store, an assumed answer carries its options and can be corrected", () => {
     const context = storing(asked);
     expect(said(`Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop (you were away)`, context).parts).toEqual([{

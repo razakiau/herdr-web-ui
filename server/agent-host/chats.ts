@@ -433,37 +433,82 @@ function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<Con
  * The message an async question's answer went to the chat as (routes.ts asyncAnswerText, ZAC-326):
  * `Answer to <id> ("<question>"): <label>`, `Assumed answer to …: <label> (you were away)` or
  * `Correction to …`. The question is not escaped, so it may hold quotes, parentheses and newlines,
- * and so may the label: only the stored question says where it ends (asyncAnswerPart).
+ * and so may the label: only the stored question says where it ends (asyncAnswerAt).
  */
 const ASYNC_ANSWER_HEAD = /^(Answer|Assumed answer|Correction) to (ask-[0-9a-f]{8}) \("/;
 const AWAY_SUFFIX = " (you were away)";
+/** What the host joins a steer to the one the turn already holds with (routes.ts send). */
+const STEER_JOIN = "\n\n";
 
 /**
- * A user turn that is an async question's answer, as the question part it answers (the user did
- * not type it as a message); null for any other text. Only a question the store knows
- * (`context.asyncAsk`) is read back: text that merely looks like an answer (typed, in a chat that
- * never asked, or one whose question was pruned 7 days after its answer) stays the user's bubble.
- * The message must start with `<form> to <id> ("<the stored question>"): `; the rest is the label,
- * less the away suffix of an assumed answer.
+ * The async answer that starts at `at` in a user turn's text, as the question part it answers and
+ * where it ends: at the text's end or at a STEER_JOIN (a steer joined after it). Null when none
+ * starts there. Only a question the store knows (`context.asyncAsk`) is read back: text that merely
+ * looks like an answer (typed, in a chat that never asked, or one whose question was pruned 7 days
+ * after its answer) stays the user's. It must start with `<form> to <id> ("<the stored question>"): `;
+ * the label after it is the longest the question could have had (its stored answer, one of its
+ * options) that ends there, less an assumed answer's away suffix; else it runs to the first join.
  */
-function asyncAnswerPart(text: string, context?: ReadContext): Extract<ConversationPart, { kind: "question" }> | null {
-  const head = ASYNC_ANSWER_HEAD.exec(text);
+function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part: Extract<ConversationPart, { kind: "question" }>; end: number } | null {
+  const head = ASYNC_ANSWER_HEAD.exec(text.slice(at, at + 64));
   if (!head) return null;
   const [opening, form, id] = head as unknown as [string, string, string];
   const asked = context?.asyncAsk?.(id) ?? null;
   if (!asked) return null;
   const lead = `${opening}${asked.question}"): `;
-  if (!text.startsWith(lead)) return null;
+  if (!text.startsWith(lead, at)) return null;
   const assumed = form === "Assumed answer";
-  const rest = text.slice(lead.length);
-  const label = assumed && rest.endsWith(AWAY_SUFFIX) ? rest.slice(0, -AWAY_SUFFIX.length) : rest;
+  const from = at + lead.length;
+  const suffix = assumed ? AWAY_SUFFIX : "";
+  const endsAt = (end: number): boolean => end === text.length || text.startsWith(STEER_JOIN, end);
+  // the label as each way it may end: a label the question could have had, with the away suffix or without, else up to the first join
+  const known = [...(asked.answer ? [asked.answer.label] : []), ...asked.options.map((option) => option.label)]
+    .filter((label) => label.trim() !== "").sort((a, b) => b.length - a.length);
+  const endings = [...known.map((label) => ({ label, after: suffix })), ...(suffix ? known.map((label) => ({ label, after: "" })) : [])];
+  const fits = endings.find(({ label, after }) => text.startsWith(label + after, from) && endsAt(from + label.length + after.length));
+  const join = text.indexOf(STEER_JOIN, from);
+  const end = fits ? from + fits.label.length + fits.after.length : join < 0 ? text.length : join;
+  const rest = text.slice(from, end);
+  const label = fits ? fits.label : assumed && rest.endsWith(AWAY_SUFFIX) ? rest.slice(0, -AWAY_SUFFIX.length) : rest;
   if (label.trim() === "") return null;
   return {
-    kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
-    ...(assumed ? { assumed: true as const } : {}),
-    // correctable while the store still holds the assumed answer: once corrected, it is the user's
-    ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
+    end,
+    part: {
+      kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
+      ...(assumed ? { assumed: true as const } : {}),
+      // correctable while the store still holds the assumed answer: once corrected, it is the user's
+      ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
+    },
   };
+}
+
+/**
+ * A user turn's text as its parts: each async answer in it (asyncAnswerAt) a question part, the
+ * rest the user's words, in order. One message is one segment; a steer the host joined to the one
+ * the turn held is another after a STEER_JOIN, so an answer is looked for at each segment's start.
+ */
+function userTextParts(text: string, context?: ReadContext): ConversationPart[] {
+  const parts: ConversationPart[] = [];
+  let words = 0;
+  const said = (until: number): void => {
+    const each = text.slice(words, until);
+    if (each.trim() !== "") parts.push({ kind: "text", text: each });
+  };
+  for (let at = 0; at >= 0 && at <= text.length;) {
+    const found = asyncAnswerAt(text, at, context);
+    if (found) {
+      said(Math.max(words, at - STEER_JOIN.length));
+      parts.push(found.part);
+      words = Math.min(text.length, found.end + STEER_JOIN.length);
+      at = words;
+      continue;
+    }
+    const next = text.indexOf(STEER_JOIN, at);
+    at = next < 0 ? -1 : next + STEER_JOIN.length;
+  }
+  if (!parts.some((part) => part.kind === "question")) return [{ kind: "text", text }];
+  said(text.length);
+  return parts;
 }
 
 /**
@@ -657,9 +702,8 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
       : part.kind !== ResponsePartKind.Error ? partsOf(part, read)
       : part !== stoppedAt ? []
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
-    const answered = asyncAnswerPart(turn.message.text, context);
     return [
-      { role: "user" as const, ts, parts: [answered ?? { kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
+      { role: "user" as const, ts, parts: [...userTextParts(turn.message.text, context), ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts, ...(read.model !== null ? { model: context?.modelName(read.model) ?? read.model } : {}) },
     ];
   });
