@@ -70,13 +70,14 @@ describe("a goal's head", () => {
     expect(goalHead(view({ spentUsd: 26, capUsd: 25, tone: "over" }), undefined, NOW).tone).toBe("notice");
   });
 
-  it("heads a paused goal Paused · $25 / $25, a met one Goal met · $27.10 with its check count", () => {
+  it("heads a paused goal Paused · $25.00 / $25, a met one Goal met · $27.10 with its check count", () => {
     expect(goalHead(view({ status: "budget_limited", spentUsd: 25, capUsd: 25, tone: "over" }), undefined, NOW))
-      .toEqual({ title: "Paused · $25 / $25", current: "0 checks", tone: "notice" });
-    expect(goalHead(view({ status: "paused", spentUsd: 4, capUsd: 25.5 }), undefined, NOW).title).toBe("Paused · $4 / $25.50");
+      .toEqual({ title: "Paused · $25.00 / $25", current: "0 checks", tone: "notice" });
+    expect(goalHead(view({ status: "paused", spentUsd: 4, capUsd: 25.5 }), undefined, NOW).title).toBe("Paused · $4.00 / $25.50");
     const checks = [check(), check(), check(), check(), check()];
     expect(goalHead(view({ status: "met", spentUsd: 27.1, judge: { model: "judge-model", warning: null, checks } }), undefined, NOW))
       .toEqual({ title: "Goal met · $27.10", current: "5 checks", tone: "done" });
+    expect(goalHead(view({ status: "met", spentUsd: 27 }), undefined, NOW).title).toBe("Goal met · $27.00");
   });
 
   it("heads a stopped goal as ended, with one check said once", () => {

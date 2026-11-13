@@ -102,8 +102,10 @@ export function goalCheckOf(text: string): { check: number; reason: string; rest
   return { check: Number(match[1]), reason, rest: text.slice(head.length).trim() };
 }
 
-/** $3.10, and $25 for a whole number of dollars */
-const dollars = (usd: number): string => Number.isInteger(usd) ? `$${usd}` : `$${usd.toFixed(2)}`;
+/** a spend always with its cents: $3.10, $25.00 */
+const dollars = (usd: number): string => `$${usd.toFixed(2)}`;
+/** a cap with no cents when it is a whole number of dollars: $25, $25.50 */
+const capDollars = (usd: number): string => Number.isInteger(usd) ? `$${usd}` : dollars(usd);
 
 /**
  * The goal bar's head: the spend against the cap (or how the goal ended), what it is on (the current
@@ -111,7 +113,7 @@ const dollars = (usd: number): string => Number.isInteger(usd) ? `$${usd}` : `$$
  */
 export function goalHead(goal: GoalView, todos: readonly HostTodo[] | undefined, now: number): { title: string; current: string; tone: "accent" | "notice" | "done" | "ended" } {
   const spent = dollars(goal.spentUsd);
-  const cap = dollars(goal.capUsd);
+  const cap = capDollars(goal.capUsd);
   const paused = goal.status === "paused" || goal.status === "budget_limited";
   const title = goal.status === "active" ? t("Goal {spent} / {cap}", { spent, cap })
     : paused ? t("Paused · {spent} / {cap}", { spent, cap })
