@@ -133,6 +133,20 @@ describe("AsyncAskStore", () => {
     expect(new AsyncAskStore(file, now).get(q.id)).toBeNull();
   });
 
+  test("reopen makes an answered question pending again, and saves it", () => {
+    const store = new AsyncAskStore(file, now);
+    const q = ask(store);
+    store.answer(q.id, "A", false);
+    expect(store.pending(SESSION)).toEqual([]);
+    expect(store.reopen(q.id)).toBe(true);
+    expect(store.pending(SESSION).map((each) => each.id)).toEqual([q.id]);
+    expect(store.get(q.id)?.answer).toBeNull();
+    expect(new AsyncAskStore(file, now).pending(SESSION).map((each) => each.id)).toEqual([q.id]);
+    // it can be answered again; an unknown id is false
+    expect(store.answer(q.id, "B", false)?.answer?.label).toBe("B");
+    expect(store.reopen("ask-00000000")).toBe(false);
+  });
+
   test("a missing or broken file starts empty", () => {
     expect(new AsyncAskStore(join(dir, "nope", "x.json"), now).pending(SESSION)).toEqual([]);
     writeFileSync(file, "{not json");

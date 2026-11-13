@@ -106,6 +106,17 @@ export class AsyncAskStore {
     return copy(q);
   }
 
+  /**
+   * Clears the answer of a question that has one (an answer recorded but never delivered to the
+   * chat): it is pending again. False when the id is unknown.
+   */
+  reopen(id: string): boolean {
+    const q = this.questions.get(id);
+    if (!q) return false;
+    if (q.answer) { q.answer = null; this.save(); }
+    return true;
+  }
+
   /** Whether some page has Ovis open; going from in use to not records when it closed. */
   setInUse(inUse: boolean): void {
     if (this.inUse && !inUse) this.lastInUseAt = this.now();

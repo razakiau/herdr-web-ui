@@ -1821,7 +1821,13 @@ async function answerAsync(call: Call, session: string, asyncId: unknown): Promi
   const { channel, chat } = await watched(call, session);
   const answered = call.asks!.answer(q!.id, label, false) ?? gone();
   const message = messageFrom(call.host.mirror().root, asyncAnswerText(answered, label), undefined, null);
-  send(call.host, session, channel, chat, message, idOf(call.body["id"]), chat.activeTurn ? "steer" : "send");
+  // an answer the chat never got is no answer: the question stays open, and the card with it
+  try {
+    send(call.host, session, channel, chat, message, idOf(call.body["id"]), chat.activeTurn ? "steer" : "send");
+  } catch (error) {
+    call.asks!.reopen(answered.id);
+    throw error;
+  }
   return jsonResponse({ ok: true });
 }
 

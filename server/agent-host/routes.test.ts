@@ -2197,6 +2197,27 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     expect(only(r.fake, "chat/turnStarted")).toMatchObject({ message: { text: answerText(q.id, "FICTIONAL rename it") } });
   });
 
+  it("an answer that fails to send leaves the question open", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    // read first, so the watch is in place: the failure is the answer's dispatch
+    await asked(r, asks, readPath);
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => {
+      if (action.type === "chat/pendingMessageSet" || action.type === "chat/turnStarted") throw new Error("FICTIONAL dispatch failure");
+      dispatch(channel, action);
+    };
+    const failed = await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] });
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    expect(asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    expect(((await asked(r, asks, readPath)).json as HostChatRead).prompt).toMatchObject({ host: { async_id: q.id } });
+    // once the host takes it, the same answer goes through
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).json).toEqual({ ok: true });
+    expect(asks.pending(sessionUri(1))).toEqual([]);
+  });
+
   it("a blocking question makes the row ask", async () => {
     const r = await rig();
     const asks = store();
