@@ -871,6 +871,7 @@ const BASE: Record<string, string> = {
   "{n} checks": "{n} 次检查",
   // the goal in the todo tab (components/HostTodoBar.tsx)
   "Goal": "目标",
+  "Goal: {objective}": "目标：{objective}",
   "Dismiss goal": "关闭目标",
   "Done when: {doneWhen}": "完成条件：{doneWhen}",
   "Judge {model}": "评判 {model}",

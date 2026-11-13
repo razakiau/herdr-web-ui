@@ -8,10 +8,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { HostTodo } from "../../shared/host-chats.ts";
 import type { JudgeChoice } from "../../shared/goal-budget.ts";
 import type { GoalView } from "../../shared/goals.ts";
-import { currentTodo } from "../components/HostTodoBar.tsx";
 import { getJson, sendJson } from "./api.ts";
 import { onHostChatMessage, onHostChatResume } from "./hostChats.ts";
 import { t } from "./i18n.ts";
+import { currentTodo } from "./todos.ts";
 
 /** How often a running goal is read again while no push comes. */
 const ACTIVE_POLL_MS = 15_000;

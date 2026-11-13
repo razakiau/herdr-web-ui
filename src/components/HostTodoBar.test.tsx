@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { GoalCheck, GoalView } from "../../shared/goals.ts";
 import type { HostTodo } from "../../shared/host-chats.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { currentTodo, HostTodoBar } from "./HostTodoBar.tsx";
+import { currentTodo } from "../lib/todos.ts";
+import { HostTodoBar } from "./HostTodoBar.tsx";
 
 const render = (element: ReactElement): string => {
   const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
@@ -90,12 +91,13 @@ describe("HostTodoBar", () => {
     expect(sections).toEqual(["Todos 2/6", "Goal"]);
     const words = said(html);
     expect(words.indexOf("Todos 2/6")).toBeLessThan(words.lastIndexOf("FICTIONAL c"));
-    expect(words.indexOf("FICTIONAL f")).toBeLessThan(words.indexOf("Done when: FICTIONAL 4 files in"));
+    expect(words.indexOf("FICTIONAL f")).toBeLessThan(words.indexOf("Goal: FICTIONAL import Q3"));
+    expect(words.indexOf("Goal: FICTIONAL import Q3")).toBeLessThan(words.indexOf("Done when: FICTIONAL 4 files in"));
     expect(words).toContain("Judge FICTIONAL-judge · same family");
     expect(words).toContain("While you're away: takes its recommended answer");
     expect(words).toContain("Check 1 · not met: FICTIONAL two left");
     expect(words).toContain("Check 2 · error: FICTIONAL timeout");
-    expect(html.match(/class="todo-bar-row"/g)?.length).toBe(6 + 3 + 2 + 1);
+    expect(html.match(/class="todo-bar-row"/g)?.length).toBe(6 + 4 + 2 + 1);
     expect(words).toContain("2/6 · FICTIONAL c");
   });
 

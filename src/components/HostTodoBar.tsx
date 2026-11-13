@@ -6,15 +6,11 @@ import type { HostTodo } from "../../shared/host-chats.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
 import { capDollars, dollars, goalHead } from "../lib/hostGoals.ts";
 import { useT } from "../lib/i18n.ts";
+import { currentTodo } from "../lib/todos.ts";
 import { AnimatedHeight } from "./AnimatedHeight.tsx";
 import "./HostTodoBar.css";
 
 const ICON: Record<HostTodo["status"], LucideIcon> = { done: Check, in_progress: CircleDot, pending: Circle, blocked: TriangleAlert };
-
-/** What the agent is on: the first todo in progress, else the first still to do. */
-export function currentTodo(todos: readonly HostTodo[]): HostTodo | null {
-  return todos.find((todo) => todo.status === "in_progress") ?? todos.find((todo) => todo.status === "pending") ?? null;
-}
 
 /**
  * VS Code's todo list above the input (chat.todoListWidget), drawn as a tab tucked under the
@@ -92,6 +88,7 @@ export function HostTodoBar({ todos, busy, defaultOpen = false, goal = null, dis
           <p className="goal-bar-section"><Target className="todo-bar-row-icon" aria-hidden="true" /><span>{t("Goal")}</span></p>
         </>}
         <ol className="todo-bar-list">
+          <GoalRow icon={Target} status="pending" text={t("Goal: {objective}", { objective: goal.objective })} />
           <GoalRow icon={goal.status === "met" ? Check : Circle} status={goal.status === "met" ? "met" : "pending"} text={t("Done when: {doneWhen}", { doneWhen: goal.doneWhen })} />
           <GoalRow icon={Scale} status={goal.judge.warning === null ? "pending" : "blocked"}
             text={goal.judge.warning === null ? t("Judge {model}", { model: goal.judge.model }) : t("Judge {model} · same family", { model: goal.judge.model })} />

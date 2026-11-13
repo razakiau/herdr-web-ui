@@ -1,3 +1,4 @@
+import type { HostTodo } from "../../shared/host-chats.ts";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { parseTodoAnswer, type TodoItem, type TodoStatus } from "../../shared/todos.ts";
 import { t } from "./i18n.ts";
@@ -105,4 +106,9 @@ export function todoCallSummary(part: Pick<Tool, "name" | "input"> & { tool_id?:
     return target === null ? what : `${what} · ${target}`;
   });
   return lines.join(", ");
+}
+
+/** What the agent is on: the first todo in progress, else the first still to do. */
+export function currentTodo(todos: readonly HostTodo[]): HostTodo | null {
+  return todos.find((todo) => todo.status === "in_progress") ?? todos.find((todo) => todo.status === "pending") ?? null;
 }

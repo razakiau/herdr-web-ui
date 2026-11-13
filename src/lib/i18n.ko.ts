@@ -867,6 +867,7 @@ const BASE: Record<string, string> = {
   "{n} checks": "확인 {n}회",
   // the goal in the todo tab (components/HostTodoBar.tsx)
   "Goal": "목표",
+  "Goal: {objective}": "목표: {objective}",
   "Dismiss goal": "목표 닫기",
   "Done when: {doneWhen}": "완료 조건: {doneWhen}",
   "Judge {model}": "판정 {model}",
