@@ -254,6 +254,8 @@ export interface ReadContext {
   todos?(): StoredTodo[] | null;
   /** the questions the agent asked without stopping (ask_user_async), unanswered, oldest first: the card's when the turn asks nothing itself */
   asked?(): AsyncQuestion[];
+  /** an async question by its id, answered or not, null when the store has none: an answer read back gets its options */
+  asyncAsk?(id: string): AsyncQuestion | null;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -425,6 +427,33 @@ function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<Con
   const base = { kind: "question" as const, text, ...(lines.length > 1 ? { report: message } : {}), options: [], chosen: [] };
   const answer = tool.success === false || /^User (?:cancelled|declined|dismissed)\b/.test(out) ? null : answerOf(out);
   return answer === null ? { ...base, custom: null, skipped: true } : withUploads({ ...base, custom: answer, skipped: false });
+}
+
+/**
+ * The message an async question's answer went to the chat as (routes.ts asyncAnswerText, ZAC-326):
+ * `Answer to <id> ("<question>"): <label>`, `Assumed answer to …: <label> (you were away)` or
+ * `Correction to …`. The question is not escaped, so it may hold quotes, parentheses and newlines:
+ * it runs, greedily, to the last `"): `. The away suffix is optional and not part of the label.
+ */
+const ASYNC_ANSWER = /^(Answer|Assumed answer|Correction) to (ask-[0-9a-f]{8}) \("([\s\S]*)"\): ([\s\S]*?)(?: \(you were away\))?$/;
+
+/**
+ * A user turn that is an async question's answer, as the question part it answers (the user did
+ * not type it as a message); null for any other text. With the store at hand (`context.asyncAsk`)
+ * the part lists the question's options, and an assumed answer names what a correction goes to.
+ */
+function asyncAnswerPart(text: string, context?: ReadContext): Extract<ConversationPart, { kind: "question" }> | null {
+  const match = ASYNC_ANSWER.exec(text);
+  if (!match) return null;
+  const [, form, id, question, label] = match as unknown as [string, string, string, string, string];
+  if (label.trim() === "") return null;
+  const assumed = form === "Assumed answer";
+  const asked = context?.asyncAsk?.(id) ?? null;
+  return {
+    kind: "question", text: question, options: asked ? asked.options.map((option) => option.label) : [], chosen: [label], custom: null, skipped: false,
+    ...(assumed ? { assumed: true as const } : {}),
+    ...(assumed && asked ? { correctable: { session: asked.session, async_id: id } } : {}),
+  };
 }
 
 /**
@@ -618,8 +647,9 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
       : part.kind !== ResponsePartKind.Error ? partsOf(part, read)
       : part !== stoppedAt ? []
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
+    const answered = asyncAnswerPart(turn.message.text, context);
     return [
-      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
+      { role: "user" as const, ts, parts: [answered ?? { kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts, ...(read.model !== null ? { model: context?.modelName(read.model) ?? read.model } : {}) },
     ];
   });

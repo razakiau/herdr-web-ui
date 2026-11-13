@@ -12,7 +12,7 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
+import { ASYNC_TICK_MS, LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, startAwayAnswers, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
 import { CostIndex } from "./costs.ts";
 import { LinkIndex } from "./links.ts";
 import { forgetSessionTodos } from "./todos.ts";
@@ -2216,6 +2216,84 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
     expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).json).toEqual({ ok: true });
     expect(asks.pending(sessionUri(1))).toEqual([]);
+  });
+
+  /** the away timer on a store with a fake clock, ticked by hand: never a real 10 s wait */
+  function away(r: Rig, inUse: () => boolean = () => false) {
+    let now = 1_000_000;
+    const asks = new AsyncAskStore(join(temp(), "async-asks.json"), () => now);
+    let tick: (() => Promise<void>) | null = null;
+    let every = 0;
+    let stopped = false;
+    const stop = startAwayAnswers(r.conn, asks, inUse, { clock: r.clock, every: (run, ms) => { tick = run; every = ms; return { stop: () => { stopped = true; } }; } });
+    return { asks, advance: (ms: number) => { now += ms; }, tick: () => tick!(), every: () => every, stop, stopped: () => stopped };
+  }
+  const assumedText = (id: string, label: string) => `Assumed answer to ${id} ("${QUESTION}"): ${label} (you were away)`;
+
+  it("the timer answers a due optional question as assumed", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const t = away(r);
+    expect(t.every()).toBe(ASYNC_TICK_MS);
+    expect(ASYNC_TICK_MS).toBe(10_000);
+    const q = ask(t.asks);
+    const blocking = ask(t.asks, "blocking", 0);
+    const none = ask(t.asks, "optional", null);
+    t.advance(59_000);
+    await t.tick();
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    t.advance(2_000);
+    await t.tick();
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", message: { text: assumedText(q.id, "FICTIONAL drop") } });
+    expect(t.asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL drop", assumed: true });
+    // blocking, or without a recommendation: never taken
+    expect(t.asks.get(blocking.id)?.answer).toBeNull();
+    expect(t.asks.get(none.id)?.answer).toBeNull();
+    // answered once: the next tick sends nothing more
+    await t.tick();
+    expect(actions(r.fake, "chat/pendingMessageSet").length).toBe(1);
+    t.stop();
+    expect(t.stopped()).toBe(true);
+  });
+
+  it("the timer waits while Ovis is open, and counts from when it closed", async () => {
+    const r = await rig();
+    let open = true;
+    const t = away(r, () => open);
+    const q = ask(t.asks);
+    t.advance(120_000);
+    await t.tick();
+    expect(t.asks.get(q.id)?.answer).toBeNull();
+    open = false;
+    await t.tick();
+    t.advance(59_000);
+    await t.tick();
+    expect(t.asks.get(q.id)?.answer).toBeNull();
+    t.advance(1_000);
+    await t.tick();
+    // idle chat: a new turn, not a steer
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ message: { text: assumedText(q.id, "FICTIONAL drop") } });
+  });
+
+  it("an assumed answer that fails to send leaves the question open, and the next tick tries again", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const t = away(r);
+    const q = ask(t.asks);
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    let failures = 0;
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => {
+      if (action.type === "chat/pendingMessageSet" || action.type === "chat/turnStarted") { failures += 1; throw new Error("FICTIONAL dispatch failure"); }
+      dispatch(channel, action);
+    };
+    t.advance(61_000);
+    await t.tick();
+    expect(failures).toBe(1);
+    expect(t.asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
+    await t.tick();
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(t.asks.get(q.id)?.answer).toMatchObject({ assumed: true });
   });
 
   it("a blocking question makes the row ask", async () => {

@@ -63,7 +63,7 @@ import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTOR
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
-import { hostChatsRoute, hostCosts, hostCostsPolled, hostLinks } from "./agent-host/routes.ts";
+import { hostChatsRoute, hostCosts, hostCostsPolled, hostLinks, startAwayAnswers } from "./agent-host/routes.ts";
 import { AsyncAskStore } from "./agent-host/async-ask.ts";
 import { AGENT_ASK_PATH, handleAgentAsk } from "./agent-host/agent-ask.ts";
 import { createDigestScheduler, type DigestPc, digestRunner, DigestStore, handleDigestRequest } from "./digest.ts";
@@ -76,7 +76,7 @@ import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
-import { handlePresenceRequest, PagePresence } from "./page-presence.ts";
+import { BRIDGE_PRESENCE_PATH, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, PresenceRelay } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
 
@@ -332,6 +332,18 @@ export function createServer(
   agentHostConnection?.start();
   // the questions this PC's agents ask without stopping their turn (ask_user_async, ZAC-326), kept across restarts
   const asyncAsks = agentHostConnection ? new AsyncAskStore(join(stateDir, "async-asks.json")) : null;
+  // whether Ovis is in use, for the away default: a page of this server, or the connection server's word (POST /api/host-chats/presence)
+  const bridgePresence = asyncAsks ? new BridgePresence(() => pages.inUse(), (inUse) => asyncAsks.setInUse(inUse)) : null;
+  // every 10 s, an optional question nobody was in to answer for 60 s takes its recommended option, marked assumed
+  const stopAwayAnswers = agentHostConnection && asyncAsks && bridgePresence ? startAwayAnswers(agentHostConnection, asyncAsks, () => bridgePresence.inUse()) : null;
+  // the connection server tells each connected PC's bridge whether a page is in use: on a change, and every 30 s
+  const presenceRelay = machines && agentHost.enabled ? new PresenceRelay({
+    inUse: () => pages.inUse(),
+    targets: () => machines.list().flatMap((machine) => machine.kind === "local" ? [] : [machines.endpoint(machine.id)].filter((endpoint) => endpoint !== undefined)),
+    fetch,
+  }) : null;
+  const presenceTimer = presenceRelay ? setInterval(() => void presenceRelay.tick(), PRESENCE_CHECK_MS) : null;
+  presenceTimer?.unref();
 
   /**
    * "Hand off now" on an alert (ZAC-262): the chat's PC is asked through its bridge
@@ -688,7 +700,13 @@ export function createServer(
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, VOICE_REQUEST_TIMEOUT_SECONDS); return handleVoiceRequest(request, pathname, voice); }
 
-      if (pathname === "/api/presence") { setRequestRoute(pathname); return handlePresenceRequest(request, pages); }
+      if (pathname === "/api/presence") {
+        setRequestRoute(pathname);
+        const response = await handlePresenceRequest(request, pages);
+        // a change reaches the bridges at once, not on the next check
+        void presenceRelay?.tick();
+        return response;
+      }
 
       if (pathname === "/api/push" || pathname.startsWith("/api/push/")) {
         try {
@@ -800,6 +818,13 @@ export function createServer(
         }
       }
 
+      if (pathname === BRIDGE_PRESENCE_PATH) {
+        setRequestRoute(pathname);
+        // the connection server's word on whether Ovis is in use (ZAC-326), with this bridge's token
+        if (!bridgePresence) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
+        if (!bridgeAuthorized) return unauthorizedJson();
+        return handleBridgePresenceRequest(request, bridgePresence);
+      }
       const hostChatsResponse = hostChatsRoute(request, pathname, agentHostConnection, undefined, asyncAsks ?? undefined);
       if (hostChatsResponse) return hostChatsResponse;
 
@@ -864,6 +889,8 @@ export function createServer(
       settlePortalStartup({ ok: false, error: new Error("Server stopped before Portal startup cleanup completed") });
       core.stop(() => {
         clearInterval(draftTimer);
+        if (presenceTimer) clearInterval(presenceTimer);
+        stopAwayAnswers?.();
         localCosts?.stop();
         groupsPoller.stop();
         // a pull in flight finishes on its own; the store closes once it has

@@ -502,7 +502,7 @@ function contextOf(host: AgentHost, session?: string, skills?: HostCommand[], as
     ...(session ? { session: () => host.mirror().getSession(ownerOf(host, session)) } : {}),
     ...(skills ? { skills: () => skills } : {}),
     ...(session ? { todos: () => readSessionTodos(session) } : {}),
-    ...(session && asks ? { asked: () => asks.pending(session) } : {}),
+    ...(session && asks ? { asked: () => asks.pending(session), asyncAsk: (id: string) => asks.get(id) } : {}),
   };
 }
 
@@ -1793,8 +1793,30 @@ function logRefusedAnswer(call: Call, response: Response): void {
   }, () => {});
 }
 
-/** The message an async question's answer goes back to the chat as (ZAC-326). */
-export const asyncAnswerText = (q: AsyncQuestion, label: string): string => `Answer to ${q.id} ("${q.question}"): ${label}`;
+/**
+ * The message an async question's answer goes back to the chat as (ZAC-326); an assumed one says
+ * it was taken while the user was away. chats.ts asyncAnswerPart reads it back.
+ */
+export const asyncAnswerText = (q: AsyncQuestion, label: string, assumed = false): string =>
+  assumed ? `Assumed answer to ${q.id} ("${q.question}"): ${label} (you were away)` : `Answer to ${q.id} ("${q.question}"): ${label}`;
+
+/**
+ * Records an async question's answer, then sends it to the chat: a steer while its turn runs, a new
+ * turn when it is idle. Null when the question is already answered (nothing is sent). An answer the
+ * chat never got is no answer: when the send throws, the question is open again and the error goes on.
+ */
+function deliverAsync(call: Pick<Call, "host" | "asks">, session: string, channel: string, chat: ChatState, q: AsyncQuestion, label: string, assumed: boolean, id: string): AsyncQuestion | null {
+  const answered = call.asks!.answer(q.id, label, assumed);
+  if (!answered) return null;
+  const message = messageFrom(call.host.mirror().root, asyncAnswerText(answered, label, assumed), undefined, null);
+  try {
+    send(call.host, session, channel, chat, message, id, chat.activeTurn ? "steer" : "send");
+  } catch (error) {
+    call.asks!.reopen(answered.id);
+    throw error;
+  }
+  return answered;
+}
 
 /**
  * An async question's answer (ZAC-326): an option by its index, or typed text. Recorded first, so a
@@ -1819,16 +1841,53 @@ async function answerAsync(call: Call, session: string, asyncId: unknown): Promi
   } else if (words !== "") label = words;
   else return badRequest("missing_answer", "pick an option or type an answer");
   const { channel, chat } = await watched(call, session);
-  const answered = call.asks!.answer(q!.id, label, false) ?? gone();
-  const message = messageFrom(call.host.mirror().root, asyncAnswerText(answered, label), undefined, null);
-  // an answer the chat never got is no answer: the question stays open, and the card with it
-  try {
-    send(call.host, session, channel, chat, message, idOf(call.body["id"]), chat.activeTurn ? "steer" : "send");
-  } catch (error) {
-    call.asks!.reopen(answered.id);
-    throw error;
-  }
+  // a send that fails reopens it: the question stays open, and the card with it
+  deliverAsync(call, session, channel, chat, q!, label, false, idOf(call.body["id"])) ?? gone();
   return jsonResponse({ ok: true });
+}
+
+/** How often the bridge looks for async questions to answer while the user is away (ZAC-326). */
+export const ASYNC_TICK_MS = 10_000;
+
+/**
+ * The away default (ask_user_async, ZAC-326): every ASYNC_TICK_MS the store hears whether Ovis is
+ * in use (`inUse`), and each optional question it then finds due (AsyncAskStore.due: a recommended
+ * option, nobody in for AWAY_AFTER_MS) is answered with that option, marked assumed, and sent as
+ * an answer is. One tick at a time; a question whose send fails is open again, so the next tick
+ * tries it again. `every` and `clock` are the tests' (the watch lease's timers). Returns a stop.
+ */
+export function startAwayAnswers(host: AgentHost, asks: AsyncAskStore, inUse: () => boolean, deps: { every?: (run: () => Promise<void>, ms: number) => { stop(): void }; clock?: LeaseClock } = {}): () => void {
+  let running: Promise<void> | null = null;
+  const tick = async (): Promise<void> => {
+    asks.setInUse(inUse());
+    const due = asks.due();
+    if (due.length === 0 || host.state().state !== "connected") return;
+    const call = { host, asks, leases: leasesOf(host, deps.clock), clock: deps.clock ?? realClock, url: new URL("http://localhost/"), body: {} } satisfies Call;
+    for (const q of due) {
+      const label = q.options[q.recommended!]!.label;
+      try {
+        const { channel, chat } = await watched(call, q.session);
+        // a page may have come back while the watch was taken: the user answers it then
+        asks.setInUse(inUse());
+        if (asks.due().some((each) => each.id === q.id)) deliverAsync(call, q.session, channel, chat, q, label, true, randomUUID());
+      } catch (error) {
+        // a chat that is gone or a host that failed: the question stays open; its id only, never the error's text
+        console.warn(`[host-chats] away answer not sent (${q.id}: ${error instanceof Refusal ? "refused" : error instanceof Error ? error.name : typeof error})`);
+      }
+    }
+  };
+  /** the tick in flight, or a new one: settles once it has answered what it found */
+  const run = (): Promise<void> => {
+    running ??= tick().finally(() => { running = null; });
+    return running;
+  };
+  const every = deps.every ?? ((go: () => Promise<void>, ms: number) => {
+    const timer = setInterval(() => void go(), ms);
+    timer.unref();
+    return { stop: () => clearInterval(timer) };
+  });
+  const handle = every(run, ASYNC_TICK_MS);
+  return () => handle.stop();
 }
 
 async function answerQuestionNow(call: Call): Promise<Response> {

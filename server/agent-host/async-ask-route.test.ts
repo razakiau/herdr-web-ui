@@ -93,6 +93,18 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect((await fetch(`${endpoint}/api/agent-ask`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(400);
   });
 
+  it("the bridge takes the connection server's presence with its token only (ZAC-326)", async () => {
+    const { endpoint, token } = await bridge();
+    const presence = (body: unknown, bearer?: string) => fetch(`${endpoint}/api/host-chats/presence`, {
+      method: "POST", headers: { "content-type": "application/json", ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) }, body: JSON.stringify(body),
+    });
+    expect((await presence({ in_use: true })).status).toBe(401);
+    expect((await presence({ in_use: true }, "FICTIONAL-wrong")).status).toBe(401);
+    expect((await presence({ in_use: "yes" }, token)).status).toBe(400);
+    expect((await presence({ in_use: true }, token)).status).toBe(204);
+    expect((await presence({ in_use: false }, token)).status).toBe(204);
+  });
+
   it("is 404 on a server with no agent host", async () => {
     const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: temp(), herdrProfiles: async () => [], registerBridge: false, tailscaleOwner: null });
     cleanups.push(() => server.stop());

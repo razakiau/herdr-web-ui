@@ -1049,3 +1049,43 @@ describe("host chat turns, whole", () => {
     expect(short.output_ref).toBeUndefined();
   });
 });
+
+describe("async question answers in the transcript (ask_user_async, ZAC-326)", () => {
+  const ID = "ask-0a1b2c3d";
+  const said = (text: string, context?: Parameters<typeof turnsFrom>[1]) =>
+    turnsFrom(chat({ turns: [{ id: "t1", startedAt: AT, duration: 1, state: "complete", usage: undefined, message: user(text), responseParts: [] }] }), context)[0]!;
+  const asked = { id: ID, session: "copilotcli:/FICTIONAL", question: "FICTIONAL keep the table?", options: [{ label: "FICTIONAL keep" }, { label: "FICTIONAL drop" }], recommended: 1, kind: "optional" as const, askedAt: 0, answer: { label: "FICTIONAL drop", assumed: true, at: 1 } };
+
+  it("answer messages read back as questions", () => {
+    expect(said(`Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop (you were away)`)).toEqual({ role: "user", ts: AT, parts: [
+      { kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: ["FICTIONAL drop"], custom: null, skipped: false, assumed: true },
+    ] });
+    expect(said(`Answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`).parts).toEqual([
+      { kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: ["FICTIONAL keep"], custom: null, skipped: false },
+    ]);
+    expect(said(`Correction to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`).parts).toEqual([
+      { kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: ["FICTIONAL keep"], custom: null, skipped: false },
+    ]);
+    // the suffix is optional, in any form
+    expect(said(`Assumed answer to ${ID} ("FICTIONAL q"): FICTIONAL drop`).parts[0]).toMatchObject({ chosen: ["FICTIONAL drop"], assumed: true });
+    // plain user text stays a bubble, and so does text that only looks close
+    for (const text of ["FICTIONAL plain words", `FICTIONAL see Answer to ${ID} ("q"): x`, `Answer to ask-zz ("q"): x`, `Answer to ${ID} (no quotes): x`]) {
+      expect(said(text).parts).toEqual([{ kind: "text", text }]);
+    }
+  });
+
+  it("a question holding quotes, parentheses and a newline reads whole: the split is at the last \"): ", () => {
+    const question = 'FICTIONAL rename "old" (the table): yes?\nor keep "it"): maybe';
+    expect(said(`Assumed answer to ${ID} ("${question}"): FICTIONAL drop (you were away)`).parts[0]).toMatchObject({ text: question, chosen: ["FICTIONAL drop"], assumed: true });
+  });
+
+  it("with the store, an assumed answer carries its options and can be corrected", () => {
+    const context = { chat: () => undefined, modelName: (id: string) => id, asyncAsk: (id: string) => id === ID ? asked : null };
+    expect(said(`Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop (you were away)`, context).parts).toEqual([{
+      kind: "question", text: "FICTIONAL keep the table?", options: ["FICTIONAL keep", "FICTIONAL drop"], chosen: ["FICTIONAL drop"], custom: null, skipped: false,
+      assumed: true, correctable: { session: "copilotcli:/FICTIONAL", async_id: ID },
+    }]);
+    // a plain answer is the user's own: nothing to correct
+    expect(said(`Answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`, context).parts[0]).not.toHaveProperty("correctable");
+  });
+});
