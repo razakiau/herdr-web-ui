@@ -542,9 +542,11 @@ export function createServer(
       const agentAsk = pathname === AGENT_ASK_PATH;
       // the agent-ask shim and the connection server's presence relay send the token in this PC's bridge
       // descriptor: the bridge token where registerBridge set one, else the server's own token (remote-entry
-      // registers that one). The own token is taken as a Bearer only, never a paired device or a cookie: the
-      // gate below lets both kinds through (a matched token is full access), and the two routes refuse the rest
-      const shimAuthorized = bridgeAuthorized || (tokenMatched && bearerMatches(request, token));
+      // registers that one). The own token counts only where it is the descriptor's (no registerBridge): with
+      // registerBridge, the browser's token must not open these two. It is taken as a Bearer only, never a paired
+      // device or a cookie: the gate below lets both kinds through (a matched token is full access), and the two
+      // routes refuse the rest
+      const shimAuthorized = bridgeAuthorized || (!options.registerBridge && tokenMatched && bearerMatches(request, token));
       const authenticated = access.level === "full" || ((bridgePath || agentAsk) && bridgeAuthorized);
 
       if (requiresAuth(pathname) && !authenticated) {

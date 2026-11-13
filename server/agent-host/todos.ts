@@ -263,8 +263,9 @@ function mtime(path: string): number | null {
 function storeStamp(path: string): string | null {
   const db = mtime(path);
   if (db === null) return null;
-  let wal: { mtimeMs: number; size: number } | null = null;
-  try { wal = statSync(`${path}-wal`); } catch { /* no WAL: checkpointed, or a rollback-journal store */ }
+  // no WAL (checkpointed, or a rollback-journal store) is undefined, not a throw: most stores have none
+  let wal: { mtimeMs: number; size: number } | undefined;
+  try { wal = statSync(`${path}-wal`, { throwIfNoEntry: false }); } catch { /* unreadable: as no WAL */ }
   return `${db}:${wal?.mtimeMs ?? 0}:${wal?.size ?? 0}`;
 }
 

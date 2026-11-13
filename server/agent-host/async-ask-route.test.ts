@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionState, SessionSummary } from "@microsoft/agent-host-protocol";
 import type { HostChatRead } from "../../shared/host-chats.ts";
+import { forgetAuthAttempts } from "../auth.ts";
 import { descriptorPath, type BridgeDescriptor } from "../bridge.ts";
 import { createServer } from "../index.ts";
 import { handleMachineRequest, MACHINE_PROXY_PATH } from "../machine-api.ts";
@@ -12,7 +13,8 @@ import { fakeAgentHost } from "./fake-host.ts";
 import { rowOfSdk, type AgentHost } from "./routes.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+// the refusals below spend the shared auth-failure budget (server/auth.ts): give it back after each test
+afterEach(async () => { forgetAuthAttempts(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 function temp(): string {
   const dir = mkdtempSync(join(tmpdir(), "herdr-agent-ask-"));
@@ -122,6 +124,19 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect((await presence({ in_use: "yes" }, token)).status).toBe(400);
     expect((await presence({ in_use: true }, token)).status).toBe(204);
     expect((await presence({ in_use: false }, token)).status).toBe(204);
+  });
+
+  it("a bridge with registerBridge takes the bridge token only, never the browser's token, on agent-ask and presence (ZAC-326)", async () => {
+    const { endpoint, token } = await bridge();
+    const presence = (bearer: string) => fetch(`${endpoint}/api/host-chats/presence`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` }, body: JSON.stringify({ in_use: true }),
+    });
+    // the browser token is full access elsewhere; the descriptor here names the bridge token, so these two refuse it
+    expect((await fetch(`${endpoint}/api/host-chats/chats`, { headers: { authorization: "Bearer FICTIONAL-browser-token" } })).status).toBe(200);
+    expect((await post(endpoint, ASK, "FICTIONAL-browser-token")).status).toBe(401);
+    expect((await presence("FICTIONAL-browser-token")).status).toBe(401);
+    expect((await post(endpoint, { ...ASK, sdk_session: "00000000-0000-4000-8000-0000000000ff" }, token)).status).toBe(404);
+    expect((await presence(token)).status).toBe(204);
   });
 
   // remote-entry registers the server's own token in the descriptor, with no registerBridge: the shim and
