@@ -1425,23 +1425,25 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey = "turn", live, wa
     const turnAction = checkpoint?.turn && onCheckpoint && !checkpoint.faded ? checkpoint : null;
     // VS Code forks before a request, so the first has nothing to fork
     const turnForkAt = checkpoint?.turn && onFork && !checkpoint.faded && !checkpoint.first ? checkpoint.turn : null;
-    // one bubble of the turn: the first carries its pictures, checkpoint, fork, outcome and skills
-    const bubble = (words: string, first: boolean, key?: string, foldKey?: string) => {
+    // one bubble of the turn: the first carries its time, pictures, checkpoint, fork, outcome and
+    // skills; `ownError` draws the copy error under it (a split turn draws it once, after its rows)
+    const bubble = (words: string, first: boolean, key?: string, foldKey?: string, ownError = true) => {
       const action = first ? turnAction : null;
       const forkAt = first ? turnForkAt : null;
+      const when = first ? time : null;
       return <article key={key} className={`chat-turn chat-turn-user${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
         {first && <UserImages paneId={paneId} parts={turn.parts} text={text} />}
         {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
         <div className="chat-user-row">
           {words.length > 0 && <UserMessage text={words} skills={userSkills} {...(foldKey !== undefined ? { foldKey } : {})} />}
-          {style === "vscode" ? <div className="chat-turn-meta">{time}
+          {style === "vscode" ? <div className="chat-turn-meta">{when}
             {/* ZAC-228: VS Code keeps a request's restore and fork behind its ⋯; only a message has them */}
             {(action || forkAt || words.length > 0) && <TurnMenu title={t("Message")} items={[
               ...(words.length > 0 ? [{ id: "copy", label: t("Copy"), icon: Copy, run: () => { void copyText(words).then(copied); } }] : []),
               ...(action ? [{ id: "restore", label: t(action.first ? "Start Over" : "Restore to before this message"), icon: RotateCcw, run: () => onCheckpoint!(action.turn!) }] : []),
               ...(forkAt ? [{ id: "fork", label: t("Fork from here"), icon: GitFork, run: () => onFork!(forkAt) }] : []),
             ]} />}</div>
-          : <div className="chat-turn-meta">{time}
+          : <div className="chat-turn-meta">{when}
             {/* VS Code's checkpoint toolbar on a request: Start Over on the first, Restore Checkpoint on the rest */}
             {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
               aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
@@ -1456,7 +1458,7 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey = "turn", live, wa
             )}
           </div>}
         </div>
-        {copyError}
+        {ownError && copyError}
         {first && outcome !== null && <OutcomeChip outcome={outcome} actions={outcomeActions} />}
         {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
         {first && <SkillActivityList parts={turn.parts} />}
@@ -1475,11 +1477,17 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey = "turn", live, wa
       else runs.push({ kind: "words", text: part.text, at });
     });
     const firstWords = runs.find((run) => run.kind === "words");
+    // a turn that is only an answer (sent while the chat was idle) has no bubble to carry the turn's
+    // time and controls: they go in a row of their own after the question, with no bubble
+    const hasMeta = firstWords === undefined && (time !== null || turnAction !== null || turnForkAt !== null || outcome !== null
+      || turnSkills(turn.parts).length > 0 || turn.parts.some((part) => part.kind === "image"));
     return <>{runs.map((run) => run.kind === "question"
       ? <article key={`question:${run.at}`} className={`chat-turn chat-turn-agent${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
         <QuestionSummary part={run.part} memoryKey={`question:${run.at}`} attached={<AnswerImages paneId={paneId} part={run.part} />} />
       </article>
-      : bubble(run.text, run === firstWords, `words:${run.at}`, run === firstWords ? undefined : `fold:${run.at}`))}</>;
+      : bubble(run.text, run === firstWords, `words:${run.at}`, run === firstWords ? undefined : `fold:${run.at}`, false))}
+      {hasMeta && bubble("", true, "meta", undefined, false)}
+      {copyError}</>;
   }
   // a notice is neither work nor answer: the turn splits as if it were not there, and each notice
   // sits after the work when it came before the answer, else after the answer

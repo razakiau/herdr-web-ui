@@ -494,9 +494,41 @@ describe("an answered async question in a user turn (ask_user_async, ZAC-326)", 
       expect(html).toContain("question-summary");
       expect(words(html)).toContain("Assumed: FICTIONAL drop");
       expect(html).toMatch(/<button[^>]*class="question-summary-change"[^>]*>Change<\/button>/);
-      expect(html).not.toContain("chat-turn-user");
-      expect(html).not.toContain("chat-user-row");
       expect(html).not.toContain("chat-bubble");
+      // its time stays, in a row of its own after the question (M1 below)
+      expect(html.indexOf("question-summary")).toBeLessThan(html.indexOf("chat-turn-meta"));
+      expect(html.match(/<time /g)).toHaveLength(1);
+    }
+    // a turn with nothing for that row (no time, no controls) draws the question alone
+    const bare = styled({ ...said([assumed]), ts: null }, "vscode");
+    expect(bare).not.toContain("chat-turn-user");
+    expect(bare).not.toContain("chat-user-row");
+  });
+
+  it("a turn that is only an answer keeps its time and Restore, after the question row and with no empty bubble (M1)", () => {
+    const checkpointed = { checkpoint: { turn: "t1", first: false, faded: false }, onCheckpoint: () => {}, onFork: () => {} };
+    const classic = styled(said([assumed]), "classic", checkpointed);
+    expect(classic).toContain("question-summary");
+    expect(classic).not.toContain("chat-bubble");
+    expect(classic).toMatch(/<button[^>]*class="chat-meta-btn chat-checkpoint-btn"[^>]*aria-label="Restore Checkpoint"/);
+    expect(classic).toContain("chat-fork-btn");
+    expect(classic).toContain("<time ");
+    expect(classic.indexOf("question-summary")).toBeLessThan(classic.indexOf("chat-checkpoint-btn"));
+    // nothing to copy: no Copy or Rewind
+    expect(classic).not.toContain("chat-copy");
+    // the first request offers Start Over; VS Code's style keeps them behind its ⋯
+    expect(styled(said([assumed]), "classic", { ...checkpointed, checkpoint: { turn: "t1", first: true, faded: false } })).toContain('aria-label="Start Over"');
+    const vscode = styled(said([assumed]), "vscode", checkpointed);
+    expect(vscode).toContain("chat-more-btn");
+    expect(vscode).not.toContain("chat-bubble");
+  });
+
+  it("a turn with two bubbles shows its time once, under the first (M2)", () => {
+    for (const style of ["vscode", "classic"] as const) {
+      const html = styled(said([{ kind: "text", text: "FICTIONAL one" }, assumed, { kind: "text", text: "FICTIONAL two" }]), style);
+      expect(html.match(/class="chat-bubble"/g)).toHaveLength(2);
+      expect(html.match(/<time /g)).toHaveLength(1);
+      expect(html.indexOf("<time ")).toBeLessThan(html.indexOf("question-summary"));
     }
   });
 
