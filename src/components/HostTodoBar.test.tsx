@@ -83,6 +83,14 @@ describe("HostTodoBar", () => {
     expect(html).not.toContain("todo-bar-list");
   });
 
+  it("a goal with no cap fills its bar when it has spent, and leaves it empty when not, never NaN", () => {
+    const fill = (over: Partial<GoalView>): string => /todo-bar-fill" data-tone="\w+" style="width:([^"]*)"/.exec(render(createElement(HostTodoBar, { todos: undefined, busy: true, goal: goal(over) })))![1]!;
+    expect(fill({ capUsd: 0, spentUsd: 0.42 })).toBe("100%");
+    expect(fill({ capUsd: 0, spentUsd: 0 })).toBe("0%");
+    expect(fill({ capUsd: Number.NaN, spentUsd: 0.42 })).toBe("100%");
+    expect(fill({ capUsd: -5, spentUsd: 0 })).toBe("0%");
+  });
+
   it("opened, lists the todos first, then the goal's terms and its checks", () => {
     const html = render(createElement(HostTodoBar, { todos: SIX, busy: true, defaultOpen: true, goal: goal({
       judge: { model: "FICTIONAL-judge", warning: "same_family", checks: [check("not_met", "FICTIONAL two left"), check("error", "FICTIONAL timeout")] },

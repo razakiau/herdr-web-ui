@@ -48,13 +48,18 @@ export function goalPausePrompt(goal: GoalView, t: Translate): InteractivePrompt
 export function GoalPauseCard({ machineId, session, goal, onDone }: { machineId: string; session: string; goal: GoalView; onDone(): void }) {
   const t = useT();
   const prompt = goalPausePrompt(goal, t);
-  const raises = goal.status === "budget_limited" ? goal.raises ?? [] : [];
+  // each option's meaning, in the prompt's order: the raises or resume, then the stop
+  const actions: (() => Promise<GoalView>)[] = [
+    ...(goal.status === "budget_limited"
+      ? (goal.raises ?? []).map((cap) => () => raiseGoal(machineId, session, cap))
+      : [() => resumeGoal(machineId, session)]),
+    () => stopGoal(machineId, session),
+  ];
   const submit = async (choice: PromptChoice): Promise<void> => {
-    const index = choice.option_index ?? 0;
-    const raise = raises[index];
-    if (raise !== undefined) await raiseGoal(machineId, session, raise);
-    else if (index === prompt.options.length - 1) await stopGoal(machineId, session);
-    else await resumeGoal(machineId, session);
+    // a pick the card did not offer spends nothing
+    const action = typeof choice.option_index === "number" && choice.option_index >= 0 ? actions[choice.option_index] : undefined;
+    if (action === undefined) throw new Error(t("That choice isn't on this card."));
+    await action();
   };
   return <PromptCardView key={prompt.id} prompt={prompt} submit={submit} onPromptChanged={onDone} onAnswered={onDone} markdown />;
 }

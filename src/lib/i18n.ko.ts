@@ -908,6 +908,7 @@ const BASE: Record<string, string> = {
   "Raise to {cap} and continue": "{cap}(으)로 올리고 계속",
   "Resume": "이어하기",
   "Stop here": "여기서 중지",
+  "That choice isn't on this card.": "이 카드에 없는 선택입니다.",
   "The judge failed: {reason}.": "판정 실패: {reason}.",
   "The chat is gone from its PC.": "이 채팅이 PC에서 사라졌습니다.",
   "Its cost can't be read.": "사용액을 읽을 수 없습니다.",

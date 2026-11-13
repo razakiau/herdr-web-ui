@@ -15,6 +15,8 @@ import { currentTodo } from "./todos.ts";
 
 /** How often a running goal is read again while no push comes. */
 const ACTIVE_POLL_MS = 15_000;
+/** The least time between two reads a chat's pushes make: a streaming turn pushes many times a second. */
+const PUSH_GAP_MS = 2_000;
 
 export async function fetchGoals(): Promise<GoalView[]> {
   return (await getJson<{ goals: GoalView[] }>("/api/goals", { cache: "no-store" })).goals;
@@ -47,9 +49,10 @@ async function goalFrom(response: Response): Promise<GoalView> {
 }
 
 /**
- * The goal of `machineId`'s chat `session`, null when it has none. Read again on the chat's push, when
- * the page or the event stream comes back, every 15 s while it runs (the judge's spend moves with no
- * push of the chat's own), and on `refresh`. A failed read keeps what was shown.
+ * The goal of `machineId`'s chat `session`, null when it has none. Read again on the chat's push (at
+ * most once every 2 s, a push in between read at the gap's end), when the page or the event stream
+ * comes back, every 15 s while it runs (the judge's spend moves with no push of the chat's own), and
+ * on `refresh`. A failed read keeps what was shown.
  */
 export function useHostGoal(machineId: string, session: string): { goal: GoalView | null; refresh(): void } {
   const [goal, setGoal] = useState<GoalView | null>(null);
@@ -66,14 +69,26 @@ export function useHostGoal(machineId: string, session: string): { goal: GoalVie
   useEffect(() => {
     setGoal(null);
     refresh();
+    let gap: ReturnType<typeof setTimeout> | undefined;
+    let owed = false;
+    const readForPush = (): void => {
+      refresh();
+      gap = setTimeout(() => {
+        gap = undefined;
+        if (owed) { owed = false; readForPush(); }
+      }, PUSH_GAP_MS);
+    };
     const stops = [
       onHostChatMessage((from, pushed) => {
-        if (from === machineId && pushed.type === "host-chat-changed" && pushed.session === session) refresh();
+        if (from !== machineId || pushed.type !== "host-chat-changed" || pushed.session !== session) return;
+        if (gap === undefined) readForPush();
+        else owed = true;
       }),
       onHostChatResume(refresh),
     ];
     return () => {
       asked.current++;
+      clearTimeout(gap);
       for (const stop of stops) stop();
     };
   }, [machineId, session, refresh]);

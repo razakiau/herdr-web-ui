@@ -64,7 +64,7 @@ export function HostTodoBar({ todos, busy, defaultOpen = false, goal = null, dis
         <Icon className="todo-bar-icon" aria-hidden="true" />
         <span className="todo-bar-title">{head.title}</span>
         <span className="todo-bar-track" role="progressbar" aria-valuemin={0} aria-valuemax={goal.capUsd} aria-valuenow={Math.min(goal.spentUsd, goal.capUsd)}>
-          <span className="todo-bar-fill" data-tone={head.tone} style={{ width: shareOf(Math.min(goal.spentUsd, goal.capUsd), goal.capUsd) }} />
+          <span className="todo-bar-fill" data-tone={head.tone} style={{ width: spendShare(goal.spentUsd, goal.capUsd) }} />
         </span>
         <span className="todo-bar-current">{head.current}</span>
         <ChevronDown className="todo-bar-caret" aria-hidden="true" />
@@ -127,6 +127,9 @@ function GoalRow({ icon: Icon, status, text }: { icon: LucideIcon; status: strin
 
 const doneOf = (todos: readonly HostTodo[]): number => todos.filter((todo) => todo.status === "done").length;
 const shareOf = (part: number, whole: number): string => `${Math.round((part / whole) * 1000) / 10}%`;
+/** the spend's share of the cap; a cap that is no number above 0 shows full once anything is spent, never NaN */
+const spendShare = (spent: number, cap: number): string =>
+  !Number.isFinite(cap) || cap <= 0 ? (spent > 0 ? "100%" : "0%") : shareOf(Math.min(spent, cap), cap);
 
 // storage can be missing or refuse (private browsing): the goal then just stays
 function wasDismissed(key: string): boolean {

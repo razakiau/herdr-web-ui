@@ -1,9 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
+import { createElement } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import type { HostTodo } from "../../shared/host-chats.ts";
 import type { GoalCheck, GoalView } from "../../shared/goals.ts";
 import { nextTurnText } from "../../server/goals/runner.ts";
-import { goalCheckOf, goalHead } from "./hostGoals.ts";
+import { noteHostChatMessage } from "./hostChats.ts";
+import { goalCheckOf, goalHead, useHostGoal } from "./hostGoals.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 
@@ -83,5 +86,70 @@ describe("a goal's head", () => {
   it("heads a stopped goal as ended, with one check said once", () => {
     expect(goalHead(view({ status: "stopped", spentUsd: 1.234, judge: { model: "judge-model", warning: null, checks: [check()] } }), undefined, NOW))
       .toEqual({ title: "Goal stopped · $1.23", current: "1 check", tone: "ended" });
+  });
+});
+
+describe("useHostGoal", () => {
+  const keys = ["fetch", "IS_REACT_ACT_ENVIRONMENT"];
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+  let renderer: ReactTestRenderer | undefined;
+  let reads: number;
+
+  beforeEach(() => {
+    for (const key of keys) saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    reads = 0;
+    const define = (key: string, value: unknown): void => { Object.defineProperty(globalThis, key, { configurable: true, writable: true, value }); };
+    define("IS_REACT_ACT_ENVIRONMENT", true);
+    define("fetch", async () => {
+      reads++;
+      return new Response(JSON.stringify({ goals: [] }), { headers: { "content-type": "application/json" } });
+    });
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    await act(async () => { renderer?.unmount(); });
+    renderer = undefined;
+    jest.useRealTimers();
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+    saved.clear();
+  });
+
+  const mount = async (): Promise<void> => {
+    const Probe = () => { useHostGoal("m", "s"); return null; };
+    await act(async () => { renderer = create(createElement(Probe)); });
+  };
+  const push = (machine = "m", session = "s"): void => { noteHostChatMessage(machine, { type: "host-chat-changed", session }); };
+
+  it("a burst of this chat's pushes reads the goal once at once and once when 2 s have passed", async () => {
+    await mount();
+    expect(reads).toBe(1);
+    for (let n = 0; n < 6; n++) { push(); jest.advanceTimersByTime(300); }
+    push("m", "other");
+    push("other-pc", "s");
+    expect(reads).toBe(2);
+    jest.advanceTimersByTime(199);
+    expect(reads).toBe(2);
+    jest.advanceTimersByTime(1);
+    expect(reads).toBe(3);
+    // the trailing read starts a window of its own; a quiet one owes nothing
+    jest.advanceTimersByTime(10_000);
+    expect(reads).toBe(3);
+    push();
+    expect(reads).toBe(4);
+  });
+
+  it("a read owed when the chat closes is never made", async () => {
+    await mount();
+    push();
+    push();
+    expect(reads).toBe(2);
+    await act(async () => { renderer?.unmount(); });
+    renderer = undefined;
+    jest.advanceTimersByTime(10_000);
+    expect(reads).toBe(2);
   });
 });

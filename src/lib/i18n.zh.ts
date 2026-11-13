@@ -912,6 +912,7 @@ const BASE: Record<string, string> = {
   "Raise to {cap} and continue": "提高到 {cap} 并继续",
   "Resume": "继续",
   "Stop here": "到此停止",
+  "That choice isn't on this card.": "此卡片上没有这个选项。",
   "The judge failed: {reason}.": "评判出错：{reason}。",
   "The chat is gone from its PC.": "这个聊天已不在它的电脑上。",
   "Its cost can't be read.": "无法读取它的花费。",

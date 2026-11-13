@@ -910,6 +910,7 @@ const BASE: Record<string, string> = {
   "Raise to {cap} and continue": "{cap} に上げて続ける",
   "Resume": "再開",
   "Stop here": "ここで停止",
+  "That choice isn't on this card.": "その選択肢はこのカードにありません。",
   "The judge failed: {reason}.": "判定が失敗しました: {reason}。",
   "The chat is gone from its PC.": "このチャットは PC からなくなりました。",
   "Its cost can't be read.": "使用額を読み取れません。",

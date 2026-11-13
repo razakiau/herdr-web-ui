@@ -6,6 +6,7 @@ import type { GoalCheck, GoalView } from "../../shared/goals.ts";
 import { translate } from "../lib/i18n.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { GoalPauseCard, goalPausePrompt } from "./GoalPauseCard.tsx";
+import { PromptCardView } from "./PromptCard.tsx";
 
 const t = (key: string, vars?: Record<string, string | number>): string => translate("en", key, vars);
 const check = (): GoalCheck => ({ at: "2026-11-13T10:00:00.000Z", callAt: "2026-11-13T10:00:00.000Z", verdict: "not_met", reason: "FICTIONAL", usd: 0.2, sent: true });
@@ -110,6 +111,28 @@ describe("GoalPauseCard", () => {
     await act(async () => { renderer?.unmount(); });
     expect(await choose(goal({ status: "paused", pauseReason: "send_failed", raises: null }), 1)).toBe(1);
     expect(posted.map((each) => each.url)).toEqual(["/api/goals/resume", "/api/goals/stop"]);
+  });
+
+  it("a choice with no index or one not on the card neither raises, resumes nor stops", async () => {
+    for (const shown of [goal(), goal({ raises: null }), goal({ status: "paused", pauseReason: "send_failed", raises: null })]) {
+      await act(async () => { renderer = create(createElement(SettingsProvider, { children: createElement(GoalPauseCard, { machineId: "m1", session: "s1", goal: shown, onDone() {} }) })); });
+      const submit = renderer!.root.findByType(PromptCardView).props.submit as (choice: object) => Promise<void>;
+      for (const choice of [{}, { option_index: null }, { option_index: 7 }, { option_index: -1 }, { custom_text: "FICTIONAL" }]) {
+        await expect(submit(choice)).rejects.toThrow("That choice isn't on this card.");
+      }
+      await act(async () => { renderer?.unmount(); });
+    }
+    expect(posted).toEqual([]);
+  });
+
+  it("with no raises offered at its cap, its one option stops the goal", async () => {
+    let done = 0;
+    await act(async () => { renderer = create(createElement(SettingsProvider, { children: createElement(GoalPauseCard, { machineId: "m1", session: "s1", goal: goal({ raises: null }), onDone: () => { done++; } }) })); });
+    const options = renderer!.root.findAll((node: ReactTestInstance) => node.type === "button" && String(node.props.className).includes("prompt-card-option"));
+    expect(options.length).toBe(1);
+    await act(async () => { options[0]!.props.onClick({ nativeEvent: {}, currentTarget: {} }); });
+    expect(posted.map((each) => each.url)).toEqual(["/api/goals/stop"]);
+    expect(done).toBe(1);
   });
 
   it("a refusal stays on the card with the server's words, and it is not done", async () => {
