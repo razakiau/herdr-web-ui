@@ -867,6 +867,19 @@ const BASE: Record<string, string> = {
   "{h}h {m}m in": "{h} 時間 {m} 分経過",
   "1 check": "1 回のチェック",
   "{n} checks": "{n} 回のチェック",
+  // the goal in the todo tab (components/HostTodoBar.tsx)
+  "Goal": "目標",
+  "Dismiss goal": "目標を閉じる",
+  "Done when: {doneWhen}": "完了条件: {doneWhen}",
+  "Judge {model}": "判定 {model}",
+  "Judge {model} · same family": "判定 {model} · 同じ系列",
+  "While you're away: takes its recommended answer": "不在のとき: おすすめの回答を選ぶ",
+  "While you're away: waits for you": "不在のとき: 戻るまで待つ",
+  "Check {n} · met: {reason}": "チェック {n} · 達成: {reason}",
+  "Check {n} · not met: {reason}": "チェック {n} · 未達成: {reason}",
+  "Check {n} · impossible: {reason}": "チェック {n} · 達成不可: {reason}",
+  "Check {n} · error: {reason}": "チェック {n} · エラー: {reason}",
+  "Chat {chat} · judge {judge} · cap {cap}": "チャット {chat} · 判定 {judge} · 上限 {cap}",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

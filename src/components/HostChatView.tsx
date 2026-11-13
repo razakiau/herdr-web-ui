@@ -54,6 +54,7 @@ import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
 import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
+import { useHostGoal } from "../lib/hostGoals.ts";
 import { hostSlashItems, resolveHostSlash } from "../lib/hostSlash.ts";
 import { STALL_MS, stalledMessage } from "../lib/hostStall.ts";
 
@@ -139,6 +140,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
   const [chat, setChat] = useState<HostChatRead | null>(() => source.last());
+  const { goal } = useHostGoal(machineId, session);
   // bumped to read the chat again now (a send, an answer); `sent` also tells the chat a message went
   const [refresh, setRefresh] = useState(0);
   const [sent, setSent] = useState(0);
@@ -515,7 +517,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
           onHandoff={onHandoff} handingOff={handingOff} handoffWaiting={handoffWaiting} fresh={fresh} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
-      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}
+      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} goal={goal} dismissKey={`${machineId}:${session}`} />}
       foot={<HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />}

@@ -865,6 +865,19 @@ const BASE: Record<string, string> = {
   "{h}h {m}m in": "{h}시간 {m}분 경과",
   "1 check": "확인 1회",
   "{n} checks": "확인 {n}회",
+  // the goal in the todo tab (components/HostTodoBar.tsx)
+  "Goal": "목표",
+  "Dismiss goal": "목표 닫기",
+  "Done when: {doneWhen}": "완료 조건: {doneWhen}",
+  "Judge {model}": "판정 {model}",
+  "Judge {model} · same family": "판정 {model} · 같은 계열",
+  "While you're away: takes its recommended answer": "자리에 없을 때: 추천 답변을 고름",
+  "While you're away: waits for you": "자리에 없을 때: 돌아올 때까지 기다림",
+  "Check {n} · met: {reason}": "확인 {n} · 달성: {reason}",
+  "Check {n} · not met: {reason}": "확인 {n} · 미달성: {reason}",
+  "Check {n} · impossible: {reason}": "확인 {n} · 달성 불가: {reason}",
+  "Check {n} · error: {reason}": "확인 {n} · 오류: {reason}",
+  "Chat {chat} · judge {judge} · cap {cap}": "채팅 {chat} · 판정 {judge} · 한도 {cap}",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

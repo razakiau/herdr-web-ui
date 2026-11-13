@@ -172,7 +172,6 @@ export const CHAT_ZH: Record<string, string> = {
   "Work so far": "目前的工作",
   "blocked": "受阻",
   "paused": "已暂停",
-  "Goal": "目标",
   "complete": "已完成",
   "out of budget": "预算用尽",
   "Used so far: {spent}": "目前已用：{spent}",

@@ -172,7 +172,6 @@ export const CHAT_KO: Record<string, string> = {
   "Work so far": "지금까지의 작업",
   "blocked": "막힘",
   "paused": "일시 중지",
-  "Goal": "목표",
   "complete": "완료",
   "out of budget": "예산 소진",
   "Used so far: {spent}": "지금까지 사용: {spent}",

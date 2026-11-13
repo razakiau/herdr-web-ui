@@ -869,6 +869,19 @@ const BASE: Record<string, string> = {
   "{h}h {m}m in": "已进行 {h} 小时 {m} 分钟",
   "1 check": "1 次检查",
   "{n} checks": "{n} 次检查",
+  // the goal in the todo tab (components/HostTodoBar.tsx)
+  "Goal": "目标",
+  "Dismiss goal": "关闭目标",
+  "Done when: {doneWhen}": "完成条件：{doneWhen}",
+  "Judge {model}": "评判 {model}",
+  "Judge {model} · same family": "评判 {model} · 同一系列",
+  "While you're away: takes its recommended answer": "你不在时：采用推荐的回答",
+  "While you're away: waits for you": "你不在时：等你回来",
+  "Check {n} · met: {reason}": "第 {n} 次检查 · 已达成：{reason}",
+  "Check {n} · not met: {reason}": "第 {n} 次检查 · 未达成：{reason}",
+  "Check {n} · impossible: {reason}": "第 {n} 次检查 · 无法达成：{reason}",
+  "Check {n} · error: {reason}": "第 {n} 次检查 · 出错：{reason}",
+  "Chat {chat} · judge {judge} · cap {cap}": "聊天 {chat} · 评判 {judge} · 上限 {cap}",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

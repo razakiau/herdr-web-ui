@@ -103,9 +103,9 @@ export function goalCheckOf(text: string): { check: number; reason: string; rest
 }
 
 /** a spend always with its cents: $3.10, $25.00 */
-const dollars = (usd: number): string => `$${usd.toFixed(2)}`;
+export const dollars = (usd: number): string => `$${usd.toFixed(2)}`;
 /** a cap with no cents when it is a whole number of dollars: $25, $25.50 */
-const capDollars = (usd: number): string => Number.isInteger(usd) ? `$${usd}` : dollars(usd);
+export const capDollars = (usd: number): string => Number.isInteger(usd) ? `$${usd}` : dollars(usd);
 
 /**
  * The goal bar's head: the spend against the cap (or how the goal ended), what it is on (the current
