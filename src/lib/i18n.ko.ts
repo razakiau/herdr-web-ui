@@ -879,6 +879,28 @@ const BASE: Record<string, string> = {
   "Check {n} · impossible: {reason}": "확인 {n} · 달성 불가: {reason}",
   "Check {n} · error: {reason}": "확인 {n} · 오류: {reason}",
   "Chat {chat} · judge {judge} · cap {cap}": "채팅 {chat} · 판정 {judge} · 한도 {cap}",
+  // starting a goal from Chat settings (components/ModelPicker.tsx)
+  "Other…": "기타…",
+  "Works until a judge agrees it's done": "판정 모델이 완료를 인정할 때까지 작업",
+  "Send the first message, then start a goal": "첫 메시지를 보낸 뒤 목표를 시작하세요",
+  "Done when": "완료 조건",
+  "The judge only reads the chat, so name proof it can see: a command and its output.": "판정 모델은 채팅만 읽으므로 볼 수 있는 증거를 적으세요: 명령과 그 출력 등.",
+  "Budget": "예산",
+  "Budget in dollars": "예산(달러)",
+  "At API prices, from OmniRoute's log. It pauses at the cap and asks before spending more.": "API 가격 기준, OmniRoute 로그에서 계산합니다. 한도에서 일시 중지하고 더 쓰기 전에 묻습니다.",
+  "Judge": "판정",
+  "Another family than the worker": "작업 모델과 다른 계열",
+  "Cheapest · another family": "가장 저렴 · 다른 계열",
+  "Same family as the worker: it may go easy on it": "작업 모델과 같은 계열: 판정이 느슨할 수 있습니다",
+  "While you're away": "자리를 비운 동안",
+  "Take its recommended answer": "추천 답변 선택",
+  "Only for questions it marks optional, after 1 min with no Ovis open. Blocking ones wait.": "선택 사항으로 표시된 질문만, Ovis가 1분 동안 열려 있지 않을 때 적용됩니다. 차단 질문은 기다립니다.",
+  "Wait for me": "돌아올 때까지 대기",
+  "Every question waits until you answer": "모든 질문이 답할 때까지 기다립니다",
+  "This model has no price, so the cap can't count its spend.": "이 모델은 가격이 없어 한도가 사용액을 셀 수 없습니다.",
+  "Start anyway": "그래도 시작",
+  "Start goal": "목표 시작",
+  "Stop goal": "목표 중지",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

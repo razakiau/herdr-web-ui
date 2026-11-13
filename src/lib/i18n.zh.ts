@@ -883,6 +883,28 @@ const BASE: Record<string, string> = {
   "Check {n} · impossible: {reason}": "第 {n} 次检查 · 无法达成：{reason}",
   "Check {n} · error: {reason}": "第 {n} 次检查 · 出错：{reason}",
   "Chat {chat} · judge {judge} · cap {cap}": "聊天 {chat} · 评判 {judge} · 上限 {cap}",
+  // starting a goal from Chat settings (components/ModelPicker.tsx)
+  "Other…": "其他…",
+  "Works until a judge agrees it's done": "一直工作，直到评判认可已完成",
+  "Send the first message, then start a goal": "先发送第一条消息，再开始目标",
+  "Done when": "完成条件",
+  "The judge only reads the chat, so name proof it can see: a command and its output.": "评判只读取聊天，所以请写明它能看到的证据：一条命令及其输出。",
+  "Budget": "预算",
+  "Budget in dollars": "预算（美元）",
+  "At API prices, from OmniRoute's log. It pauses at the cap and asks before spending more.": "按 API 价格，取自 OmniRoute 的日志。达到上限时会暂停，并在继续花费前询问你。",
+  "Judge": "评判",
+  "Another family than the worker": "与执行模型不同系列",
+  "Cheapest · another family": "最便宜 · 不同系列",
+  "Same family as the worker: it may go easy on it": "与执行模型同一系列：可能会对它手下留情",
+  "While you're away": "你不在时",
+  "Take its recommended answer": "采用推荐的回答",
+  "Only for questions it marks optional, after 1 min with no Ovis open. Blocking ones wait.": "仅限它标为可选的问题，且没有打开 Ovis 满 1 分钟后。阻塞性问题会等你。",
+  "Wait for me": "等我回来",
+  "Every question waits until you answer": "每个问题都等你回答",
+  "This model has no price, so the cap can't count its spend.": "此模型没有价格，上限无法计算它的花费。",
+  "Start anyway": "仍然开始",
+  "Start goal": "开始目标",
+  "Stop goal": "停止目标",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
