@@ -432,28 +432,37 @@ function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<Con
 /**
  * The message an async question's answer went to the chat as (routes.ts asyncAnswerText, ZAC-326):
  * `Answer to <id> ("<question>"): <label>`, `Assumed answer to …: <label> (you were away)` or
- * `Correction to …`. The question is not escaped, so it may hold quotes, parentheses and newlines:
- * it runs, greedily, to the last `"): `. The away suffix is optional and not part of the label.
+ * `Correction to …`. The question is not escaped, so it may hold quotes, parentheses and newlines,
+ * and so may the label: only the stored question says where it ends (asyncAnswerPart).
  */
-const ASYNC_ANSWER = /^(Answer|Assumed answer|Correction) to (ask-[0-9a-f]{8}) \("([\s\S]*)"\): ([\s\S]*?)(?: \(you were away\))?$/;
+const ASYNC_ANSWER_HEAD = /^(Answer|Assumed answer|Correction) to (ask-[0-9a-f]{8}) \("/;
+const AWAY_SUFFIX = " (you were away)";
 
 /**
  * A user turn that is an async question's answer, as the question part it answers (the user did
- * not type it as a message); null for any other text. With the store at hand (`context.asyncAsk`)
- * the part lists the question's options, and an assumed answer names what a correction goes to.
+ * not type it as a message); null for any other text. Only a question the store knows
+ * (`context.asyncAsk`) is read back: text that merely looks like an answer (typed, in a chat that
+ * never asked, or one whose question was pruned 7 days after its answer) stays the user's bubble.
+ * The message must start with `<form> to <id> ("<the stored question>"): `; the rest is the label,
+ * less the away suffix of an assumed answer.
  */
 function asyncAnswerPart(text: string, context?: ReadContext): Extract<ConversationPart, { kind: "question" }> | null {
-  const match = ASYNC_ANSWER.exec(text);
-  if (!match) return null;
-  const [, form, id, question, label] = match as unknown as [string, string, string, string, string];
-  if (label.trim() === "") return null;
-  const assumed = form === "Assumed answer";
+  const head = ASYNC_ANSWER_HEAD.exec(text);
+  if (!head) return null;
+  const [opening, form, id] = head as unknown as [string, string, string];
   const asked = context?.asyncAsk?.(id) ?? null;
+  if (!asked) return null;
+  const lead = `${opening}${asked.question}"): `;
+  if (!text.startsWith(lead)) return null;
+  const assumed = form === "Assumed answer";
+  const rest = text.slice(lead.length);
+  const label = assumed && rest.endsWith(AWAY_SUFFIX) ? rest.slice(0, -AWAY_SUFFIX.length) : rest;
+  if (label.trim() === "") return null;
   return {
-    kind: "question", text: question, options: asked ? asked.options.map((option) => option.label) : [], chosen: [label], custom: null, skipped: false,
+    kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
     ...(assumed ? { assumed: true as const } : {}),
     // correctable while the store still holds the assumed answer: once corrected, it is the user's
-    ...(assumed && asked?.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
+    ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
   };
 }
 
