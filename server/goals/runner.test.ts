@@ -95,7 +95,7 @@ Spent $0.80 of $10.00.`);
     expect(goal.lastJudgedCallAt).toBe(T1);
     expect(goal.chatUsd).toBeCloseTo(0.8, 10);
     expect(goal.judgeUsd).toBeCloseTo(0.0011, 10);
-    expect(goal.judge.checks).toEqual([{ at: new Date(clock).toISOString(), callAt: T1, verdict: "not_met", reason: "FICTIONAL: no test output shown", usd: expect.closeTo(0.0011, 10) }]);
+    expect(goal.judge.checks).toEqual([{ at: new Date(clock).toISOString(), callAt: T1, verdict: "not_met", reason: "FICTIONAL: no test output shown", usd: expect.closeTo(0.0011, 10), sent: true }]);
   });
 
   it("a second tick on the same lastCallAt sends nothing and judges nothing", async () => {
@@ -266,7 +266,47 @@ Spent $0.80 of $10.00.`);
     answers.push(verdict("not_met", "FICTIONAL"));
     await runner(store).tick();
     expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "paused", pauseReason: "send_failed", lastJudgedCallAt: T1 });
+    expect(store.get(MACHINE, SESSION)!.judge.checks.at(-1)!.sent).toBe(false);
     expect(pc.sent).toHaveLength(1);
+  });
+
+  it("restart between saving the check and the send: a new store and runner re-send it once, with no judge call", async () => {
+    answers.push(verdict("not_met", "FICTIONAL: still missing"));
+    // central dies inside the first send: the call never returns, so `sent` is never saved
+    const send = pc.send.bind(pc);
+    const reached = Promise.withResolvers<void>();
+    pc.send = (session, text) => { pc.sent.push({ session, text }); reached.resolve(); return new Promise<boolean>(() => {}); };
+    void runner(started()).tick();
+    await reached.promise;
+    expect(pc.sent).toHaveLength(1);
+    expect(new GoalStore(stateDir).get(MACHINE, SESSION)!.judge.checks.at(-1)).toMatchObject({ verdict: "not_met", sent: false, callAt: T1 });
+    pc.send = send;
+    const first = pc.sent[0]!.text;
+    const store = new GoalStore(stateDir, () => clock);
+    const run = runner(store);
+    await run.tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(2);
+    expect(pc.sent[1]!.text).toBe(first);
+    expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "active", lastJudgedCallAt: T1 });
+    expect(store.get(MACHINE, SESSION)!.judge.checks.at(-1)!.sent).toBe(true);
+    await run.tick();
+    await runner(new GoalStore(stateDir, () => clock)).tick();
+    expect(pc.sent).toHaveLength(2);
+    expect(calls).toBe(1);
+  });
+
+  it("a re-send that fails pauses with send_failed and judges nothing", async () => {
+    answers.push(verdict("not_met", "FICTIONAL"));
+    const reached = Promise.withResolvers<void>();
+    pc.send = (session, text) => { pc.sent.push({ session, text }); reached.resolve(); return new Promise<boolean>(() => {}); };
+    void runner(started()).tick();
+    await reached.promise;
+    pc.send = async () => { throw new Error("FICTIONAL: unreachable"); };
+    const store = new GoalStore(stateDir, () => clock);
+    await runner(store).tick();
+    expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "paused", pauseReason: "send_failed" });
+    expect(calls).toBe(1);
   });
 
   it("step acts only on a goal still active in the store", async () => {

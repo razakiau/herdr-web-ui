@@ -17,6 +17,8 @@ export interface GoalCheck {
   verdict: Verdict | "error";
   reason: string;
   usd: number;
+  /** a not_met check's next turn reached the chat; false until the send succeeds, so a restart in between re-sends it */
+  sent: boolean;
 }
 
 export interface HostGoal {
@@ -65,6 +67,12 @@ const isGoal = (each: unknown): each is HostGoal => {
 
 const copy = (goal: HostGoal): HostGoal => structuredClone(goal);
 
+/** A check saved before `sent` existed counts as sent, so nothing old is sent again */
+const withSent = (goal: HostGoal): HostGoal => ({
+  ...goal,
+  judge: { ...goal.judge, checks: goal.judge.checks.map((check) => typeof check.sent === "boolean" ? check : { ...check, sent: true }) },
+});
+
 export class GoalStore {
   private readonly path: string;
   private readonly now: () => number;
@@ -75,7 +83,7 @@ export class GoalStore {
     this.goals = [];
     try {
       const raw = JSON.parse(readFileSync(this.path, "utf8")) as unknown;
-      if (Array.isArray(raw)) this.goals = raw.filter(isGoal);
+      if (Array.isArray(raw)) this.goals = raw.filter(isGoal).map(withSent);
     } catch { /* none yet, or unreadable: the next goal starts the file again */ }
   }
 

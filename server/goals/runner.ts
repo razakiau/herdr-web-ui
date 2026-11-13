@@ -71,6 +71,13 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     if (!pc) return;
     const { machineId, session } = goal;
 
+    // 0. a judged turn whose next turn was saved but never reached the chat (central died in between): send it again, no new judge
+    const last = goal.judge.checks.at(-1);
+    if (last && last.verdict === "not_met" && !last.sent && last.callAt === goal.lastJudgedCallAt) {
+      await sendNext(pc, goal, last.reason);
+      return;
+    }
+
     // 1. a finished turn not judged yet ("error" ended the turn too)
     const row = await pc.row(session);
     if (row === null || row === "offline") return;
@@ -99,8 +106,8 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     const usd = answer.usage ? judgeUsd(goal.judge.model, answer.usage, prices, priced.fallback) : 0;
     const at = new Date(now()).toISOString();
     const check: GoalCheck = "error" in answer
-      ? { at, callAt, verdict: "error", reason: answer.error, usd }
-      : { at, callAt, verdict: answer.verdict, reason: answer.reason, usd };
+      ? { at, callAt, verdict: "error", reason: answer.error, usd, sent: false }
+      : { at, callAt, verdict: answer.verdict, reason: answer.reason, usd, sent: false };
     const judged = store.update(machineId, session, (each) => {
       if (Number.isFinite(usd)) each.judgeUsd += usd;
       each.judge.checks.push(check);
@@ -115,13 +122,20 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     });
     if (!judged || judged.status !== "active" || "error" in answer || answer.verdict !== "not_met") return;
 
-    const text = nextTurnText({ check: judged.judge.checks.length, reason: answer.reason, doneWhen: judged.doneWhen, spentUsd: spent(judged), capUsd: judged.capUsd });
+    await sendNext(pc, judged, answer.reason);
+  }
+
+  /** Queues the next turn for the goal's last check (saved with sent: false), then marks it sent, or pauses on send_failed. */
+  async function sendNext(pc: GoalPc, goal: HostGoal, reason: string): Promise<void> {
+    const { machineId, session } = goal;
+    const callAt = goal.lastJudgedCallAt;
+    const text = nextTurnText({ check: goal.judge.checks.length, reason, doneWhen: goal.doneWhen, spentUsd: spent(goal), capUsd: goal.capUsd });
     const sent = await pc.send(session, text).catch(() => false);
-    if (!sent) {
-      store.update(machineId, session, (each) => {
-        if (each.status === "active") { each.status = "paused"; each.pauseReason = "send_failed"; }
-      });
-    }
+    store.update(machineId, session, (each) => {
+      const check = each.judge.checks.at(-1);
+      if (sent) { if (check && check.callAt === callAt) check.sent = true; return; }
+      if (each.status === "active") { each.status = "paused"; each.pauseReason = "send_failed"; }
+    });
   }
 
   return {

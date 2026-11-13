@@ -89,10 +89,20 @@ describe("GoalStore", () => {
     expect(() => store.raise(START.machineId, "session-unknown", 50)).toThrow("not_found");
   });
 
+  it("a check saved before `sent` existed loads as sent", () => {
+    const store = new GoalStore(stateDir, now);
+    store.start({ ...START, judge: { ...START.judge } });
+    const file = join(stateDir, "goals.json");
+    const raw = JSON.parse(readFileSync(file, "utf8")) as { judge: { checks: unknown[] } }[];
+    raw[0]!.judge.checks.push({ at: "t", callAt: "c", verdict: "not_met", reason: "FICTIONAL", usd: 0 });
+    writeFileSync(file, JSON.stringify(raw));
+    expect(new GoalStore(stateDir, now).get(START.machineId, START.session)!.judge.checks).toEqual([{ at: "t", callAt: "c", verdict: "not_met", reason: "FICTIONAL", usd: 0, sent: true }]);
+  });
+
   it("update keeps the newest checks only", () => {
     const store = new GoalStore(stateDir, now);
     store.start({ ...START, judge: { ...START.judge } });
-    const check = (n: number): GoalCheck => ({ at: `t${n}`, callAt: `c${n}`, verdict: "not_met", reason: `FICTIONAL ${n}`, usd: 0.01 });
+    const check = (n: number): GoalCheck => ({ at: `t${n}`, callAt: `c${n}`, verdict: "not_met", reason: `FICTIONAL ${n}`, usd: 0.01, sent: true });
     store.update(START.machineId, START.session, (goal) => { for (let n = 0; n < GOAL_CHECKS + 5; n++) goal.judge.checks.push(check(n)); });
     const checks = new GoalStore(stateDir, now).get(START.machineId, START.session)!.judge.checks;
     expect(checks).toHaveLength(GOAL_CHECKS);
@@ -111,7 +121,7 @@ describe("GoalStore", () => {
     const store = new GoalStore(stateDir, now);
     const started = store.start({ ...START, judge: { ...START.judge } });
     started.capUsd = 999;
-    store.get(START.machineId, START.session)!.judge.checks.push({ at: "x", callAt: "x", verdict: "met", reason: "x", usd: 0 });
+    store.get(START.machineId, START.session)!.judge.checks.push({ at: "x", callAt: "x", verdict: "met", reason: "x", usd: 0, sent: true });
     expect(store.get(START.machineId, START.session)).toMatchObject({ capUsd: 10, judge: { checks: [] } });
   });
 });
