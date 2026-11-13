@@ -1059,10 +1059,11 @@ function UserImages({ paneId, parts, text }: { paneId: string; parts: Conversati
  * every row) the last line fades into the card and "Show full message" opens it. Opened, it stays
  * open while its row leaves and re-enters the list (useChatRowToggle).
  */
-function UserMessage({ text, skills = null }: { text: string; skills?: SkillMatcher | null }) {
+/** `foldKey`: where the row memory keeps it opened; a turn with more than one bubble names each */
+function UserMessage({ text, skills = null, foldKey = "fold" }: { text: string; skills?: SkillMatcher | null; foldKey?: string }) {
   const t = useT();
   const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
-  const [chosen, setOpen] = useChatRowToggle("fold", false);
+  const [chosen, setOpen] = useChatRowToggle(foldKey, false);
   const open = chosen === true;
   const capped = canFold && !open;
   const body = useRef<HTMLDivElement>(null);
@@ -1421,41 +1422,64 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey = "turn", live, wa
       <div className="chat-turn-meta">{time}<CopyButton text={text} label={t("Copy message")} onResult={copied} /></div>
       {copyError}
     </section>;
-    const action = checkpoint?.turn && onCheckpoint && !checkpoint.faded ? checkpoint : null;
+    const turnAction = checkpoint?.turn && onCheckpoint && !checkpoint.faded ? checkpoint : null;
     // VS Code forks before a request, so the first has nothing to fork
-    const forkAt = checkpoint?.turn && onFork && !checkpoint.faded && !checkpoint.first ? checkpoint.turn : null;
-    return <article className={`chat-turn chat-turn-user${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
-      <UserImages paneId={paneId} parts={turn.parts} text={text} />
-      {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
-      <div className="chat-user-row">
-        {text.length > 0 && <UserMessage text={text} skills={userSkills} />}
-        {style === "vscode" ? <div className="chat-turn-meta">{time}
-          {/* ZAC-228: VS Code keeps a request's restore and fork behind its ⋯; only a message has them */}
-          {(action || forkAt || text.length > 0) && <TurnMenu title={t("Message")} items={[
-            ...(text.length > 0 ? [{ id: "copy", label: t("Copy"), icon: Copy, run: () => { void copyText(text).then(copied); } }] : []),
-            ...(action ? [{ id: "restore", label: t(action.first ? "Start Over" : "Restore to before this message"), icon: RotateCcw, run: () => onCheckpoint!(action.turn!) }] : []),
-            ...(forkAt ? [{ id: "fork", label: t("Fork from here"), icon: GitFork, run: () => onFork!(forkAt) }] : []),
-          ]} />}</div>
-        : <div className="chat-turn-meta">{time}
-          {/* VS Code's checkpoint toolbar on a request: Start Over on the first, Restore Checkpoint on the rest */}
-          {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
-            aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
-            <RotateCcw aria-hidden="true" /><span className="chat-checkpoint-word">{t(action.first ? "Start Over" : "Restore")}</span>
-          </button>}
-          {forkAt && <button type="button" className="chat-meta-btn chat-fork-btn" title={t("Fork Conversation")} aria-label={t("Fork Conversation")} onClick={() => onFork!(forkAt)}>
-            <GitFork aria-hidden="true" />
-          </button>}
-          {text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}
-          {text.length > 0 && onRewindInTerminal !== null && (
-            <button type="button" className="icon-button chat-copy chat-rewind" aria-label={t("Rewind in terminal")} title={t("Rewind in terminal")} onClick={onRewindInTerminal}><Undo2 aria-hidden="true" /></button>
-          )}
-        </div>}
-      </div>
-      {copyError}
-      {outcome !== null && <OutcomeChip outcome={outcome} actions={outcomeActions} />}
-      {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
-      <SkillActivityList parts={turn.parts} />
-    </article>;
+    const turnForkAt = checkpoint?.turn && onFork && !checkpoint.faded && !checkpoint.first ? checkpoint.turn : null;
+    // one bubble of the turn: the first carries its pictures, checkpoint, fork, outcome and skills
+    const bubble = (words: string, first: boolean, key?: string, foldKey?: string) => {
+      const action = first ? turnAction : null;
+      const forkAt = first ? turnForkAt : null;
+      return <article key={key} className={`chat-turn chat-turn-user${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
+        {first && <UserImages paneId={paneId} parts={turn.parts} text={text} />}
+        {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
+        <div className="chat-user-row">
+          {words.length > 0 && <UserMessage text={words} skills={userSkills} {...(foldKey !== undefined ? { foldKey } : {})} />}
+          {style === "vscode" ? <div className="chat-turn-meta">{time}
+            {/* ZAC-228: VS Code keeps a request's restore and fork behind its ⋯; only a message has them */}
+            {(action || forkAt || words.length > 0) && <TurnMenu title={t("Message")} items={[
+              ...(words.length > 0 ? [{ id: "copy", label: t("Copy"), icon: Copy, run: () => { void copyText(words).then(copied); } }] : []),
+              ...(action ? [{ id: "restore", label: t(action.first ? "Start Over" : "Restore to before this message"), icon: RotateCcw, run: () => onCheckpoint!(action.turn!) }] : []),
+              ...(forkAt ? [{ id: "fork", label: t("Fork from here"), icon: GitFork, run: () => onFork!(forkAt) }] : []),
+            ]} />}</div>
+          : <div className="chat-turn-meta">{time}
+            {/* VS Code's checkpoint toolbar on a request: Start Over on the first, Restore Checkpoint on the rest */}
+            {action && <button type="button" className="chat-meta-btn chat-checkpoint-btn" title={t(action.first ? "Start Over" : "Restore Checkpoint")}
+              aria-label={t(action.first ? "Start Over" : "Restore Checkpoint")} onClick={() => onCheckpoint!(action.turn!)}>
+              <RotateCcw aria-hidden="true" /><span className="chat-checkpoint-word">{t(action.first ? "Start Over" : "Restore")}</span>
+            </button>}
+            {forkAt && <button type="button" className="chat-meta-btn chat-fork-btn" title={t("Fork Conversation")} aria-label={t("Fork Conversation")} onClick={() => onFork!(forkAt)}>
+              <GitFork aria-hidden="true" />
+            </button>}
+            {words.length > 0 && <CopyButton text={words} label={t("Copy message")} onResult={copied} />}
+            {words.length > 0 && onRewindInTerminal !== null && (
+              <button type="button" className="icon-button chat-copy chat-rewind" aria-label={t("Rewind in terminal")} title={t("Rewind in terminal")} onClick={onRewindInTerminal}><Undo2 aria-hidden="true" /></button>
+            )}
+          </div>}
+        </div>
+        {copyError}
+        {first && outcome !== null && <OutcomeChip outcome={outcome} actions={outcomeActions} />}
+        {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
+        {first && <SkillActivityList parts={turn.parts} />}
+      </article>;
+    };
+    const asked = turn.parts.some((part) => part.kind === "question");
+    if (!asked) return bubble(text, true);
+    // an async question answered in this turn (ZAC-326): the agent's question with its answer under it,
+    // a row of the transcript where it came, between the bubbles of the words the user sent with it
+    const runs: ({ kind: "words"; text: string; at: number } | { kind: "question"; part: Extract<ConversationPart, { kind: "question" }>; at: number })[] = [];
+    turn.parts.forEach((part, at) => {
+      if (part.kind === "question") { runs.push({ kind: "question", part, at }); return; }
+      if (part.kind !== "text" || part.text.trim() === "") return;
+      const last = runs.at(-1);
+      if (last?.kind === "words") last.text = `${last.text}\n\n${part.text}`;
+      else runs.push({ kind: "words", text: part.text, at });
+    });
+    const firstWords = runs.find((run) => run.kind === "words");
+    return <>{runs.map((run) => run.kind === "question"
+      ? <article key={`question:${run.at}`} className={`chat-turn chat-turn-agent${checkpoint?.faded ? " is-checkpoint-faded" : ""}`}>
+        <QuestionSummary part={run.part} memoryKey={`question:${run.at}`} attached={<AnswerImages paneId={paneId} part={run.part} />} />
+      </article>
+      : bubble(run.text, run === firstWords, `words:${run.at}`, run === firstWords ? undefined : `fold:${run.at}`))}</>;
   }
   // a notice is neither work nor answer: the turn splits as if it were not there, and each notice
   // sits after the work when it came before the answer, else after the answer
