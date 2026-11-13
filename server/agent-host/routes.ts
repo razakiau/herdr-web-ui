@@ -58,12 +58,13 @@ import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { handoffCommand, resumeCommand } from "../../shared/handoff-command.ts";
 import { nextHandoffTitle } from "../../shared/handoff-title.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse } from "../http.ts";
 import { workOf } from "./artifacts.ts";
+import { digestOf } from "../goals/judge.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
 import type { AsyncAskStore, AsyncQuestion } from "./async-ask.ts";
@@ -289,6 +290,7 @@ const GETS: Record<string, Handler> = {
   "files": listFiles,
   "chat/handoff": readHandoff,
   "links": readLinks,
+  "goal-digest": readGoalDigest,
 };
 const POSTS: Record<string, Handler> = {
   "chat/watch": async (call) => { await watched(call, sessionOf(call.body)); return jsonResponse({ ok: true }); },
@@ -316,8 +318,10 @@ const POSTS: Record<string, Handler> = {
   "session/config": writeConfig,
 };
 
-/** Every route a bridge answers under /api/host-chats/, which the server's PC proxy must pass. */
-export const HOST_CHAT_ROUTES: readonly string[] = ["state", ...Object.keys(GETS), ...Object.keys(POSTS)];
+/** Routes only the central server asks a bridge for, with the endpoint token: its PC proxy never passes them (a browser has no use for them). */
+const SERVER_ONLY: ReadonlySet<string> = new Set(["goal-digest"]);
+/** Every route a bridge answers under /api/host-chats/ for a browser, which the server's PC proxy must pass. */
+export const HOST_CHAT_ROUTES: readonly string[] = ["state", ...Object.keys(GETS), ...Object.keys(POSTS)].filter((route) => !SERVER_ONLY.has(route));
 
 async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined, asks: AsyncAskStore | null): Promise<Response> {
   if (!host) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
@@ -762,6 +766,46 @@ async function readCosts(call: Call): Promise<Response> {
   }
   // `?poll=1`: a server's cold-cache poll (server/machines.ts), read with the small budget; a page keeps its own
   return jsonResponse(call.url.searchParams.get("poll") === "1" ? await hostCostsPolled(call.host) : hostCosts(call.host));
+}
+
+/** The newest part of a chat's log a goal's digest reads: the digest keeps the newest 60 KB of far less text. */
+const GOAL_LOG_BYTES = 2 * 1024 * 1024;
+
+/**
+ * GET goal-digest?session=&parent=: the chat's Copilot log reduced to what the agent did (the
+ * judge's transcript, server/goals/judge.ts, ZAC-326), from the log's newest 2 MB. Read-only; the
+ * central server's goal runner asks it with the endpoint token. A chat with no log is 404 no_log.
+ */
+async function readGoalDigest(call: Call): Promise<Response> {
+  const session = call.url.searchParams.get("session");
+  if (!session) return badRequest("missing_session", "session is required");
+  // a fork or peer chat whose id names no parent and none was given: the host's row says whose it is, as for costs
+  const parent = call.url.searchParams.get("parent")
+    || (call.host.state().state === "connected" ? rowsFrom(call.host.summaries()).find((row) => row.session === session)?.fork_of ?? null : null);
+  const path = costsOf().index.logPathOf(session, parent);
+  const text = path === null ? null : tailOf(path, GOAL_LOG_BYTES);
+  if (text === null) return jsonResponse({ error: { code: "no_log", message: "this chat has no Copilot log" } }, 404);
+  return jsonResponse({ digest: digestOf(text) });
+}
+
+/** A file's last `bytes`, without the line the cut fell in; null when it cannot be read. */
+function tailOf(path: string, bytes: number): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - bytes);
+    const buffer = Buffer.alloc(size - start);
+    let read = 0;
+    while (read < buffer.length) {
+      const got = readSync(fd, buffer, read, buffer.length - read, start + read);
+      if (got === 0) break;
+      read += got;
+    }
+    const text = buffer.subarray(0, read).toString("utf8");
+    return start === 0 ? text : text.slice(text.indexOf("\n") + 1);
+  } catch { return null; }
+  finally { if (fd !== undefined) closeSync(fd); }
 }
 
 /**
