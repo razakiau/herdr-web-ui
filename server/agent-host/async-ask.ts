@@ -32,6 +32,10 @@ const KEEP_ANSWERED_MS = 7 * 24 * 60 * 60_000;
 type Row = Record<string, unknown>;
 const record = (value: unknown): Row | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
 
+/** Whether `recommended` is null or the index of one of `count` options. */
+const recommendedFits = (recommended: unknown, count: number): recommended is number | null =>
+  recommended === null || (Number.isInteger(recommended) && (recommended as number) >= 0 && (recommended as number) < count);
+
 /** A stored question, or null for anything else the file holds. */
 function questionOf(value: unknown): AsyncQuestion | null {
   const row = record(value);
@@ -39,8 +43,7 @@ function questionOf(value: unknown): AsyncQuestion | null {
   const { id, session, question, options, recommended, kind, askedAt, answer } = row;
   if (typeof id !== "string" || typeof session !== "string" || typeof question !== "string" || typeof askedAt !== "number") return null;
   if (kind !== "optional" && kind !== "blocking") return null;
-  if (recommended !== null && typeof recommended !== "number") return null;
-  if (!Array.isArray(options)) return null;
+  if (!Array.isArray(options) || !recommendedFits(recommended, options.length)) return null;
   const opts: AsyncQuestion["options"] = [];
   for (const option of options) {
     const o = record(option);
@@ -61,15 +64,21 @@ const copy = (q: AsyncQuestion): AsyncQuestion => structuredClone(q);
 
 export class AsyncAskStore {
   private readonly questions = new Map<string, AsyncQuestion>();
-  /** "in use" unknown at start counts as not in use since t=0 */
+  /**
+   * Starting state: not in use, last seen now. A restarted bridge cannot know when a page last had
+   * Ovis open, so a question asked long ago becomes due AWAY_AFTER_MS after the start, not at once.
+   */
   private inUse = false;
-  private lastInUseAt = 0;
+  private lastInUseAt: number;
 
   constructor(private readonly file: string, private readonly now: () => number = Date.now) {
+    this.lastInUseAt = now();
     this.load();
   }
 
+  /** Throws unless `recommended` is null or the index of one of `options`. */
   add(q: Omit<AsyncQuestion, "id" | "askedAt" | "answer">): AsyncQuestion {
+    if (!recommendedFits(q.recommended, q.options.length)) throw new Error(`recommended must be null or an option index below ${q.options.length}`);
     let id: string;
     do id = `ask-${randomBytes(4).toString("hex")}`; while (this.questions.has(id));
     const stored: AsyncQuestion = { ...q, options: q.options.map((o) => ({ ...o })), id, askedAt: this.now(), answer: null };

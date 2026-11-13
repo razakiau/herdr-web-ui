@@ -44,7 +44,7 @@ describe("AsyncAskStore", () => {
     expect(store.due().map((d) => d.id)).toEqual([q.id]);
   });
 
-  test("a fresh store counts as away from the start, and a repeated setInUse(false) keeps the first close", () => {
+  test("a fresh store counts as away from its start, and a repeated setInUse(false) keeps the first close", () => {
     const store = new AsyncAskStore(file, now);
     const q = ask(store);
     clock = 30_000;
@@ -59,6 +59,30 @@ describe("AsyncAskStore", () => {
     expect(store.due()).toEqual([]);
     clock = 160_000;
     expect(store.due().map((d) => d.id)).toEqual([q.id]);
+  });
+
+  test("a restart counts as seen now: an old question is due 60 s after it, not at once", () => {
+    ask(new AsyncAskStore(file, now));
+    clock = 10 * 60_000;
+    const restarted = new AsyncAskStore(file, now);
+    clock = 10 * 60_000 + 59_000;
+    expect(restarted.due()).toEqual([]);
+    clock = 10 * 60_000 + 60_000;
+    expect(restarted.due()).toHaveLength(1);
+  });
+
+  test("add refuses a recommended option that is not there", () => {
+    const store = new AsyncAskStore(file, now);
+    expect(() => ask(store, { recommended: 5 })).toThrow();
+    expect(() => ask(store, { recommended: -1 })).toThrow();
+    expect(() => ask(store, { recommended: 0.5 })).toThrow();
+    expect(store.pending(SESSION)).toEqual([]);
+  });
+
+  test("a stored row whose recommended option is not there is skipped on load", () => {
+    const row = { id: "ask-0000000a", session: SESSION, question: "FICTIONAL", options: OPTIONS, recommended: 2, kind: "optional", askedAt: 0, answer: null };
+    writeFileSync(file, JSON.stringify([row, { ...row, id: "ask-0000000b", recommended: 1 }]));
+    expect(new AsyncAskStore(file, now).pending(SESSION).map((q) => q.id)).toEqual(["ask-0000000b"]);
   });
 
   test("blocking and no-recommendation questions are never due", () => {
