@@ -2343,11 +2343,10 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     expect(t.asks.get(q.id)?.answer).toMatchObject({ assumed: true });
   });
 
-  it("a due question whose chat is gone is dropped on the first tick, and the next tick does nothing", async () => {
+  it("a due question whose chat is gone is dropped by the minute's sweep, and later ticks do nothing", async () => {
     const r = await rig();
     const t = away(r);
-    // a chat this host does not have (deleted since it asked)
-    // the first tick is the minute's sweep; asked after it, the question meets the send's own check
+    // the first tick is a minute's sweep; asked after it, the question waits for the next one
     await t.tick();
     const q = t.asks.add({ session: sessionUri(99), question: QUESTION, options: OPTIONS, recommended: 1, kind: "optional" });
     const warn = console.warn;
@@ -2355,11 +2354,18 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
     try {
       t.advance(61_000);
+      // due, but its send finds no chat: kept, with the send's warning, until the sweep
+      await t.tick();
+      expect(t.asks.get(q.id)).toMatchObject({ answer: null });
+      expect(warned).toEqual([`[host-chats] away answer not sent (${q.id}: refused)`]);
+      warned.length = 0;
+      for (let i = 2; i < ASYNC_SWEEP_TICKS; i += 1) await t.tick();
+      warned.length = 0;
+      // the sweep: dropped, saved, and said once
       await t.tick();
       expect(t.asks.get(q.id)).toBeNull();
-      expect(warned).toEqual([`[host-chats] async question dropped (${q.id}: chat gone)`]);
-      // saved: a restart does not bring it back
       expect(new AsyncAskStore(t.file, () => 1_061_000).get(q.id)).toBeNull();
+      expect(warned).toEqual([`[host-chats] async question dropped (${q.id}: chat gone)`]);
       warned.length = 0;
       t.advance(10_000);
       await t.tick();
@@ -2370,6 +2376,25 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     }
     expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
     expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("a live chat's due question whose watch fails (rpc_error) stays open: a failed send never drops it", async () => {
+    const r = await rig();
+    const t = away(r);
+    // the host knows the chat, but its watch is refused: watched() says host_chat_missing
+    (r.conn as { watch: AgentHost["watch"] }).watch = async () => { throw new AgentHostError("rpc_error", -32000); };
+    const q = ask(t.asks);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      t.advance(61_000);
+      for (let i = 0; i < ASYNC_SWEEP_TICKS + 1; i += 1) await t.tick();
+    } finally {
+      console.warn = warn;
+    }
+    expect(t.asks.get(q.id)).toMatchObject({ id: q.id, answer: null });
+    expect(t.asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    expect(t.asks.due().map((each) => each.id)).toEqual([q.id]);
   });
 
   it("a blocking question on a live chat never expires: 8 days on, it survives the load and every tick", async () => {
