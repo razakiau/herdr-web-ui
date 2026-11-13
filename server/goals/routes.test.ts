@@ -47,7 +47,7 @@ describe("/api/goals", () => {
   });
   const call = async (path: string, body?: unknown): Promise<{ status: number; json: any }> => {
     const request = new Request(`http://localhost${path}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const response = await handleGoalsRequest(request, path, deps());
+    const response = await handleGoalsRequest(request, new URL(request.url).pathname, deps());
     return { status: response.status, json: await response.json() };
   };
 
@@ -160,6 +160,17 @@ describe("/api/goals", () => {
     expect((await call("/api/goals/start")).status).toBe(405);
     expect((await call("/api/goals/pause", { machine: MACHINE, session: SESSION })).status).toBe(404);
   });
+
+  it("judges: the choices for a worker model from OmniRoute's models and the prices; 405 to a POST", async () => {
+    models = ["cc/claude-opus-5-5", "fictional/gpt-judge-x", "fictional/claude-work-x"];
+    expect(await call("/api/goals/judges?worker=cc%2Fclaude-opus-5-5")).toEqual({ status: 200, json: { choices: [
+      { id: "fictional/gpt-judge-x", why: "default" },
+      { id: "fictional/claude-work-x", why: "same_family" },
+    ] } });
+    // no worker: the first model is the default
+    expect((await call("/api/goals/judges")).json).toEqual({ choices: [{ id: "cc/claude-opus-5-5", why: "default" }, { id: "fictional/claude-work-x", why: "cheapest" }] });
+    expect((await call("/api/goals/judges", {})).status).toBe(405);
+  });
 });
 
 describe("goalPcOver", () => {
@@ -202,7 +213,7 @@ describe("goalPcOver", () => {
   });
 });
 
-it("a watching device's POST to /api/goals is refused read_only; its GET is answered", async () => {
+it("a watching device's POST to /api/goals is refused read_only; its GETs are answered", async () => {
   const root = mkdtempSync(join(tmpdir(), "ovis-goal-watch-"));
   const devices = new DeviceStore(root);
   const watch = devices.pair(devices.startPairing().code, "Watch", "watch")!;
@@ -212,6 +223,7 @@ it("a watching device's POST to /api/goals is refused read_only; its GET is answ
   const headers = { "x-herdr-machine": "1", "content-type": "application/json", cookie: `ovis_device=${watch.token}` };
   try {
     expect((await fetch(`${base}/api/goals`, { headers })).status).toBe(200);
+    expect((await fetch(`${base}/api/goals/judges?worker=cc%2Fclaude-opus-5-5`, { headers })).status).toBe(200);
     for (const action of ["start", "raise", "stop", "resume"]) {
       const response = await fetch(`${base}/api/goals/${action}`, { method: "POST", headers, body: JSON.stringify({ ...START, capUsd: 20 }) });
       expect(response.status).toBe(403);

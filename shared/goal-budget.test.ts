@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { budgetTone, chatUsd, defaultJudge, judgeUsd, modelFamily, suggestedRaises } from "./goal-budget.ts";
+import { budgetTone, chatUsd, defaultJudge, judgeChoices, judgeUsd, modelFamily, suggestedRaises } from "./goal-budget.ts";
 import type { HostCostModel } from "./host-chats.ts";
 import type { ModelPrices } from "./usage.ts";
 
@@ -91,5 +91,39 @@ describe("defaultJudge", () => {
   it("takes the first model without a worker model, and none from an empty list", () => {
     expect(defaultJudge(null, ["cc/claude-sonnet-5-5", "gpt-6-luna"])).toBe("cc/claude-sonnet-5-5");
     expect(defaultJudge("cc/claude-opus-5-5", [])).toBeNull();
+  });
+});
+
+describe("judgeChoices", () => {
+  // the brief's prices, under one provider: a bare id is looked up in every provider's table
+  const prices: ModelPrices = { fictional: { "gpt-5-6-sol": { input: 2, output: 8 }, "deepseek-v4-flash": { input: 0.1, output: 0.4 }, "claude-haiku-5-5": { input: 1, output: 5 }, "claude-opus-5-5": { input: 15, output: 75 } } };
+
+  it("offers the default judge, then the cheapest priced model of another family, then the cheapest of the worker's", () => {
+    const models = ["gpt-5-6-sol", "claude-opus-5-5", "deepseek-v4-flash", "claude-haiku-5-5"];
+    expect(judgeChoices("omniroute/claude-haiku-5-5", models, prices, null)).toEqual([
+      { id: "gpt-5-6-sol", why: "default" },
+      { id: "deepseek-v4-flash", why: "cheapest" },
+      { id: "claude-haiku-5-5", why: "same_family" },
+    ]);
+  });
+
+  it("does not repeat a model: the default that is also the cheapest appears once", () => {
+    expect(judgeChoices("omniroute/claude-haiku-5-5", ["deepseek-v4-flash", "claude-opus-5-5"], prices, null)).toEqual([
+      { id: "deepseek-v4-flash", why: "default" },
+      { id: "claude-opus-5-5", why: "same_family" },
+    ]);
+  });
+
+  it("skips a model with no price for cheapest and same_family, and returns [] for no models", () => {
+    const models = ["gpt-5-6-sol", "fictional-mystery-1", "local/fictional-7b", "claude-mystery-2"];
+    expect(judgeChoices("cc/claude-opus-5-5", models, prices, null)).toEqual([{ id: "gpt-5-6-sol", why: "default" }]);
+    expect(judgeChoices("cc/claude-opus-5-5", [], prices, null)).toEqual([]);
+  });
+
+  it("without a worker model, offers the first model and the cheapest priced one", () => {
+    expect(judgeChoices(null, ["claude-opus-5-5", "gpt-5-6-sol", "deepseek-v4-flash"], prices, null)).toEqual([
+      { id: "claude-opus-5-5", why: "default" },
+      { id: "deepseek-v4-flash", why: "cheapest" },
+    ]);
   });
 });

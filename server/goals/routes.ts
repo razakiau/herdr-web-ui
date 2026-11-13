@@ -6,20 +6,18 @@
  * A watching device's POST is refused before this (server/index.ts, read_only).
  */
 import { createHash } from "node:crypto";
-import { budgetTone, chatUsd, defaultJudge, modelFamily, suggestedRaises } from "../../shared/goal-budget.ts";
+import { budgetTone, chatUsd, defaultJudge, judgeChoices, modelFamily, suggestedRaises } from "../../shared/goal-budget.ts";
+import type { GoalView, HostGoal } from "../../shared/goals.ts";
 import type { HostChatCost, HostChatRow } from "../../shared/host-chats.ts";
 import type { ModelPrice, ModelPrices } from "../../shared/usage.ts";
 import { badRequest, isJsonObject, jsonResponse, readJsonObject, setRequestRoute } from "../http.ts";
 import type { GoalPc } from "./runner.ts";
-import { spent, type GoalStore, type HostGoal } from "./store.ts";
+import { spent, type GoalStore } from "./store.ts";
 
 /** The longest objective and "done when" a goal takes. */
 export const GOAL_TEXT_MAX = 4_000;
 const MAX_ID = 512;
 const MAX_MODEL = 200;
-
-/** A goal as GET /api/goals lists it: what it has spent, how close that is to the cap, and the caps to offer once it is reached. */
-export type GoalView = HostGoal & { spentUsd: number; tone: "ok" | "notice" | "over"; raises: [number, number] | null };
 
 export function goalView(goal: HostGoal): GoalView {
   const spentUsd = spent(goal);
@@ -86,7 +84,7 @@ export interface GoalRoutesDeps {
   /** the PC's chats; null for a PC this server does not know (404 no_machine) */
   pcs: (machineId: string) => GoalPc | null;
   prices: () => Promise<Prices>;
-  /** OmniRoute's model ids, for the default judge */
+  /** OmniRoute's model ids, for the default judge and the judges to offer */
   models: () => Promise<string[]>;
   /** a goal was started, raised or resumed: the runner may look at it now rather than on its next tick */
   kick?: () => void;
@@ -104,6 +102,7 @@ const isEnded = (goal: HostGoal) => goal.status === "met" || goal.status === "st
 
 /**
  *   GET  /api/goals                                                    `{ goals: GoalView[] }`
+ *   GET  /api/goals/judges?worker=<model id>                           `{ choices: JudgeChoice[] }`, the judges to offer a chat whose last model is `worker`
  *   POST /api/goals/start  { machine, session, parent?, objective, doneWhen, capUsd, judgeModel?, allowUnpriced? }   `{ goal }`;
  *                          400 unpriced_model when the chat's last model has no price, unless allowUnpriced is true
  *   POST /api/goals/raise  { machine, session, capUsd }                `{ goal }`; 409 below_spent, goal_ended
@@ -116,6 +115,14 @@ export async function handleGoalsRequest(request: Request, pathname: string, dep
     setRequestRoute(pathname);
     if (request.method !== "GET") return refuse("method_not_allowed", "Use GET /api/goals", 405);
     return reply({ goals: store.list().map(goalView) });
+  }
+  if (pathname === "/api/goals/judges") {
+    setRequestRoute(pathname);
+    if (request.method !== "GET") return refuse("method_not_allowed", "Use GET /api/goals/judges", 405);
+    const worker = new URL(request.url).searchParams.get("worker") || null;
+    // a list to pick from: with no prices it still offers the default judge
+    const [models, priced] = await Promise.all([deps.models().catch(() => []), deps.prices().catch((): Prices => ({ prices: null, fallback: null }))]);
+    return reply({ choices: judgeChoices(worker, models, priced.prices ?? {}, priced.fallback) });
   }
   const action = /^\/api\/goals\/(start|raise|stop|resume)$/.exec(pathname)?.[1];
   if (!action) return refuse("not_found", "not found", 404);

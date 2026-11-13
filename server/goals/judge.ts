@@ -7,9 +7,10 @@
  * The judge never throws: a failed call or an answer that is not a verdict comes back as `error`,
  * and the runner pauses the goal on it. A broken judge must never keep an agent looping.
  */
+import type { Verdict } from "../../shared/goals.ts";
 import type { OmniRouteCompletion } from "../omniroute.ts";
 
-export type Verdict = "met" | "not_met" | "impossible";
+export type { Verdict } from "../../shared/goals.ts";
 
 /** The newest bytes of the digest the judge reads: ~15k tokens, the evidence of the last few turns. */
 export const DIGEST_BYTES = 60_000;

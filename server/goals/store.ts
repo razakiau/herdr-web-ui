@@ -6,43 +6,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivateState } from "../private-state.ts";
-import type { Verdict } from "./judge.ts";
+import type { HostGoal } from "../../shared/goals.ts";
 
-export type GoalStatus = "active" | "paused" | "budget_limited" | "met" | "stopped";
-
-export interface GoalCheck {
-  at: string;
-  /** the chat's lastCallAt this check judged */
-  callAt: string;
-  verdict: Verdict | "error";
-  reason: string;
-  usd: number;
-  /** a not_met check's next turn reached the chat; false until the send succeeds, so a restart in between re-sends it */
-  sent: boolean;
-}
-
-export interface HostGoal {
-  machineId: string;
-  session: string;
-  parent: string | null;
-  objective: string;
-  doneWhen: string;
-  status: GoalStatus;
-  pauseReason: string | null;
-  capUsd: number;
-  /** the chat's priced cost when the goal started */
-  baselineUsd: number;
-  /** the chat's priced cost since the start (main agent and sub-agents) */
-  chatUsd: number;
-  /** every judge call's cost */
-  judgeUsd: number;
-  /** models of the chat with no price, counted $0 */
-  unpriced: string[];
-  judge: { model: string; warning: "same_family" | null; checks: GoalCheck[] };
-  lastJudgedCallAt: string | null;
-  startedAt: string;
-  updatedAt: string;
-}
+export type { GoalCheck, GoalStatus, HostGoal } from "../../shared/goals.ts";
 
 export type GoalStart = Omit<HostGoal, "status" | "pauseReason" | "chatUsd" | "judgeUsd" | "unpriced" | "lastJudgedCallAt" | "startedAt" | "updatedAt" | "judge">
   & { judge: { model: string; warning: "same_family" | null } };
