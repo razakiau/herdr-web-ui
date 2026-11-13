@@ -58,7 +58,7 @@ import { defaultCopilotHome } from "../copilot.ts";
 import type { FileEditKind } from "../../shared/protocol.ts";
 import { paneFiles } from "../files.ts";
 import { PasteImageError, pasteDirectory, saveAttachment } from "../paste.ts";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { handoffCommand, resumeCommand } from "../../shared/handoff-command.ts";
 import { nextHandoffTitle } from "../../shared/handoff-title.ts";
@@ -851,15 +851,18 @@ function rowsBySdk(host: Pick<AgentHost, "state" | "summaries">, agentDirs: read
 
 /**
  * The host row an SDK session runs on (ask_user_async names its chat by the SDK session the shim
- * knows, ZAC-326), or null when no listed row does.
+ * knows, ZAC-326), or null when no listed row does. `hasLog`: whether a uuid has a CLI log of its
+ * own, so a `copilotcli:/` row the Mac's host made (no log under its uuid) is mapped through its
+ * VS Code store, as hostCosts does (live 2026-11-13: copilotcli:/592189bd-… runs on 44f5e766-…).
  */
-export function rowOfSdk(host: AgentHost, sdk: string, agentDirs: readonly string[]): string | null {
-  return rowsBySdk(host, agentDirs).get(sdk) ?? null;
+export function rowOfSdk(host: AgentHost, sdk: string, agentDirs: readonly string[], hasLog: (uuid: string) => boolean): string | null {
+  return rowsBySdk(host, agentDirs, hasLog).get(sdk) ?? null;
 }
 
-/** rowOfSdk with this PC's VS Code stores, the ones the costs index maps chats through. */
+/** rowOfSdk with this PC's VS Code stores and CLI logs, the ones the costs index reads. */
 export function rowOfSdkHere(host: AgentHost, sdk: string): string | null {
-  return rowOfSdk(host, sdk, costsOf().agentDirs);
+  const home = defaultCopilotHome();
+  return rowOfSdk(host, sdk, costsOf().agentDirs, (uuid) => existsSync(join(home, "session-state", uuid, "events.jsonl")));
 }
 
 /**
