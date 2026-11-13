@@ -537,9 +537,14 @@ export function createServer(
         tokenConfigured: token !== "",
         gated: devices.gated,
       });
-      // an agent's async question (ZAC-326) comes from the shim on this PC with the bridge token; it is
-      // not a bridgePath: the connection server never forwards it to another PC
+      // an agent's async question (ZAC-326) comes from the shim on this PC; it is not a bridgePath: the
+      // connection server never forwards it to another PC
       const agentAsk = pathname === AGENT_ASK_PATH;
+      // the agent-ask shim and the connection server's presence relay send the token in this PC's bridge
+      // descriptor: the bridge token where registerBridge set one, else the server's own token (remote-entry
+      // registers that one). The own token is taken as a Bearer only, never a paired device or a cookie: the
+      // gate below lets both kinds through (a matched token is full access), and the two routes refuse the rest
+      const shimAuthorized = bridgeAuthorized || (tokenMatched && bearerMatches(request, token));
       const authenticated = access.level === "full" || ((bridgePath || agentAsk) && bridgeAuthorized);
 
       if (requiresAuth(pathname) && !authenticated) {
@@ -817,9 +822,9 @@ export function createServer(
 
       if (pathname === BRIDGE_PRESENCE_PATH) {
         setRequestRoute(pathname);
-        // the connection server's word on whether Ovis is in use (ZAC-326), with this bridge's token
+        // the connection server's word on whether Ovis is in use (ZAC-326), with this bridge's descriptor token
         if (!bridgePresence) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
-        if (!bridgeAuthorized) return unauthorizedJson();
+        if (!shimAuthorized) return unauthorizedJson();
         return handleBridgePresenceRequest(request, bridgePresence);
       }
       const hostChatsResponse = hostChatsRoute(request, pathname, agentHostConnection, undefined, asyncAsks ?? undefined);
@@ -827,9 +832,9 @@ export function createServer(
 
       if (agentAsk) {
         setRequestRoute(pathname);
-        // only this PC's own bridge answers it, and only for the shim that holds the bridge token
+        // only this PC's own bridge answers it, and only for the shim that holds the descriptor's token
         if (!agentHostConnection || !asyncAsks) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
-        if (!bridgeAuthorized) return unauthorizedJson();
+        if (!shimAuthorized) return unauthorizedJson();
         return handleAgentAsk(request, agentHostConnection, asyncAsks, (session) => {
           broadcastAll({ type: "host-chat-changed", session });
           // the list too: a blocking question makes its row ask

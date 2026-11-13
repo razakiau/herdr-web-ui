@@ -57,6 +57,25 @@ async function bridge(): Promise<{ endpoint: string; token: string; stateDir: st
   return { endpoint, token, stateDir };
 }
 
+/** A PC's bridge as server/remote-entry.ts starts it: no registerBridge, so the descriptor's token is the server's own. */
+async function remoteBridge(): Promise<{ endpoint: string; token: string }> {
+  const home = temp();
+  const config = join(home, "cfg");
+  const entries = process.platform === "darwin" ? join(home, "Library", "Application Support", "Code", "agent-host", "local-endpoint", "entries") : join(config, "Code", "agent-host", "local-endpoint", "entries");
+  mkdirSync(entries, { recursive: true });
+  const fake = await fakeAgentHost({ sessions: [summary], states: { [SESSION]: state }, chats: { [CHAT]: chat }, models: [], entryDir: entries });
+  cleanups.push(() => fake.stop());
+  const token = "FICTIONAL-remote-token";
+  const server = createServer({
+    port: 0, hostname: "127.0.0.1", token, machines: false, stateDir: temp(), tailscaleOwner: null, herdrProfiles: async () => [],
+    agentHost: { enabled: true, startHost: false, home, env: { XDG_CONFIG_HOME: config } },
+  });
+  cleanups.push(() => server.stop());
+  const endpoint = `http://127.0.0.1:${server.port}`;
+  await until("the bridge's host", async () => (await (await fetch(`${endpoint}/api/host-chats/chats`, { headers: { authorization: `Bearer ${token}` } })).json() as { chats?: unknown[] }).chats?.length === 1);
+  return { endpoint, token };
+}
+
 const post = (endpoint: string, body: unknown, token?: string) => fetch(`${endpoint}/api/agent-ask`, {
   method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
 });
@@ -103,6 +122,40 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect((await presence({ in_use: "yes" }, token)).status).toBe(400);
     expect((await presence({ in_use: true }, token)).status).toBe(204);
     expect((await presence({ in_use: false }, token)).status).toBe(204);
+  });
+
+  // remote-entry registers the server's own token in the descriptor, with no registerBridge: the shim and
+  // the connection server's PresenceRelay send that token, never the random bridge token createServer makes
+  const remotePresence = (endpoint: string, body: unknown, bearer?: string) => fetch(`${endpoint}/api/host-chats/presence`, {
+    method: "POST", headers: { "content-type": "application/json", ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) }, body: JSON.stringify(body),
+  });
+
+  it("a PC's bridge, built as remote-entry builds it, takes the shim's question with its own token (ZAC-326)", async () => {
+    const { endpoint, token } = await remoteBridge();
+    const ask = await post(endpoint, { ...ASK, sdk_session: "00000000-0000-4000-8000-0000000000ff" }, token);
+    expect([ask.status, ((await ask.json()) as { error: { code: string } }).error.code]).toEqual([404, "no_chat"]);
+  });
+
+  it("a PC's bridge, built as remote-entry builds it, takes the relay's presence with its own token (ZAC-326)", async () => {
+    const { endpoint, token } = await remoteBridge();
+    expect((await remotePresence(endpoint, { in_use: true }, token)).status).toBe(204);
+  });
+
+  it("a PC's bridge refuses a wrong Bearer and no auth at all on agent-ask and presence (ZAC-326)", async () => {
+    const { endpoint } = await remoteBridge();
+    expect((await post(endpoint, ASK, "FICTIONAL-wrong")).status).toBe(401);
+    expect((await remotePresence(endpoint, { in_use: true }, "FICTIONAL-wrong")).status).toBe(401);
+    expect((await post(endpoint, ASK)).status).toBe(401);
+    expect((await remotePresence(endpoint, { in_use: true })).status).toBe(401);
+  });
+
+  it("the bridge's own token in a cookie does not reach agent-ask or presence: a Bearer only (ZAC-326)", async () => {
+    const { endpoint, token } = await remoteBridge();
+    const cookie = { "content-type": "application/json", cookie: `ovis_token=${token}`, origin: endpoint };
+    expect((await fetch(`${endpoint}/api/agent-ask`, { method: "POST", headers: cookie, body: JSON.stringify(ASK) })).status).toBe(401);
+    expect((await fetch(`${endpoint}/api/host-chats/presence`, { method: "POST", headers: cookie, body: JSON.stringify({ in_use: true }) })).status).toBe(401);
+    // the same cookie still opens the rest of the API, so the refusal is these two paths' own
+    expect((await fetch(`${endpoint}/api/host-chats/chats`, { headers: { cookie: `ovis_token=${token}` } })).status).toBe(200);
   });
 
   it("is 404 on a server with no agent host", async () => {
