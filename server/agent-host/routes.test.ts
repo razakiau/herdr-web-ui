@@ -12,11 +12,12 @@ import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { AgentHostConnection, AgentHostError } from "./connection.ts";
 import { fakeAgentHost, reducedChat, toolCallActions, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
-import { LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
+import { ASYNC_SWEEP_TICKS, ASYNC_TICK_MS, LEASE_MS, REPLACEMENT_WATCH_MS, STOP_AND_SEND_WAIT_MS, hostChatsRoute, startAwayAnswers, setCostIndexForTests, setLinkIndexForTests, type LeaseClock, type AgentHost } from "./routes.ts";
 import { CostIndex } from "./costs.ts";
 import { LinkIndex } from "./links.ts";
 import { forgetSessionTodos } from "./todos.ts";
 import { GroupStore } from "../groups-store.ts";
+import { AsyncAskStore } from "./async-ask.ts";
 import { Database } from "bun:sqlite";
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -2100,5 +2101,368 @@ describe("host chat forks: VS Code's Fork Conversation", () => {
     ] } as unknown as SessionSummary;
     const r = await forking({ sessions: [hidden, summary(2)] });
     expect((await rows(r)).map((each) => each["session"])).toEqual([sessionUri(2), sessionUri(1)]);
+  });
+});
+
+describe("host chat async questions (ask_user_async, ZAC-326)", () => {
+  const OPTIONS = [{ label: "FICTIONAL keep", description: "the first way" }, { label: "FICTIONAL drop" }];
+  const QUESTION = "FICTIONAL: keep the old table?";
+  const store = (): AsyncAskStore => new AsyncAskStore(join(temp(), "async-asks.json"));
+  const ask = (asks: AsyncAskStore, kind: "optional" | "blocking" = "optional", recommended: number | null = 1) =>
+    asks.add({ session: sessionUri(1), question: QUESTION, options: OPTIONS, recommended, kind });
+  /** the route call, with the store */
+  async function asked(r: Rig, asks: AsyncAskStore, path: string, body?: unknown): Promise<{ status: number; json: any }> {
+    const request = body === undefined
+      ? get(path)
+      : new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const response = await hostChatsRoute(request, new URL(request.url).pathname, r.conn, r.clock, asks)!;
+    return { status: response.status, json: await response.json() };
+  }
+  const readPath = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
+  const answerText = (id: string, label: string) => `Answer to ${id} ("${QUESTION}"): ${label}`;
+
+  it("an async question is the card when no native prompt is open", async () => {
+    const r = await rig();
+    const asks = store();
+    const q = ask(asks);
+    const read = (await asked(r, asks, readPath)).json as HostChatRead;
+    expect(read.prompt).toMatchObject({
+      id: q.id, kind: "question", title: "Question", question: QUESTION, away_default: 2, custom_option_index: 2, multi_select: false,
+      options: [{ label: "FICTIONAL keep", description: "the first way" }, { label: "FICTIONAL drop", description: null, recommended: true }, { label: "Other…", description: null }],
+      host: { async_id: q.id, option_ids: ["0", "1"] },
+    });
+    // several stack: the oldest first, counted in the title; a blocking one says nothing of an away default
+    const second = asks.add({ session: sessionUri(1), question: "FICTIONAL second?", options: OPTIONS, recommended: null, kind: "blocking" });
+    const both = (await asked(r, asks, readPath)).json as HostChatRead;
+    expect(both.prompt).toMatchObject({ id: q.id, title: "Question 1 of 2" });
+    expect(both.signature).not.toBe(read.signature);
+    asks.answer(q.id, "FICTIONAL keep", false);
+    const next = (await asked(r, asks, readPath)).json as HostChatRead;
+    expect(next.prompt).toMatchObject({ id: second.id, title: "Question" });
+    expect(next.prompt?.away_default).toBeUndefined();
+    // no store, or another chat: no card
+    expect((await call(r, readPath)).json.prompt).toBeNull();
+    expect((await asked(r, asks, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(2))}`)).json.prompt).toBeNull();
+  });
+
+  it("a native ask_user wins the card", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: asking([COLOR]), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    const read = (await asked(r, asks, readPath)).json as HostChatRead;
+    expect(read.prompt?.host).toMatchObject({ request_id: "req-1" });
+    expect("async_id" in read.prompt!.host).toBe(false);
+    expect(asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+  });
+
+  it("the answer steers a busy chat", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    expect(await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).toEqual({ status: 200, json: { ok: true } });
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", message: { text: answerText(q.id, "FICTIONAL keep") } });
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL keep", assumed: false });
+    // answered once: a second answer finds it gone, and nothing more is sent
+    const again = await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["1"] });
+    expect({ status: again.status, code: again.json.error.code }).toEqual({ status: 409, code: "prompt_changed" });
+    expect(actions(r.fake, "chat/pendingMessageSet").length).toBe(1);
+  });
+
+  it("the answer queues on an idle chat", async () => {
+    const r = await rig();
+    const asks = store();
+    const q = ask(asks);
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).json).toEqual({ ok: true });
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ message: { text: answerText(q.id, "FICTIONAL keep") } });
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+  });
+
+  it("a typed answer goes as its words; a bad or unknown answer sends nothing", async () => {
+    const r = await rig();
+    const asks = store();
+    const q = ask(asks);
+    const refused = async (body: Record<string, unknown>) => { const res = await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), ...body }); return [res.status, res.json.error.code]; };
+    expect(await refused({ async_id: q.id, option_ids: ["7"] })).toEqual([400, "invalid_answer"]);
+    expect(await refused({ async_id: q.id, option_ids: [""], text: "  " })).toEqual([400, "missing_answer"]);
+    expect(await refused({ async_id: "ask-00000000", option_ids: ["0"] })).toEqual([409, "prompt_changed"]);
+    // another chat's question is not this chat's to answer
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(2), async_id: q.id, option_ids: ["0"] })).status).toBe(409);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    expect(asks.pending(sessionUri(1)).length).toBe(1);
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: [""], text: "FICTIONAL rename it" })).json).toEqual({ ok: true });
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ message: { text: answerText(q.id, "FICTIONAL rename it") } });
+  });
+
+  it("a correction replaces an assumed answer and goes as Correction to …", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    const correct = (body: Record<string, unknown> = {}) => asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"], correction: true, ...body });
+    // nothing assumed yet: an open question is not corrected, it is answered
+    expect(await correct()).toMatchObject({ status: 409, json: { error: { code: "prompt_changed" } } });
+    asks.answer(q.id, "FICTIONAL drop", true);
+    // a plain answer to an answered question is still refused: only a correction replaces it
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).status).toBe(409);
+    expect(await correct()).toEqual({ status: 200, json: { ok: true } });
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", message: { text: `Correction to ${q.id} ("${QUESTION}"): FICTIONAL keep` } });
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL keep", assumed: false });
+    expect(asks.pending(sessionUri(1))).toEqual([]);
+    // corrected once: the answer is the user's now, so a second correction finds nothing to correct
+    expect((await correct({ option_ids: ["1"] })).status).toBe(409);
+    expect(actions(r.fake, "chat/pendingMessageSet").length).toBe(1);
+    // another chat's question is not this chat's to correct; a bad option sends nothing
+    asks.reopen(q.id); asks.answer(q.id, "FICTIONAL drop", true);
+    expect((await correct({ session: sessionUri(2) })).status).toBe(409);
+    expect((await correct({ option_ids: ["7"] })).json.error.code).toBe("invalid_answer");
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL drop", assumed: true });
+  });
+
+  it("a correction that fails to send leaves the assumed answer, so Change can try again", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    asks.answer(q.id, "FICTIONAL drop", true);
+    await asked(r, asks, readPath);
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => {
+      if (action.type === "chat/pendingMessageSet" || action.type === "chat/turnStarted") throw new Error("FICTIONAL dispatch failure");
+      dispatch(channel, action);
+    };
+    const body = { session: sessionUri(1), async_id: q.id, option_ids: ["0"], correction: true };
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", body)).status).toBeGreaterThanOrEqual(500);
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL drop", assumed: true });
+    // a failed correction does not open the question again: the card stays away
+    expect(asks.pending(sessionUri(1))).toEqual([]);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", body)).json).toEqual({ ok: true });
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL keep", assumed: false });
+  });
+
+  it("an answer that fails to send leaves the question open", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    // read first, so the watch is in place: the failure is the answer's dispatch
+    await asked(r, asks, readPath);
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => {
+      if (action.type === "chat/pendingMessageSet" || action.type === "chat/turnStarted") throw new Error("FICTIONAL dispatch failure");
+      dispatch(channel, action);
+    };
+    const failed = await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] });
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    expect(asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    expect(((await asked(r, asks, readPath)).json as HostChatRead).prompt).toMatchObject({ host: { async_id: q.id } });
+    // once the host takes it, the same answer goes through
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).json).toEqual({ ok: true });
+    expect(asks.pending(sessionUri(1))).toEqual([]);
+  });
+
+  /** the away timer on a store with a fake clock, ticked by hand: never a real 10 s wait */
+  function away(r: Rig, inUse: () => boolean = () => false) {
+    let now = 1_000_000;
+    const file = join(temp(), "async-asks.json");
+    const asks = new AsyncAskStore(file, () => now);
+    let tick: (() => Promise<void>) | null = null;
+    let every = 0;
+    let stopped = false;
+    const stop = startAwayAnswers(r.conn, asks, inUse, { clock: r.clock, every: (run, ms) => { tick = run; every = ms; return { stop: () => { stopped = true; } }; } });
+    return { asks, file, advance: (ms: number) => { now += ms; }, tick: () => tick!(), every: () => every, stop, stopped: () => stopped };
+  }
+  const assumedText = (id: string, label: string) => `Assumed answer to ${id} ("${QUESTION}"): ${label} (you were away)`;
+
+  it("the timer answers a due optional question as assumed", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const t = away(r);
+    expect(t.every()).toBe(ASYNC_TICK_MS);
+    expect(ASYNC_TICK_MS).toBe(10_000);
+    const q = ask(t.asks);
+    const blocking = ask(t.asks, "blocking", 0);
+    const none = ask(t.asks, "optional", null);
+    t.advance(59_000);
+    await t.tick();
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    t.advance(2_000);
+    await t.tick();
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", message: { text: assumedText(q.id, "FICTIONAL drop") } });
+    expect(t.asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL drop", assumed: true });
+    // blocking, or without a recommendation: never taken
+    expect(t.asks.get(blocking.id)?.answer).toBeNull();
+    expect(t.asks.get(none.id)?.answer).toBeNull();
+    // answered once: the next tick sends nothing more
+    await t.tick();
+    expect(actions(r.fake, "chat/pendingMessageSet").length).toBe(1);
+    t.stop();
+    expect(t.stopped()).toBe(true);
+  });
+
+  it("the timer waits while Ovis is open, and counts from when it closed", async () => {
+    const r = await rig();
+    let open = true;
+    const t = away(r, () => open);
+    const q = ask(t.asks);
+    t.advance(120_000);
+    await t.tick();
+    expect(t.asks.get(q.id)?.answer).toBeNull();
+    open = false;
+    await t.tick();
+    t.advance(59_000);
+    await t.tick();
+    expect(t.asks.get(q.id)?.answer).toBeNull();
+    t.advance(1_000);
+    await t.tick();
+    // idle chat: a new turn, not a steer
+    await until("the turn", () => actions(r.fake, "chat/turnStarted").length > 0);
+    expect(only(r.fake, "chat/turnStarted")).toMatchObject({ message: { text: assumedText(q.id, "FICTIONAL drop") } });
+  });
+
+  it("an assumed answer that fails to send leaves the question open, and the next tick tries again", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const t = away(r);
+    const q = ask(t.asks);
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    let failures = 0;
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => {
+      if (action.type === "chat/pendingMessageSet" || action.type === "chat/turnStarted") { failures += 1; throw new Error("FICTIONAL dispatch failure"); }
+      dispatch(channel, action);
+    };
+    t.advance(61_000);
+    await t.tick();
+    expect(failures).toBe(1);
+    expect(t.asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
+    await t.tick();
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(t.asks.get(q.id)?.answer).toMatchObject({ assumed: true });
+  });
+
+  it("a due question whose chat is gone is dropped by the minute's sweep, and later ticks do nothing", async () => {
+    const r = await rig();
+    const t = away(r);
+    // the first tick is a minute's sweep; asked after it, the question waits for the next one
+    await t.tick();
+    const q = t.asks.add({ session: sessionUri(99), question: QUESTION, options: OPTIONS, recommended: 1, kind: "optional" });
+    const warn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    try {
+      t.advance(61_000);
+      // due, but its send finds no chat: kept, with the send's warning, until the sweep
+      await t.tick();
+      expect(t.asks.get(q.id)).toMatchObject({ answer: null });
+      expect(warned).toEqual([`[host-chats] away answer not sent (${q.id}: refused)`]);
+      warned.length = 0;
+      for (let i = 2; i < ASYNC_SWEEP_TICKS; i += 1) await t.tick();
+      warned.length = 0;
+      // the sweep: dropped, saved, and said once
+      await t.tick();
+      expect(t.asks.get(q.id)).toBeNull();
+      expect(new AsyncAskStore(t.file, () => 1_061_000).get(q.id)).toBeNull();
+      expect(warned).toEqual([`[host-chats] async question dropped (${q.id}: chat gone)`]);
+      warned.length = 0;
+      t.advance(10_000);
+      await t.tick();
+      expect(t.asks.due()).toEqual([]);
+      expect(warned).toEqual([]);
+    } finally {
+      console.warn = warn;
+    }
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("a live chat's due question whose watch fails (rpc_error) stays open: a failed send never drops it", async () => {
+    const r = await rig();
+    const t = away(r);
+    // the host knows the chat, but its watch is refused: watched() says host_chat_missing
+    (r.conn as { watch: AgentHost["watch"] }).watch = async () => { throw new AgentHostError("rpc_error", -32000); };
+    const q = ask(t.asks);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      t.advance(61_000);
+      for (let i = 0; i < ASYNC_SWEEP_TICKS + 1; i += 1) await t.tick();
+    } finally {
+      console.warn = warn;
+    }
+    expect(t.asks.get(q.id)).toMatchObject({ id: q.id, answer: null });
+    expect(t.asks.pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    expect(t.asks.due().map((each) => each.id)).toEqual([q.id]);
+  });
+
+  it("a blocking question on a live chat never expires: 8 days on, it survives the load and every tick", async () => {
+    const r = await rig();
+    const t = away(r);
+    const q = ask(t.asks, "blocking", null);
+    t.advance(8 * 24 * 60 * 60_000);
+    expect(new AsyncAskStore(t.file, () => 1_000_000 + 8 * 24 * 60 * 60_000).pending(sessionUri(1)).map((each) => each.id)).toEqual([q.id]);
+    // two sweeps' worth of ticks: none drops it, none answers it
+    for (let i = 0; i < 2 * ASYNC_SWEEP_TICKS + 1; i += 1) { t.advance(ASYNC_TICK_MS); await t.tick(); }
+    expect(t.asks.get(q.id)).toMatchObject({ id: q.id, answer: null });
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("the minute's sweep drops a gone chat's questions, blocking ones too, and only those", async () => {
+    const r = await rig();
+    const t = away(r);
+    const gone = t.asks.add({ session: sessionUri(99), question: QUESTION, options: OPTIONS, recommended: null, kind: "blocking" });
+    const live = ask(t.asks, "blocking", null);
+    const warn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    try {
+      // no time has passed: the drop is for the chat, not the question's age
+      await t.tick();
+    } finally {
+      console.warn = warn;
+    }
+    expect(t.asks.get(gone.id)).toBeNull();
+    expect(new AsyncAskStore(t.file, () => 1_000_000).get(gone.id)).toBeNull();
+    expect(t.asks.get(live.id)).toMatchObject({ answer: null });
+    expect(warned).toEqual([`[host-chats] async question dropped (${gone.id}: chat gone)`]);
+    // between sweeps, a gone chat's blocking question (never due) waits for the next one
+    const later = t.asks.add({ session: sessionUri(98), question: QUESTION, options: OPTIONS, recommended: null, kind: "blocking" });
+    console.warn = () => {};
+    try {
+      for (let i = 1; i < ASYNC_SWEEP_TICKS; i += 1) await t.tick();
+      expect(t.asks.get(later.id)).not.toBeNull();
+      await t.tick();
+      expect(t.asks.get(later.id)).toBeNull();
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it("a correction to the answer it already is is refused, and nothing is sent", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    // OPTIONS[1] is the recommended one, assumed while away
+    asks.answer(q.id, q.options[1]!.label, true);
+    const same = await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["1"], correction: true });
+    expect({ status: same.status, code: same.json.error.code }).toEqual({ status: 400, code: "same_answer" });
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: q.options[1]!.label, assumed: true });
+  });
+
+  it("a blocking question makes the row ask", async () => {
+    const r = await rig();
+    const asks = store();
+    const statusOf = async () => ((await asked(r, asks, "/api/host-chats/chats")).json.chats as { session: string; status: string }[]).find((row) => row.session === sessionUri(1))?.status;
+    ask(asks, "optional");
+    expect(await statusOf()).toBe("idle");
+    const blocking = ask(asks, "blocking", null);
+    expect(await statusOf()).toBe("asks");
+    asks.answer(blocking.id, "FICTIONAL keep", false);
+    expect(await statusOf()).toBe("idle");
   });
 });

@@ -2298,6 +2298,50 @@ button.question-summary-answer { cursor: pointer; }
 .question-summary-option.is-selected { background: var(--bg-hover); color: var(--text); }
 .question-summary-option-label { flex: 1; min-width: 0; }
 .question-summary-option-check { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
+/* an answer the bridge assumed while the user was away (ZAC-326): "Assumed:" in the notice
+   colour, and under it "You were away · Change", Change opening the options to correct it with */
+.question-summary-prefix.is-assumed { color: var(--notice); }
+.question-summary-away,
+.question-summary-change-error {
+  margin: var(--space-1) 0 0;
+  padding-left: calc(var(--fs-sm) + var(--space-1));
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.question-summary-change-error { color: var(--status-blocked); }
+.question-summary-change {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.question-summary-change:hover { text-decoration: underline; }
+.question-summary-change:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); border-radius: var(--radius-sm); }
+.question-summary-change-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-left: calc(var(--fs-sm) + var(--space-1));
+}
+.question-summary-change-option {
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+.question-summary-change-option:hover:not(:disabled) { background: var(--bg-hover); }
+.question-summary-change-option[aria-pressed="true"] { border-color: var(--notice); }
+.question-summary-change-option:disabled { opacity: 0.6; cursor: default; }
+.question-summary-change-option:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); }
 /* the report an ask_user form came with, above its questions: one line, as "Question:" reads,
    that opens to the message read as the reply reads */
 .question-summary-report { display: flex; flex-direction: column; min-width: 0; }

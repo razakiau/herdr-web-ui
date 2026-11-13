@@ -24,8 +24,8 @@ export type StoredTodo = HostTodo & { created: number | null };
 
 const cache = new Map<string, { stamp: string; todos: StoredTodo[] | null }>();
 
-/** per VS Code chat: the SDK session it names, by the stamp of the store it was read from */
-const sdkCache = new Map<string, { stamp: number; sdk: string | null }>();
+/** per VS Code chat: the SDK session it names, by the stamp of the store it was read from (storeStamp) and when */
+const sdkCache = new Map<string, { stamp: string; at: number; sdk: string | null }>();
 
 export function forgetSessionTodos(): void { cache.clear(); sdkCache.clear(); peerCache.clear(); chatIndex.clear(); scans.clear(); }
 
@@ -42,13 +42,13 @@ export function defaultAgentSessionDirs(): string[] {
 }
 
 /** The SDK session a VS Code chat runs on, read from its own store; null when it names none. */
-export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | null {
+export function sdkSessionOf(uuid: string, dirs: readonly string[], now: number = Date.now()): string | null {
   for (const dir of dirs) {
     const path = join(dir, uuid, "session.db");
-    const stamp = mtime(path);
+    const stamp = storeStamp(path);
     if (stamp === null) continue;
     const known = sdkCache.get(path);
-    if (known?.stamp === stamp) return known.sdk;
+    if (known !== undefined && fresh(known, stamp, now)) return known.sdk;
     let sdk: string | null = null;
     try {
       const store = new Database(path, { readonly: true });
@@ -61,7 +61,7 @@ export function sdkSessionOf(uuid: string, dirs: readonly string[]): string | nu
       // locked mid-write, no such table yet or not JSON: what it named last time, and read it again next time
       return known?.sdk ?? null;
     }
-    sdkCache.set(path, { stamp, sdk });
+    sdkCache.set(path, { stamp, at: now, sdk });
     return sdk;
   }
   return null;
@@ -88,8 +88,8 @@ export function cliSessionOf(session: string, home: string = defaultCopilotHome(
   return session.startsWith("ahp-chat:") ? peerChatSdkOf(session, dirs, parent) : null;
 }
 
-/** per peer chat: the SDK session its parent's store names for it, by the stamp of that store */
-const peerCache = new Map<string, { stamp: number; sdk: string | null }>();
+/** per peer chat: the SDK session its parent's store names for it, by the stamp of that store (storeStamp) and when */
+const peerCache = new Map<string, { stamp: string; at: number; sdk: string | null }>();
 
 /**
  * The SDK session of a session's other chat (ZAC-260): a VS Code peer chat (origin "user") or a fork
@@ -104,7 +104,7 @@ const peerCache = new Map<string, { stamp: number; sdk: string | null }>();
  * (Specifica, bridge 1071), the stores that name the chat themselves (chatIndexSdk). Null for
  * anything else.
  */
-export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: string | null = null): string | null {
+export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: string | null = null, now: number = Date.now()): string | null {
   const nested = /^ahp-chat:\/\/([^/]+)\/([A-Za-z0-9_+/=-]+)$/.exec(chat);
   const flat = /^ahp-chat:\/([0-9a-f-]{36})$/i.exec(chat);
   if (nested && (nested[1] === "default" || nested[1] === "subagent")) return null;
@@ -124,11 +124,11 @@ export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: str
   const same = (uri: unknown): boolean => typeof uri === "string" && chatIdOf(uri) === id;
   for (const dir of dirs) {
     const path = join(dir, uuid, "session.db");
-    const stamp = mtime(path);
+    const stamp = storeStamp(path);
     if (stamp === null) continue;
     const key = `${path}\n${chat}`;
     const known = peerCache.get(key);
-    if (known?.stamp === stamp) {
+    if (known !== undefined && fresh(known, stamp, now)) {
       if (known.sdk !== null) return known.sdk;
       break;
     }
@@ -147,7 +147,7 @@ export function peerChatSdkOf(chat: string, dirs: readonly string[], parent: str
       if (known?.sdk) return known.sdk;
       break;
     }
-    peerCache.set(key, { stamp, sdk });
+    peerCache.set(key, { stamp, at: now, sdk });
     if (sdk !== null) return sdk;
     break;
   }
@@ -162,8 +162,8 @@ function chatIdOf(uri: string): string | null {
   return flat ? flat[1]!.toLowerCase() : null;
 }
 
-/** per store dir: its store's stamp, and the chats it names (chat id → SDK session) */
-const chatIndex = new Map<string, { stamp: number; chats: [string, string][] }>();
+/** per store dir: its store's stamp (storeStamp), and the chats it names (chat id → SDK session) */
+const chatIndex = new Map<string, { stamp: string; chats: [string, string][] }>();
 /** a scan lists at most this many stores (the Mac had 1,819 dirs, 593 of them uuid-named, 2026-10-30) */
 const MAX_STORES = 5000;
 
@@ -173,7 +173,7 @@ const MAX_STORES = 5000;
  * VS Code runs on its own SDK session gets a backing store, `agentSessionData/<sdk>/session.db`, whose
  * `session_metadata.peerChatBacking` names the chat's URI: the most direct link, one key per store,
  * no parent needed (on the Mac all 7 peer chats had one, 2026-10-30). The parents' `peerChats` lists
- * are read in the same pass as a second witness. Each store is re-read only when its mtime moves.
+ * are read in the same pass as a second witness. Each store is re-read only when its stamp (storeStamp) moves.
  */
 function chatIndexSdk(chatId: string, dirs: readonly string[], now: number = Date.now()): string | null {
   const scope = dirs.join("\n");
@@ -199,7 +199,7 @@ function scanStores(dirs: readonly string[]): Map<string, string> {
       if (!UUID.test(name)) continue;
       if (++listed > MAX_STORES) return found;
       const path = join(dir, name, "session.db");
-      const stamp = mtime(path);
+      const stamp = storeStamp(path);
       if (stamp === null) continue;
       let known = chatIndex.get(path);
       if (known?.stamp !== stamp) {
@@ -253,6 +253,33 @@ function mtime(path: string): number | null {
   try { return statSync(path).mtimeMs; } catch { return null; }
 }
 
+/**
+ * A store's stamp: session.db's mtime with its WAL's mtime and size. VS Code (and the CLI) keep the
+ * store in WAL mode: a new row lands in session.db-wal, and session.db's mtime holds until a
+ * checkpoint. Live, ZAC-326 (2026-11-13): session.db 17:56:35, its WAL 18:07:11; a peer chat created
+ * at 18:01:57 was looked up before VS Code wrote its peerChats entry, the miss was kept under the
+ * unmoved mtime, and every agent-ask for it answered 404 no_chat. Null when there is no store.
+ */
+function storeStamp(path: string): string | null {
+  const db = mtime(path);
+  if (db === null) return null;
+  // no WAL (checkpointed, or a rollback-journal store) is undefined, not a throw: most stores have none
+  let wal: { mtimeMs: number; size: number } | undefined;
+  try { wal = statSync(`${path}-wal`, { throwIfNoEntry: false }); } catch { /* unreadable: as no WAL */ }
+  return `${db}:${wal?.mtimeMs ?? 0}:${wal?.size ?? 0}`;
+}
+
+/**
+ * A store's word on a chat is kept while its stamp holds; a miss only MISS_MS on top (a WAL rewritten
+ * in place after a checkpoint can keep its size, and a coarse clock its mtime). A miss is kept at all
+ * because every costs poll and every agent-ask asks for every host row (rowsBySdk): a row whose store
+ * never names it (a session with no defaultChatProviderData) would open SQLite on each of them.
+ */
+const MISS_MS = 5_000;
+function fresh(known: { stamp: string; at: number; sdk: string | null }, stamp: string, now: number): boolean {
+  return known.stamp === stamp && (known.sdk !== null || now - known.at < MISS_MS);
+}
+
 /** The session's todos in the order they were written; null when it has no store or no table. */
 export function readSessionTodos(session: string, home: string = defaultCopilotHome(), agentDirs: readonly string[] = defaultAgentSessionDirs()): StoredTodo[] | null {
   const uuid = session.slice(session.indexOf(":/") + 2);
@@ -261,10 +288,9 @@ export function readSessionTodos(session: string, home: string = defaultCopilotH
   const own = join(home, "session-state", uuid, "session.db");
   const sdk = mtime(own) === null ? sdkSessionOf(uuid, agentDirs) : null;
   const path = sdk === null ? own : join(home, "session-state", sdk, "session.db");
-  const db = mtime(path);
-  if (db === null) return null;
   // the CLI writes through its WAL: the main file's mtime alone would miss a change
-  const stamp = `${db}:${mtime(`${path}-wal`)}`;
+  const stamp = storeStamp(path);
+  if (stamp === null) return null;
   const known = cache.get(path);
   if (known?.stamp === stamp) return known.todos;
   let todos: StoredTodo[] | null;

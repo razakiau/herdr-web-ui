@@ -47,6 +47,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
 import { todosSince, type StoredTodo } from "./todos.ts";
+import type { AsyncQuestion } from "./async-ask.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
@@ -251,6 +252,10 @@ export interface ReadContext {
   modelOutput?(id: string): number | null;
   /** the session's todo list with when each row was written (server/agent-host/todos.ts), null when it has none */
   todos?(): StoredTodo[] | null;
+  /** the questions the agent asked without stopping (ask_user_async), unanswered, oldest first: the card's when the turn asks nothing itself */
+  asked?(): AsyncQuestion[];
+  /** an async question by its id, answered or not, null when the store has none: an answer read back gets its options */
+  asyncAsk?(id: string): AsyncQuestion | null;
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -422,6 +427,88 @@ function askPart(tool: ToolCallState, content: ToolResultContent[]): Extract<Con
   const base = { kind: "question" as const, text, ...(lines.length > 1 ? { report: message } : {}), options: [], chosen: [] };
   const answer = tool.success === false || /^User (?:cancelled|declined|dismissed)\b/.test(out) ? null : answerOf(out);
   return answer === null ? { ...base, custom: null, skipped: true } : withUploads({ ...base, custom: answer, skipped: false });
+}
+
+/**
+ * The message an async question's answer went to the chat as (routes.ts asyncAnswerText, ZAC-326):
+ * `Answer to <id> ("<question>"): <label>`, `Assumed answer to …: <label> (you were away)` or
+ * `Correction to …`. The question is not escaped, so it may hold quotes, parentheses and newlines,
+ * and so may the label: only the stored question says where it ends (asyncAnswerAt).
+ */
+const ASYNC_ANSWER_HEAD = /^(Answer|Assumed answer|Correction) to (ask-[0-9a-f]{8}) \("/;
+const AWAY_SUFFIX = " (you were away)";
+/** What the host joins a steer to the one the turn already holds with (routes.ts send). */
+const STEER_JOIN = "\n\n";
+
+/**
+ * The async answer that starts at `at` in a user turn's text, as the question part it answers and
+ * where it ends: at the text's end or at a STEER_JOIN (a steer joined after it). Null when none
+ * starts there. Only a question the store knows (`context.asyncAsk`) is read back: text that merely
+ * looks like an answer (typed, in a chat that never asked, or one whose question was pruned 7 days
+ * after its answer) stays the user's. It must start with `<form> to <id> ("<the stored question>"): `;
+ * the label after it is the longest the question could have had (its stored answer, one of its
+ * options) that ends there, less an assumed answer's away suffix; else it runs to the first join.
+ */
+function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part: Extract<ConversationPart, { kind: "question" }>; end: number } | null {
+  const head = ASYNC_ANSWER_HEAD.exec(text.slice(at, at + 64));
+  if (!head) return null;
+  const [opening, form, id] = head as unknown as [string, string, string];
+  const asked = context?.asyncAsk?.(id) ?? null;
+  if (!asked) return null;
+  const lead = `${opening}${asked.question}"): `;
+  if (!text.startsWith(lead, at)) return null;
+  const assumed = form === "Assumed answer";
+  const from = at + lead.length;
+  const suffix = assumed ? AWAY_SUFFIX : "";
+  const endsAt = (end: number): boolean => end === text.length || text.startsWith(STEER_JOIN, end);
+  // the label as each way it may end: a label the question could have had, with the away suffix or without, else up to the first join
+  const known = [...(asked.answer ? [asked.answer.label] : []), ...asked.options.map((option) => option.label)]
+    .filter((label) => label.trim() !== "").sort((a, b) => b.length - a.length);
+  const endings = [...known.map((label) => ({ label, after: suffix })), ...(suffix ? known.map((label) => ({ label, after: "" })) : [])];
+  const fits = endings.find(({ label, after }) => text.startsWith(label + after, from) && endsAt(from + label.length + after.length));
+  const join = text.indexOf(STEER_JOIN, from);
+  const end = fits ? from + fits.label.length + fits.after.length : join < 0 ? text.length : join;
+  const rest = text.slice(from, end);
+  const label = fits ? fits.label : assumed && rest.endsWith(AWAY_SUFFIX) ? rest.slice(0, -AWAY_SUFFIX.length) : rest;
+  if (label.trim() === "") return null;
+  return {
+    end,
+    part: {
+      kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
+      ...(assumed ? { assumed: true as const } : {}),
+      // correctable while the store still holds the assumed answer: once corrected, it is the user's
+      ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
+    },
+  };
+}
+
+/**
+ * A user turn's text as its parts: each async answer in it (asyncAnswerAt) a question part, the
+ * rest the user's words, in order. One message is one segment; a steer the host joined to the one
+ * the turn held is another after a STEER_JOIN, so an answer is looked for at each segment's start.
+ */
+function userTextParts(text: string, context?: ReadContext): ConversationPart[] {
+  const parts: ConversationPart[] = [];
+  let words = 0;
+  const said = (until: number): void => {
+    const each = text.slice(words, until);
+    if (each.trim() !== "") parts.push({ kind: "text", text: each });
+  };
+  for (let at = 0; at >= 0 && at <= text.length;) {
+    const found = asyncAnswerAt(text, at, context);
+    if (found) {
+      said(Math.max(words, at - STEER_JOIN.length));
+      parts.push(found.part);
+      words = Math.min(text.length, found.end + STEER_JOIN.length);
+      at = words;
+      continue;
+    }
+    const next = text.indexOf(STEER_JOIN, at);
+    at = next < 0 ? -1 : next + STEER_JOIN.length;
+  }
+  if (!parts.some((part) => part.kind === "question")) return [{ kind: "text", text }];
+  said(text.length);
+  return parts;
 }
 
 /**
@@ -616,7 +703,7 @@ export function turnsFrom(chat: ChatState, context?: ReadContext): ConversationT
       : part !== stoppedAt ? []
         : [{ kind: "notice", text: part.error.message, source: "error", ...(latest && part.resumable === true ? { resumable: true as const } : {}) }]);
     return [
-      { role: "user" as const, ts, parts: [{ kind: "text" as const, text: turn.message.text }, ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
+      { role: "user" as const, ts, parts: [...userTextParts(turn.message.text, context), ...userImagesOf(turn.message).map((image, index) => ({ kind: "image" as const, media_type: image.media_type, ref: `${USER_REF}${turn.id}:${index}` }))] },
       { role: "assistant" as const, ts, ...(end ? { end_ts: end } : {}), parts, ...(read.model !== null ? { model: context?.modelName(read.model) ?? read.model } : {}) },
     ];
   });
@@ -839,6 +926,31 @@ function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<HostCh
     multi_select: false,
     custom_option_index: null,
     host: { tool_call_id: tool.toolCallId, turn_id: turnId, option_ids: choices.map((c) => c.id), approves: choices.map((c) => c.approves) },
+  };
+}
+
+/**
+ * A question the agent asked without stopping its turn (ask_user_async, ZAC-326), as the card asks
+ * a host question: its options by index ("0".."n-1"), the agent's recommendation tagged, then a
+ * typed answer. `at` and `count` place it among the chat's pending ones ("Question 1 of 2"). An
+ * optional one with a recommendation says what it goes with when nobody has Ovis open.
+ */
+export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number): NonNullable<HostChatRead["prompt"]> {
+  const options: InteractivePromptOption[] = q.options.map((option, index) => ({
+    label: option.label, description: option.description ?? null, ...(index === q.recommended ? { recommended: true as const } : {}),
+  }));
+  return {
+    id: q.id,
+    agent: PROMPT_AGENT,
+    kind: "question",
+    title: count > 1 ? `Question ${at + 1} of ${count}` : "Question",
+    question: q.question,
+    body: null,
+    options: [...options, { label: OTHER_LABEL, description: null }],
+    multi_select: false,
+    custom_option_index: options.length,
+    ...(q.kind === "optional" && q.recommended !== null ? { away_default: q.recommended + 1 } : {}),
+    host: { async_id: q.id, option_ids: q.options.map((_, index) => String(index)) },
   };
 }
 
@@ -1147,7 +1259,9 @@ export function tokensOf(chat: ChatState): NonNullable<HostChatRead["tokens"]> {
 }
 
 export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext, restored: HostChatRead["restored"] = null): HostChatRead {
-  const prompt = promptFrom(chat);
+  // a question the host itself holds open wins the card: the turn waits on it (ZAC-326)
+  const asked = context?.asked?.() ?? [];
+  const prompt = promptFrom(chat) ?? (asked.length > 0 ? asyncQuestionPrompt(asked[0]!, 0, asked.length) : null);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const status = statusOf(chat.status);
   const turns = turnsFrom(chat, context);
@@ -1189,7 +1303,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
-    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
+    prompt?.id ?? null, prompt?.title ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
     read.background, read.work, read.artifacts, read.confirmations, read.context, read.tokens, read.restored, read.todos ?? null,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),

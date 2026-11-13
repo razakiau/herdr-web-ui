@@ -168,4 +168,5 @@ export const COMPOSER_KO: Record<string, string> = {
   "Add to Queue": "대기열에 추가",
   "Steer with Message": "메시지로 방향 지정",
   "This answer was refused: {reason}": "이 답변은 거부되었습니다: {reason}",
+  "Optional. If you're away, it goes with {n} and tells you.": "선택 사항. 자리에 없으면 {n}(으)로 진행하고 알려 드립니다.",
 };

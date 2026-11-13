@@ -6,6 +6,7 @@ import type { ConversationTurn } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { changesLine, groupStartsOpen, Turn, standaloneRuns } from "./ChatView.tsx";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
+import { readFrom } from "../../server/agent-host/chats.ts";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] } as ConversationTurn);
 const render = (paneId: string, turn: ConversationTurn): string => {
@@ -467,5 +468,113 @@ describe("the end of a host answer (ZAC-228)", () => {
     expect(html).toContain('aria-label="More actions"');
     expect(html).not.toContain("chat-checkpoint-btn");
     expect(html).not.toContain("chat-fork-btn");
+  });
+});
+
+describe("an answered async question in a user turn (ask_user_async, ZAC-326)", () => {
+  type Part = ConversationTurn["parts"][number];
+  const ID = "ask-0a1b2c3d";
+  const assumed: Part = { kind: "question", text: "FICTIONAL keep the table?", options: ["FICTIONAL keep", "FICTIONAL drop"], chosen: ["FICTIONAL drop"], custom: null, skipped: false, assumed: true, correctable: { session: "copilotcli:/FICTIONAL", async_id: ID } };
+  const said = (parts: Part[]): ConversationTurn => ({ role: "user", ts: "2026-01-01T00:00:00.000Z", parts });
+  const styled = (turn: ConversationTurn, style: "vscode" | "classic", extra: Record<string, unknown> = {}): string => {
+    const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, { paneId: "", turn, live: false, waiting: false, showThinking: false, style, ...extra }) }));
+    } finally {
+      if (saved) Object.defineProperty(navigator, "languages", saved);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+  it("a turn that is only an assumed answer draws its question row with Assumed: and Change, and no empty bubble or user row", () => {
+    for (const style of ["vscode", "classic"] as const) {
+      const html = styled(said([assumed]), style);
+      expect(html).toContain("question-summary");
+      expect(words(html)).toContain("Assumed: FICTIONAL drop");
+      expect(html).toMatch(/<button[^>]*class="question-summary-change"[^>]*>Change<\/button>/);
+      expect(html).not.toContain("chat-bubble");
+      // its time stays, in a row of its own after the question (M1 below)
+      expect(html.indexOf("question-summary")).toBeLessThan(html.indexOf("chat-turn-meta"));
+      expect(html.match(/<time /g)).toHaveLength(1);
+    }
+    // a turn with nothing for that row (no time, no controls) draws the question alone
+    const bare = styled({ ...said([assumed]), ts: null }, "vscode");
+    expect(bare).not.toContain("chat-turn-user");
+    expect(bare).not.toContain("chat-user-row");
+  });
+
+  it("a turn that is only an answer keeps its time and Restore, after the question row and with no empty bubble (M1)", () => {
+    const checkpointed = { checkpoint: { turn: "t1", first: false, faded: false }, onCheckpoint: () => {}, onFork: () => {} };
+    const classic = styled(said([assumed]), "classic", checkpointed);
+    expect(classic).toContain("question-summary");
+    expect(classic).not.toContain("chat-bubble");
+    expect(classic).toMatch(/<button[^>]*class="chat-meta-btn chat-checkpoint-btn"[^>]*aria-label="Restore Checkpoint"/);
+    expect(classic).toContain("chat-fork-btn");
+    expect(classic).toContain("<time ");
+    expect(classic.indexOf("question-summary")).toBeLessThan(classic.indexOf("chat-checkpoint-btn"));
+    // nothing to copy: no Copy or Rewind
+    expect(classic).not.toContain("chat-copy");
+    // the first request offers Start Over; VS Code's style keeps them behind its ⋯
+    expect(styled(said([assumed]), "classic", { ...checkpointed, checkpoint: { turn: "t1", first: true, faded: false } })).toContain('aria-label="Start Over"');
+    const vscode = styled(said([assumed]), "vscode", checkpointed);
+    expect(vscode).toContain("chat-more-btn");
+    expect(vscode).not.toContain("chat-bubble");
+  });
+
+  it("a turn with two bubbles shows its time once, under the first (M2)", () => {
+    for (const style of ["vscode", "classic"] as const) {
+      const html = styled(said([{ kind: "text", text: "FICTIONAL one" }, assumed, { kind: "text", text: "FICTIONAL two" }]), style);
+      expect(html.match(/class="chat-bubble"/g)).toHaveLength(2);
+      expect(html.match(/<time /g)).toHaveLength(1);
+      expect(html.indexOf("<time ")).toBeLessThan(html.indexOf("question-summary"));
+    }
+  });
+
+  it("a steer joined to the answer draws its bubble, then the question row, in order; the answer is never in a bubble", () => {
+    for (const style of ["vscode", "classic"] as const) {
+      const html = styled(said([{ kind: "text", text: "FICTIONAL also do X" }, assumed]), style);
+      expect(html).toContain("chat-turn-user");
+      expect(html.indexOf("FICTIONAL also do X")).toBeGreaterThan(-1);
+      expect(html.indexOf("FICTIONAL also do X")).toBeLessThan(html.indexOf("question-summary"));
+      expect(html.match(/class="chat-bubble"/g)).toHaveLength(1);
+      expect(html).not.toContain("Assumed answer to");
+      const reversed = styled(said([assumed, { kind: "text", text: "FICTIONAL also do X" }]), style);
+      expect(reversed.indexOf("question-summary")).toBeLessThan(reversed.indexOf("FICTIONAL also do X"));
+      const both = styled(said([{ kind: "text", text: "FICTIONAL one" }, assumed, { kind: "text", text: "FICTIONAL two" }]), style);
+      expect(both.indexOf("FICTIONAL one")).toBeLessThan(both.indexOf("question-summary"));
+      expect(both.indexOf("question-summary")).toBeLessThan(both.indexOf("FICTIONAL two"));
+      expect(both.match(/class="chat-bubble"/g)).toHaveLength(2);
+    }
+  });
+
+  it("a plain user turn draws exactly as before (markup taken at 84048663)", () => {
+    const plain: ConversationTurn = { role: "user", ts: null, parts: [{ kind: "text", text: "FICTIONAL plain words" }] };
+    const checkpointed = { checkpoint: { turn: "t1", first: false, faded: false }, onCheckpoint: () => {}, onFork: () => {} };
+    const svg = (cls: string, body: string): string => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${cls}" aria-hidden="true">${body}</svg>`;
+    const bubble = '<article class="chat-turn chat-turn-user"><div class="chat-user-row"><div class="chat-bubble"><div class="chat-bubble-body"><div class="markdown"><p><span><span>FICTIONAL plain words</span></span></p></div></div></div>';
+    expect(styled(plain, "vscode", checkpointed)).toBe(`${bubble}<div class="chat-turn-meta"><button type="button" class="chat-meta-btn chat-more-btn" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false">`
+      + `${svg("lucide lucide-ellipsis lucide-more-horizontal", '<circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle>')}</button></div></div></article>`);
+    expect(styled(plain, "classic", checkpointed)).toBe(`${bubble}<div class="chat-turn-meta">`
+      + `<button type="button" class="chat-meta-btn chat-checkpoint-btn" title="Restore Checkpoint" aria-label="Restore Checkpoint">${svg("lucide lucide-rotate-ccw", '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path>')}<span class="chat-checkpoint-word">Restore</span></button>`
+      + `<button type="button" class="chat-meta-btn chat-fork-btn" title="Fork Conversation" aria-label="Fork Conversation">${svg("lucide lucide-git-fork", '<circle cx="12" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"></path><path d="M12 12v3"></path>')}</button>`
+      + `<button type="button" class="icon-button chat-copy" aria-label="Copy message" title="Copy message">${svg("lucide lucide-copy", '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>')}</button></div></div></article>`);
+  });
+
+  it("from the host's chat to the visible Assumed: (readChat's turns through the Turn)", () => {
+    const asked = { id: ID, session: "copilotcli:/FICTIONAL", question: "FICTIONAL keep the table?", options: [{ label: "FICTIONAL keep" }, { label: "FICTIONAL drop" }], recommended: 1, kind: "optional" as const, askedAt: 0, answer: { label: "FICTIONAL drop", assumed: true, at: 1 } };
+    const chat = {
+      resource: "ahp-chat://default/fictional", title: "FICTIONAL_chat", status: 1, modifiedAt: "2026-01-01T00:00:00.000Z",
+      turns: [{ id: "t1", startedAt: "2026-01-01T00:00:00.000Z", duration: 1, state: "complete", usage: undefined, responseParts: [],
+        message: { text: `FICTIONAL also do X\n\nAssumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop (you were away)`, origin: { kind: "user" } } }],
+    } as unknown as Parameters<typeof readFrom>[2];
+    const read = readFrom("copilotcli:/FICTIONAL", "FICTIONAL_chat", chat, { chat: () => undefined, modelName: (id) => id, asyncAsk: (id) => id === ID ? asked : null });
+    const html = styled(read.turns[0]!, "vscode");
+    expect(words(html)).toContain("FICTIONAL also do X");
+    expect(words(html)).toContain("Assumed: FICTIONAL drop");
+    expect(words(html)).toContain("You were away · Change");
+    expect(html).not.toContain("Assumed answer to");
+    expect(html.indexOf("FICTIONAL also do X")).toBeLessThan(html.indexOf("Assumed:"));
   });
 });

@@ -168,4 +168,5 @@ export const COMPOSER_ZH: Record<string, string> = {
   "Add to Queue": "添加到队列",
   "Steer with Message": "用消息引导",
   "This answer was refused: {reason}": "此回答未被接受：{reason}",
+  "Optional. If you're away, it goes with {n} and tells you.": "可选。如果你不在，将选择 {n} 并告诉你。",
 };

@@ -112,6 +112,12 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
       });
       return;
     }
+    if ("async_id" in ref) {
+      // a question the agent asked without stopping (ZAC-326): the option picked, else the words typed
+      const optionId = choice.custom_text === undefined && choice.option_index !== undefined ? ref.option_ids[choice.option_index] : undefined;
+      await answerHost(machineId, { session, async_id: ref.async_id, ...(optionId !== undefined ? { option_ids: [optionId] } : { text: choice.custom_text ?? "" }) });
+      return;
+    }
     const index = choice.option_index ?? 0;
     const optionId = ref.option_ids[index] ?? "";
     await confirmHost(machineId, {

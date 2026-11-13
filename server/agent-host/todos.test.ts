@@ -1,11 +1,11 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { HostTodo } from "../../shared/host-chats.ts";
-import { cliSessionOf, forgetSessionTodos, readSessionTodos, todosSince, type StoredTodo } from "./todos.ts";
+import { cliSessionOf, forgetSessionTodos, peerChatSdkOf, readSessionTodos, sdkSessionOf, todosSince, type StoredTodo } from "./todos.ts";
 
 const UUID = "1da5c4f1-451b-4845-953f-52a960f82afa";
 const SCHEMA = `CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT,
@@ -139,6 +139,69 @@ describe("cliSessionOf", () => {
     expect(cliSessionOf(`ahp-chat:/${PEER}`, home, agentDirs, `copilotcli:/${CHAT}`)).toBe(SDK);
     // a session's default chat names no chat of its own: the session's id is what resolves it
     expect(cliSessionOf(`ahp-chat://default/${Buffer.from(`copilotcli:/${CHAT}`).toString("base64url")}`, home, agentDirs)).toBeNull();
+  });
+
+  /**
+   * VS Code keeps its store in WAL mode: a new row lands in session.db-wal and session.db's mtime
+   * holds until a checkpoint. Live, ZAC-326 (2026-11-13): a peer chat looked up before VS Code wrote
+   * its peerChats entry kept the miss, and every agent-ask for it answered 404 no_chat.
+   */
+  function walStore(dir: string, session: string): { path: string; writer: Database } {
+    mkdirSync(join(dir, session), { recursive: true });
+    const path = join(dir, session, "session.db");
+    const setup = new Database(path);
+    setup.run("PRAGMA journal_mode = WAL");
+    setup.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    setup.close();
+    // VS Code's own connection, held open and never checkpointing: what it writes stays in the WAL
+    const writer = new Database(path);
+    writer.run("PRAGMA wal_autocheckpoint = 0");
+    return { path, writer };
+  }
+
+  test("a peer chat VS Code writes to the WAL after a lookup missed it", () => {
+    const agentDirs = [join(home, "agentSessionData")];
+    const { path, writer } = walStore(agentDirs[0]!, CHAT);
+    try {
+      expect(peerChatSdkOf(`ahp-chat:/${PEER}`, agentDirs, `copilotcli:/${CHAT}`)).toBeNull();
+      const before = statSync(path).mtimeMs;
+      writer.run("INSERT INTO session_metadata (key, value) VALUES ('peerChats', ?)", [JSON.stringify([{ uri: `ahp-chat:/${PEER}`, providerData: JSON.stringify({ sdkSessionId: SDK }), origin: { kind: "user" } }])]);
+      expect(statSync(path).mtimeMs).toBe(before);
+      expect(existsSync(`${path}-wal`)).toBe(true);
+      expect(peerChatSdkOf(`ahp-chat:/${PEER}`, agentDirs, `copilotcli:/${CHAT}`)).toBe(SDK);
+    } finally { writer.close(); }
+  });
+
+  test("a miss is kept 5 s at most, even under a stamp that did not move", () => {
+    const agentDirs = [join(home, "agentSessionData")];
+    const { path, writer } = walStore(agentDirs[0]!, CHAT);
+    const pin = new Date("2026-01-01T00:00:00Z");
+    const pinStamp = () => { utimesSync(path, pin, pin); utimesSync(`${path}-wal`, pin, pin); };
+    try {
+      writer.run("INSERT INTO session_metadata (key, value) VALUES ('peerChats', '[]')");
+      pinStamp();
+      const size = statSync(`${path}-wal`).size;
+      expect(peerChatSdkOf(`ahp-chat:/${PEER}`, agentDirs, `copilotcli:/${CHAT}`, 1_000)).toBeNull();
+      // a checkpoint, then the WAL rewritten from its start: same size, and (a coarse clock) same mtimes
+      writer.run("PRAGMA wal_checkpoint(PASSIVE)");
+      writer.run("UPDATE session_metadata SET value = ? WHERE key = 'peerChats'", [JSON.stringify([{ uri: `ahp-chat:/${PEER}`, providerData: JSON.stringify({ sdkSessionId: SDK }) }])]);
+      pinStamp();
+      expect(statSync(`${path}-wal`).size).toBe(size);
+      expect(peerChatSdkOf(`ahp-chat:/${PEER}`, agentDirs, `copilotcli:/${CHAT}`, 3_000)).toBeNull();
+      expect(peerChatSdkOf(`ahp-chat:/${PEER}`, agentDirs, `copilotcli:/${CHAT}`, 6_001)).toBe(SDK);
+    } finally { writer.close(); }
+  });
+
+  test("a chat's sdkSessionId VS Code writes to the WAL after a lookup missed it", () => {
+    const agentDirs = [join(home, "agentSessionData")];
+    const { path, writer } = walStore(agentDirs[0]!, CHAT);
+    try {
+      expect(sdkSessionOf(CHAT, agentDirs)).toBeNull();
+      const before = statSync(path).mtimeMs;
+      writer.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: SDK })]);
+      expect(statSync(path).mtimeMs).toBe(before);
+      expect(sdkSessionOf(CHAT, agentDirs)).toBe(SDK);
+    } finally { writer.close(); }
   });
 });
 
