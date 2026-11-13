@@ -736,7 +736,7 @@ export function setCostIndexForTests(index: CostIndex | null, agentDirs: readonl
  * 78 logs were answered under no row, so no ring and no kept-warm flame), so its store is asked when
  * no log carries its own uuid, as the index's costOf and cliSessionOf already do.
  */
-function sdkOfRow(session: string, agentDirs: readonly string[], parent: string | null = null, hasLog: (uuid: string) => boolean = () => true): string | null {
+function sdkOfRow(session: string, agentDirs: readonly string[], parent: string | null, hasLog: (uuid: string) => boolean): string | null {
   if (session.startsWith("ahp-chat:")) return peerChatSdkOf(session, agentDirs, parent);
   const at = session.indexOf(":/");
   if (at < 0) return null;
@@ -838,7 +838,7 @@ export async function hostCostsPolled(host: Pick<AgentHost, "state" | "summaries
 }
 
 /** The host's rows by the SDK session they run on; a host that is down has none to name. */
-function rowsBySdk(host: Pick<AgentHost, "state" | "summaries">, agentDirs: readonly string[], hasLog: (uuid: string) => boolean = () => true): Map<string, string> {
+function rowsBySdk(host: Pick<AgentHost, "state" | "summaries">, agentDirs: readonly string[], hasLog: (uuid: string) => boolean): Map<string, string> {
   const rowBySdk = new Map<string, string>();
   const rows = host.state().state === "connected" ? rowsFrom(host.summaries()) : [];
   for (const row of rows) {
@@ -859,10 +859,18 @@ export function rowOfSdk(host: AgentHost, sdk: string, agentDirs: readonly strin
   return rowsBySdk(host, agentDirs, hasLog).get(sdk) ?? null;
 }
 
+/**
+ * Whether a uuid has a CLI log of its own on this PC (`<copilot home>/session-state/<uuid>/events.jsonl`,
+ * as cliSessionOf checks): a `copilotcli:/` row the Mac's host made has none, and runs on the SDK
+ * session its VS Code store names (live 2026-11-13, ZAC-326).
+ */
+function hasOwnLog(uuid: string): boolean {
+  return existsSync(join(defaultCopilotHome(), "session-state", uuid, "events.jsonl"));
+}
+
 /** rowOfSdk with this PC's VS Code stores and CLI logs, the ones the costs index reads. */
 export function rowOfSdkHere(host: AgentHost, sdk: string): string | null {
-  const home = defaultCopilotHome();
-  return rowOfSdk(host, sdk, costsOf().agentDirs, (uuid) => existsSync(join(home, "session-state", uuid, "events.jsonl")));
+  return rowOfSdk(host, sdk, costsOf().agentDirs, hasOwnLog);
 }
 
 /**
@@ -907,10 +915,8 @@ const LINK_ORDER: readonly LinkKind[] = ["job", "spawn", "continue", "resume", "
 const linkJob: HandoffDone = (job) => {
   try {
     const { index, agentDirs } = linksOf();
-    const sdk = (session: string): string => {
-      if (session.startsWith(`${PROVIDER}:/`)) return session.slice(PROVIDER.length + 2);
-      return sdkOfRow(session, agentDirs) ?? session;
-    };
+    // a CLI chat with its own log runs on its uuid; one the Mac's host made, on its store's SDK session
+    const sdk = (session: string): string => sdkOfRow(session, agentDirs, null, hasOwnLog) ?? session;
     index.addJob(sdk(job.session), sdk(job.newSession), new Date(job.endedAt).toISOString());
   } catch { /* the chats' logs give the same link */ }
 };
@@ -941,7 +947,7 @@ export async function hostLinks(host: Pick<AgentHost, "state" | "summaries">, si
       answer = index.all(POLL_BYTES_PER_SCAN);
     }
   } catch { return { links: [], complete: false }; }
-  const rowBySdk = rowsBySdk(host, agentDirs);
+  const rowBySdk = rowsBySdk(host, agentDirs, hasOwnLog);
   // a log no listed row runs on has no id that stays: once VS Code lists its chat, the row's id
   // (`ahp-session:/…`) is not the `copilotcli:/<uuid>` it would be named by now, and the store would
   // file the chat twice (review of PR 1). Such a link waits; the logs give it again on a later call.

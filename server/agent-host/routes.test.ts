@@ -460,6 +460,37 @@ describe("host chat links", () => {
     expect((await call(r, "/api/host-chats/links?since=yesterday")).status).toBe(400);
   });
 
+  it("a copilotcli:/ row with no log of its own (one the Mac's host made) is keyed by the SDK session its store names (ZAC-326)", async () => {
+    const home = temp();
+    const MADE = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
+    const MADE_SDK = "4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a";
+    // the row's own uuid has no log; its SDK session hands off and host chat 1 resumes it
+    const logs: Record<string, string[]> = {
+      [MADE_SDK]: [event("assistant.message", at(3), "Start the next chat with: /resume fictional-made")],
+      [uuid(1)]: [event("user.message", at(2), "/resume fictional-made")],
+    };
+    for (const [id, lines] of Object.entries(logs)) {
+      mkdirSync(join(home, "session-state", id), { recursive: true });
+      writeFileSync(join(home, "session-state", id, "events.jsonl"), lines.join(""));
+    }
+    const agentDirs = [join(home, "agentSessionData")];
+    mkdirSync(join(agentDirs[0]!, MADE), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, MADE, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: MADE_SDK })]);
+    db.close();
+    const before = process.env["COPILOT_HOME"];
+    process.env["COPILOT_HOME"] = home;
+    try {
+      setLinkIndexForTests(new LinkIndex(home, agentDirs), agentDirs);
+      const made = `copilotcli:/${MADE}`;
+      const r = await rig({ sessions: [summary(1), { ...summary(3), resource: made }] });
+      expect((await call(r, "/api/host-chats/links")).json.links).toEqual([{ from: made, to: sessionUri(1), kind: "resume", at: at(2) }]);
+    } finally {
+      if (before === undefined) delete process.env["COPILOT_HOME"]; else process.env["COPILOT_HOME"] = before;
+    }
+  });
+
   it("a link to a new VS Code chat no row lists yet waits, then is answered once under its row id, and files it once", async () => {
     const home = temp();
     const NEW = "2b6d0c3e-8f41-4a7e-9c55-1e0f2a3b4c5d";
