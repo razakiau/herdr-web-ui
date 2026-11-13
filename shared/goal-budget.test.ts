@@ -120,6 +120,10 @@ describe("judgeChoices", () => {
     expect(judgeChoices("cc/claude-opus-5-5", [], prices, null)).toEqual([]);
   });
 
+  it("labels the default same_family when every model is of the worker's family", () => {
+    expect(judgeChoices("omniroute/claude-haiku-5-5", ["claude/claude-haiku-5-5", "claude/claude-sonnet-5-5"], prices, null)[0]).toEqual({ id: "claude/claude-haiku-5-5", why: "same_family" });
+  });
+
   it("without a worker model, offers the first model and the cheapest priced one", () => {
     expect(judgeChoices(null, ["claude-opus-5-5", "gpt-5-6-sol", "deepseek-v4-flash"], prices, null)).toEqual([
       { id: "claude-opus-5-5", why: "default" },

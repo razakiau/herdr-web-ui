@@ -74,7 +74,8 @@ export function defaultJudge(workerModel: string | null, models: readonly string
 export interface JudgeChoice { id: string; why: "default" | "cheapest" | "same_family" }
 
 /**
- * The judges to offer for a chat whose last model is `worker`: `defaultJudge`, then the cheapest
+ * The judges to offer for a chat whose last model is `worker`: `defaultJudge` (labelled
+ * `same_family` when no other family is on offer), then the cheapest
  * priced model of another family (of any family without a worker), then the cheapest of the
  * worker's family; each model once. Cheapest is the lowest input plus output price; a local or
  * unpriced model is never offered as either.
@@ -94,8 +95,10 @@ export function judgeChoices(worker: string | null, models: readonly string[], p
     }
     return best?.id ?? null;
   };
+  const byDefault = defaultJudge(worker, models);
   const picks: [string | null, JudgeChoice["why"]][] = [
-    [defaultJudge(worker, models), "default"],
+    // no other family on offer: the default is the worker's own, so it says so
+    [byDefault, byDefault !== null && modelFamily(byDefault) === family ? "same_family" : "default"],
     [cheapest(false), "cheapest"],
     [family === null ? null : cheapest(true), "same_family"],
   ];
