@@ -58,7 +58,7 @@ import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath } from "../../shared/machines.ts";
-import { stickyRequestIndex } from "../lib/chatStickyRequest.ts";
+import { stickyRequestIndex, stickyRequestRole } from "../lib/chatStickyRequest.ts";
 import { checkpointRows, type CheckpointRow } from "../lib/hostCheckpoints.ts";
 import type { HostCheckpoint, HostEditDiff } from "../../shared/host-chats.ts";
 import type { ToolEdit } from "../../shared/protocol.ts";
@@ -2382,7 +2382,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
     }
     if (entering) { setSticky(null); return; }
     const at = first === null ? -1 : timelineRows.findIndex((row) => row.key === first.key);
-    const index = stickyRequestIndex(timelineRows.map((row) => row.turn === null ? "user" : row.turn.role), at, first === null ? 0 : first.top - top);
+    const index = stickyRequestIndex(timelineRows.map((row) => row.turn === null ? "user" : stickyRequestRole(row.turn.role, userText(row.turn))), at, first === null ? 0 : first.top - top);
     setSticky(index === null ? null : timelineRows[index]!.key);
   };
   const toStickyRequest = (): void => {

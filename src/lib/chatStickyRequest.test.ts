@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { stickyRequestIndex } from "./chatStickyRequest.ts";
+import { stickyRequestIndex, stickyRequestRole } from "./chatStickyRequest.ts";
 
 const roles = ["user", "assistant", "user", "assistant", "assistant"] as const;
 
@@ -21,5 +21,15 @@ describe("the message a host chat keeps at its top (VS Code's sticky request)", 
   it("is none above the first message, and none with nothing on screen", () => {
     expect(stickyRequestIndex(["assistant", "user"], 0, -50)).toBeNull();
     expect(stickyRequestIndex(roles, -1, 0)).toBeNull();
+  });
+
+  it("skips the goal runner's check prompts: they show as the judge's verdict, not the owner's message", () => {
+    const check = "[Goal, check 1] Not done yet: x\n\nKeep working toward the whole goal:\nship it";
+    const timeline = [["user", "real ask"], ["assistant", "done"], ["user", check], ["assistant", "more"]] as const;
+    const rolesOf = timeline.map(([role, text]) => stickyRequestRole(role, text));
+    expect(rolesOf).toEqual(["user", "assistant", "assistant", "assistant"]);
+    expect(stickyRequestIndex(rolesOf, 2, -30)).toBe(0);
+    expect(stickyRequestIndex(rolesOf, 3, -30)).toBe(0);
+    expect(stickyRequestRole("user", "[Goal, check 1] is how the runner writes it")).toBe("user");
   });
 });
