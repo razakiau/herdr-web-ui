@@ -31,6 +31,8 @@ export interface HostChatRow {
   no_folder?: boolean;
   /** what it is doing now, in the host's words (SessionSummary.activity), only while it works; absent before bundle 1061 */
   activity?: string;
+  /** how many async questions (ask_user_async, optional or blocking) the chat has unanswered, when any; absent before bundle 1097 */
+  waiting?: number;
 }
 
 /**

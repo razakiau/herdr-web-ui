@@ -268,11 +268,19 @@ export function hostChatsRoute(request: Request, pathname: string, host: AgentHo
 type Handler = (call: Call) => Promise<Response>;
 interface Call { host: AgentHost; leases: HostLeases; clock: LeaseClock; url: URL; body: Record<string, unknown>; asks: AsyncAskStore | null }
 
-/** The host's rows, a row with a blocking async question unanswered as asking (it waits on the user, as an ask_user does). */
+/**
+ * The host's rows, a row with a blocking async question unanswered as asking (it waits on the user, as an
+ * ask_user does), and any row with async questions unanswered (either kind) counting them in `waiting`.
+ */
 function rowsWithAsks(host: AgentHost, asks: AsyncAskStore | null): HostChatRow[] {
   const rows = rowsFrom(host.summaries());
   if (!asks) return rows;
-  return rows.map((row) => row.status !== "asks" && asks.pending(row.session).some((q) => q.kind === "blocking") ? { ...row, status: "asks" } : row);
+  return rows.map((row) => {
+    const pending = asks.pending(row.session);
+    if (pending.length === 0) return row;
+    const status = row.status !== "asks" && pending.some((q) => q.kind === "blocking") ? "asks" : row.status;
+    return { ...row, status, waiting: pending.length };
+  });
 }
 
 const GETS: Record<string, Handler> = {

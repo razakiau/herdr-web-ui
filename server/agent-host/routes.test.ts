@@ -2496,4 +2496,15 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     asks.answer(blocking.id, "FICTIONAL keep", false);
     expect(await statusOf()).toBe("idle");
   });
+
+  it("an optional question counts as waiting and leaves the row idle", async () => {
+    const r = await rig();
+    const asks = store();
+    const rowOf = async () => ((await asked(r, asks, "/api/host-chats/chats")).json.chats as { session: string; status: string; waiting?: number }[]).find((row) => row.session === sessionUri(1));
+    expect(await rowOf()).not.toHaveProperty("waiting");
+    const optional = ask(asks, "optional");
+    expect(await rowOf()).toMatchObject({ status: "idle", waiting: 1 });
+    asks.answer(optional.id, optional.options[0]!.label, false);
+    expect(await rowOf()).not.toHaveProperty("waiting");
+  });
 });
