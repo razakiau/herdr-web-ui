@@ -61,10 +61,13 @@ export function modelFamily(id: string): string {
 }
 
 /**
- * The judge a goal gets unless the owner picks one: the first model whose family differs from the
- * chat's last model, else the first model (the caller warns `same_family`); null for an empty list.
+ * The judge a goal gets unless the owner picks one: `preferred` (the owner's named default judge,
+ * HERDR_WEB_GOAL_JUDGE) when it is one of `models`, whatever the worker's family; else the first model
+ * whose family differs from the chat's last model, else the first model (the caller warns
+ * `same_family`); null for an empty list.
  */
-export function defaultJudge(workerModel: string | null, models: readonly string[]): string | null {
+export function defaultJudge(workerModel: string | null, models: readonly string[], preferred: string | null = null): string | null {
+  if (preferred !== null && models.includes(preferred)) return preferred;
   if (workerModel === null) return models[0] ?? null;
   const family = modelFamily(workerModel);
   return models.find((each) => modelFamily(each) !== family) ?? models[0] ?? null;
@@ -74,13 +77,14 @@ export function defaultJudge(workerModel: string | null, models: readonly string
 export interface JudgeChoice { id: string; why: "default" | "cheapest" | "same_family" }
 
 /**
- * The judges to offer for a chat whose last model is `worker`: `defaultJudge` (labelled
- * `same_family` when no other family is on offer), then the cheapest
+ * The judges to offer for a chat whose last model is `worker`: `defaultJudge` with the owner's
+ * `preferred` judge (labelled `same_family` when its family is the worker's, as when the preferred
+ * judge is of the worker's family or no other family is on offer), then the cheapest
  * priced model of another family (of any family without a worker), then the cheapest of the
  * worker's family; each model once. Cheapest is the lowest input plus output price; a local or
  * unpriced model is never offered as either.
  */
-export function judgeChoices(worker: string | null, models: readonly string[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null): JudgeChoice[] {
+export function judgeChoices(worker: string | null, models: readonly string[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null, preferred: string | null = null): JudgeChoice[] {
   const family = worker === null ? null : modelFamily(worker);
   const cost = (id: string): number | null => {
     const found = priceWithFallback(id, prices, fallback);
@@ -95,9 +99,9 @@ export function judgeChoices(worker: string | null, models: readonly string[], p
     }
     return best?.id ?? null;
   };
-  const byDefault = defaultJudge(worker, models);
+  const byDefault = defaultJudge(worker, models, preferred);
   const picks: [string | null, JudgeChoice["why"]][] = [
-    // no other family on offer: the default is the worker's own, so it says so
+    // the default is the worker's own family (preferred so, or no other on offer), so it says so
     [byDefault, byDefault !== null && modelFamily(byDefault) === family ? "same_family" : "default"],
     [cheapest(false), "cheapest"],
     [family === null ? null : cheapest(true), "same_family"],

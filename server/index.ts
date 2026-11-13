@@ -472,6 +472,8 @@ export function createServer(
   // the owner's models for the digest and the goal judge: never a quota he forbids, nor whatever sorts first
   const curatedModels = async () => digestModels(await omniRoute.models(), process.env["HERDR_WEB_DIGEST_MODELS"]);
   const curatedModelAllowed = (id: string) => digestModelAllowed(id, process.env["HERDR_WEB_DIGEST_MODELS"]);
+  // the owner's default goal judge (ZAC-326), whatever the worker's family; ignored unless it is one of curatedModels
+  const preferredJudge = process.env["HERDR_WEB_GOAL_JUDGE"]?.trim() || null;
   const digestJobs = new DigestJobs({
     store: groupsStore, readChat: readMemberChat, complete: (request) => omniRoute.complete(request), prices: coldPrices,
     facts: chatFacts, models: curatedModels, changed: () => groupsSignal.tell(),
@@ -736,7 +738,7 @@ export function createServer(
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
       // the goals (ZAC-326); a watching device reads them and cannot start, raise, stop or resume one (above)
       if (pathname === "/api/goals" || pathname.startsWith("/api/goals/")) return handleGoalsRequest(request, pathname,
-        { store: goals, pcs: goalPcs, prices: coldPrices, models: curatedModels, judgeAllowed: curatedModelAllowed, kick: goalTick });
+        { store: goals, pcs: goalPcs, prices: coldPrices, models: curatedModels, judgeAllowed: curatedModelAllowed, preferredJudge, kick: goalTick });
       // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)
       if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell(),
         { on: () => preferences.get().settings.chatGroups === true, jobs: digestJobs });

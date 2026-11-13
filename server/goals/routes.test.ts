@@ -41,10 +41,11 @@ describe("/api/goals", () => {
   let pc: FakePc;
   let models: string[];
   let judgeAllowed: (id: string) => boolean;
+  let preferredJudge: string | null;
   let kicks: number;
   const deps = (): GoalRoutesDeps => ({
     store, pcs: (id) => id === MACHINE ? pc : null,
-    prices: async () => ({ prices: PRICES, fallback: null }), models: async () => models, judgeAllowed: (id) => judgeAllowed(id), kick: () => { kicks += 1; },
+    prices: async () => ({ prices: PRICES, fallback: null }), models: async () => models, judgeAllowed: (id) => judgeAllowed(id), preferredJudge, kick: () => { kicks += 1; },
   });
   const call = async (path: string, body?: unknown): Promise<{ status: number; json: any }> => {
     const request = new Request(`http://localhost${path}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -58,6 +59,7 @@ describe("/api/goals", () => {
     pc = new FakePc();
     models = ["cc/claude-opus-5-5", "fictional/gpt-judge-x"];
     judgeAllowed = () => true;
+    preferredJudge = null;
     kicks = 0;
   });
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }); });
@@ -90,6 +92,23 @@ describe("/api/goals", () => {
     expect(store.list()).toEqual([]);
     const started = await call("/api/goals/start", { ...START, judgeModel: "fictional/gpt-judge-x" });
     expect(started).toMatchObject({ status: 200, json: { goal: { judge: { model: "fictional/gpt-judge-x" } } } });
+  });
+
+  it("start: the owner's preferred judge, when on the list, is the default whatever the worker's family", async () => {
+    models = ["fictional/gpt-judge-x", "cc/claude-sonnet-5-5"];
+    preferredJudge = "cc/claude-sonnet-5-5";
+    // a Claude worker: the preferred Claude judge, warned same_family
+    expect((await call("/api/goals/start", START)).json.goal.judge).toMatchObject({ model: "cc/claude-sonnet-5-5", warning: "same_family" });
+    await call("/api/goals/stop", { machine: MACHINE, session: SESSION });
+    // a non-Claude worker: still the preferred judge
+    pc.lastModel = "fictional/gpt-work-x";
+    expect((await call("/api/goals/start", { ...START, allowUnpriced: true })).json.goal.judge).toMatchObject({ model: "cc/claude-sonnet-5-5", warning: null });
+  });
+
+  it("start: a preferred judge not on the list falls back to the family rule", async () => {
+    models = ["cc/claude-haiku-5-5", "fictional/gpt-judge-x"];
+    preferredJudge = "cc/claude-sonnet-5-5";
+    expect((await call("/api/goals/start", START)).json.goal.judge).toMatchObject({ model: "fictional/gpt-judge-x", warning: null });
   });
 
   it("no model to judge with is 400 no_judge", async () => {
@@ -191,6 +210,15 @@ describe("/api/goals", () => {
     // no worker: the first model is the default
     expect((await call("/api/goals/judges")).json).toEqual({ choices: [{ id: "cc/claude-opus-5-5", why: "default" }, { id: "fictional/claude-work-x", why: "cheapest" }] });
     expect((await call("/api/goals/judges", {})).status).toBe(405);
+  });
+
+  it("judges: the owner's preferred judge comes first when on the list; ignored when not", async () => {
+    models = ["cc/claude-opus-5-5", "fictional/gpt-judge-x", "fictional/claude-work-x"];
+    preferredJudge = "cc/claude-opus-5-5";
+    expect((await call("/api/goals/judges?worker=cc%2Fclaude-opus-5-5")).json.choices[0]).toEqual({ id: "cc/claude-opus-5-5", why: "same_family" });
+    expect((await call("/api/goals/judges?worker=fictional%2Fgpt-work-x")).json.choices[0]).toEqual({ id: "cc/claude-opus-5-5", why: "default" });
+    preferredJudge = "cc/claude-sonnet-5-5";
+    expect((await call("/api/goals/judges?worker=cc%2Fclaude-opus-5-5")).json.choices[0]).toEqual({ id: "fictional/gpt-judge-x", why: "default" });
   });
 });
 
