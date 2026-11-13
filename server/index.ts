@@ -64,6 +64,8 @@ import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { AgentHostConnection } from "./agent-host/connection.ts";
 import { GitHubReferenceState, handleReferenceStateRequest, type ReferenceStateSource } from "./references.ts";
 import { hostChatsRoute, hostCosts, hostCostsPolled, hostLinks } from "./agent-host/routes.ts";
+import { AsyncAskStore } from "./agent-host/async-ask.ts";
+import { AGENT_ASK_PATH, handleAgentAsk } from "./agent-host/agent-ask.ts";
 import { createDigestScheduler, type DigestPc, digestRunner, DigestStore, handleDigestRequest } from "./digest.ts";
 import { createCostsPoller } from "./costs-poller.ts";
 import { GroupStore } from "./groups-store.ts";
@@ -328,6 +330,8 @@ export function createServer(
   }) : null;
   localCosts?.start();
   agentHostConnection?.start();
+  // the questions this PC's agents ask without stopping their turn (ask_user_async, ZAC-326), kept across restarts
+  const asyncAsks = agentHostConnection ? new AsyncAskStore(join(stateDir, "async-asks.json")) : null;
 
   /**
    * "Hand off now" on an alert (ZAC-262): the chat's PC is asked through its bridge
@@ -336,7 +340,7 @@ export function createServer(
   const handoffs = createHandoffFollower({
     bridge: bridgeHandoff({
       endpoint: (machineId) => machines?.endpoint(machineId),
-      local: agentHostConnection ? (request, pathname) => hostChatsRoute(request, pathname, agentHostConnection) : null,
+      local: agentHostConnection ? (request, pathname) => hostChatsRoute(request, pathname, agentHostConnection, undefined, asyncAsks ?? undefined) : null,
       fetch,
     }),
     tell: (outcome) => push.ntfy({ ...outcome, status: "handoff" }),
@@ -435,7 +439,7 @@ export function createServer(
     const path = `/api/host-chats/chat?session=${encodeURIComponent(session)}`;
     if (pc === "local") {
       if (!agentHostConnection) return null;
-      const response = await hostChatsRoute(new Request(`http://localhost${path}`), "/api/host-chats/chat", agentHostConnection)?.catch(() => null);
+      const response = await hostChatsRoute(new Request(`http://localhost${path}`), "/api/host-chats/chat", agentHostConnection, undefined, asyncAsks ?? undefined)?.catch(() => null);
       if (!response?.ok) { await response?.body?.cancel(); return null; }
       return await response.json().catch(() => null) as HostChatRead | null;
     }
@@ -524,7 +528,10 @@ export function createServer(
         tokenConfigured: token !== "",
         gated: devices.gated,
       });
-      const authenticated = access.level === "full" || (bridgePath && bridgeAuthorized);
+      // an agent's async question (ZAC-326) comes from the shim on this PC with the bridge token; it is
+      // not a bridgePath: the connection server never forwards it to another PC
+      const agentAsk = pathname === AGENT_ASK_PATH;
+      const authenticated = access.level === "full" || ((bridgePath || agentAsk) && bridgeAuthorized);
 
       if (requiresAuth(pathname) && !authenticated) {
         setRequestRoute("auth-refusal");
@@ -793,8 +800,20 @@ export function createServer(
         }
       }
 
-      const hostChatsResponse = hostChatsRoute(request, pathname, agentHostConnection);
+      const hostChatsResponse = hostChatsRoute(request, pathname, agentHostConnection, undefined, asyncAsks ?? undefined);
       if (hostChatsResponse) return hostChatsResponse;
+
+      if (agentAsk) {
+        setRequestRoute(pathname);
+        // only this PC's own bridge answers it, and only for the shim that holds the bridge token
+        if (!agentHostConnection || !asyncAsks) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
+        if (!bridgeAuthorized) return unauthorizedJson();
+        return handleAgentAsk(request, agentHostConnection, asyncAsks, (session) => {
+          broadcastAll({ type: "host-chat-changed", session });
+          // the list too: a blocking question makes its row ask
+          broadcastAll({ type: "host-chat-changed", session: null });
+        });
+      }
 
       if (pathname.startsWith("/api/")) {
         return jsonResponse({ error: { code: "not_found", message: `unknown endpoint ${pathname}` } }, 404);

@@ -50,7 +50,7 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState, HostChanges, HostChatCost, HostCommand, HostCostCall, HostLink, LinkKind } from "../../shared/host-chats.ts";
+import type { AgentHostState, HostChatRow, HostChanges, HostChatCost, HostCommand, HostCostCall, HostLink, LinkKind } from "../../shared/host-chats.ts";
 import { cliSessionOf, defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
 import { CostIndex, POLL_BYTES_PER_SCAN, POLL_READS_PER_TICK } from "./costs.ts";
 import { LinkIndex } from "./links.ts";
@@ -66,6 +66,7 @@ import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse
 import { workOf } from "./artifacts.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
+import type { AsyncAskStore, AsyncQuestion } from "./async-ask.ts";
 import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff, type HandoffDone } from "./handoff.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -255,19 +256,27 @@ const refuse = (response: Response): never => { throw new Refusal(response); };
 
 /**
  * The answer for a `/api/host-chats/` path; null for any other path. `clock` is the lease timers' (tests);
- * it is read when a host's first route is answered.
+ * it is read when a host's first route is answered. `asks` holds the questions agents asked without
+ * stopping (ask_user_async, ZAC-326); without one, a chat has none.
  */
-export function hostChatsRoute(request: Request, pathname: string, host: AgentHost | null, clock?: LeaseClock): Promise<Response> | null {
+export function hostChatsRoute(request: Request, pathname: string, host: AgentHost | null, clock?: LeaseClock, asks?: AsyncAskStore): Promise<Response> | null {
   if (!pathname.startsWith(PREFIX)) return null;
-  return answer(request, pathname.slice(PREFIX.length), host, clock);
+  return answer(request, pathname.slice(PREFIX.length), host, clock, asks ?? null);
 }
 
 type Handler = (call: Call) => Promise<Response>;
-interface Call { host: AgentHost; leases: HostLeases; clock: LeaseClock; url: URL; body: Record<string, unknown> }
+interface Call { host: AgentHost; leases: HostLeases; clock: LeaseClock; url: URL; body: Record<string, unknown>; asks: AsyncAskStore | null }
+
+/** The host's rows, a row with a blocking async question unanswered as asking (it waits on the user, as an ask_user does). */
+function rowsWithAsks(host: AgentHost, asks: AsyncAskStore | null): HostChatRow[] {
+  const rows = rowsFrom(host.summaries());
+  if (!asks) return rows;
+  return rows.map((row) => row.status !== "asks" && asks.pending(row.session).some((q) => q.kind === "blocking") ? { ...row, status: "asks" } : row);
+}
 
 const GETS: Record<string, Handler> = {
   // the connection keeps its last list after a disconnect: a down host says so instead of a stale list
-  "chats": async ({ host }) => { connected(host); return jsonResponse({ chats: rowsFrom(host.summaries()) }); },
+  "chats": async ({ host, asks }) => { connected(host); return jsonResponse({ chats: rowsWithAsks(host, asks) }); },
   "costs": readCosts,
   "chat": readChat,
   "models": listModels,
@@ -310,7 +319,7 @@ const POSTS: Record<string, Handler> = {
 /** Every route a bridge answers under /api/host-chats/, which the server's PC proxy must pass. */
 export const HOST_CHAT_ROUTES: readonly string[] = ["state", ...Object.keys(GETS), ...Object.keys(POSTS)];
 
-async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined): Promise<Response> {
+async function answer(request: Request, route: string, host: AgentHost | null, clock: LeaseClock | undefined, asks: AsyncAskStore | null): Promise<Response> {
   if (!host) return jsonResponse({ error: { code: "host_chats_off", message: "host chats are off on this PC (HERDR_WEB_AGENT_HOST)" } }, 404);
   if (route === "state") {
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
@@ -330,7 +339,7 @@ async function answer(request: Request, route: string, host: AgentHost | null, c
     body = payload;
   }
   try {
-    return await (get ?? post)!({ host, leases: leasesOf(host, clock), clock: clock ?? realClock, url: new URL(request.url), body });
+    return await (get ?? post)!({ host, leases: leasesOf(host, clock), clock: clock ?? realClock, url: new URL(request.url), body, asks });
   } catch (error) {
     if (error instanceof Refusal) return error.response;
     return failure(error, host);
@@ -483,7 +492,7 @@ async function followSubagents(call: Call, session: string, chat: ChatState): Pr
 }
 
 /** What a read of `session`'s chat knows beside it: its subagents' own chats, and the models' names. */
-function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): ReadContext {
+function contextOf(host: AgentHost, session?: string, skills?: HostCommand[], asks?: AsyncAskStore | null): ReadContext {
   const models = modelsFrom(host.mirror().root);
   const names = new Map(models.map((model) => [model.id, model.name]));
   const windows = new Map(models.map((model) => [model.id, model.context]));
@@ -493,6 +502,7 @@ function contextOf(host: AgentHost, session?: string, skills?: HostCommand[]): R
     ...(session ? { session: () => host.mirror().getSession(ownerOf(host, session)) } : {}),
     ...(skills ? { skills: () => skills } : {}),
     ...(session ? { todos: () => readSessionTodos(session) } : {}),
+    ...(session && asks ? { asked: () => asks.pending(session) } : {}),
   };
 }
 
@@ -578,7 +588,7 @@ async function readChat(call: Call): Promise<Response> {
   }
   await followSubagents(call, session, chat);
   const skills = await sessionSkills(call.host, session);
-  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills), restoredRead(call.host, session)));
+  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills, call.asks), restoredRead(call.host, session)));
 }
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
@@ -793,6 +803,19 @@ function rowsBySdk(host: Pick<AgentHost, "state" | "summaries">, agentDirs: read
     if (sdk !== null && !rowBySdk.has(sdk)) rowBySdk.set(sdk, row.session);
   }
   return rowBySdk;
+}
+
+/**
+ * The host row an SDK session runs on (ask_user_async names its chat by the SDK session the shim
+ * knows, ZAC-326), or null when no listed row does.
+ */
+export function rowOfSdk(host: AgentHost, sdk: string, agentDirs: readonly string[]): string | null {
+  return rowsBySdk(host, agentDirs).get(sdk) ?? null;
+}
+
+/** rowOfSdk with this PC's VS Code stores, the ones the costs index maps chats through. */
+export function rowOfSdkHere(host: AgentHost, sdk: string): string | null {
+  return rowOfSdk(host, sdk, costsOf().agentDirs);
 }
 
 /**
@@ -1765,12 +1788,46 @@ async function answerQuestion(call: Call): Promise<Response> {
 
 function logRefusedAnswer(call: Call, response: Response): void {
   void response.clone().json().then((body: { error?: { code?: string; message?: string } }) => {
-    console.error(`[host-chats] answer refused: ${body.error?.code ?? "?"} (request ${String(call.body["request_id"]).slice(0, 12)})`);
+    const of = call.body["async_id"] !== undefined ? `async ${String(call.body["async_id"]).slice(0, 12)}` : `request ${String(call.body["request_id"]).slice(0, 12)}`;
+    console.error(`[host-chats] answer refused: ${body.error?.code ?? "?"} (${of})`);
   }, () => {});
+}
+
+/** The message an async question's answer goes back to the chat as (ZAC-326). */
+export const asyncAnswerText = (q: AsyncQuestion, label: string): string => `Answer to ${q.id} ("${q.question}"): ${label}`;
+
+/**
+ * An async question's answer (ZAC-326): an option by its index, or typed text. Recorded first, so a
+ * second answer finds it answered (prompt_changed), then sent to the chat: a steer while its turn
+ * runs, a new turn when it is idle.
+ */
+async function answerAsync(call: Call, session: string, asyncId: unknown): Promise<Response> {
+  if (!text(asyncId) || asyncId === "") return badRequest("missing_async_id", "async_id must be a question id");
+  const rawIds = call.body["option_ids"];
+  const typed = call.body["text"];
+  if (rawIds !== undefined && !(Array.isArray(rawIds) && rawIds.every(text))) return badRequest("invalid_answer", "option_ids must be strings");
+  if (typed !== undefined && !text(typed)) return badRequest("invalid_answer", "text must be a string");
+  const q = call.asks?.get(asyncId) ?? null;
+  if (!q || q.session !== session || q.answer) gone();
+  const picked = ((rawIds as string[] | undefined) ?? []).find((id) => id !== "");
+  const index = picked === undefined ? -1 : Number(picked);
+  const words = typeof typed === "string" ? typed.trim() : "";
+  let label: string;
+  if (picked !== undefined) {
+    if (!/^\d+$/.test(picked) || !q!.options[index]) return badRequest("invalid_answer", "option_ids names no option of this question");
+    label = q!.options[index]!.label;
+  } else if (words !== "") label = words;
+  else return badRequest("missing_answer", "pick an option or type an answer");
+  const { channel, chat } = await watched(call, session);
+  const answered = call.asks!.answer(q!.id, label, false) ?? gone();
+  const message = messageFrom(call.host.mirror().root, asyncAnswerText(answered, label), undefined, null);
+  send(call.host, session, channel, chat, message, idOf(call.body["id"]), chat.activeTurn ? "steer" : "send");
+  return jsonResponse({ ok: true });
 }
 
 async function answerQuestionNow(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
+  if (call.body["async_id"] !== undefined) return answerAsync(call, session, call.body["async_id"]);
   const requestId = call.body["request_id"];
   const questionId = call.body["question_id"];
   if (!text(requestId) || requestId === "") return badRequest("missing_request_id", "request_id is required");

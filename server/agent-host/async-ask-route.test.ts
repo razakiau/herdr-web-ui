@@ -1,0 +1,132 @@
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ChatState, SessionState, SessionSummary } from "@microsoft/agent-host-protocol";
+import type { HostChatRead } from "../../shared/host-chats.ts";
+import { descriptorPath, type BridgeDescriptor } from "../bridge.ts";
+import { createServer } from "../index.ts";
+import { handleMachineRequest, MACHINE_PROXY_PATH } from "../machine-api.ts";
+import type { MachineManager } from "../machines.ts";
+import { fakeAgentHost } from "./fake-host.ts";
+import { rowOfSdk, type AgentHost } from "./routes.ts";
+
+const cleanups: Array<() => Promise<void> | void> = [];
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+
+function temp(): string {
+  const dir = mkdtempSync(join(tmpdir(), "herdr-agent-ask-"));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+async function until(what: string, ready: () => Promise<boolean> | boolean, ms = 5_000): Promise<void> {
+  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
+    if (await ready()) return;
+    await Bun.sleep(10);
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+const UUID = "00000000-0000-4000-8000-000000000001";
+const SESSION = `copilotcli:/${UUID}`;
+const CHAT = `ahp-chat://default/${Buffer.from(SESSION).toString("base64")}`;
+const AT = "2026-01-01T00:00:00.000Z";
+const summary = { resource: SESSION, provider: "copilotcli", title: "FICTIONAL_chat", status: 1, createdAt: AT, modifiedAt: AT, workingDirectories: ["file:///tmp/fictional-repo"], defaultChat: CHAT } as SessionSummary;
+const state = { provider: "copilotcli", title: "FICTIONAL_chat", status: 1, lifecycle: "ready", activeClients: [], chats: [{ resource: CHAT, title: "FICTIONAL_chat", status: 1, modifiedAt: AT }], defaultChat: CHAT, workingDirectories: ["file:///tmp/fictional-repo"] } as unknown as SessionState;
+const chat = { resource: CHAT, title: "FICTIONAL_chat", status: 1, modifiedAt: AT, turns: [] } as unknown as ChatState;
+const ASK = { sdk_session: UUID, question: "FICTIONAL: keep the old table?", options: [{ label: "FICTIONAL keep" }, { label: "FICTIONAL drop", description: "FICTIONAL why" }], recommended: 0, kind: "optional" };
+
+/** A bridge on a fake agent host, whose browsers need a token of their own: the shim holds only the bridge token. */
+async function bridge(): Promise<{ endpoint: string; token: string; stateDir: string }> {
+  const home = temp();
+  const config = join(home, "cfg");
+  const entries = process.platform === "darwin" ? join(home, "Library", "Application Support", "Code", "agent-host", "local-endpoint", "entries") : join(config, "Code", "agent-host", "local-endpoint", "entries");
+  mkdirSync(entries, { recursive: true });
+  const fake = await fakeAgentHost({ sessions: [summary], states: { [SESSION]: state }, chats: { [CHAT]: chat }, models: [], entryDir: entries });
+  cleanups.push(() => fake.stop());
+  const stateDir = temp();
+  const server = createServer({
+    port: 0, hostname: "127.0.0.1", token: "FICTIONAL-browser-token", machines: false, registerBridge: true, stateDir, tailscaleOwner: null, herdrProfiles: async () => [],
+    agentHost: { enabled: true, startHost: false, home, env: { XDG_CONFIG_HOME: config } },
+  });
+  cleanups.push(() => server.stop());
+  const token = (JSON.parse(readFileSync(descriptorPath(), "utf8")) as BridgeDescriptor).token;
+  const endpoint = `http://127.0.0.1:${server.port}`;
+  await until("the bridge's host", async () => (await (await fetch(`${endpoint}/api/host-chats/chats`, { headers: { authorization: `Bearer ${token}` } })).json() as { chats?: unknown[] }).chats?.length === 1);
+  return { endpoint, token, stateDir };
+}
+
+const post = (endpoint: string, body: unknown, token?: string) => fetch(`${endpoint}/api/agent-ask`, {
+  method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+});
+
+describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
+  it("files the question under the row its SDK session runs on, and the chat's card shows it", async () => {
+    const { endpoint, token, stateDir } = await bridge();
+    const response = await post(endpoint, ASK, token);
+    expect(response.status).toBe(200);
+    const answer = await response.json() as { accepted: boolean; id: string };
+    expect(answer.accepted).toBe(true);
+    expect(answer.id).toMatch(/^ask-[0-9a-f]{8}$/);
+    const read = await (await fetch(`${endpoint}/api/host-chats/chat?session=${encodeURIComponent(SESSION)}`, { headers: { authorization: `Bearer ${token}` } })).json() as HostChatRead;
+    expect(read.prompt).toMatchObject({ id: answer.id, question: ASK.question, away_default: 1, host: { async_id: answer.id, option_ids: ["0", "1"] } });
+    // kept in the bridge's state dir, across a restart
+    expect((JSON.parse(readFileSync(join(stateDir, "async-asks.json"), "utf8")) as { id: string; session: string }[]).map((q) => [q.id, q.session])).toEqual([[answer.id, SESSION]]);
+  });
+
+  it("refuses a request without the bridge token, a bad body, and a session no row runs on", async () => {
+    const { endpoint, token } = await bridge();
+    expect((await post(endpoint, ASK)).status).toBe(401);
+    expect((await post(endpoint, ASK, "FICTIONAL-wrong")).status).toBe(401);
+    const refused = async (body: unknown) => { const response = await post(endpoint, body, token); return [response.status, ((await response.json()) as { error: { code: string } }).error.code]; };
+    expect(await refused({ ...ASK, sdk_session: "" })).toEqual([400, "missing_sdk_session"]);
+    expect(await refused({ ...ASK, question: " " })).toEqual([400, "invalid_question"]);
+    expect(await refused({ ...ASK, kind: "urgent" })).toEqual([400, "invalid_kind"]);
+    expect(await refused({ ...ASK, options: [] })).toEqual([400, "invalid_options"]);
+    expect(await refused({ ...ASK, options: [{ description: "FICTIONAL no label" }] })).toEqual([400, "invalid_options"]);
+    expect(await refused({ ...ASK, recommended: 2 })).toEqual([400, "invalid_recommended"]);
+    expect(await refused([ASK])).toEqual([400, "invalid_body"]);
+    expect(await refused({ ...ASK, sdk_session: "00000000-0000-4000-8000-0000000000ff" })).toEqual([404, "no_chat"]);
+    // recommended may be left out: no away default
+    expect((await post(endpoint, { ...ASK, recommended: undefined, kind: "blocking" }, token)).status).toBe(200);
+    expect((await fetch(`${endpoint}/api/agent-ask`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(400);
+  });
+
+  it("is 404 on a server with no agent host", async () => {
+    const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: temp(), herdrProfiles: async () => [], registerBridge: false, tailscaleOwner: null });
+    cleanups.push(() => server.stop());
+    expect((await post(`http://127.0.0.1:${server.port}`, ASK)).status).toBe(404);
+  });
+
+  it("/api/agent-ask is not forwarded by the central server", async () => {
+    // a remote PC's bridge that would accept anything: it must never be asked
+    let reached = 0;
+    const remote = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => { reached += 1; return Response.json({ accepted: true, id: "ask-00000000" }); } });
+    cleanups.push(() => { void remote.stop(true); });
+    const manager = { endpoint: (id: string) => id === "pc-remote" ? { url: `http://127.0.0.1:${remote.port}`, token: "FICTIONAL-bridge-token" } : null, trackTerminal: () => () => {} } as unknown as MachineManager;
+    const forwarded = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc-remote/agent-ask", {
+      method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify(ASK),
+    }), manager);
+    expect(forwarded.status).toBe(404);
+    expect(MACHINE_PROXY_PATH.test("agent-ask")).toBe(false);
+    // the central server's own /api/agent-ask, and its /local alias, answer here (no agent host: 404), never on another PC
+    const central = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: temp(), herdrProfiles: async () => [], registerBridge: false, tailscaleOwner: null });
+    cleanups.push(() => central.stop());
+    expect((await post(`http://127.0.0.1:${central.port}`, ASK)).status).toBe(404);
+    const local = await fetch(`http://127.0.0.1:${central.port}/api/machines/local/agent-ask`, { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify(ASK) });
+    expect(local.status).toBeGreaterThanOrEqual(400);
+    expect(reached).toBe(0);
+  });
+});
+
+describe("rowOfSdk", () => {
+  it("names the row whose SDK session matches, and null for one no row runs on or a host that is down", () => {
+    const rows = [summary, { ...summary, resource: "copilotcli:/00000000-0000-4000-8000-000000000002", defaultChat: "ahp-chat://default/x" }] as SessionSummary[];
+    const host = (connected: boolean) => ({ state: () => ({ state: connected ? "connected" : "disconnected" }), summaries: () => rows }) as unknown as AgentHost;
+    expect(rowOfSdk(host(true), UUID, [])).toBe(SESSION);
+    expect(rowOfSdk(host(true), "00000000-0000-4000-8000-000000000002", [])).toBe("copilotcli:/00000000-0000-4000-8000-000000000002");
+    expect(rowOfSdk(host(true), "00000000-0000-4000-8000-0000000000ff", [])).toBeNull();
+    expect(rowOfSdk(host(false), UUID, [])).toBeNull();
+  });
+});

@@ -695,6 +695,9 @@ export interface InteractivePrompt {
   default_option_indices?: number[];
   /** previously entered custom text for a step, if any */
   default_custom_text?: string;
+  /** an optional async question's away default (ZAC-326): the 1-based option it goes with when
+   * nobody has Ovis open, which the card says before it happens */
+  away_default?: number;
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;

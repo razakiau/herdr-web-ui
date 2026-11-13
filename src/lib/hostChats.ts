@@ -13,7 +13,7 @@ import { machinePath } from "../../shared/machines.ts";
 import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
-import type { HandoffJob, HandoffState, HostAgent, HostAnswer, HostFormAnswer, HostChanges, HostChatCost, HostChatRead, HostChatRow, HostCostCall, HostCostsAnswer, HostEditDiff, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HandoffJob, HandoffState, HostAgent, HostAnswer, HostAsyncAnswer, HostFormAnswer, HostChanges, HostChatCost, HostChatRead, HostChatRow, HostCostCall, HostCostsAnswer, HostEditDiff, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 import { daysBack } from "./hostChatGroups.ts";
@@ -147,7 +147,7 @@ export async function watchHostChat(machineId: string, session: string): Promise
   await post(machineId, "host-chats/chat/watch", { session });
 }
 
-export function answerHost(machineId: string, body: HostAnswer): Promise<{ ok: true }> {
+export function answerHost(machineId: string, body: HostAnswer | HostAsyncAnswer): Promise<{ ok: true }> {
   return post(machineId, "host-chats/chat/answer", body);
 }
 

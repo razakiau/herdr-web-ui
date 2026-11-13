@@ -47,6 +47,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
 import { todosSince, type StoredTodo } from "./todos.ts";
+import type { AsyncQuestion } from "./async-ask.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
@@ -251,6 +252,8 @@ export interface ReadContext {
   modelOutput?(id: string): number | null;
   /** the session's todo list with when each row was written (server/agent-host/todos.ts), null when it has none */
   todos?(): StoredTodo[] | null;
+  /** the questions the agent asked without stopping (ask_user_async), unanswered, oldest first: the card's when the turn asks nothing itself */
+  asked?(): AsyncQuestion[];
 }
 
 /** The turn being read: its times, whether it runs, and its own model (for a subagent's to differ from). */
@@ -842,6 +845,31 @@ function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<HostCh
   };
 }
 
+/**
+ * A question the agent asked without stopping its turn (ask_user_async, ZAC-326), as the card asks
+ * a host question: its options by index ("0".."n-1"), the agent's recommendation tagged, then a
+ * typed answer. `at` and `count` place it among the chat's pending ones ("Question 1 of 2"). An
+ * optional one with a recommendation says what it goes with when nobody has Ovis open.
+ */
+export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number): NonNullable<HostChatRead["prompt"]> {
+  const options: InteractivePromptOption[] = q.options.map((option, index) => ({
+    label: option.label, description: option.description ?? null, ...(index === q.recommended ? { recommended: true as const } : {}),
+  }));
+  return {
+    id: q.id,
+    agent: PROMPT_AGENT,
+    kind: "question",
+    title: count > 1 ? `Question ${at + 1} of ${count}` : "Question",
+    question: q.question,
+    body: null,
+    options: [...options, { label: OTHER_LABEL, description: null }],
+    multi_select: false,
+    custom_option_index: options.length,
+    ...(q.kind === "optional" && q.recommended !== null ? { away_default: q.recommended + 1 } : {}),
+    host: { async_id: q.id, option_ids: q.options.map((_, index) => String(index)) },
+  };
+}
+
 /** What the running turn waits on: its first open question, else its first tool call to confirm. */
 export function promptFrom(chat: ChatState): HostChatRead["prompt"] {
   const active = chat.activeTurn;
@@ -1147,7 +1175,9 @@ export function tokensOf(chat: ChatState): NonNullable<HostChatRead["tokens"]> {
 }
 
 export function readFrom(session: string, title: string, chat: ChatState, context?: ReadContext, restored: HostChatRead["restored"] = null): HostChatRead {
-  const prompt = promptFrom(chat);
+  // a question the host itself holds open wins the card: the turn waits on it (ZAC-326)
+  const asked = context?.asked?.() ?? [];
+  const prompt = promptFrom(chat) ?? (asked.length > 0 ? asyncQuestionPrompt(asked[0]!, 0, asked.length) : null);
   const newest = chat.activeTurn ?? chat.turns.at(-1);
   const status = statusOf(chat.status);
   const turns = turnsFrom(chat, context);
@@ -1189,7 +1219,7 @@ export function readFrom(session: string, title: string, chat: ChatState, contex
     read.title, read.status,
     chat.turns.map((turn) => [turn.id, JSON.stringify(turn.responseParts).length]),
     chat.activeTurn ? [chat.activeTurn.id, chat.activeTurn.responseParts.length, JSON.stringify(chat.activeTurn.responseParts).length] : null,
-    prompt?.id ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
+    prompt?.id ?? null, prompt?.title ?? null, prompt?.steps ?? null, read.cursor, read.model, read.agent, read.message_ids, read.pending, read.commands,
     read.background, read.work, read.artifacts, read.confirmations, read.context, read.tokens, read.restored, read.todos ?? null,
     // what a subagent's own chat adds (its model, times, activity) is not in this chat's parts
     turns.flatMap((each) => each.parts.filter((part) => part.kind === "subagent")),
