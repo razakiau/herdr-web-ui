@@ -91,11 +91,12 @@ export const BRIDGE_PRESENCE_PATH = "/api/host-chats/presence";
 /**
  * The connection server's side (ZAC-326): it tells each connected bridge (its address and token, as
  * any /api/host-chats/ call goes) whether a page is in use, on each change and every
- * PRESENCE_RELAY_MS. A bridge that did not take it (gone, older, no host chats) is told again on
- * the next tick. One tick at a time.
+ * PRESENCE_RELAY_MS. A bridge that did not take it (gone, older, no host chats: 404) is not asked
+ * again with the same word until PRESENCE_RELAY_MS has passed; a change goes at once. One tick at a time.
  */
 export class PresenceRelay {
-  private readonly told = new Map<string, { inUse: boolean; at: number }>();
+  /** each URL's last word tried, when, and whether the bridge took it */
+  private readonly told = new Map<string, { inUse: boolean; at: number; ok: boolean }>();
   private running: Promise<void> | null = null;
 
   constructor(private readonly deps: {
@@ -119,19 +120,44 @@ export class PresenceRelay {
     const urls = new Set(targets.map((target) => target.url));
     for (const url of this.told.keys()) if (!urls.has(url)) this.told.delete(url);
     await Promise.all(targets.map(async (target) => {
+      // the same word, said or refused under PRESENCE_RELAY_MS ago, waits: a refusing bridge is not asked every check
       const last = this.told.get(target.url);
       if (last && last.inUse === inUse && now - last.at < PRESENCE_RELAY_MS) return;
+      let ok = false;
       try {
         const response = await this.deps.fetch(`${target.url}${BRIDGE_PRESENCE_PATH}`, {
           method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${target.token}` }, body: JSON.stringify({ in_use: inUse }),
           redirect: "error", signal: AbortSignal.timeout(10_000),
         });
         await response.body?.cancel();
-        if (response.ok) this.told.set(target.url, { inUse, at: now });
-        else this.told.delete(target.url);
-      } catch {
-        this.told.delete(target.url);
-      }
+        ok = response.ok;
+      } catch { /* gone: tried again after PRESENCE_RELAY_MS, or on a change */ }
+      this.told.set(target.url, { inUse, at: now, ok });
     }));
   }
+}
+
+/** What the relay needs of the PC registry (server/machines.ts MachineManager). */
+export interface RelayMachines {
+  list(): { id: string; kind: string; state: string }[];
+  endpoint(id: string): { url: string; token: string } | undefined;
+}
+
+/**
+ * The connection server's relay to its connected remote PCs' bridges, or null with no PC registry.
+ * Whether host chats run on this server does not matter: a remote PC's bridge runs its own, and
+ * without the word it would count as away and answer while the user is looking at Ovis.
+ */
+export function presenceRelayFor(machines: RelayMachines | null, inUse: () => boolean, fetch: (url: string, init: RequestInit) => Promise<Response>, now?: () => number): PresenceRelay | null {
+  if (!machines) return null;
+  return new PresenceRelay({
+    inUse,
+    targets: () => machines.list().flatMap((machine) => {
+      if (machine.kind === "local" || machine.state !== "connected") return [];
+      const endpoint = machines.endpoint(machine.id);
+      return endpoint ? [endpoint] : [];
+    }),
+    fetch,
+    ...(now ? { now } : {}),
+  });
 }

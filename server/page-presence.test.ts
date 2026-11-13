@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { BRIDGE_PRESENCE_TTL_MS, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PresenceRelay } from "./page-presence.ts";
+import { BRIDGE_PRESENCE_TTL_MS, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_RELAY_MS, PresenceRelay, presenceRelayFor } from "./page-presence.ts";
 
 const post = (body: unknown, method = "POST") => new Request("http://127.0.0.1/api/presence", { method, headers: { "content-type": "application/json" }, body: method === "GET" ? undefined : JSON.stringify(body) });
 
@@ -113,5 +113,58 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     for (const body of [{}, { in_use: "yes" }, null]) expect((await handleBridgePresenceRequest(bridgePost(body), bridge)).status).toBe(400);
     expect((await handleBridgePresenceRequest(new Request("http://127.0.0.1/api/host-chats/presence"), bridge)).status).toBe(400);
     expect(told).toEqual([true]);
+  });
+
+  it("the relay tells remote bridges whether host chats run on the connection server or not", async () => {
+    // presenceRelayFor takes no host chats switch: a connection server with them off still relays to a remote PC that has them
+    const machines = {
+      list: () => [
+        { id: "local", kind: "local", state: "connected" },
+        { id: "pc-on", kind: "ssh", state: "connected" },
+        { id: "pc-off", kind: "ssh", state: "reconnecting" },
+      ],
+      endpoint: (id: string) => ({ url: `http://fictional-${id}`, token: "FICTIONAL-token" }),
+    };
+    const posted: string[] = [];
+    const relay = presenceRelayFor(machines, () => true, async (url) => { posted.push(url); return new Response(null, { status: 204 }); })!;
+    await relay.tick();
+    // the local PC reads its pages itself; one not connected is not asked
+    expect(posted).toEqual(["http://fictional-pc-on/api/host-chats/presence"]);
+    expect(presenceRelayFor(null, () => true, fetch)).toBeNull();
+  });
+
+  it("a bridge that refuses or is gone is asked again only after 30 s, or at once on a change", async () => {
+    let now = 0;
+    let inUse = false;
+    let status = 404;
+    const posted: string[] = [];
+    const relay = new PresenceRelay({
+      inUse: () => inUse,
+      targets: () => [{ url: "http://fictional-old", token: "FICTIONAL-token" }, { url: "http://fictional-gone", token: "FICTIONAL-token" }],
+      fetch: async (url) => {
+        posted.push(url);
+        if (url.startsWith("http://fictional-gone")) throw new Error("FICTIONAL refused");
+        return new Response(null, { status });
+      },
+      now: () => now,
+    });
+    await relay.tick();
+    expect(posted.length).toBe(2);
+    // the 5 s checks in between ask neither again
+    for (now = 5_000; now < PRESENCE_RELAY_MS; now += 5_000) await relay.tick();
+    expect(posted.length).toBe(2);
+    // a change goes at once, to both
+    inUse = true;
+    await relay.tick();
+    expect(posted.length).toBe(4);
+    now += 5_000; await relay.tick();
+    expect(posted.length).toBe(4);
+    // PRESENCE_RELAY_MS after the last try: asked again; the old bridge now takes it
+    status = 204;
+    now += PRESENCE_RELAY_MS;
+    await relay.tick();
+    expect(posted.length).toBe(6);
+    now += 5_000; await relay.tick();
+    expect(posted.length).toBe(6);
   });
 });

@@ -76,7 +76,7 @@ import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
-import { BRIDGE_PRESENCE_PATH, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, PresenceRelay } from "./page-presence.ts";
+import { BRIDGE_PRESENCE_PATH, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, presenceRelayFor } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
 
@@ -337,11 +337,8 @@ export function createServer(
   // every 10 s, an optional question nobody was in to answer for 60 s takes its recommended option, marked assumed
   const stopAwayAnswers = agentHostConnection && asyncAsks && bridgePresence ? startAwayAnswers(agentHostConnection, asyncAsks, () => bridgePresence.inUse()) : null;
   // the connection server tells each connected PC's bridge whether a page is in use: on a change, and every 30 s
-  const presenceRelay = machines && agentHost.enabled ? new PresenceRelay({
-    inUse: () => pages.inUse(),
-    targets: () => machines.list().flatMap((machine) => machine.kind === "local" ? [] : [machines.endpoint(machine.id)].filter((endpoint) => endpoint !== undefined)),
-    fetch,
-  }) : null;
+  // whether host chats run here or not: a remote PC's bridge may run them
+  const presenceRelay = presenceRelayFor(machines, () => pages.inUse(), fetch);
   const presenceTimer = presenceRelay ? setInterval(() => void presenceRelay.tick(), PRESENCE_CHECK_MS) : null;
   presenceTimer?.unref();
 
