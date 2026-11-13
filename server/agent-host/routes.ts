@@ -1793,26 +1793,36 @@ function logRefusedAnswer(call: Call, response: Response): void {
   }, () => {});
 }
 
+/** How an async answer goes to the chat: the user's, one assumed while they were away, or their correction of that one. */
+export type AsyncAnswerForm = "answer" | "assumed" | "correction";
+
 /**
  * The message an async question's answer goes back to the chat as (ZAC-326); an assumed one says
- * it was taken while the user was away. chats.ts asyncAnswerPart reads it back.
+ * it was taken while the user was away, and a correction replaces one. chats.ts asyncAnswerPart reads it back.
  */
-export const asyncAnswerText = (q: AsyncQuestion, label: string, assumed = false): string =>
-  assumed ? `Assumed answer to ${q.id} ("${q.question}"): ${label} (you were away)` : `Answer to ${q.id} ("${q.question}"): ${label}`;
+export const asyncAnswerText = (q: AsyncQuestion, label: string, form: AsyncAnswerForm = "answer"): string =>
+  form === "assumed" ? `Assumed answer to ${q.id} ("${q.question}"): ${label} (you were away)`
+    : form === "correction" ? `Correction to ${q.id} ("${q.question}"): ${label}`
+      : `Answer to ${q.id} ("${q.question}"): ${label}`;
 
 /**
  * Records an async question's answer, then sends it to the chat: a steer while its turn runs, a new
  * turn when it is idle. Null when the question is already answered (nothing is sent). An answer the
  * chat never got is no answer: when the send throws, the question is open again and the error goes on.
+ * A correction (`form` "correction") replaces an assumed answer instead (AsyncAskStore.correct): null
+ * when there is none to replace, and a send that throws puts the assumed answer back.
  */
-function deliverAsync(call: Pick<Call, "host" | "asks">, session: string, channel: string, chat: ChatState, q: AsyncQuestion, label: string, assumed: boolean, id: string): AsyncQuestion | null {
-  const answered = call.asks!.answer(q.id, label, assumed);
+function deliverAsync(call: Pick<Call, "host" | "asks">, session: string, channel: string, chat: ChatState, q: AsyncQuestion, label: string, form: AsyncAnswerForm, id: string): AsyncQuestion | null {
+  const asks = call.asks!;
+  const corrected = form === "correction" ? asks.correct(q.id, label) : null;
+  const answered = form === "correction" ? corrected?.question ?? null : asks.answer(q.id, label, form === "assumed");
   if (!answered) return null;
-  const message = messageFrom(call.host.mirror().root, asyncAnswerText(answered, label, assumed), undefined, null);
+  const message = messageFrom(call.host.mirror().root, asyncAnswerText(answered, label, form), undefined, null);
   try {
     send(call.host, session, channel, chat, message, id, chat.activeTurn ? "steer" : "send");
   } catch (error) {
-    call.asks!.reopen(answered.id);
+    if (corrected) asks.revert(answered.id, corrected.previous);
+    else asks.reopen(answered.id);
     throw error;
   }
   return answered;
@@ -1821,7 +1831,9 @@ function deliverAsync(call: Pick<Call, "host" | "asks">, session: string, channe
 /**
  * An async question's answer (ZAC-326): an option by its index, or typed text. Recorded first, so a
  * second answer finds it answered (prompt_changed), then sent to the chat: a steer while its turn
- * runs, a new turn when it is idle.
+ * runs, a new turn when it is idle. With `correction: true` it replaces the answer the bridge
+ * assumed while the user was away (the transcript's Change), sent as `Correction to …`; a question
+ * open or already answered by the user has nothing to correct (prompt_changed).
  */
 async function answerAsync(call: Call, session: string, asyncId: unknown): Promise<Response> {
   if (!text(asyncId) || asyncId === "") return badRequest("missing_async_id", "async_id must be a question id");
@@ -1829,8 +1841,9 @@ async function answerAsync(call: Call, session: string, asyncId: unknown): Promi
   const typed = call.body["text"];
   if (rawIds !== undefined && !(Array.isArray(rawIds) && rawIds.every(text))) return badRequest("invalid_answer", "option_ids must be strings");
   if (typed !== undefined && !text(typed)) return badRequest("invalid_answer", "text must be a string");
+  const correction = call.body["correction"] === true;
   const q = call.asks?.get(asyncId) ?? null;
-  if (!q || q.session !== session || q.answer) gone();
+  if (!q || q.session !== session || (correction ? !q.answer?.assumed : q.answer)) gone();
   const picked = ((rawIds as string[] | undefined) ?? []).find((id) => id !== "");
   const index = picked === undefined ? -1 : Number(picked);
   const words = typeof typed === "string" ? typed.trim() : "";
@@ -1841,8 +1854,8 @@ async function answerAsync(call: Call, session: string, asyncId: unknown): Promi
   } else if (words !== "") label = words;
   else return badRequest("missing_answer", "pick an option or type an answer");
   const { channel, chat } = await watched(call, session);
-  // a send that fails reopens it: the question stays open, and the card with it
-  deliverAsync(call, session, channel, chat, q!, label, false, idOf(call.body["id"])) ?? gone();
+  // a send that fails reopens it (the question stays open, and the card with it); a correction keeps the assumed answer
+  deliverAsync(call, session, channel, chat, q!, label, correction ? "correction" : "answer", idOf(call.body["id"])) ?? gone();
   return jsonResponse({ ok: true });
 }
 
@@ -1869,7 +1882,7 @@ export function startAwayAnswers(host: AgentHost, asks: AsyncAskStore, inUse: ()
         const { channel, chat } = await watched(call, q.session);
         // a page may have come back while the watch was taken: the user answers it then
         asks.setInUse(inUse());
-        if (asks.due().some((each) => each.id === q.id)) deliverAsync(call, q.session, channel, chat, q, label, true, randomUUID());
+        if (asks.due().some((each) => each.id === q.id)) deliverAsync(call, q.session, channel, chat, q, label, "assumed", randomUUID());
       } catch (error) {
         // a chat that is gone or a host that failed: the question stays open; its id only, never the error's text
         console.warn(`[host-chats] away answer not sent (${q.id}: ${error instanceof Refusal ? "refused" : error instanceof Error ? error.name : typeof error})`);

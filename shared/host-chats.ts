@@ -208,8 +208,12 @@ export interface HostSend { session: string; id?: string; text: string; model?: 
 /** POST /api/host-chats/chat/send: `queued` when it waits for the running turn; `joined` when a steer joined the one already set. */
 export interface HostSendResult { queued: boolean; joined?: true }
 export interface HostAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true }
-/** An async question's answer (ask_user_async, ZAC-326): one option by its id ("0".."n-1"), or typed text. */
-export interface HostAsyncAnswer { session: string; async_id: string; option_ids?: [string]; text?: string }
+/**
+ * An async question's answer (ask_user_async, ZAC-326): one option by its id ("0".."n-1"), or typed
+ * text. `correction`: it replaces the answer the bridge assumed while the user was away (the
+ * transcript's Change), and goes to the chat as `Correction to …`.
+ */
+export interface HostAsyncAnswer { session: string; async_id: string; option_ids?: [string]; text?: string; correction?: true }
 /**
  * A form answered whole: each question's answer by its id, `null` for an optional one left empty
  * (sent as skipped). A required one with no answer is refused, and nothing reaches the host.

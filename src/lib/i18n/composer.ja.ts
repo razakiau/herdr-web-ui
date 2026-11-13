@@ -168,4 +168,5 @@ export const COMPOSER_JA: Record<string, string> = {
   "Add to Queue": "キューに追加",
   "Steer with Message": "メッセージで誘導",
   "This answer was refused: {reason}": "この回答は受け付けられませんでした: {reason}",
+  "Optional. If you're away, it goes with {n} and tells you.": "任意。不在の場合は {n} で進めて、お知らせします。",
 };

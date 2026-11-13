@@ -128,3 +128,21 @@ describe("answerRefusal (ZAC-271)", () => {
     expect(answerRefusal(new ApiError("/x", 409, "gone", "prompt_changed"), true, t).reread).toBe(true);
   });
 });
+
+describe("an async question's away note (ask_user_async, ZAC-326)", () => {
+  const words = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ").trim();
+  const NOTE = "Optional. If you're away, it goes with 1 and tells you.";
+
+  it("the card says what it takes when away", () => {
+    const html = render(true, prompt({ away_default: 1 }));
+    expect(words(html)).toContain(NOTE);
+    // under the options, in the foot, with a clock
+    expect(html).toMatch(/<div class="prompt-card-foot"><p class="prompt-card-away">.*lucide-clock/);
+    // a card with no foot otherwise still says it
+    expect(words(render(true, prompt({ away_default: 2, options: [{ label: "Red", description: null }, { label: "Blue", description: null }], custom_option_index: null })))).toContain("it goes with 2 and tells you.");
+    // without one, no such text
+    const plain = render(true, prompt());
+    expect(plain).not.toContain("prompt-card-away");
+    expect(words(plain)).not.toContain("If you're away");
+  });
+});

@@ -1,10 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
+import { MachineContext } from "../lib/machineContext.tsx";
 import { answerText, QuestionSummary } from "./QuestionSummary.tsx";
 
 type Question = Extract<ConversationPart, { kind: "question" }>;
@@ -98,5 +100,104 @@ describe("QuestionSummary", () => {
     const html = render(createElement(QuestionSummary, { part: part({ options: [], chosen: [], custom: "FICTIONAL large" }) }), true);
     expect(html).not.toContain("question-summary-options");
     expect(html).not.toContain("aria-expanded");
+  });
+});
+
+describe("an assumed answer (ask_user_async, ZAC-326)", () => {
+  const ASSUMED = part({ text: "FICTIONAL keep the table?", options: ["FICTIONAL keep", "FICTIONAL drop"], chosen: ["FICTIONAL drop"], assumed: true, correctable: { session: "copilotcli:/FICTIONAL", async_id: "ask-0a1b2c3d" } });
+
+  it("an assumed answer reads Assumed: and offers Change", () => {
+    const html = render(createElement(QuestionSummary, { part: ASSUMED }));
+    expect(text(html)).toContain("Assumed: FICTIONAL drop");
+    expect(text(html)).not.toContain("Answered:");
+    expect(html).toContain("question-summary-prefix is-assumed");
+    expect(text(html)).toContain("You were away · Change");
+    expect(html).toMatch(/<button[^>]*class="question-summary-change"[^>]*>Change<\/button>/);
+    // assumed, but with nothing to send a correction to (the store forgot it): no Change
+    const { correctable: _gone, ...uncorrectable } = ASSUMED;
+    const bare = render(createElement(QuestionSummary, { part: uncorrectable }));
+    expect(text(bare)).toContain("Assumed: FICTIONAL drop");
+    expect(bare).not.toContain("question-summary-change");
+    // a plain answered part has neither
+    const plain = render(createElement(QuestionSummary, { part: part() }));
+    expect(text(plain)).not.toContain("Assumed:");
+    expect(plain).not.toContain("question-summary-change");
+    expect(text(plain)).not.toContain("You were away");
+  });
+
+  describe("Change", () => {
+    const descriptors = new Map<string, PropertyDescriptor | undefined>();
+    const realFetch = globalThis.fetch;
+    let renderer: ReactTestRenderer | undefined;
+    let posted: { url: string; body: unknown }[] = [];
+    let reply: () => Response;
+
+    beforeEach(() => {
+      for (const key of ["window", "document", "navigator", "getComputedStyle", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+      Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+      Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
+      Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "#12100e" }) });
+      Object.defineProperty(globalThis, "window", { configurable: true, value: {
+        localStorage: { getItem: () => null, setItem() {} }, addEventListener() {}, removeEventListener() {},
+        matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      } });
+      Object.defineProperty(globalThis, "document", { configurable: true, value: {
+        documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, addEventListener() {}, removeEventListener() {},
+      } });
+      posted = [];
+      reply = () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        posted.push({ url: String(input), body: JSON.parse(String(init?.body ?? "null")) });
+        return reply();
+      }) as typeof fetch;
+    });
+
+    afterEach(async () => {
+      await act(async () => { renderer?.unmount(); });
+      renderer = undefined;
+      globalThis.fetch = realFetch;
+      for (const [key, descriptor] of descriptors) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+      descriptors.clear();
+    });
+
+    const textOf = (node: ReactTestInstance | string): string => typeof node === "string" ? node : node.children.map(textOf).join("");
+    const classed = (root: ReactTestInstance, name: string): ReactTestInstance[] =>
+      root.findAll((each) => typeof each.type === "string" && typeof each.props["className"] === "string" && (each.props["className"] as string).split(" ").includes(name));
+    async function mount(): Promise<ReactTestInstance> {
+      await act(async () => {
+        renderer = create(createElement(MachineContext.Provider, { value: "FICTIONAL-pc", children: createElement(SettingsProvider, { children: createElement(QuestionSummary, { part: ASSUMED }) }) }));
+      });
+      return renderer!.root;
+    }
+    const press = async (node: ReactTestInstance) => { await act(async () => { (node.props["onClick"] as () => void)(); }); };
+
+    it("Change sends a correction", async () => {
+      const root = await mount();
+      expect(classed(root, "question-summary-change-option")).toEqual([]);
+      await press(classed(root, "question-summary-change")[0]!);
+      const options = classed(root, "question-summary-change-option");
+      expect(options.map(textOf)).toEqual(["FICTIONAL keep", "FICTIONAL drop"]);
+      // the assumed one is marked as what it is now
+      expect(options[1]!.props["aria-pressed"]).toBe(true);
+      await press(options[0]!);
+      expect(posted).toEqual([{ url: "/api/machines/FICTIONAL-pc/host-chats/chat/answer", body: { session: "copilotcli:/FICTIONAL", async_id: "ask-0a1b2c3d", option_ids: ["0"], correction: true } }]);
+      // sent: the picker closes, and the line says what goes to the agent until the transcript has it
+      expect(classed(root, "question-summary-change-option")).toEqual([]);
+      expect(classed(root, "question-summary-change")).toEqual([]);
+      expect(textOf(classed(root, "question-summary-away")[0]!)).toBe("Changed to FICTIONAL keep");
+    });
+
+    it("a correction the bridge refuses says so and keeps Change", async () => {
+      reply = () => new Response(JSON.stringify({ error: { code: "prompt_changed", message: "gone" } }), { status: 409, headers: { "content-type": "application/json" } });
+      const root = await mount();
+      await press(classed(root, "question-summary-change")[0]!);
+      await press(classed(root, "question-summary-change-option")[0]!);
+      expect(posted.length).toBe(1);
+      expect(textOf(classed(root, "question-summary-change-error")[0]!)).toBe("Couldn't send the change. Try again.");
+      expect(classed(root, "question-summary-change").length).toBe(1);
+    });
   });
 });

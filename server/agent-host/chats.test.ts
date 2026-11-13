@@ -1087,5 +1087,10 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
     }]);
     // a plain answer is the user's own: nothing to correct
     expect(said(`Answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`, context).parts[0]).not.toHaveProperty("correctable");
+    // corrected already: the store holds the user's answer, so there is nothing left to change
+    const corrected = { ...context, asyncAsk: (id: string) => id === ID ? { ...asked, answer: { label: "FICTIONAL keep", assumed: false, at: 2 } } : null };
+    const after = said(`Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop (you were away)`, corrected).parts[0];
+    expect(after).toMatchObject({ assumed: true, chosen: ["FICTIONAL drop"] });
+    expect(after).not.toHaveProperty("correctable");
   });
 });

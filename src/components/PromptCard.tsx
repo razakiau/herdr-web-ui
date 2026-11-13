@@ -1,6 +1,6 @@
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, Maximize2, Minimize2, Plus, Send, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, FileText, Maximize2, Minimize2, Plus, Send, X } from "lucide-react";
 
 import "./PromptCard.css";
 
@@ -370,7 +370,9 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
   </>;
   const footPager = form !== null && (pagerAtFoot || lastPage);
-  const hasFoot = (q.multi_select && form === null) || q.custom_option_index !== null || (prompt.optional && !prompt.multi_select) || typedAnswer?.option_index !== undefined || footPager;
+  // an optional async question says, under its options, what it goes with when nobody is there (ZAC-326)
+  const awayDefault = prompt.away_default ?? null;
+  const hasFoot = (q.multi_select && form === null) || q.custom_option_index !== null || (prompt.optional && !prompt.multi_select) || typedAnswer?.option_index !== undefined || footPager || awayDefault !== null;
   const card = (
     <section className={`prompt-card${folded && !expanded ? " is-folded" : ""}${expanded ? " is-expanded" : ""}`} ref={cardRef} role="region" aria-label={t("Agent is asking")}
       onKeyDown={(event) => { down.current = null; keyed.current = event.key === "Enter" || event.key === " " ? event.target : null; }}
@@ -530,6 +532,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
       )}
       </div>
       {hasFoot && <div className="prompt-card-foot">
+      {awayDefault !== null && <p className="prompt-card-away"><Clock className="prompt-card-away-icon" aria-hidden="true" /><span>{t("Optional. If you're away, it goes with {n} and tells you.", { n: awayDefault })}</span></p>}
       {q.multi_select && form === null && (
         <button type="button" className={`btn${selected.size > 0 ? " btn-primary" : ""} prompt-card-submit`} disabled={pending || (selected.size === 0 && !("optional" in q && q.optional) && !(prompt.agent === "opencode" && custom.trim()))} onClick={(event) => void answer({ option_indices: [...selected].sort((a, b) => a - b) }, event)}>
           {selected.size > 0 ? t("Submit ({n})", { n: selected.size }) : t("Submit")}

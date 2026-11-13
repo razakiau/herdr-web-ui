@@ -2197,6 +2197,52 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     expect(only(r.fake, "chat/turnStarted")).toMatchObject({ message: { text: answerText(q.id, "FICTIONAL rename it") } });
   });
 
+  it("a correction replaces an assumed answer and goes as Correction to …", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    const correct = (body: Record<string, unknown> = {}) => asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"], correction: true, ...body });
+    // nothing assumed yet: an open question is not corrected, it is answered
+    expect(await correct()).toMatchObject({ status: 409, json: { error: { code: "prompt_changed" } } });
+    asks.answer(q.id, "FICTIONAL drop", true);
+    // a plain answer to an answered question is still refused: only a correction replaces it
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["0"] })).status).toBe(409);
+    expect(await correct()).toEqual({ status: 200, json: { ok: true } });
+    await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
+    expect(only(r.fake, "chat/pendingMessageSet")).toMatchObject({ kind: "steering", message: { text: `Correction to ${q.id} ("${QUESTION}"): FICTIONAL keep` } });
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL keep", assumed: false });
+    expect(asks.pending(sessionUri(1))).toEqual([]);
+    // corrected once: the answer is the user's now, so a second correction finds nothing to correct
+    expect((await correct({ option_ids: ["1"] })).status).toBe(409);
+    expect(actions(r.fake, "chat/pendingMessageSet").length).toBe(1);
+    // another chat's question is not this chat's to correct; a bad option sends nothing
+    asks.reopen(q.id); asks.answer(q.id, "FICTIONAL drop", true);
+    expect((await correct({ session: sessionUri(2) })).status).toBe(409);
+    expect((await correct({ option_ids: ["7"] })).json.error.code).toBe("invalid_answer");
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL drop", assumed: true });
+  });
+
+  it("a correction that fails to send leaves the assumed answer, so Change can try again", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    asks.answer(q.id, "FICTIONAL drop", true);
+    await asked(r, asks, readPath);
+    const dispatch = r.conn.dispatch.bind(r.conn);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = (channel, action) => {
+      if (action.type === "chat/pendingMessageSet" || action.type === "chat/turnStarted") throw new Error("FICTIONAL dispatch failure");
+      dispatch(channel, action);
+    };
+    const body = { session: sessionUri(1), async_id: q.id, option_ids: ["0"], correction: true };
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", body)).status).toBeGreaterThanOrEqual(500);
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL drop", assumed: true });
+    // a failed correction does not open the question again: the card stays away
+    expect(asks.pending(sessionUri(1))).toEqual([]);
+    (r.conn as { dispatch: AgentHost["dispatch"] }).dispatch = dispatch;
+    expect((await asked(r, asks, "/api/host-chats/chat/answer", body)).json).toEqual({ ok: true });
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: "FICTIONAL keep", assumed: false });
+  });
+
   it("an answer that fails to send leaves the question open", async () => {
     const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
     const asks = store();

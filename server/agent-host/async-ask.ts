@@ -107,6 +107,29 @@ export class AsyncAskStore {
   }
 
   /**
+   * The user's correction of an answer the bridge assumed for them (the transcript's Change): the
+   * user's label replaces it, no longer assumed, so a second correction finds nothing to correct.
+   * `previous` is the assumed answer, for `revert` when the correction never reaches the chat.
+   * Null when the question is unknown, unanswered, or already answered by the user.
+   */
+  correct(id: string, label: string): { question: AsyncQuestion; previous: NonNullable<AsyncQuestion["answer"]> } | null {
+    const q = this.questions.get(id);
+    if (!q?.answer?.assumed) return null;
+    const previous = q.answer;
+    q.answer = { label, assumed: false, at: this.now() };
+    this.save();
+    return { question: copy(q), previous: { ...previous } };
+  }
+
+  /** Puts back the answer a correction replaced (`correct`'s `previous`): one that failed to send. */
+  revert(id: string, previous: NonNullable<AsyncQuestion["answer"]>): void {
+    const q = this.questions.get(id);
+    if (!q) return;
+    q.answer = { ...previous };
+    this.save();
+  }
+
+  /**
    * Clears the answer of a question that has one (an answer recorded but never delivered to the
    * chat): it is pending again. False when the id is unknown.
    */

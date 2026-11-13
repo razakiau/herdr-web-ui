@@ -452,7 +452,8 @@ function asyncAnswerPart(text: string, context?: ReadContext): Extract<Conversat
   return {
     kind: "question", text: question, options: asked ? asked.options.map((option) => option.label) : [], chosen: [label], custom: null, skipped: false,
     ...(assumed ? { assumed: true as const } : {}),
-    ...(assumed && asked ? { correctable: { session: asked.session, async_id: id } } : {}),
+    // correctable while the store still holds the assumed answer: once corrected, it is the user's
+    ...(assumed && asked?.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
   };
 }
 

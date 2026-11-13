@@ -147,6 +147,31 @@ describe("AsyncAskStore", () => {
     expect(store.reopen("ask-00000000")).toBe(false);
   });
 
+  test("a correction replaces an assumed answer with the user's, once; revert puts the assumed one back", () => {
+    const store = new AsyncAskStore(file, now);
+    const q = ask(store);
+    // unanswered, or answered by the user: nothing to correct
+    expect(store.correct(q.id, "B")).toBeNull();
+    store.answer(q.id, "A", false);
+    expect(store.correct(q.id, "B")).toBeNull();
+    store.reopen(q.id);
+    clock = 5;
+    store.answer(q.id, "A", true);
+    clock = 9;
+    const corrected = store.correct(q.id, "B");
+    expect(corrected?.question.answer).toEqual({ label: "B", assumed: false, at: 9 });
+    expect(corrected?.previous).toEqual({ label: "A", assumed: true, at: 5 });
+    // saved, and not pending again; a second correction finds it the user's
+    expect(new AsyncAskStore(file, now).get(q.id)?.answer).toEqual({ label: "B", assumed: false, at: 9 });
+    expect(store.pending(SESSION)).toEqual([]);
+    expect(store.correct(q.id, "A")).toBeNull();
+    // a correction that never reached the chat: the assumed answer is back, and correctable again
+    store.revert(q.id, corrected!.previous);
+    expect(store.get(q.id)?.answer).toEqual({ label: "A", assumed: true, at: 5 });
+    expect(new AsyncAskStore(file, now).get(q.id)?.answer).toEqual({ label: "A", assumed: true, at: 5 });
+    expect(store.correct("ask-00000000", "B")).toBeNull();
+  });
+
   test("a missing or broken file starts empty", () => {
     expect(new AsyncAskStore(join(dir, "nope", "x.json"), now).pending(SESSION)).toEqual([]);
     writeFileSync(file, "{not json");

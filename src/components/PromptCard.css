@@ -606,6 +606,18 @@
   gap: var(--space-1);
 }
 
+/* an optional async question's away default (ZAC-326): what it goes with when nobody is there */
+.prompt-card-away {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+}
+.prompt-card-away-icon { flex: none; width: var(--fs-sm); height: var(--fs-sm); }
+
 .prompt-card-custom-label {
   color: var(--text-dim);
   font-size: var(--fs-xs);

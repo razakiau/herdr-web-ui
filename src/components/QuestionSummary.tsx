@@ -3,12 +3,18 @@
  * (chatQuestionCarouselPart.ts renderConversationSummary at 6d62b1d): a muted "Question: {text}" on
  * one line, then under an L connector a comment icon and "Answered: {answer}", which opens to the
  * options with a check by the chosen one, or "Custom answer: {text}". Skipped: "Skipped question".
+ * An answer the bridge assumed while the user was away (ask_user_async, ZAC-326) reads "Assumed:",
+ * with "You were away · Change" under it: Change lists the options, and the one picked goes to the
+ * agent as a correction.
  */
+import { useState } from "react";
 import { Check, ChevronDown, ChevronRight, FileText, MessageSquare, X } from "lucide-react";
 
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
+import { answerHost } from "../lib/hostChats.ts";
 import { useT } from "../lib/i18n.ts";
+import { useMachineId } from "../lib/machineContext.tsx";
 import { Markdown } from "./Markdown.tsx";
 
 export type QuestionPart = Extract<ConversationPart, { kind: "question" }>;
@@ -47,7 +53,7 @@ export function QuestionSummary({ part, memoryKey = "question", attached = null 
     <Icon className="question-summary-answer-icon" aria-hidden="true" />
     {part.skipped
       ? <span className="question-summary-answer-value">{t("Skipped question")}</span>
-      : <><span className="question-summary-prefix">{t("Answered:")}</span> <span className="question-summary-answer-value" title={answer}>{answer}</span></>}
+      : <><span className={`question-summary-prefix${part.assumed ? " is-assumed" : ""}`}>{part.assumed ? t("Assumed:") : t("Answered:")}</span> <span className="question-summary-answer-value" title={answer}>{answer}</span></>}
     {canOpen && <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>}
   </>;
   // the report a form came with leads it, folded to its first line; the question follows, unless
@@ -86,7 +92,46 @@ export function QuestionSummary({ part, memoryKey = "question", attached = null 
           </li>}
         </ul>
       </div>}
+      {part.assumed && <AssumedAnswer part={part} />}
     </div>
     {attached}
   </div>;
+}
+
+/**
+ * Under an assumed answer: "You were away", and Change while the bridge still holds it (`correctable`).
+ * Change lists the question's options, the assumed one pressed; the one picked is sent as a
+ * correction (answerHost with `correction`), and the line says so until the transcript reads it.
+ */
+function AssumedAnswer({ part }: { part: QuestionPart }) {
+  const t = useT();
+  const machineId = useMachineId();
+  const [picking, setPicking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const target = part.correctable ?? null;
+  const change = async (index: number): Promise<void> => {
+    if (target === null || sending) return;
+    setSending(true); setFailed(false);
+    try {
+      await answerHost(machineId, { session: target.session, async_id: target.async_id, option_ids: [String(index)], correction: true });
+      setSent(part.options[index] ?? ""); setPicking(false);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSending(false);
+    }
+  };
+  if (sent !== null) return <p className="question-summary-away">{t("Changed to {label}", { label: sent })}</p>;
+  return <>
+    <p className="question-summary-away">
+      {t("You were away")}
+      {target !== null && part.options.length > 0 && <>{" · "}<button type="button" className="question-summary-change" aria-expanded={picking} onClick={() => { setPicking(!picking); setFailed(false); }}>{t("Change")}</button></>}
+    </p>
+    {picking && <div className="question-summary-change-options" role="group" aria-label={t("Change the assumed answer")}>
+      {part.options.map((option, index) => <button key={index} type="button" className="question-summary-change-option" disabled={sending} aria-pressed={part.chosen.includes(option)} onClick={() => void change(index)}>{option}</button>)}
+    </div>}
+    {failed && <p className="question-summary-change-error" role="alert">{t("Couldn't send the change. Try again.")}</p>}
+  </>;
 }
