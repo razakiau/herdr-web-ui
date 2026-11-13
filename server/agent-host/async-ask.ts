@@ -26,6 +26,9 @@ export interface AsyncQuestion {
 }
 
 export const AWAY_AFTER_MS = 60_000;
+
+/** who said a chat waits: this server's own goals, or the connection server over the presence relay */
+export type WaitSource = "local" | "relay";
 /**
  * answered questions stay this long (the transcript shows them), then go on the next load. An
  * unanswered one never expires (a blocking question never times out): only its chat going drops it.
@@ -74,11 +77,12 @@ export class AsyncAskStore {
   private inUse = false;
   private lastInUseAt: number;
   /**
-   * Chats whose goal waits for the owner (ZAC-326): their questions are never due. In memory only:
-   * a restarted bridge has none until the connection server's next word (PRESENCE_RELAY_MS, 30 s),
-   * well inside the AWAY_AFTER_MS a question waits before it is due.
+   * Chats whose goal waits for the owner (ZAC-326): their questions are never due. Kept per source,
+   * this server's own goals ("local") and the connection server's word ("relay"), so neither clears
+   * the other's. In memory only: a restarted bridge has none until the connection server's next word
+   * (PRESENCE_RELAY_MS, 30 s), well inside the AWAY_AFTER_MS a question waits before it is due.
    */
-  private waiting = new Set<string>();
+  private readonly waiting: Record<WaitSource, Set<string>> = { local: new Set(), relay: new Set() };
 
   constructor(private readonly file: string, private readonly now: () => number = Date.now) {
     this.lastInUseAt = now();
@@ -167,9 +171,9 @@ export class AsyncAskStore {
     this.inUse = inUse;
   }
 
-  /** The chats whose questions wait for the owner however long they are away (a goal set to "wait"). */
-  setWaiting(sessions: readonly string[]): void {
-    this.waiting = new Set(sessions);
+  /** The chats whose questions wait for the owner however long they are away (a goal set to "wait"), as `source` lists them. */
+  setWaiting(source: WaitSource, sessions: readonly string[]): void {
+    this.waiting[source] = new Set(sessions);
   }
 
   /** Optional questions with a recommendation, unanswered, whose user has been away AWAY_AFTER_MS, outside the waiting chats. */
@@ -177,7 +181,7 @@ export class AsyncAskStore {
     if (this.inUse) return [];
     const now = this.now();
     return [...this.questions.values()]
-      .filter((q) => q.kind === "optional" && q.recommended !== null && !q.answer && !this.waiting.has(q.session) && now - Math.max(q.askedAt, this.lastInUseAt) >= AWAY_AFTER_MS)
+      .filter((q) => q.kind === "optional" && q.recommended !== null && !q.answer && !this.waiting.local.has(q.session) && !this.waiting.relay.has(q.session) && now - Math.max(q.askedAt, this.lastInUseAt) >= AWAY_AFTER_MS)
       .sort((a, b) => a.askedAt - b.askedAt)
       .map(copy);
   }

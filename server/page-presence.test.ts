@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { BRIDGE_PRESENCE_TTL_MS, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_RELAY_MS, PresenceRelay, presenceRelayFor } from "./page-presence.ts";
+import { AsyncAskStore } from "./agent-host/async-ask.ts";
+import { BRIDGE_PRESENCE_TTL_MS, BridgePresence, bridgePresenceFor, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_RELAY_MS, PresenceRelay, presenceRelayFor } from "./page-presence.ts";
 
 const post = (body: unknown, method = "POST") => new Request("http://127.0.0.1/api/presence", { method, headers: { "content-type": "application/json" }, body: method === "GET" ? undefined : JSON.stringify(body) });
 
@@ -149,6 +153,28 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     }
     expect((await handleBridgePresenceRequest(bridgePost({ in_use: false, wait: Array.from({ length: 500 }, (_, i) => `s${i}`) }), bridge)).status).toBe(204);
     expect(waits.length).toBe(2);
+  });
+
+  it("on a remote PC's bridge, the connection server's wait list survives the bridge's own check of its (empty) goals", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "presence-wait-"));
+    try {
+      let now = 0;
+      const asks = new AsyncAskStore(join(dir, "async-asks.json"), () => now);
+      const waits = asks.add({ session: "s1", question: "FICTIONAL: which way?", options: [{ label: "A" }], recommended: 0, kind: "optional" });
+      const other = asks.add({ session: "s2", question: "FICTIONAL: which way?", options: [{ label: "A" }], recommended: 0, kind: "optional" });
+      // wired as server/index.ts wires it; this PC keeps no goals, the connection server does
+      const { presence, syncLocal } = bridgePresenceFor(asks, () => false, () => []);
+      syncLocal();
+      expect((await handleBridgePresenceRequest(bridgePost({ in_use: false, wait: ["s1"] }), presence)).status).toBe(204);
+      // the next 5 s checks, then the away time
+      for (now = 5_000; now <= 60_000; now += 5_000) syncLocal();
+      expect(asks.due().map((q) => q.id)).toEqual([other.id]);
+      // the connection server's next word ends the wait
+      expect((await handleBridgePresenceRequest(bridgePost({ in_use: false, wait: [] }), presence)).status).toBe(204);
+      expect(asks.due().map((q) => q.id)).toEqual([waits.id, other.id]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("the relay tells remote bridges whether host chats run on the connection server or not", async () => {

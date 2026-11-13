@@ -76,7 +76,7 @@ import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
-import { BRIDGE_PRESENCE_PATH, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, presenceRelayFor } from "./page-presence.ts";
+import { BRIDGE_PRESENCE_PATH, bridgePresenceFor, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, presenceRelayFor } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
 import { GoalStore } from "./goals/store.ts";
@@ -335,23 +335,24 @@ export function createServer(
   agentHostConnection?.start();
   // the questions this PC's agents ask without stopping their turn (ask_user_async, ZAC-326), kept across restarts
   const asyncAsks = agentHostConnection ? new AsyncAskStore(join(stateDir, "async-asks.json")) : null;
-  // whether Ovis is in use, for the away default: a page of this server, or the connection server's word (POST /api/host-chats/presence)
-  const bridgePresence = asyncAsks ? new BridgePresence(() => pages.inUse(), (inUse) => asyncAsks.setInUse(inUse), (sessions) => asyncAsks.setWaiting(sessions)) : null;
-  // every 10 s, an optional question nobody was in to answer for 60 s takes its recommended option, marked assumed
-  const stopAwayAnswers = agentHostConnection && asyncAsks && bridgePresence ? startAwayAnswers(agentHostConnection, asyncAsks, () => bridgePresence.inUse()) : null;
   // the goals of every PC's chats (ZAC-326 part 2), kept here; see goalPcs and the runner below
   const goals = new GoalStore(stateDir);
   // the chats on a PC whose running goal leaves its optional questions for the owner, however long they are away
   const goalsWaiting = (machineId: string): string[] => goals.list()
     .filter((goal) => goal.machineId === machineId && goal.away === "wait" && (goal.status === "active" || goal.status === "paused" || goal.status === "budget_limited"))
     .map((goal) => goal.session);
+  // whether Ovis is in use, for the away default: a page of this server, or the connection server's word (POST /api/host-chats/presence)
+  // and which chats' goals wait for the owner: the connection server's list, and this server's own goals (below)
+  const askPresence = asyncAsks ? bridgePresenceFor(asyncAsks, () => pages.inUse(), () => goalsWaiting("local")) : null;
+  const bridgePresence = askPresence?.presence ?? null;
+  // every 10 s, an optional question nobody was in to answer for 60 s takes its recommended option, marked assumed
+  const stopAwayAnswers = agentHostConnection && asyncAsks && bridgePresence ? startAwayAnswers(agentHostConnection, asyncAsks, () => bridgePresence.inUse()) : null;
   // the connection server tells each connected PC's bridge whether a page is in use and which chats wait: on a change, and every 30 s
   // whether host chats run here or not: a remote PC's bridge may run them
   const presenceRelay = presenceRelayFor(machines, () => pages.inUse(), goalsWaiting, fetch);
   // this PC's own questions hear of its goals at the start and on each check, as a remote bridge does over the relay
-  const waitLocal = () => asyncAsks?.setWaiting(goalsWaiting("local"));
-  const presenceCheck = () => { waitLocal(); void presenceRelay?.tick(); };
-  waitLocal();
+  const presenceCheck = () => { askPresence?.syncLocal(); void presenceRelay?.tick(); };
+  askPresence?.syncLocal();
   const presenceTimer = presenceRelay || asyncAsks ? setInterval(presenceCheck, PRESENCE_CHECK_MS) : null;
   presenceTimer?.unref();
 

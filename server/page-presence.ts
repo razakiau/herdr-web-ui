@@ -86,6 +86,24 @@ export class BridgePresence {
   sync(): void { this.tell(this.inUse()); }
 }
 
+/** What presence needs of a bridge's async questions (AsyncAskStore). */
+export interface PresenceAsks {
+  setInUse(inUse: boolean): void;
+  setWaiting(source: "local" | "relay", sessions: readonly string[]): void;
+}
+
+/**
+ * A bridge's presence wired to its async questions: the connection server's word sets the "relay"
+ * wait list, `syncLocal` this server's own goals as the "local" one, so a PC whose goals live on the
+ * connection server (none here) never clears what the relay said.
+ */
+export function bridgePresenceFor(asks: PresenceAsks, localInUse: () => boolean, localWaiting: () => string[]): { presence: BridgePresence; syncLocal(): void } {
+  return {
+    presence: new BridgePresence(localInUse, (inUse) => asks.setInUse(inUse), (sessions) => asks.setWaiting("relay", sessions)),
+    syncLocal: () => asks.setWaiting("local", localWaiting()),
+  };
+}
+
 /** the most chats a connection server lists as waiting in one word */
 const MAX_WAIT = 500;
 

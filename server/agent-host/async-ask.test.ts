@@ -66,9 +66,15 @@ describe("AsyncAskStore", () => {
     const s1 = store.add({ session: "s1", question: "FICTIONAL: which way?", options: OPTIONS, recommended: 0, kind: "optional" });
     const s2 = store.add({ session: "s2", question: "FICTIONAL: which way?", options: OPTIONS, recommended: 0, kind: "optional" });
     clock = 60_000;
-    store.setWaiting(["s1"]);
+    store.setWaiting("relay", ["s1"]);
     expect(store.due().map((d) => d.id)).toEqual([s2.id]);
-    store.setWaiting([]);
+    // this server's own goals (none here) do not clear the connection server's list
+    store.setWaiting("local", []);
+    expect(store.due().map((d) => d.id)).toEqual([s2.id]);
+    store.setWaiting("local", ["s2"]);
+    expect(store.due()).toEqual([]);
+    store.setWaiting("relay", []);
+    store.setWaiting("local", []);
     expect(store.due().map((d) => d.id)).toEqual([s1.id, s2.id]);
   });
 
