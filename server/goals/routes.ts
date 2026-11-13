@@ -84,8 +84,10 @@ export interface GoalRoutesDeps {
   /** the PC's chats; null for a PC this server does not know (404 no_machine) */
   pcs: (machineId: string) => GoalPc | null;
   prices: () => Promise<Prices>;
-  /** OmniRoute's model ids, for the default judge and the judges to offer */
+  /** the models a judge may run on (the owner's curated list, as the digest's), for the default judge and the judges to offer */
   models: () => Promise<string[]>;
+  /** whether a picked judge is one of those models: a hand-made start cannot spend a quota the owner forbids */
+  judgeAllowed: (id: string) => boolean;
   /** a goal was started, raised or resumed: the runner may look at it now rather than on its next tick */
   kick?: () => void;
 }
@@ -104,7 +106,8 @@ const isEnded = (goal: HostGoal) => goal.status === "met" || goal.status === "st
  *   GET  /api/goals                                                    `{ goals: GoalView[] }`
  *   GET  /api/goals/judges?worker=<model id>                           `{ choices: JudgeChoice[] }`, the judges to offer a chat whose last model is `worker`
  *   POST /api/goals/start  { machine, session, parent?, objective, doneWhen, capUsd, judgeModel?, allowUnpriced?, away? }   `{ goal }`;
- *                          400 unpriced_model when the chat's last model has no price, unless allowUnpriced is true
+ *                          400 unpriced_model when the chat's last model has no price, unless allowUnpriced is true;
+ *                          400 invalid_judge when judgeModel is not one of the owner's judges
  *   POST /api/goals/raise  { machine, session, capUsd }                `{ goal }`; 409 below_spent, goal_ended
  *   POST /api/goals/stop   { machine, session }                        `{ goal }`
  *   POST /api/goals/resume { machine, session }                        `{ goal }`, paused → active; 409 not_paused
@@ -177,6 +180,7 @@ async function start(deps: GoalRoutesDeps, machine: string, session: string, bod
   if (objective === null || doneWhen === null || capUsd === null || parent === undefined || picked === undefined || away === undefined) {
     return badRequest("invalid_body", `Send { machine, session, parent?, objective and doneWhen: 1 to ${GOAL_TEXT_MAX} characters, capUsd: dollars above 0, judgeModel?, away?: "assume" or "wait" }`);
   }
+  if (picked !== null && !deps.judgeAllowed(picked)) return refuse("invalid_judge", `${picked} is not one of the judges on offer. Pick a judge from the list`, 400);
   const pc = deps.pcs(machine);
   if (!pc) return refuse("no_machine", "No such PC", 404);
   const existing = deps.store.get(machine, session);

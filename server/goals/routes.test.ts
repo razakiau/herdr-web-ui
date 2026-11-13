@@ -40,10 +40,11 @@ describe("/api/goals", () => {
   let store: GoalStore;
   let pc: FakePc;
   let models: string[];
+  let judgeAllowed: (id: string) => boolean;
   let kicks: number;
   const deps = (): GoalRoutesDeps => ({
     store, pcs: (id) => id === MACHINE ? pc : null,
-    prices: async () => ({ prices: PRICES, fallback: null }), models: async () => models, kick: () => { kicks += 1; },
+    prices: async () => ({ prices: PRICES, fallback: null }), models: async () => models, judgeAllowed: (id) => judgeAllowed(id), kick: () => { kicks += 1; },
   });
   const call = async (path: string, body?: unknown): Promise<{ status: number; json: any }> => {
     const request = new Request(`http://localhost${path}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -56,6 +57,7 @@ describe("/api/goals", () => {
     store = new GoalStore(stateDir);
     pc = new FakePc();
     models = ["cc/claude-opus-5-5", "fictional/gpt-judge-x"];
+    judgeAllowed = () => true;
     kicks = 0;
   });
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }); });
@@ -78,6 +80,16 @@ describe("/api/goals", () => {
     // not checked against OmniRoute's list
     await call("/api/goals/stop", { machine: MACHINE, session: SESSION });
     expect((await call("/api/goals/start", { ...START, judgeModel: "no-such/model" })).json.goal.judge).toMatchObject({ model: "no-such/model", warning: null });
+  });
+
+  it("a picked judge outside the owner's list is 400 invalid_judge; one inside starts", async () => {
+    judgeAllowed = (id) => id === "fictional/gpt-judge-x";
+    const refused = await call("/api/goals/start", { ...START, judgeModel: "fictional/forbidden-quota-x" });
+    expect(refused).toMatchObject({ status: 400, json: { error: { code: "invalid_judge" } } });
+    expect(refused.json.error.message).toContain("Pick a judge from the list");
+    expect(store.list()).toEqual([]);
+    const started = await call("/api/goals/start", { ...START, judgeModel: "fictional/gpt-judge-x" });
+    expect(started).toMatchObject({ status: 200, json: { goal: { judge: { model: "fictional/gpt-judge-x" } } } });
   });
 
   it("no model to judge with is 400 no_judge", async () => {

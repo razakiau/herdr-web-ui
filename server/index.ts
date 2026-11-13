@@ -469,10 +469,13 @@ export function createServer(
     const endpoint = machines?.endpoint(pc);
     return endpoint ? remoteJson<HostChatRead>(endpoint, path, 60_000) : null;
   };
+  // the owner's models for the digest and the goal judge: never a quota he forbids, nor whatever sorts first
+  const curatedModels = async () => digestModels(await omniRoute.models(), process.env["HERDR_WEB_DIGEST_MODELS"]);
+  const curatedModelAllowed = (id: string) => digestModelAllowed(id, process.env["HERDR_WEB_DIGEST_MODELS"]);
   const digestJobs = new DigestJobs({
     store: groupsStore, readChat: readMemberChat, complete: (request) => omniRoute.complete(request), prices: coldPrices,
-    facts: chatFacts, models: async () => digestModels(await omniRoute.models(), process.env["HERDR_WEB_DIGEST_MODELS"]), changed: () => groupsSignal.tell(),
-    modelAllowed: (id) => digestModelAllowed(id, process.env["HERDR_WEB_DIGEST_MODELS"]),
+    facts: chatFacts, models: curatedModels, changed: () => groupsSignal.tell(),
+    modelAllowed: curatedModelAllowed,
   });
 
   const digestScheduler = options.weeklyDigest ? createDigestScheduler({
@@ -733,7 +736,7 @@ export function createServer(
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
       // the goals (ZAC-326); a watching device reads them and cannot start, raise, stop or resume one (above)
       if (pathname === "/api/goals" || pathname.startsWith("/api/goals/")) return handleGoalsRequest(request, pathname,
-        { store: goals, pcs: goalPcs, prices: coldPrices, models: () => omniRoute.models(), kick: goalTick });
+        { store: goals, pcs: goalPcs, prices: coldPrices, models: curatedModels, judgeAllowed: curatedModelAllowed, kick: goalTick });
       // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)
       if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell(),
         { on: () => preferences.get().settings.chatGroups === true, jobs: digestJobs });
