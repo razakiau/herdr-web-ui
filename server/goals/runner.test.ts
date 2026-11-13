@@ -24,6 +24,8 @@ const START = {
 class FakePc implements GoalPc {
   status: HostChatRow["status"] = "idle";
   archived = false;
+  /** the chat's unanswered async questions; undefined leaves `waiting` off the row */
+  waiting: number | undefined = undefined;
   lastCallAt: string | null = T1;
   input = 100_000;
   digestText: string | null | "offline" = "USER: FICTIONAL\nAGENT: done";
@@ -36,7 +38,7 @@ class FakePc implements GoalPc {
   async row(session: string): Promise<HostChatRow | null | "offline"> {
     if (this.offline) return "offline";
     if (this.chatMissing) return null;
-    return { session, title: "FICTIONAL", status: this.status, modified_at: T1, cwd: null, unread: false, archived: this.archived };
+    return { session, title: "FICTIONAL", status: this.status, modified_at: T1, cwd: null, unread: false, archived: this.archived, ...(this.waiting === undefined ? {} : { waiting: this.waiting }) };
   }
   async cost(session: string): Promise<HostChatCost | null | "offline"> {
     if (this.offline) return "offline";
@@ -141,6 +143,26 @@ Spent $0.80 of $10.00.`);
       expect(store.get(MACHINE, SESSION)).toEqual(before);
     });
   }
+
+  it("an idle row waiting on an async answer holds on a new call; without waiting it is judged as before", async () => {
+    const store = started();
+    answers.push(verdict("not_met", "FICTIONAL: first"), verdict("not_met", "FICTIONAL: second"));
+    const run = runner(store);
+    await run.tick();
+    expect(calls).toBe(1);
+    pc.lastCallAt = T2;
+    pc.waiting = 1;
+    const before = store.get(MACHINE, SESSION);
+    await run.tick();
+    await run.tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(1);
+    expect(store.get(MACHINE, SESSION)).toEqual(before);
+    pc.waiting = undefined;
+    await run.tick();
+    expect(calls).toBe(2);
+    expect(pc.sent[1]!.text).toStartWith("[Goal, check 2] Not done yet: FICTIONAL: second");
+  });
 
   it("an archived row, or no call yet, waits", async () => {
     const store = started();

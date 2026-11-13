@@ -76,7 +76,7 @@ import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
-import { BRIDGE_PRESENCE_PATH, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, presenceRelayFor } from "./page-presence.ts";
+import { BRIDGE_PRESENCE_PATH, bridgePresenceFor, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, presenceRelayFor } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
 import { GoalStore } from "./goals/store.ts";
@@ -335,14 +335,25 @@ export function createServer(
   agentHostConnection?.start();
   // the questions this PC's agents ask without stopping their turn (ask_user_async, ZAC-326), kept across restarts
   const asyncAsks = agentHostConnection ? new AsyncAskStore(join(stateDir, "async-asks.json")) : null;
+  // the goals of every PC's chats (ZAC-326 part 2), kept here; see goalPcs and the runner below
+  const goals = new GoalStore(stateDir);
+  // the chats on a PC whose running goal leaves its optional questions for the owner, however long they are away
+  const goalsWaiting = (machineId: string): string[] => goals.list()
+    .filter((goal) => goal.machineId === machineId && goal.away === "wait" && (goal.status === "active" || goal.status === "paused" || goal.status === "budget_limited"))
+    .map((goal) => goal.session);
   // whether Ovis is in use, for the away default: a page of this server, or the connection server's word (POST /api/host-chats/presence)
-  const bridgePresence = asyncAsks ? new BridgePresence(() => pages.inUse(), (inUse) => asyncAsks.setInUse(inUse)) : null;
+  // and which chats' goals wait for the owner: the connection server's list, and this server's own goals (below)
+  const askPresence = asyncAsks ? bridgePresenceFor(asyncAsks, () => pages.inUse(), () => goalsWaiting("local")) : null;
+  const bridgePresence = askPresence?.presence ?? null;
   // every 10 s, an optional question nobody was in to answer for 60 s takes its recommended option, marked assumed
   const stopAwayAnswers = agentHostConnection && asyncAsks && bridgePresence ? startAwayAnswers(agentHostConnection, asyncAsks, () => bridgePresence.inUse()) : null;
-  // the connection server tells each connected PC's bridge whether a page is in use: on a change, and every 30 s
+  // the connection server tells each connected PC's bridge whether a page is in use and which chats wait: on a change, and every 30 s
   // whether host chats run here or not: a remote PC's bridge may run them
-  const presenceRelay = presenceRelayFor(machines, () => pages.inUse(), fetch);
-  const presenceTimer = presenceRelay ? setInterval(() => void presenceRelay.tick(), PRESENCE_CHECK_MS) : null;
+  const presenceRelay = presenceRelayFor(machines, () => pages.inUse(), goalsWaiting, fetch);
+  // this PC's own questions hear of its goals at the start and on each check, as a remote bridge does over the relay
+  const presenceCheck = () => { askPresence?.syncLocal(); void presenceRelay?.tick(); };
+  askPresence?.syncLocal();
+  const presenceTimer = presenceRelay || asyncAsks ? setInterval(presenceCheck, PRESENCE_CHECK_MS) : null;
   presenceTimer?.unref();
 
   /**
@@ -458,10 +469,13 @@ export function createServer(
     const endpoint = machines?.endpoint(pc);
     return endpoint ? remoteJson<HostChatRead>(endpoint, path, 60_000) : null;
   };
+  // the owner's models for the digest and the goal judge: never a quota he forbids, nor whatever sorts first
+  const curatedModels = async () => digestModels(await omniRoute.models(), process.env["HERDR_WEB_DIGEST_MODELS"]);
+  const curatedModelAllowed = (id: string) => digestModelAllowed(id, process.env["HERDR_WEB_DIGEST_MODELS"]);
   const digestJobs = new DigestJobs({
     store: groupsStore, readChat: readMemberChat, complete: (request) => omniRoute.complete(request), prices: coldPrices,
-    facts: chatFacts, models: async () => digestModels(await omniRoute.models(), process.env["HERDR_WEB_DIGEST_MODELS"]), changed: () => groupsSignal.tell(),
-    modelAllowed: (id) => digestModelAllowed(id, process.env["HERDR_WEB_DIGEST_MODELS"]),
+    facts: chatFacts, models: curatedModels, changed: () => groupsSignal.tell(),
+    modelAllowed: curatedModelAllowed,
   });
 
   const digestScheduler = options.weeklyDigest ? createDigestScheduler({
@@ -482,7 +496,6 @@ export function createServer(
    * PC's over its bridge with the endpoint token, as the groups' pull does; it judges through OmniRoute
    * and prices as the cold-cache alert does. Every 15 s, and at once on a start, raise or resume.
    */
-  const goals = new GoalStore(stateDir);
   const goalPcs = (machineId: string): GoalPc | null => {
     if (machineId === "local") {
       if (!agentHostConnection) return null;
@@ -723,7 +736,7 @@ export function createServer(
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
       // the goals (ZAC-326); a watching device reads them and cannot start, raise, stop or resume one (above)
       if (pathname === "/api/goals" || pathname.startsWith("/api/goals/")) return handleGoalsRequest(request, pathname,
-        { store: goals, pcs: goalPcs, prices: coldPrices, models: () => omniRoute.models(), kick: goalTick });
+        { store: goals, pcs: goalPcs, prices: coldPrices, models: curatedModels, judgeAllowed: curatedModelAllowed, kick: goalTick });
       // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)
       if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell(),
         { on: () => preferences.get().settings.chatGroups === true, jobs: digestJobs });

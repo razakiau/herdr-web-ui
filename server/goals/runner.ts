@@ -8,7 +8,7 @@
  * with the judge's cost, then mark the goal met, pause it (impossible, judge error, failed send) or
  * queue the next turn on the chat. A PC that answers without the chat, its cost or its log pauses
  * the goal (no_chat, no_cost, no_log) rather than leave it waiting unseen; one that does not answer
- * is tried again on the next tick.
+ * is tried again on the next tick. A chat with an async question unanswered (`waiting`) is held, not judged.
  */
 import { chatUsd, judgeUsd } from "../../shared/goal-budget.ts";
 import type { HostChatCost, HostChatRow } from "../../shared/host-chats.ts";
@@ -90,6 +90,8 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     if (row === "offline") return;
     if (row === null) { pause(goal, "no_chat"); return; }
     if (row.archived || row.status === "working" || row.status === "asks") return;
+    // an unanswered async question still brings a message (the user's answer or the assumed one): hold
+    if ((row.waiting ?? 0) > 0) return;
     const cost = await pc.cost(session, goal.parent);
     if (cost === "offline") return;
     if (cost === null) { pause(goal, "no_cost"); return; }

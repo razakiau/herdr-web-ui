@@ -172,7 +172,6 @@ export const CHAT_JA: Record<string, string> = {
   "Work so far": "これまでの作業",
   "blocked": "ブロック中",
   "paused": "一時停止",
-  "Goal": "目標",
   "complete": "完了",
   "out of budget": "予算切れ",
   "Used so far: {spent}": "これまでの使用量: {spent}",
@@ -224,4 +223,5 @@ export const CHAT_JA: Record<string, string> = {
   "Checkpoint": "チェックポイント",
   "This message can't be shown here.": "このメッセージはここには表示できません。",
   "Go to your message: {text}": "あなたのメッセージへ移動: {text}",
+  "Judge · not met: {reason}": "判定 · 未達成: {reason}",
 };

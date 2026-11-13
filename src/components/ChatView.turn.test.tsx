@@ -7,6 +7,7 @@ import { SettingsProvider } from "../lib/settings.ts";
 import { changesLine, groupStartsOpen, Turn, standaloneRuns } from "./ChatView.tsx";
 import { ChatRowMemoryContext } from "../lib/chatRowState.tsx";
 import { readFrom } from "../../server/agent-host/chats.ts";
+import { nextTurnText } from "../../server/goals/runner.ts";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] } as ConversationTurn);
 const render = (paneId: string, turn: ConversationTurn): string => {
@@ -65,6 +66,16 @@ describe("a notice in a turn", () => {
     expect(html).toContain("Background result delivered");
     expect(html).not.toContain("chat-turn-user");
     expect(html).not.toContain("chat-turn-agent");
+  });
+});
+
+describe("a goal's check in a chat", () => {
+  it("the runner's check message is the judge's row, not the user's bubble", () => {
+    const html = render("", user(nextTurnText({ check: 2, reason: "FICTIONAL verify was not run", doneWhen: "FICTIONAL verify passes", spentUsd: 1.5, capUsd: 10 })));
+    expect(html).toContain("Judge · not met:");
+    expect(html).toContain("FICTIONAL verify was not run");
+    expect(html).toContain("chat-turn-agent");
+    expect(html).not.toContain("chat-bubble");
   });
 });
 

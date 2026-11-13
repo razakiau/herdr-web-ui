@@ -38,7 +38,6 @@ export const WORKSPACE_KO: Record<string, string> = {
   "Earlier sessions": "이전 세션",
   "Open the pane showing {title}": "{title}을(를) 보여주는 패널 열기",
   "Resume {title}": "{title} 이어하기",
-  "Resume": "이어하기",
   "Resuming…": "이어하는 중…",
   "Started {started} · last active {updated}": "{started}에 시작 · 마지막 사용 {updated}",
   "Directory": "폴더",

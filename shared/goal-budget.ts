@@ -69,3 +69,40 @@ export function defaultJudge(workerModel: string | null, models: readonly string
   const family = modelFamily(workerModel);
   return models.find((each) => modelFamily(each) !== family) ?? models[0] ?? null;
 }
+
+/** A judge the start sheet offers, and why: the default, the cheapest of another family, the cheapest of the worker's own. */
+export interface JudgeChoice { id: string; why: "default" | "cheapest" | "same_family" }
+
+/**
+ * The judges to offer for a chat whose last model is `worker`: `defaultJudge` (labelled
+ * `same_family` when no other family is on offer), then the cheapest
+ * priced model of another family (of any family without a worker), then the cheapest of the
+ * worker's family; each model once. Cheapest is the lowest input plus output price; a local or
+ * unpriced model is never offered as either.
+ */
+export function judgeChoices(worker: string | null, models: readonly string[], prices: ModelPrices, fallback: Record<string, ModelPrice> | null): JudgeChoice[] {
+  const family = worker === null ? null : modelFamily(worker);
+  const cost = (id: string): number | null => {
+    const found = priceWithFallback(id, prices, fallback);
+    return !found || found.via === "local" ? null : found.price.input + found.price.output;
+  };
+  const cheapest = (sameFamily: boolean): string | null => {
+    let best: { id: string; usd: number } | null = null;
+    for (const id of models) {
+      if ((modelFamily(id) === family) !== sameFamily) continue;
+      const usd = cost(id);
+      if (usd !== null && (best === null || usd < best.usd)) best = { id, usd };
+    }
+    return best?.id ?? null;
+  };
+  const byDefault = defaultJudge(worker, models);
+  const picks: [string | null, JudgeChoice["why"]][] = [
+    // no other family on offer: the default is the worker's own, so it says so
+    [byDefault, byDefault !== null && modelFamily(byDefault) === family ? "same_family" : "default"],
+    [cheapest(false), "cheapest"],
+    [family === null ? null : cheapest(true), "same_family"],
+  ];
+  const choices: JudgeChoice[] = [];
+  for (const [id, why] of picks) if (id !== null && !choices.some((each) => each.id === id)) choices.push({ id, why });
+  return choices;
+}

@@ -157,7 +157,6 @@ export const COMPOSER_KO: Record<string, string> = {
   "Not inserted: this PC has not said yet what it supports. Insert it again.": "넣지\u00a0못했습니다: 이\u00a0PC가\u00a0아직\u00a0지원하는\u00a0기능을\u00a0알려\u00a0주지\u00a0않았습니다. 다시\u00a0넣으세요.",
   "Not inserted: the line holds a control character. Remove it, then insert again.": "넣지\u00a0못했습니다: 입력창에\u00a0제어\u00a0문자가\u00a0있습니다. 지운\u00a0뒤\u00a0다시\u00a0넣으세요.",
   "More send options": "추가 보내기 옵션",
-  "Other…": "기타…",
   "This question needs an answer.": "이 질문에는 답이 필요합니다.",
   "Previous question": "이전 질문",
   "{n} of {total}": "{n} / {total}",

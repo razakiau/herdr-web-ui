@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -204,9 +205,27 @@ describe("rowOfSdk", () => {
   it("names the row whose SDK session matches, and null for one no row runs on or a host that is down", () => {
     const rows = [summary, { ...summary, resource: "copilotcli:/00000000-0000-4000-8000-000000000002", defaultChat: "ahp-chat://default/x" }] as SessionSummary[];
     const host = (connected: boolean) => ({ state: () => ({ state: connected ? "connected" : "disconnected" }), summaries: () => rows }) as unknown as AgentHost;
-    expect(rowOfSdk(host(true), UUID, [])).toBe(SESSION);
-    expect(rowOfSdk(host(true), "00000000-0000-4000-8000-000000000002", [])).toBe("copilotcli:/00000000-0000-4000-8000-000000000002");
-    expect(rowOfSdk(host(true), "00000000-0000-4000-8000-0000000000ff", [])).toBeNull();
-    expect(rowOfSdk(host(false), UUID, [])).toBeNull();
+    const logged = () => true;
+    expect(rowOfSdk(host(true), UUID, [], logged)).toBe(SESSION);
+    expect(rowOfSdk(host(true), "00000000-0000-4000-8000-000000000002", [], logged)).toBe("copilotcli:/00000000-0000-4000-8000-000000000002");
+    expect(rowOfSdk(host(true), "00000000-0000-4000-8000-0000000000ff", [], logged)).toBeNull();
+    expect(rowOfSdk(host(false), UUID, [], logged)).toBeNull();
+  });
+
+  it("names a copilotcli:/ row with no log of its own by the SDK session its VS Code store names (live 2026-11-13)", () => {
+    const row = "00000000-0000-4000-8000-000000000003";
+    const sdk = "00000000-0000-4000-8000-000000000004";
+    const agentDirs = [temp()];
+    mkdirSync(join(agentDirs[0]!, row), { recursive: true });
+    const db = new Database(join(agentDirs[0]!, row, "session.db"));
+    db.run("CREATE TABLE session_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+    db.run("INSERT INTO session_metadata (key, value) VALUES ('defaultChatProviderData', ?)", [JSON.stringify({ sdkSessionId: sdk })]);
+    db.close();
+    const rows = [{ ...summary, resource: `copilotcli:/${row}`, defaultChat: "ahp-chat://default/y" }] as SessionSummary[];
+    const host = { state: () => ({ state: "connected" }), summaries: () => rows } as unknown as AgentHost;
+    expect(rowOfSdk(host, sdk, agentDirs, () => false)).toBe(`copilotcli:/${row}`);
+    expect(rowOfSdk(host, row, agentDirs, () => false)).toBeNull();
+    // a CLI chat with its own log still runs on its own uuid
+    expect(rowOfSdk(host, row, agentDirs, (uuid) => uuid === row)).toBe(`copilotcli:/${row}`);
   });
 });

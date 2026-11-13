@@ -40,14 +40,15 @@ describe("/api/goals", () => {
   let store: GoalStore;
   let pc: FakePc;
   let models: string[];
+  let judgeAllowed: (id: string) => boolean;
   let kicks: number;
   const deps = (): GoalRoutesDeps => ({
     store, pcs: (id) => id === MACHINE ? pc : null,
-    prices: async () => ({ prices: PRICES, fallback: null }), models: async () => models, kick: () => { kicks += 1; },
+    prices: async () => ({ prices: PRICES, fallback: null }), models: async () => models, judgeAllowed: (id) => judgeAllowed(id), kick: () => { kicks += 1; },
   });
   const call = async (path: string, body?: unknown): Promise<{ status: number; json: any }> => {
     const request = new Request(`http://localhost${path}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const response = await handleGoalsRequest(request, path, deps());
+    const response = await handleGoalsRequest(request, new URL(request.url).pathname, deps());
     return { status: response.status, json: await response.json() };
   };
 
@@ -56,6 +57,7 @@ describe("/api/goals", () => {
     store = new GoalStore(stateDir);
     pc = new FakePc();
     models = ["cc/claude-opus-5-5", "fictional/gpt-judge-x"];
+    judgeAllowed = () => true;
     kicks = 0;
   });
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }); });
@@ -80,6 +82,16 @@ describe("/api/goals", () => {
     expect((await call("/api/goals/start", { ...START, judgeModel: "no-such/model" })).json.goal.judge).toMatchObject({ model: "no-such/model", warning: null });
   });
 
+  it("a picked judge outside the owner's list is 400 invalid_judge; one inside starts", async () => {
+    judgeAllowed = (id) => id === "fictional/gpt-judge-x";
+    const refused = await call("/api/goals/start", { ...START, judgeModel: "fictional/forbidden-quota-x" });
+    expect(refused).toMatchObject({ status: 400, json: { error: { code: "invalid_judge" } } });
+    expect(refused.json.error.message).toContain("Pick a judge from the list");
+    expect(store.list()).toEqual([]);
+    const started = await call("/api/goals/start", { ...START, judgeModel: "fictional/gpt-judge-x" });
+    expect(started).toMatchObject({ status: 200, json: { goal: { judge: { model: "fictional/gpt-judge-x" } } } });
+  });
+
   it("no model to judge with is 400 no_judge", async () => {
     models = [];
     pc.lastModel = null;
@@ -97,6 +109,15 @@ describe("/api/goals", () => {
     expect(await call("/api/goals/start", { ...START, allowUnpriced: "yes" })).toMatchObject({ status: 400, json: { error: { code: "unpriced_model" } } });
     const started = await call("/api/goals/start", { ...START, allowUnpriced: true });
     expect(started).toMatchObject({ status: 200, json: { goal: { status: "active" } } });
+  });
+
+  it("start takes away: wait and stores it; with none it assumes, and anything else is 400 invalid_body", async () => {
+    expect(await call("/api/goals/start", { ...START, away: "x" })).toMatchObject({ status: 400, json: { error: { code: "invalid_body" } } });
+    expect(store.list()).toEqual([]);
+    expect((await call("/api/goals/start", { ...START, away: "wait" })).json.goal.away).toBe("wait");
+    expect(store.get(MACHINE, SESSION)!.away).toBe("wait");
+    store.stop(MACHINE, SESSION);
+    expect((await call("/api/goals/start", START)).json.goal.away).toBe("assume");
   });
 
   it("start twice → 409 goal_running", async () => {
@@ -160,6 +181,17 @@ describe("/api/goals", () => {
     expect((await call("/api/goals/start")).status).toBe(405);
     expect((await call("/api/goals/pause", { machine: MACHINE, session: SESSION })).status).toBe(404);
   });
+
+  it("judges: the choices for a worker model from OmniRoute's models and the prices; 405 to a POST", async () => {
+    models = ["cc/claude-opus-5-5", "fictional/gpt-judge-x", "fictional/claude-work-x"];
+    expect(await call("/api/goals/judges?worker=cc%2Fclaude-opus-5-5")).toEqual({ status: 200, json: { choices: [
+      { id: "fictional/gpt-judge-x", why: "default" },
+      { id: "fictional/claude-work-x", why: "same_family" },
+    ] } });
+    // no worker: the first model is the default
+    expect((await call("/api/goals/judges")).json).toEqual({ choices: [{ id: "cc/claude-opus-5-5", why: "default" }, { id: "fictional/claude-work-x", why: "cheapest" }] });
+    expect((await call("/api/goals/judges", {})).status).toBe(405);
+  });
 });
 
 describe("goalPcOver", () => {
@@ -202,7 +234,7 @@ describe("goalPcOver", () => {
   });
 });
 
-it("a watching device's POST to /api/goals is refused read_only; its GET is answered", async () => {
+it("a watching device's POST to /api/goals is refused read_only; its GETs are answered", async () => {
   const root = mkdtempSync(join(tmpdir(), "ovis-goal-watch-"));
   const devices = new DeviceStore(root);
   const watch = devices.pair(devices.startPairing().code, "Watch", "watch")!;
@@ -212,6 +244,7 @@ it("a watching device's POST to /api/goals is refused read_only; its GET is answ
   const headers = { "x-herdr-machine": "1", "content-type": "application/json", cookie: `ovis_device=${watch.token}` };
   try {
     expect((await fetch(`${base}/api/goals`, { headers })).status).toBe(200);
+    expect((await fetch(`${base}/api/goals/judges?worker=cc%2Fclaude-opus-5-5`, { headers })).status).toBe(200);
     for (const action of ["start", "raise", "stop", "resume"]) {
       const response = await fetch(`${base}/api/goals/${action}`, { method: "POST", headers, body: JSON.stringify({ ...START, capUsd: 20 }) });
       expect(response.status).toBe(403);

@@ -55,19 +55,29 @@ export const PRESENCE_CHECK_MS = 5_000;
  * Whether Ovis is in use, as a bridge with async questions sees it (ask_user_async, ZAC-326): a page
  * of its own server (`local`, PagePresence.inUse), or the connection server's last word
  * (POST /api/host-chats/presence) while it is under `ttl` old. Each word, and each `sync`, is told
- * to `tell` (AsyncAskStore.setInUse).
+ * to `tell` (AsyncAskStore.setInUse); the chats whose goal waits for the owner go to `tellWaiting`
+ * (AsyncAskStore.setWaiting).
  */
 export class BridgePresence {
   private remote = false;
   private heardAt = -Infinity;
 
-  constructor(private readonly local: () => boolean, private readonly tell: (inUse: boolean) => void, private readonly ttl = BRIDGE_PRESENCE_TTL_MS, private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly local: () => boolean,
+    private readonly tell: (inUse: boolean) => void,
+    private readonly tellWaiting: (sessions: readonly string[]) => void = () => {},
+    private readonly ttl = BRIDGE_PRESENCE_TTL_MS,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   report(inUse: boolean): void {
     this.remote = inUse;
     this.heardAt = this.now();
     this.sync();
   }
+
+  /** The chats whose goal waits for the owner, as the connection server last listed them. */
+  wait(sessions: readonly string[]): void { this.tellWaiting(sessions); }
 
   inUse(): boolean {
     return this.local() || (this.remote && this.now() - this.heardAt < this.ttl);
@@ -76,12 +86,41 @@ export class BridgePresence {
   sync(): void { this.tell(this.inUse()); }
 }
 
-/** POST /api/host-chats/presence { in_use } -> 204: the connection server says whether a page of Ovis is in use. */
+/** What presence needs of a bridge's async questions (AsyncAskStore). */
+export interface PresenceAsks {
+  setInUse(inUse: boolean): void;
+  setWaiting(source: "local" | "relay", sessions: readonly string[]): void;
+}
+
+/**
+ * A bridge's presence wired to its async questions: the connection server's word sets the "relay"
+ * wait list, `syncLocal` this server's own goals as the "local" one, so a PC whose goals live on the
+ * connection server (none here) never clears what the relay said.
+ */
+export function bridgePresenceFor(asks: PresenceAsks, localInUse: () => boolean, localWaiting: () => string[]): { presence: BridgePresence; syncLocal(): void } {
+  return {
+    presence: new BridgePresence(localInUse, (inUse) => asks.setInUse(inUse), (sessions) => asks.setWaiting("relay", sessions)),
+    syncLocal: () => asks.setWaiting("local", localWaiting()),
+  };
+}
+
+/** the most chats a connection server lists as waiting in one word */
+const MAX_WAIT = 500;
+
+/**
+ * POST /api/host-chats/presence { in_use, wait? } -> 204: the connection server says whether a page of
+ * Ovis is in use, and which chats' goals wait for the owner. An older one sends no `wait`: the last
+ * list stays, so a goal set to wait keeps waiting.
+ */
 export async function handleBridgePresenceRequest(request: Request, presence: BridgePresence): Promise<Response> {
   if (request.method !== "POST") return badRequest("method_not_allowed", `${request.method} is not supported on /api/host-chats/presence`);
-  const body = await readJsonObject<{ in_use?: unknown }>(request);
+  const body = await readJsonObject<{ in_use?: unknown; wait?: unknown }>(request);
   if (body instanceof Response) return body;
-  if (typeof body.in_use !== "boolean") return badRequest("invalid_presence", "Expected { in_use }");
+  const wait = body.wait;
+  if (typeof body.in_use !== "boolean" || (wait !== undefined && !(Array.isArray(wait) && wait.length <= MAX_WAIT && wait.every((each) => typeof each === "string")))) {
+    return badRequest("invalid_presence", `Expected { in_use, wait?: up to ${MAX_WAIT} chat ids }`);
+  }
+  if (wait !== undefined) presence.wait(wait as string[]);
   presence.report(body.in_use);
   return new Response(null, { status: 204 });
 }
@@ -90,19 +129,22 @@ export const BRIDGE_PRESENCE_PATH = "/api/host-chats/presence";
 
 /**
  * The connection server's side (ZAC-326): it tells each connected bridge (its address and token, as
- * any /api/host-chats/ call goes) whether a page is in use, on each change and every
- * PRESENCE_RELAY_MS. A bridge that did not take "not in use" (gone, older, no host chats: 404) is
- * not asked again with it until PRESENCE_RELAY_MS has passed; a refused "in use" is tried again on
- * the next check, and a change goes at once. One tick at a time.
+ * any /api/host-chats/ call goes) whether a page is in use and which of its chats' goals wait for
+ * the owner, on each change and every PRESENCE_RELAY_MS. A bridge that did not take "not in use,
+ * none waiting" (gone, older, no host chats: 404) is not asked again with it until PRESENCE_RELAY_MS
+ * has passed; a refused "in use" or wait list is tried again on the next check, and a change goes at
+ * once. One tick at a time.
  */
 export class PresenceRelay {
-  /** each URL's last word tried, when, and whether the bridge took it */
-  private readonly told = new Map<string, { inUse: boolean; at: number; ok: boolean }>();
+  /** each URL's last word tried (`wait` as its JSON), when, and whether the bridge took it */
+  private readonly told = new Map<string, { inUse: boolean; wait: string; at: number; ok: boolean }>();
   private running: Promise<void> | null = null;
 
   constructor(private readonly deps: {
     inUse: () => boolean;
-    targets: () => { url: string; token: string }[];
+    targets: () => { id: string; url: string; token: string }[];
+    /** the chats on that PC whose goal waits for the owner */
+    waiting: (machineId: string) => string[];
     fetch: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
   }) {}
@@ -121,20 +163,22 @@ export class PresenceRelay {
     const urls = new Set(targets.map((target) => target.url));
     for (const url of this.told.keys()) if (!urls.has(url)) this.told.delete(url);
     await Promise.all(targets.map(async (target) => {
+      const wait = this.deps.waiting(target.id);
+      const waitKey = JSON.stringify(wait);
       // the same word, said or refused under PRESENCE_RELAY_MS ago, waits: a refusing bridge is not asked every check.
-      // A refused "in use" does not wait: until the bridge hears it, it counts as away and may answer for the user.
+      // A refused "in use" or wait list does not wait: until the bridge hears it, it may answer for the user.
       const last = this.told.get(target.url);
-      if (last && last.inUse === inUse && now - last.at < PRESENCE_RELAY_MS && (last.ok || !inUse)) return;
+      if (last && last.inUse === inUse && last.wait === waitKey && now - last.at < PRESENCE_RELAY_MS && (last.ok || (!inUse && wait.length === 0))) return;
       let ok = false;
       try {
         const response = await this.deps.fetch(`${target.url}${BRIDGE_PRESENCE_PATH}`, {
-          method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${target.token}` }, body: JSON.stringify({ in_use: inUse }),
+          method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${target.token}` }, body: JSON.stringify({ in_use: inUse, wait }),
           redirect: "error", signal: AbortSignal.timeout(10_000),
         });
         await response.body?.cancel();
         ok = response.ok;
       } catch { /* gone: tried again after PRESENCE_RELAY_MS, or on a change */ }
-      this.told.set(target.url, { inUse, at: now, ok });
+      this.told.set(target.url, { inUse, wait: waitKey, at: now, ok });
     }));
   }
 }
@@ -150,15 +194,16 @@ export interface RelayMachines {
  * Whether host chats run on this server does not matter: a remote PC's bridge runs its own, and
  * without the word it would count as away and answer while the user is looking at Ovis.
  */
-export function presenceRelayFor(machines: RelayMachines | null, inUse: () => boolean, fetch: (url: string, init: RequestInit) => Promise<Response>, now?: () => number): PresenceRelay | null {
+export function presenceRelayFor(machines: RelayMachines | null, inUse: () => boolean, waiting: (machineId: string) => string[], fetch: (url: string, init: RequestInit) => Promise<Response>, now?: () => number): PresenceRelay | null {
   if (!machines) return null;
   return new PresenceRelay({
     inUse,
     targets: () => machines.list().flatMap((machine) => {
       if (machine.kind === "local" || machine.state !== "connected") return [];
       const endpoint = machines.endpoint(machine.id);
-      return endpoint ? [endpoint] : [];
+      return endpoint ? [{ id: machine.id, url: endpoint.url, token: endpoint.token }] : [];
     }),
+    waiting,
     fetch,
     ...(now ? { now } : {}),
   });

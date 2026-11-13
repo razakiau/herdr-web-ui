@@ -99,6 +99,17 @@ describe("GoalStore", () => {
     expect(new GoalStore(stateDir, now).get(START.machineId, START.session)!.judge.checks).toEqual([{ at: "t", callAt: "c", verdict: "not_met", reason: "FICTIONAL", usd: 0, sent: true }]);
   });
 
+  it("a goal waits for the owner only when started so; one saved before `away` existed loads as assume", () => {
+    const store = new GoalStore(stateDir, now);
+    expect(store.start({ ...START, away: "wait", judge: { ...START.judge } }).away).toBe("wait");
+    expect(store.start({ ...START, session: "session-fictional-2", judge: { ...START.judge } }).away).toBe("assume");
+    const file = join(stateDir, "goals.json");
+    const raw = JSON.parse(readFileSync(file, "utf8")) as { away?: string }[];
+    for (const goal of raw) delete goal.away;
+    writeFileSync(file, JSON.stringify(raw));
+    expect(new GoalStore(stateDir, now).list().map((goal) => goal.away)).toEqual(["assume", "assume"]);
+  });
+
   it("update keeps the newest checks only", () => {
     const store = new GoalStore(stateDir, now);
     store.start({ ...START, judge: { ...START.judge } });

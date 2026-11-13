@@ -172,7 +172,6 @@ export const CHAT_ZH: Record<string, string> = {
   "Work so far": "目前的工作",
   "blocked": "受阻",
   "paused": "已暂停",
-  "Goal": "目标",
   "complete": "已完成",
   "out of budget": "预算用尽",
   "Used so far: {spent}": "目前已用：{spent}",
@@ -224,4 +223,5 @@ export const CHAT_ZH: Record<string, string> = {
   "Checkpoint": "检查点",
   "This message can't be shown here.": "此消息无法在这里显示。",
   "Go to your message: {text}": "跳转到你的消息：{text}",
+  "Judge · not met: {reason}": "评审 · 未达成：{reason}",
 };

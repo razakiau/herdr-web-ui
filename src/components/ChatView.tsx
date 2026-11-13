@@ -47,6 +47,7 @@ import { statusEdgeRead } from "../lib/status.ts";
 import { askedQuestions } from "../lib/askQuestions.ts";
 import { ConversationRefresh } from "../lib/conversationRefresh.ts";
 import { teammateMessageParts, type TeammateMessage } from "../lib/teammateMessage.ts";
+import { goalCheckOf } from "../lib/hostGoals.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
@@ -57,7 +58,7 @@ import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath } from "../../shared/machines.ts";
-import { stickyRequestIndex } from "../lib/chatStickyRequest.ts";
+import { stickyRequestIndex, stickyRequestRole } from "../lib/chatStickyRequest.ts";
 import { checkpointRows, type CheckpointRow } from "../lib/hostCheckpoints.ts";
 import type { HostCheckpoint, HostEditDiff } from "../../shared/host-chats.ts";
 import type { ToolEdit } from "../../shared/protocol.ts";
@@ -1349,6 +1350,22 @@ function SystemNotice({ notice, memoryKey }: { notice: NoticePart; memoryKey: st
   </div>;
 }
 
+/**
+ * The goal runner's next turn (ZAC-326): sent as the user, but the judge said it. SystemNotice's row
+ * with its verdict at the head and the message the agent got folded under it.
+ */
+function GoalVerdict({ reason, rest }: { reason: string; rest: string }) {
+  const t = useT();
+  const [open, setOpen] = useChatRowToggle("goal-verdict", false);
+  return <div className={`chat-system-notification is-disclosure${open === true ? "" : " is-collapsed"}`}>
+    <button type="button" className="chat-system-notification-head" aria-expanded={open === true} onClick={() => setOpen(open !== true)}>
+      <CircleX className="chat-system-notification-icon chat-goal-verdict-icon" aria-hidden="true" /><Markdown style="vscode">{t("Judge · not met: {reason}", { reason })}</Markdown>
+      <ChevronRight className="chat-system-notification-caret" aria-hidden="true" />
+    </button>
+    {open === true && <div className="chat-system-notification-body"><Markdown style="vscode">{rest}</Markdown></div>}
+  </div>;
+}
+
 /** A notice as the quiet divider, its label in the rule and its text on request; a host chat's error in the error colour. */
 function NoticeRow({ notice, memoryKey, time }: { notice: NoticePart; memoryKey: string; time: ReactNode }) {
   const t = useT();
@@ -1413,6 +1430,8 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey = "turn", live, wa
   if (turn.role === "user") {
     if (outcome !== null && terminalOnlyOutcome(outcome, outcomeActions)) return <TerminalCommandRow outcome={outcome} actions={outcomeActions} />;
     const text = userText(turn);
+    const goalCheck = goalCheckOf(text);
+    if (goalCheck !== null) return <article className="chat-turn chat-turn-agent"><GoalVerdict reason={goalCheck.reason} rest={goalCheck.rest} /></article>;
     // a teammate's delivery is recorded as a user prompt, but nobody typed it here
     const teammateParts = teammateMessageParts(text);
     if (teammateParts !== null) return <section className="chat-turn chat-teammate-messages" aria-label={t("Claude teammate messages")}>
@@ -2363,7 +2382,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
     }
     if (entering) { setSticky(null); return; }
     const at = first === null ? -1 : timelineRows.findIndex((row) => row.key === first.key);
-    const index = stickyRequestIndex(timelineRows.map((row) => row.turn === null ? "user" : row.turn.role), at, first === null ? 0 : first.top - top);
+    const index = stickyRequestIndex(timelineRows.map((row) => row.turn === null ? "user" : stickyRequestRole(row.turn.role, userText(row.turn))), at, first === null ? 0 : first.top - top);
     setSticky(index === null ? null : timelineRows[index]!.key);
   };
   const toStickyRequest = (): void => {

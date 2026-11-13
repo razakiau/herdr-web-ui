@@ -38,6 +38,29 @@
 .todo-bar-row[data-status="in_progress"] .todo-bar-row-icon { color: var(--status-working); }
 .todo-bar-row[data-status="in_progress"] { color: var(--text-strong); }
 .todo-bar-row[data-status="blocked"] .todo-bar-row-icon { color: var(--notice); }
+/* a chat's goal (ZAC-326) owns the head; the meter is its spend against the cap */
+.goal-bar-head { display: flex; align-items: center; }
+.goal-bar-head .todo-bar-head { flex: 1; min-width: 0; }
+.goal-bar .todo-bar-fill[data-tone="notice"] { background: var(--notice); }
+.goal-bar .todo-bar-fill[data-tone="done"] { background: var(--status-done); }
+.goal-bar .todo-bar-fill[data-tone="ended"] { background: var(--text-dim); }
+.goal-bar-dismiss {
+  flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; margin-inline-start: calc(var(--space-2) * -1);
+  padding: 0; border: 0; background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.goal-bar-dismiss:hover { color: var(--text); }
+.goal-bar-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.goal-bar-dismiss svg { width: 1em; height: 1em; }
+/* a section label inside the goal tab, sized and spaced like a todo row */
+.goal-bar-section {
+  display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-medium, 500); font-variant-numeric: tabular-nums;
+}
+.goal-bar-section + .todo-bar-list { padding-bottom: var(--space-1); }
+.goal-bar-todos + .goal-bar-section { border-top: var(--hairline) solid var(--border); margin: var(--space-1) var(--space-3) 0; padding-inline: 0; }
+.goal-bar .todo-bar-row[data-status="met"] .todo-bar-row-icon { color: var(--status-done); }
+.goal-bar .todo-bar-row[data-status="impossible"] .todo-bar-row-icon,
+.goal-bar .todo-bar-row[data-status="error"] .todo-bar-row-icon { color: var(--notice); }
 @media (prefers-reduced-motion: reduce) {
   .todo-bar-caret, .todo-bar-fill { transition: none; }
 }

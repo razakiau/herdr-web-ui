@@ -6,46 +6,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivateState } from "../private-state.ts";
-import type { Verdict } from "./judge.ts";
+import type { HostGoal } from "../../shared/goals.ts";
 
-export type GoalStatus = "active" | "paused" | "budget_limited" | "met" | "stopped";
+export type { GoalCheck, GoalStatus, HostGoal } from "../../shared/goals.ts";
 
-export interface GoalCheck {
-  at: string;
-  /** the chat's lastCallAt this check judged */
-  callAt: string;
-  verdict: Verdict | "error";
-  reason: string;
-  usd: number;
-  /** a not_met check's next turn reached the chat; false until the send succeeds, so a restart in between re-sends it */
-  sent: boolean;
-}
-
-export interface HostGoal {
-  machineId: string;
-  session: string;
-  parent: string | null;
-  objective: string;
-  doneWhen: string;
-  status: GoalStatus;
-  pauseReason: string | null;
-  capUsd: number;
-  /** the chat's priced cost when the goal started */
-  baselineUsd: number;
-  /** the chat's priced cost since the start (main agent and sub-agents) */
-  chatUsd: number;
-  /** every judge call's cost */
-  judgeUsd: number;
-  /** models of the chat with no price, counted $0 */
-  unpriced: string[];
-  judge: { model: string; warning: "same_family" | null; checks: GoalCheck[] };
-  lastJudgedCallAt: string | null;
-  startedAt: string;
-  updatedAt: string;
-}
-
-export type GoalStart = Omit<HostGoal, "status" | "pauseReason" | "chatUsd" | "judgeUsd" | "unpriced" | "lastJudgedCallAt" | "startedAt" | "updatedAt" | "judge">
-  & { judge: { model: string; warning: "same_family" | null } };
+export type GoalStart = Omit<HostGoal, "status" | "pauseReason" | "away" | "chatUsd" | "judgeUsd" | "unpriced" | "lastJudgedCallAt" | "startedAt" | "updatedAt" | "judge">
+  & { away?: HostGoal["away"]; judge: { model: string; warning: "same_family" | null } };
 
 /** How many judge checks a goal keeps, newest last */
 export const GOAL_CHECKS = 50;
@@ -67,9 +33,10 @@ const isGoal = (each: unknown): each is HostGoal => {
 
 const copy = (goal: HostGoal): HostGoal => structuredClone(goal);
 
-/** A check saved before `sent` existed counts as sent, so nothing old is sent again */
-const withSent = (goal: HostGoal): HostGoal => ({
+/** A check saved before `sent` existed counts as sent, so nothing old is sent again; a goal saved before `away` assumes */
+const loaded = (goal: HostGoal): HostGoal => ({
   ...goal,
+  away: goal.away === "wait" ? "wait" : "assume",
   judge: { ...goal.judge, checks: goal.judge.checks.map((check) => typeof check.sent === "boolean" ? check : { ...check, sent: true }) },
 });
 
@@ -83,7 +50,7 @@ export class GoalStore {
     this.goals = [];
     try {
       const raw = JSON.parse(readFileSync(this.path, "utf8")) as unknown;
-      if (Array.isArray(raw)) this.goals = raw.filter(isGoal).map(withSent);
+      if (Array.isArray(raw)) this.goals = raw.filter(isGoal).map(loaded);
     } catch { /* none yet, or unreadable: the next goal starts the file again */ }
   }
 
@@ -107,6 +74,7 @@ export class GoalStore {
       doneWhen: input.doneWhen,
       status: "active",
       pauseReason: null,
+      away: input.away ?? "assume",
       capUsd: input.capUsd,
       baselineUsd: input.baselineUsd,
       chatUsd: 0,

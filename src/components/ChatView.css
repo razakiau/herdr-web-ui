@@ -2425,6 +2425,7 @@ button.question-summary-answer { cursor: pointer; }
 }
 
 .chat-system-notification-icon { color: var(--status-done); }
+.chat-system-notification-icon.chat-goal-verdict-icon { color: var(--notice); }
 .chat-system-notification-caret { opacity: 0.6; transition: transform 120ms ease; }
 .chat-system-notification:not(.is-collapsed) .chat-system-notification-caret { transform: rotate(90deg); }
 

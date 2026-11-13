@@ -38,7 +38,6 @@ export const WORKSPACE_JA: Record<string, string> = {
   "Earlier sessions": "以前のセッション",
   "Open the pane showing {title}": "{title} を表示しているペインを開く",
   "Resume {title}": "{title} を再開",
-  "Resume": "再開",
   "Resuming…": "再開中…",
   "Started {started} · last active {updated}": "開始 {started} · 最終使用 {updated}",
   "Directory": "ディレクトリ",

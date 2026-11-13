@@ -12,14 +12,15 @@
  */
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { chatCost } from "../lib/chatCost.ts";
-import { fetchModelPrices, type ChatPrices } from "../lib/api.ts";
-import { Eye, GitFork, RotateCw, SlidersHorizontal } from "lucide-react";
+import { ApiError, fetchModelPrices, type ChatPrices } from "../lib/api.ts";
+import { Eye, GitFork, RotateCw, SlidersHorizontal, Target } from "lucide-react";
 
 import "./ChatView.css";
 import "./ChatTimeline.css";
 import "./Composer.css";
 import "./HostChatView.css";
 
+import type { JudgeChoice } from "../../shared/goal-budget.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { hostSource, keepContext } from "../lib/chatSource.ts";
@@ -52,8 +53,10 @@ import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
-import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker } from "./ModelPicker.tsx";
+import { GoalPauseCard } from "./GoalPauseCard.tsx";
+import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker, type GoalStart } from "./ModelPicker.tsx";
 import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
+import { fetchJudges, goalCheckOf, startGoal, stopGoal, useHostGoal } from "../lib/hostGoals.ts";
 import { hostSlashItems, resolveHostSlash } from "../lib/hostSlash.ts";
 import { STALL_MS, stalledMessage } from "../lib/hostStall.ts";
 
@@ -139,6 +142,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
   const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
   const [chat, setChat] = useState<HostChatRead | null>(() => source.last());
+  const { goal, refresh: refreshGoal } = useHostGoal(machineId, session);
   // bumped to read the chat again now (a send, an answer); `sent` also tells the chat a message went
   const [refresh, setRefresh] = useState(0);
   const [sent, setSent] = useState(0);
@@ -151,6 +155,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const [config, setConfig] = useState<HostSessionConfig | null>(null);
   const [catalog, setCatalog] = useState<{ models: HostModel[]; agents: HostAgent[] } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
+  // the judges a goal started from the settings sheet can take, read as the sheet opens
+  const [judges, setJudges] = useState<JudgeChoice[] | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   // OmniRoute's prices, once the context sheet is first opened, or at once while costs are tracked
   // (the meter and the banner weigh a big chat in dollars, ZAC-260); asked again until both tables
@@ -269,6 +275,11 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const openSheet = (part: "model" | "settings"): void => {
     setSheet(part);
     setSheetError(null);
+    if (part === "settings") {
+      setJudges(null);
+      // none to offer: the server picks its default judge
+      void fetchJudges(chat?.model?.id ?? null).then((value) => { if (mounted.current) setJudges(value); }, () => { if (mounted.current) setJudges([]); });
+    }
     if (catalog === null) {
       void fetchHostModels(machineId, session).then((value) => { if (mounted.current) setCatalog(value); }, (cause: unknown) => {
         if (mounted.current) { setSheetError(errorText(cause)); setCatalog({ models: [], agents: [] }); }
@@ -299,6 +310,43 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     setChoice(chosenFor(machineId, session));
     setSheet(null);
   };
+
+  // a goal's objective (ZAC-326): the chat's newest message of the owner's own, not a judge's check sent for it
+  const goalDraft = useMemo(() => {
+    for (const turn of [...(chat?.turns ?? [])].reverse()) {
+      if (turn.role !== "user") continue;
+      const text = turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n\n").trim();
+      if (text !== "" && goalCheckOf(text) === null) return text;
+    }
+    return null;
+  }, [chat?.turns]);
+  const startChatGoal = async (input: GoalStart): Promise<string | null> => {
+    if (goalDraft === null) return "no_objective";
+    setSheetError(null);
+    try {
+      await startGoal({ machine: machineId, session, objective: goalDraft, doneWhen: input.doneWhen, capUsd: input.capUsd, away: input.away,
+        ...(input.judgeModel !== null ? { judgeModel: input.judgeModel } : {}), ...(input.allowUnpriced ? { allowUnpriced: true } : {}) });
+    } catch (cause) {
+      const code = cause instanceof ApiError ? cause.code ?? "failed" : "failed";
+      // an unpriced judge is the sheet's own question (Start anyway), not an error
+      if (mounted.current && code !== "unpriced_model") setSheetError(errorText(cause));
+      return code;
+    }
+    refreshGoal();
+    if (mounted.current) setSheet(null);
+    return null;
+  };
+  const stopChatGoal = async (): Promise<void> => {
+    setSheetError(null);
+    try {
+      await stopGoal(machineId, session);
+      if (mounted.current) setSheet(null);
+    } catch (cause) {
+      if (mounted.current) setSheetError(errorText(cause));
+    }
+    refreshGoal();
+  };
+  const goalOn = goal !== null && (goal.status === "active" || goal.status === "paused" || goal.status === "budget_limited");
 
   // One message, once, on the user's tap, as `mode`. True: it went (the composer clears what it
   // carried); a string: it did not, and says why (the words stay in the box).
@@ -423,12 +471,12 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const shownEffort = model?.effort ?? (model && modelEntry?.id === model.id ? modelEntry.efforts?.default ?? null : null);
   const effortLabel = shownEffort ? shownEffort.charAt(0).toUpperCase() + shownEffort.slice(1) : null;
   // one settings button (ZAC-207 redesign): mode, permissions and agent in one sheet; it wears the
-  // notice colour for a raised permission level, as the mode pill's shield did
+  // notice colour for a raised permission level, as the mode pill's shield did, and a target while the chat's goal is on (ZAC-326)
   const settings = <button type="button" className="icon-button host-chat-settings" aria-haspopup="dialog" aria-expanded={sheet === "settings"}
     data-tone={settingsTone(config?.approvals)}
     aria-label={t("Chat settings: {0}, {1}, {2}", { 0: modeLabel ?? "—", 1: approvalsLabel ?? "—", 2: agentLabel })}
     title={[modeLabel, approvalsLabel, agentLabel].filter(Boolean).join(" · ")} onClick={() => openSheet("settings")}>
-    <SlidersHorizontal aria-hidden="true" />
+    {goalOn ? <Target aria-hidden="true" /> : <SlidersHorizontal aria-hidden="true" />}
   </button>;
   const pills = <span className="host-chat-pills">
     <button type="button" className="host-chat-pill host-chat-model" aria-haspopup="dialog" aria-expanded={sheet === "model"}
@@ -457,6 +505,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
         setChat((current) => current === null ? current : { ...current, prompt: null });
         reread();
       }} />}
+      {/* a paused goal asks in the same card, once the chat's own question is answered (ZAC-326) */}
+      {!chat?.prompt && goal !== null && (goal.status === "paused" || goal.status === "budget_limited") &&
+        <GoalPauseCard machineId={machineId} session={session} goal={goal} onDone={refreshGoal} />}
     </div>
     {look && <div className="checkpoint-bar look-bar">
       <Eye className="checkpoint-bar-icon" aria-hidden="true" />
@@ -515,7 +566,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
           onHandoff={onHandoff} handingOff={handingOff} handoffWaiting={handoffWaiting} fresh={fresh} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
-      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} />}
+      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} goal={goal} dismissKey={`${machineId}:${session}`} />}
       foot={<HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />}
@@ -535,6 +586,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
       }} />}
     {attaching !== null && <AttachSheet machineId={machineId} session={session} api={attaching} onClose={() => setAttaching(null)} />}
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
-      onModel={pickModel} switchCost={trackCosts && chatCostLog?.chat ? (target) => switchCostOf(chatCostLog.chat, target, chat?.context?.currentTokens ?? chatCostLog.chat?.context ?? 0, costSettings, Date.now(), sheetPrices) : undefined} onAgent={pickAgent} onConfig={pickConfig} onClose={() => setSheet(null)} />}
+      onModel={pickModel} switchCost={trackCosts && chatCostLog?.chat ? (target) => switchCostOf(chatCostLog.chat, target, chat?.context?.currentTokens ?? chatCostLog.chat?.context ?? 0, costSettings, Date.now(), sheetPrices) : undefined} onAgent={pickAgent} onConfig={pickConfig}
+      goal={goal} goalDraft={goalDraft} judges={judges} onStartGoal={startChatGoal} onStopGoal={stopChatGoal} onClose={() => setSheet(null)} />}
   </div>;
 }
