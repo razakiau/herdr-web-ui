@@ -91,8 +91,9 @@ export const BRIDGE_PRESENCE_PATH = "/api/host-chats/presence";
 /**
  * The connection server's side (ZAC-326): it tells each connected bridge (its address and token, as
  * any /api/host-chats/ call goes) whether a page is in use, on each change and every
- * PRESENCE_RELAY_MS. A bridge that did not take it (gone, older, no host chats: 404) is not asked
- * again with the same word until PRESENCE_RELAY_MS has passed; a change goes at once. One tick at a time.
+ * PRESENCE_RELAY_MS. A bridge that did not take "not in use" (gone, older, no host chats: 404) is
+ * not asked again with it until PRESENCE_RELAY_MS has passed; a refused "in use" is tried again on
+ * the next check, and a change goes at once. One tick at a time.
  */
 export class PresenceRelay {
   /** each URL's last word tried, when, and whether the bridge took it */
@@ -120,9 +121,10 @@ export class PresenceRelay {
     const urls = new Set(targets.map((target) => target.url));
     for (const url of this.told.keys()) if (!urls.has(url)) this.told.delete(url);
     await Promise.all(targets.map(async (target) => {
-      // the same word, said or refused under PRESENCE_RELAY_MS ago, waits: a refusing bridge is not asked every check
+      // the same word, said or refused under PRESENCE_RELAY_MS ago, waits: a refusing bridge is not asked every check.
+      // A refused "in use" does not wait: until the bridge hears it, it counts as away and may answer for the user.
       const last = this.told.get(target.url);
-      if (last && last.inUse === inUse && now - last.at < PRESENCE_RELAY_MS) return;
+      if (last && last.inUse === inUse && now - last.at < PRESENCE_RELAY_MS && (last.ok || !inUse)) return;
       let ok = false;
       try {
         const response = await this.deps.fetch(`${target.url}${BRIDGE_PRESENCE_PATH}`, {

@@ -253,6 +253,8 @@ class Refusal extends Error {
   constructor(readonly response: Response) { super("refusal"); }
 }
 const refuse = (response: Response): never => { throw new Refusal(response); };
+/** The refusal for a chat the host does not have (`missing`): the away timer drops its questions. */
+class MissingChat extends Refusal {}
 
 /**
  * The answer for a `/api/host-chats/` path; null for any other path. `clock` is the lease timers' (tests);
@@ -424,7 +426,7 @@ function connected(host: AgentHost): void {
   if (host.state().state !== "connected") refuse(hostDown(host));
 }
 
-const missing = (): never => refuse(jsonResponse({ error: { code: "host_chat_missing", message: "no such host chat on this PC" } }, 404));
+const missing = (): never => { throw new MissingChat(jsonResponse({ error: { code: "host_chat_missing", message: "no such host chat on this PC" } }, 404)); };
 
 /**
  * The session a chat id is in: a session's own URI is itself; a session's other chat (a fork, VS
@@ -1853,6 +1855,8 @@ async function answerAsync(call: Call, session: string, asyncId: unknown): Promi
     label = q!.options[index]!.label;
   } else if (words !== "") label = words;
   else return badRequest("missing_answer", "pick an option or type an answer");
+  // Change re-picking the answer it replaces would send a correction that changes nothing
+  if (correction && label === q!.answer!.label) return badRequest("same_answer", "that is already the answer");
   const { channel, chat } = await watched(call, session);
   // a send that fails reopens it (the question stays open, and the card with it); a correction keeps the assumed answer
   deliverAsync(call, session, channel, chat, q!, label, correction ? "correction" : "answer", idOf(call.body["id"])) ?? gone();
@@ -1867,7 +1871,7 @@ export const ASYNC_TICK_MS = 10_000;
  * in use (`inUse`), and each optional question it then finds due (AsyncAskStore.due: a recommended
  * option, nobody in for AWAY_AFTER_MS) is answered with that option, marked assumed, and sent as
  * an answer is. One tick at a time; a question whose send fails is open again, so the next tick
- * tries it again. `every` and `clock` are the tests' (the watch lease's timers). Returns a stop.
+ * tries it again, unless its chat is gone (host_chat_missing): that question is dropped. `every` and `clock` are the tests' (the watch lease's timers). Returns a stop.
  */
 export function startAwayAnswers(host: AgentHost, asks: AsyncAskStore, inUse: () => boolean, deps: { every?: (run: () => Promise<void>, ms: number) => { stop(): void }; clock?: LeaseClock } = {}): () => void {
   let running: Promise<void> | null = null;
@@ -1884,7 +1888,13 @@ export function startAwayAnswers(host: AgentHost, asks: AsyncAskStore, inUse: ()
         asks.setInUse(inUse());
         if (asks.due().some((each) => each.id === q.id)) deliverAsync(call, q.session, channel, chat, q, label, "assumed", randomUUID());
       } catch (error) {
-        // a chat that is gone or a host that failed: the question stays open; its id only, never the error's text
+        // a chat that is gone: nobody can answer it any more, so it goes, and the next tick is not retrying it forever
+        if (error instanceof MissingChat) {
+          asks.drop(q.id);
+          console.warn(`[host-chats] away answer dropped (${q.id}: chat gone)`);
+          continue;
+        }
+        // a host that failed: the question stays open; its id only, never the error's text
         console.warn(`[host-chats] away answer not sent (${q.id}: ${error instanceof Refusal ? "refused" : error instanceof Error ? error.name : typeof error})`);
       }
     }

@@ -133,7 +133,7 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     expect(presenceRelayFor(null, () => true, fetch)).toBeNull();
   });
 
-  it("a bridge that refuses or is gone is asked again only after 30 s, or at once on a change", async () => {
+  it("a bridge that refuses or is gone is asked \"not in use\" again only after 30 s, or at once on a change", async () => {
     let now = 0;
     let inUse = false;
     let status = 404;
@@ -153,18 +153,54 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     // the 5 s checks in between ask neither again
     for (now = 5_000; now < PRESENCE_RELAY_MS; now += 5_000) await relay.tick();
     expect(posted.length).toBe(2);
+    // PRESENCE_RELAY_MS after the last try: asked again; the old bridge now takes it
+    status = 204;
+    now = PRESENCE_RELAY_MS;
+    await relay.tick();
+    expect(posted.length).toBe(4);
+    now += 5_000; await relay.tick();
+    expect(posted.length).toBe(4);
     // a change goes at once, to both
     inUse = true;
     await relay.tick();
-    expect(posted.length).toBe(4);
-    now += 5_000; await relay.tick();
-    expect(posted.length).toBe(4);
-    // PRESENCE_RELAY_MS after the last try: asked again; the old bridge now takes it
-    status = 204;
-    now += PRESENCE_RELAY_MS;
+    expect(posted.length).toBe(6);
+  });
+
+  it("a refused \"in use\" is tried again on the next 5 s check; a refused \"not in use\" still waits 30 s", async () => {
+    let now = 0;
+    let inUse = true;
+    let fail = true;
+    const posted: boolean[] = [];
+    const relay = new PresenceRelay({
+      inUse: () => inUse,
+      targets: () => [{ url: "http://fictional-bridge", token: "FICTIONAL-token" }],
+      fetch: async (_url, init) => {
+        posted.push((JSON.parse(String(init.body)) as { in_use: boolean }).in_use);
+        if (fail) throw new Error("FICTIONAL refused");
+        return new Response(null, { status: 204 });
+      },
+      now: () => now,
+    });
     await relay.tick();
-    expect(posted.length).toBe(6);
+    expect(posted).toEqual([true]);
+    // failed: the next check says it again, without waiting PRESENCE_RELAY_MS
     now += 5_000; await relay.tick();
-    expect(posted.length).toBe(6);
+    expect(posted).toEqual([true, true]);
+    // taken: then it waits as any word said does
+    fail = false;
+    now += 5_000; await relay.tick();
+    expect(posted).toEqual([true, true, true]);
+    now += 5_000; await relay.tick();
+    expect(posted).toEqual([true, true, true]);
+    // a failed "not in use" waits PRESENCE_RELAY_MS
+    fail = true;
+    inUse = false;
+    await relay.tick();
+    expect(posted).toEqual([true, true, true, false]);
+    const failedAt = now;
+    for (now += 5_000; now - failedAt < PRESENCE_RELAY_MS; now += 5_000) await relay.tick();
+    expect(posted.length).toBe(4);
+    now = failedAt + PRESENCE_RELAY_MS; await relay.tick();
+    expect(posted).toEqual([true, true, true, false, false]);
   });
 });

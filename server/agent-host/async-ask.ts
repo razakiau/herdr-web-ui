@@ -26,7 +26,10 @@ export interface AsyncQuestion {
 }
 
 export const AWAY_AFTER_MS = 60_000;
-/** answered questions stay this long (the transcript shows them), then go on the next load */
+/**
+ * answered questions stay this long (the transcript shows them), then go on the next load; so do
+ * unanswered ones that old, whose chat is most likely gone (a blocking one is never answered for it)
+ */
 const KEEP_ANSWERED_MS = 7 * 24 * 60 * 60_000;
 
 type Row = Record<string, unknown>;
@@ -140,6 +143,13 @@ export class AsyncAskStore {
     return true;
   }
 
+  /** Forgets a question, saved: one whose chat no longer exists. False when the id is unknown. */
+  drop(id: string): boolean {
+    if (!this.questions.delete(id)) return false;
+    this.save();
+    return true;
+  }
+
   /** Whether some page has Ovis open; going from in use to not records when it closed. */
   setInUse(inUse: boolean): void {
     if (this.inUse && !inUse) this.lastInUseAt = this.now();
@@ -163,7 +173,7 @@ export class AsyncAskStore {
     const now = this.now();
     for (const value of parsed) {
       const q = questionOf(value);
-      if (q && !(q.answer && now - q.answer.at > KEEP_ANSWERED_MS)) this.questions.set(q.id, q);
+      if (q && now - (q.answer ? q.answer.at : q.askedAt) <= KEEP_ANSWERED_MS) this.questions.set(q.id, q);
     }
   }
 

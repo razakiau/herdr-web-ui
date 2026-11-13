@@ -2267,12 +2267,13 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
   /** the away timer on a store with a fake clock, ticked by hand: never a real 10 s wait */
   function away(r: Rig, inUse: () => boolean = () => false) {
     let now = 1_000_000;
-    const asks = new AsyncAskStore(join(temp(), "async-asks.json"), () => now);
+    const file = join(temp(), "async-asks.json");
+    const asks = new AsyncAskStore(file, () => now);
     let tick: (() => Promise<void>) | null = null;
     let every = 0;
     let stopped = false;
     const stop = startAwayAnswers(r.conn, asks, inUse, { clock: r.clock, every: (run, ms) => { tick = run; every = ms; return { stop: () => { stopped = true; } }; } });
-    return { asks, advance: (ms: number) => { now += ms; }, tick: () => tick!(), every: () => every, stop, stopped: () => stopped };
+    return { asks, file, advance: (ms: number) => { now += ms; }, tick: () => tick!(), every: () => every, stop, stopped: () => stopped };
   }
   const assumedText = (id: string, label: string) => `Assumed answer to ${id} ("${QUESTION}"): ${label} (you were away)`;
 
@@ -2340,6 +2341,46 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     await t.tick();
     await until("the steer", () => actions(r.fake, "chat/pendingMessageSet").length > 0);
     expect(t.asks.get(q.id)?.answer).toMatchObject({ assumed: true });
+  });
+
+  it("a due question whose chat is gone is dropped on the first tick, and the next tick does nothing", async () => {
+    const r = await rig();
+    const t = away(r);
+    // a chat this host does not have (deleted since it asked)
+    const q = t.asks.add({ session: sessionUri(99), question: QUESTION, options: OPTIONS, recommended: 1, kind: "optional" });
+    const warn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    try {
+      t.advance(61_000);
+      await t.tick();
+      expect(t.asks.get(q.id)).toBeNull();
+      expect(warned).toEqual([`[host-chats] away answer dropped (${q.id}: chat gone)`]);
+      // saved: a restart does not bring it back
+      expect(new AsyncAskStore(t.file, () => 1_061_000).get(q.id)).toBeNull();
+      warned.length = 0;
+      t.advance(10_000);
+      await t.tick();
+      expect(t.asks.due()).toEqual([]);
+      expect(warned).toEqual([]);
+    } finally {
+      console.warn = warn;
+    }
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+  });
+
+  it("a correction to the answer it already is is refused, and nothing is sent", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const asks = store();
+    const q = ask(asks);
+    // OPTIONS[1] is the recommended one, assumed while away
+    asks.answer(q.id, q.options[1]!.label, true);
+    const same = await asked(r, asks, "/api/host-chats/chat/answer", { session: sessionUri(1), async_id: q.id, option_ids: ["1"], correction: true });
+    expect({ status: same.status, code: same.json.error.code }).toEqual({ status: 400, code: "same_answer" });
+    expect(actions(r.fake, "chat/pendingMessageSet")).toEqual([]);
+    expect(actions(r.fake, "chat/turnStarted")).toEqual([]);
+    expect(asks.get(q.id)?.answer).toMatchObject({ label: q.options[1]!.label, assumed: true });
   });
 
   it("a blocking question makes the row ask", async () => {

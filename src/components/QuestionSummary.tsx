@@ -100,7 +100,7 @@ export function QuestionSummary({ part, memoryKey = "question", attached = null 
 
 /**
  * Under an assumed answer: "You were away", and Change while the bridge still holds it (`correctable`).
- * Change lists the question's options, the assumed one pressed; the one picked is sent as a
+ * Change lists the question's options, the assumed one pressed (and disabled: re-picking it changes nothing); the one picked is sent as a
  * correction (answerHost with `correction`), and the line says so until the transcript reads it.
  */
 function AssumedAnswer({ part }: { part: QuestionPart }) {
@@ -130,7 +130,7 @@ function AssumedAnswer({ part }: { part: QuestionPart }) {
       {target !== null && part.options.length > 0 && <>{" · "}<button type="button" className="question-summary-change" aria-expanded={picking} onClick={() => { setPicking(!picking); setFailed(false); }}>{t("Change")}</button></>}
     </p>
     {picking && <div className="question-summary-change-options" role="group" aria-label={t("Change the assumed answer")}>
-      {part.options.map((option, index) => <button key={index} type="button" className="question-summary-change-option" disabled={sending} aria-pressed={part.chosen.includes(option)} onClick={() => void change(index)}>{option}</button>)}
+      {part.options.map((option, index) => <button key={index} type="button" className="question-summary-change-option" disabled={sending || part.chosen.includes(option)} aria-pressed={part.chosen.includes(option)} onClick={() => void change(index)}>{option}</button>)}
     </div>}
     {failed && <p className="question-summary-change-error" role="alert">{t("Couldn't send the change. Try again.")}</p>}
   </>;

@@ -182,6 +182,9 @@ describe("an assumed answer (ask_user_async, ZAC-326)", () => {
       expect(options.map(textOf)).toEqual(["FICTIONAL keep", "FICTIONAL drop"]);
       // the assumed one is marked as what it is now
       expect(options[1]!.props["aria-pressed"]).toBe(true);
+      // and cannot be picked again: a correction to the same answer changes nothing
+      expect(options[1]!.props["disabled"]).toBe(true);
+      expect(options[0]!.props["disabled"]).toBe(false);
       await press(options[0]!);
       expect(posted).toEqual([{ url: "/api/machines/FICTIONAL-pc/host-chats/chat/answer", body: { session: "copilotcli:/FICTIONAL", async_id: "ask-0a1b2c3d", option_ids: ["0"], correction: true } }]);
       // sent: the picker closes, and the line says what goes to the agent until the transcript has it
