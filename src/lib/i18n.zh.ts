@@ -905,6 +905,19 @@ const BASE: Record<string, string> = {
   "Start anyway": "仍然开始",
   "Start goal": "开始目标",
   "Stop goal": "停止目标",
+  // a paused goal's card in the prompt dock (components/GoalPauseCard.tsx)
+  "Goal paused at its {cap} budget": "目标已在 {cap} 预算处暂停",
+  "Goal paused": "目标已暂停",
+  "Spent {spent}: chat {chat}, judge {judge}, over {checks}.": "已花费 {spent}：聊天 {chat}，评判 {judge}，共 {checks}。",
+  "Raise to {cap} and continue": "提高到 {cap} 并继续",
+  "Resume": "继续",
+  "Stop here": "到此停止",
+  "The judge failed: {reason}.": "评判出错：{reason}。",
+  "The chat is gone from its PC.": "这个聊天已不在它的电脑上。",
+  "Its cost can't be read.": "无法读取它的花费。",
+  "Its log can't be read.": "无法读取它的日志。",
+  "The next turn couldn't be sent.": "下一轮未能发送。",
+  "It reached its cap.": "已达到上限。",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

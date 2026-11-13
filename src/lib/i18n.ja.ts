@@ -903,6 +903,19 @@ const BASE: Record<string, string> = {
   "Start anyway": "このまま開始",
   "Start goal": "目標を開始",
   "Stop goal": "目標を停止",
+  // a paused goal's card in the prompt dock (components/GoalPauseCard.tsx)
+  "Goal paused at its {cap} budget": "目標は予算 {cap} で一時停止しました",
+  "Goal paused": "目標は一時停止中",
+  "Spent {spent}: chat {chat}, judge {judge}, over {checks}.": "使用額 {spent}: チャット {chat}、判定 {judge}、{checks}。",
+  "Raise to {cap} and continue": "{cap} に上げて続ける",
+  "Resume": "再開",
+  "Stop here": "ここで停止",
+  "The judge failed: {reason}.": "判定が失敗しました: {reason}。",
+  "The chat is gone from its PC.": "このチャットは PC からなくなりました。",
+  "Its cost can't be read.": "使用額を読み取れません。",
+  "Its log can't be read.": "ログを読み取れません。",
+  "The next turn couldn't be sent.": "次のターンを送れませんでした。",
+  "It reached its cap.": "上限に達しました。",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

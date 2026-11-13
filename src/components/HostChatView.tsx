@@ -53,6 +53,7 @@ import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
+import { GoalPauseCard } from "./GoalPauseCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker, type GoalStart } from "./ModelPicker.tsx";
 import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
 import { fetchJudges, goalCheckOf, startGoal, stopGoal, useHostGoal } from "../lib/hostGoals.ts";
@@ -504,6 +505,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
         setChat((current) => current === null ? current : { ...current, prompt: null });
         reread();
       }} />}
+      {/* a paused goal asks in the same card, once the chat's own question is answered (ZAC-326) */}
+      {!chat?.prompt && goal !== null && (goal.status === "paused" || goal.status === "budget_limited") &&
+        <GoalPauseCard machineId={machineId} session={session} goal={goal} onDone={refreshGoal} />}
     </div>
     {look && <div className="checkpoint-bar look-bar">
       <Eye className="checkpoint-bar-icon" aria-hidden="true" />

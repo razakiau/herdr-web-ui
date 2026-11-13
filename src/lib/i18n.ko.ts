@@ -901,6 +901,19 @@ const BASE: Record<string, string> = {
   "Start anyway": "그래도 시작",
   "Start goal": "목표 시작",
   "Stop goal": "목표 중지",
+  // a paused goal's card in the prompt dock (components/GoalPauseCard.tsx)
+  "Goal paused at its {cap} budget": "목표가 예산 {cap}에서 일시 중지됨",
+  "Goal paused": "목표 일시 중지됨",
+  "Spent {spent}: chat {chat}, judge {judge}, over {checks}.": "사용액 {spent}: 채팅 {chat}, 판정 {judge}, {checks}.",
+  "Raise to {cap} and continue": "{cap}(으)로 올리고 계속",
+  "Resume": "이어하기",
+  "Stop here": "여기서 중지",
+  "The judge failed: {reason}.": "판정 실패: {reason}.",
+  "The chat is gone from its PC.": "이 채팅이 PC에서 사라졌습니다.",
+  "Its cost can't be read.": "사용액을 읽을 수 없습니다.",
+  "Its log can't be read.": "로그를 읽을 수 없습니다.",
+  "The next turn couldn't be sent.": "다음 턴을 보내지 못했습니다.",
+  "It reached its cap.": "한도에 도달했습니다.",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

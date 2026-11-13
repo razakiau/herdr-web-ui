@@ -38,7 +38,6 @@ export const WORKSPACE_ZH: Record<string, string> = {
   "Earlier sessions": "之前的会话",
   "Open the pane showing {title}": "打开显示 {title} 的面板",
   "Resume {title}": "继续 {title}",
-  "Resume": "继续",
   "Resuming…": "正在继续…",
   "Started {started} · last active {updated}": "开始于 {started} · 最后使用 {updated}",
   "Directory": "目录",
