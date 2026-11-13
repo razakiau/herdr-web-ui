@@ -79,6 +79,9 @@ import { MachineRelay } from "./machine-relay.ts";
 import { BRIDGE_PRESENCE_PATH, BridgePresence, handleBridgePresenceRequest, handlePresenceRequest, PagePresence, PRESENCE_CHECK_MS, presenceRelayFor } from "./page-presence.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
+import { GoalStore } from "./goals/store.ts";
+import { createGoalRunner, type GoalPc } from "./goals/runner.ts";
+import { goalPcOver, handleGoalsRequest } from "./goals/routes.ts";
 
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
@@ -473,6 +476,36 @@ export function createServer(
   }) : null;
   void digestScheduler?.start();
 
+  /**
+   * Goals (ZAC-326 part 2, server/goals/): a chat on any PC worked turn by turn until a judge says its
+   * "done when" holds. The runner reads this PC's chats through its own host-chats routes, another
+   * PC's over its bridge with the endpoint token, as the groups' pull does; it judges through OmniRoute
+   * and prices as the cold-cache alert does. Every 15 s, and at once on a start, raise or resume.
+   */
+  const goals = new GoalStore(stateDir);
+  const goalPcs = (machineId: string): GoalPc | null => {
+    if (machineId === "local") {
+      if (!agentHostConnection) return null;
+      return goalPcOver("local", async (path, init) => await hostChatsRoute(new Request(`http://localhost${path}`, init), path.split("?")[0]!, agentHostConnection, undefined, asyncAsks ?? undefined) ?? null);
+    }
+    if (!machines?.list().some((machine) => machine.id === machineId)) return null;
+    return goalPcOver(machineId, async (path, init) => {
+      const endpoint = machines.endpoint(machineId);
+      if (!endpoint) return null;
+      const headers = new Headers(init?.headers);
+      headers.set("authorization", `Bearer ${endpoint.token}`);
+      // the list and a send answer at once; a cost or digest read may first scan a log
+      const timeoutMs = path === "/api/host-chats/chats" || init?.method === "POST" ? 15_000 : 60_000;
+      return fetch(`${endpoint.url}${path}`, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+    });
+  };
+  const goalRunner = createGoalRunner({ store: goals, pcs: goalPcs, prices: coldPrices, complete: (request) => omniRoute.complete(request) });
+  // no goal active: no price read, no PC asked
+  const goalTick = () => { if (goals.list().some((goal) => goal.status === "active")) void goalRunner.tick(); };
+  const goalTimer = setInterval(goalTick, 15_000);
+  goalTimer.unref();
+  goalTick();
+
   type PortalStartup = { ok: true } | { ok: false; error: unknown };
   let settlePortalStartup!: (result: PortalStartup) => void;
   let portalStartupResult: PortalStartup | undefined;
@@ -688,6 +721,9 @@ export function createServer(
       if (pathname === "/api/preferences") { setRequestRoute(pathname); return handlePreferencesRequest(request, preferences); }
       // the finishes read in some browser of this server; a watching device reads them and cannot add to them (above)
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
+      // the goals (ZAC-326); a watching device reads them and cannot start, raise, stop or resume one (above)
+      if (pathname === "/api/goals" || pathname.startsWith("/api/goals/")) return handleGoalsRequest(request, pathname,
+        { store: goals, pcs: goalPcs, prices: coldPrices, models: () => omniRoute.models(), kick: goalTick });
       // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)
       if (pathname === "/api/groups" || pathname.startsWith("/api/groups/")) return handleGroupsRequest(request, pathname, groupsStore(), () => groupsSignal.tell(),
         { on: () => preferences.get().settings.chatGroups === true, jobs: digestJobs });
@@ -894,6 +930,7 @@ export function createServer(
       core.stop(() => {
         clearInterval(draftTimer);
         if (presenceTimer) clearInterval(presenceTimer);
+        clearInterval(goalTimer);
         stopAwayAnswers?.();
         localCosts?.stop();
         groupsPoller.stop();

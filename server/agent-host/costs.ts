@@ -445,6 +445,12 @@ export class CostIndex {
     return sdk !== null && this.pathOf(sdk) !== null ? sdk : null;
   }
 
+  /** The Copilot log (events.jsonl) a chat id runs on, as `costOf` finds it; null when it has none (a goal's judge, ZAC-326). */
+  logPathOf(session: string, parent: string | null = null): string | null {
+    const uuid = this.sdkOf(session, parent);
+    return uuid === null ? null : this.logs.get(uuid)?.path ?? this.pathOf(uuid);
+  }
+
   private pathOf(uuid: string): string | null {
     const found = copilotTranscript(uuid, this.home);
     return found !== null && "path" in found ? found.path : null;

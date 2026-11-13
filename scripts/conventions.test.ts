@@ -132,6 +132,7 @@ describe("demo transport", () => {
     "/api/auth": "the demo is never locked (/api/health says authenticated), so neither the token form nor sign-out runs",
     "/api/bridge": "a remote PC's bridge endpoint, asked by another server, never by the browser",
     "/api/host-chats/presence": "a connection server telling a PC's bridge whether a page is in use, with the bridge token, never by the browser (ZAC-326)",
+    "/api/host-chats/chat/send": "named in server/ by the goal runner queuing a goal's next turn on a PC's bridge, server to server (ZAC-326); the demo has no host chats, so its browser never sends one",
     "/api/agent-ask": "an agent's async question, posted by the shim's MCP server on the bridge's PC with the bridge token, never by the browser (ZAC-326)",
     "/api/event": "OpenCode v2's own service's event stream, read by this server (opencode-service.ts), never by the browser",
     "/api/info": "OpenCode v2's own service's identity, checked by this server (opencode-service.ts), never by the browser",
