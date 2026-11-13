@@ -73,6 +73,12 @@ export class AsyncAskStore {
    */
   private inUse = false;
   private lastInUseAt: number;
+  /**
+   * Chats whose goal waits for the owner (ZAC-326): their questions are never due. In memory only:
+   * a restarted bridge has none until the connection server's next word (PRESENCE_RELAY_MS, 30 s),
+   * well inside the AWAY_AFTER_MS a question waits before it is due.
+   */
+  private waiting = new Set<string>();
 
   constructor(private readonly file: string, private readonly now: () => number = Date.now) {
     this.lastInUseAt = now();
@@ -161,12 +167,17 @@ export class AsyncAskStore {
     this.inUse = inUse;
   }
 
-  /** Optional questions with a recommendation, unanswered, whose user has been away AWAY_AFTER_MS. */
+  /** The chats whose questions wait for the owner however long they are away (a goal set to "wait"). */
+  setWaiting(sessions: readonly string[]): void {
+    this.waiting = new Set(sessions);
+  }
+
+  /** Optional questions with a recommendation, unanswered, whose user has been away AWAY_AFTER_MS, outside the waiting chats. */
   due(): AsyncQuestion[] {
     if (this.inUse) return [];
     const now = this.now();
     return [...this.questions.values()]
-      .filter((q) => q.kind === "optional" && q.recommended !== null && !q.answer && now - Math.max(q.askedAt, this.lastInUseAt) >= AWAY_AFTER_MS)
+      .filter((q) => q.kind === "optional" && q.recommended !== null && !q.answer && !this.waiting.has(q.session) && now - Math.max(q.askedAt, this.lastInUseAt) >= AWAY_AFTER_MS)
       .sort((a, b) => a.askedAt - b.askedAt)
       .map(copy);
   }

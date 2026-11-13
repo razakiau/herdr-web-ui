@@ -336,13 +336,23 @@ export function createServer(
   // the questions this PC's agents ask without stopping their turn (ask_user_async, ZAC-326), kept across restarts
   const asyncAsks = agentHostConnection ? new AsyncAskStore(join(stateDir, "async-asks.json")) : null;
   // whether Ovis is in use, for the away default: a page of this server, or the connection server's word (POST /api/host-chats/presence)
-  const bridgePresence = asyncAsks ? new BridgePresence(() => pages.inUse(), (inUse) => asyncAsks.setInUse(inUse)) : null;
+  const bridgePresence = asyncAsks ? new BridgePresence(() => pages.inUse(), (inUse) => asyncAsks.setInUse(inUse), (sessions) => asyncAsks.setWaiting(sessions)) : null;
   // every 10 s, an optional question nobody was in to answer for 60 s takes its recommended option, marked assumed
   const stopAwayAnswers = agentHostConnection && asyncAsks && bridgePresence ? startAwayAnswers(agentHostConnection, asyncAsks, () => bridgePresence.inUse()) : null;
-  // the connection server tells each connected PC's bridge whether a page is in use: on a change, and every 30 s
+  // the goals of every PC's chats (ZAC-326 part 2), kept here; see goalPcs and the runner below
+  const goals = new GoalStore(stateDir);
+  // the chats on a PC whose running goal leaves its optional questions for the owner, however long they are away
+  const goalsWaiting = (machineId: string): string[] => goals.list()
+    .filter((goal) => goal.machineId === machineId && goal.away === "wait" && (goal.status === "active" || goal.status === "paused" || goal.status === "budget_limited"))
+    .map((goal) => goal.session);
+  // the connection server tells each connected PC's bridge whether a page is in use and which chats wait: on a change, and every 30 s
   // whether host chats run here or not: a remote PC's bridge may run them
-  const presenceRelay = presenceRelayFor(machines, () => pages.inUse(), fetch);
-  const presenceTimer = presenceRelay ? setInterval(() => void presenceRelay.tick(), PRESENCE_CHECK_MS) : null;
+  const presenceRelay = presenceRelayFor(machines, () => pages.inUse(), goalsWaiting, fetch);
+  // this PC's own questions hear of its goals at the start and on each check, as a remote bridge does over the relay
+  const waitLocal = () => asyncAsks?.setWaiting(goalsWaiting("local"));
+  const presenceCheck = () => { waitLocal(); void presenceRelay?.tick(); };
+  waitLocal();
+  const presenceTimer = presenceRelay || asyncAsks ? setInterval(presenceCheck, PRESENCE_CHECK_MS) : null;
   presenceTimer?.unref();
 
   /**
@@ -482,7 +492,6 @@ export function createServer(
    * PC's over its bridge with the endpoint token, as the groups' pull does; it judges through OmniRoute
    * and prices as the cold-cache alert does. Every 15 s, and at once on a start, raise or resume.
    */
-  const goals = new GoalStore(stateDir);
   const goalPcs = (machineId: string): GoalPc | null => {
     if (machineId === "local") {
       if (!agentHostConnection) return null;

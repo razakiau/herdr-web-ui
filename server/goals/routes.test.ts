@@ -99,6 +99,15 @@ describe("/api/goals", () => {
     expect(started).toMatchObject({ status: 200, json: { goal: { status: "active" } } });
   });
 
+  it("start takes away: wait and stores it; with none it assumes, and anything else is 400 invalid_body", async () => {
+    expect(await call("/api/goals/start", { ...START, away: "x" })).toMatchObject({ status: 400, json: { error: { code: "invalid_body" } } });
+    expect(store.list()).toEqual([]);
+    expect((await call("/api/goals/start", { ...START, away: "wait" })).json.goal.away).toBe("wait");
+    expect(store.get(MACHINE, SESSION)!.away).toBe("wait");
+    store.stop(MACHINE, SESSION);
+    expect((await call("/api/goals/start", START)).json.goal.away).toBe("assume");
+  });
+
   it("start twice → 409 goal_running", async () => {
     expect((await call("/api/goals/start", START)).status).toBe(200);
     expect(await call("/api/goals/start", START)).toMatchObject({ status: 409, json: { error: { code: "goal_running" } } });

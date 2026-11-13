@@ -103,7 +103,7 @@ const isEnded = (goal: HostGoal) => goal.status === "met" || goal.status === "st
 /**
  *   GET  /api/goals                                                    `{ goals: GoalView[] }`
  *   GET  /api/goals/judges?worker=<model id>                           `{ choices: JudgeChoice[] }`, the judges to offer a chat whose last model is `worker`
- *   POST /api/goals/start  { machine, session, parent?, objective, doneWhen, capUsd, judgeModel?, allowUnpriced? }   `{ goal }`;
+ *   POST /api/goals/start  { machine, session, parent?, objective, doneWhen, capUsd, judgeModel?, allowUnpriced?, away? }   `{ goal }`;
  *                          400 unpriced_model when the chat's last model has no price, unless allowUnpriced is true
  *   POST /api/goals/raise  { machine, session, capUsd }                `{ goal }`; 409 below_spent, goal_ended
  *   POST /api/goals/stop   { machine, session }                        `{ goal }`
@@ -173,8 +173,9 @@ async function start(deps: GoalRoutesDeps, machine: string, session: string, bod
   const parent = body["parent"] === undefined || body["parent"] === null ? null : id(body["parent"]) ? body["parent"] : undefined;
   const picked = body["judgeModel"] === undefined || body["judgeModel"] === null ? null
     : typeof body["judgeModel"] === "string" && body["judgeModel"].trim() !== "" && body["judgeModel"].length <= MAX_MODEL ? body["judgeModel"].trim() : undefined;
-  if (objective === null || doneWhen === null || capUsd === null || parent === undefined || picked === undefined) {
-    return badRequest("invalid_body", `Send { machine, session, parent?, objective and doneWhen: 1 to ${GOAL_TEXT_MAX} characters, capUsd: dollars above 0, judgeModel? }`);
+  const away = body["away"] === undefined ? "assume" : body["away"] === "assume" || body["away"] === "wait" ? body["away"] : undefined;
+  if (objective === null || doneWhen === null || capUsd === null || parent === undefined || picked === undefined || away === undefined) {
+    return badRequest("invalid_body", `Send { machine, session, parent?, objective and doneWhen: 1 to ${GOAL_TEXT_MAX} characters, capUsd: dollars above 0, judgeModel?, away?: "assume" or "wait" }`);
   }
   const pc = deps.pcs(machine);
   if (!pc) return refuse("no_machine", "No such PC", 404);
@@ -200,7 +201,7 @@ async function start(deps: GoalRoutesDeps, machine: string, session: string, bod
   if (model === null) return refuse("no_judge", "No model to judge with: pick one, or connect OmniRoute", 400);
   const warning = lastModel !== null && modelFamily(model) === modelFamily(lastModel) ? "same_family" : null;
   try {
-    const goal = deps.store.start({ machineId: machine, session, parent, objective, doneWhen, capUsd, baselineUsd: Number.isFinite(baselineUsd) ? baselineUsd : 0, judge: { model, warning } });
+    const goal = deps.store.start({ machineId: machine, session, parent, objective, doneWhen, capUsd, away, baselineUsd: Number.isFinite(baselineUsd) ? baselineUsd : 0, judge: { model, warning } });
     deps.kick?.();
     return reply({ goal: goalView(goal) });
   } catch (error) {

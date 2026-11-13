@@ -61,6 +61,17 @@ describe("AsyncAskStore", () => {
     expect(store.due().map((d) => d.id)).toEqual([q.id]);
   });
 
+  test("due() leaves out the questions of a chat whose goal waits for the owner", () => {
+    const store = new AsyncAskStore(file, now);
+    const s1 = store.add({ session: "s1", question: "FICTIONAL: which way?", options: OPTIONS, recommended: 0, kind: "optional" });
+    const s2 = store.add({ session: "s2", question: "FICTIONAL: which way?", options: OPTIONS, recommended: 0, kind: "optional" });
+    clock = 60_000;
+    store.setWaiting(["s1"]);
+    expect(store.due().map((d) => d.id)).toEqual([s2.id]);
+    store.setWaiting([]);
+    expect(store.due().map((d) => d.id)).toEqual([s1.id, s2.id]);
+  });
+
   test("a restart counts as seen now: an old question is due 60 s after it, not at once", () => {
     ask(new AsyncAskStore(file, now));
     clock = 10 * 60_000;

@@ -59,12 +59,13 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     const pages = new PagePresence(45_000, () => now);
     // the bridge's store, as far as presence goes
     const told: boolean[] = [];
-    const bridge = new BridgePresence(() => false, (inUse) => told.push(inUse), BRIDGE_PRESENCE_TTL_MS, () => now);
+    const bridge = new BridgePresence(() => false, (inUse) => told.push(inUse), () => {}, BRIDGE_PRESENCE_TTL_MS, () => now);
     // the central server's relay posts to the bridge as it posts any /api/host-chats/ call: its address and token
     const posted: { url: string; auth: string | null; body: unknown }[] = [];
     const relay = new PresenceRelay({
       inUse: () => pages.inUse(),
-      targets: () => [{ url: "http://fictional-bridge", token: "FICTIONAL-token" }],
+      targets: () => [{ id: "pc-fictional", url: "http://fictional-bridge", token: "FICTIONAL-token" }],
+      waiting: () => [],
       fetch: async (url, init) => {
         const request = new Request(url, init);
         posted.push({ url, auth: request.headers.get("authorization"), body: await request.clone().json() });
@@ -79,7 +80,7 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     pages.set("page-aaaaaaaa", false);
     await relay.tick();
     expect(told).toEqual([false, true, false]);
-    expect(posted.map((each) => each.body)).toEqual([{ in_use: false }, { in_use: true }, { in_use: false }]);
+    expect(posted.map((each) => each.body)).toEqual([{ in_use: false, wait: [] }, { in_use: true, wait: [] }, { in_use: false, wait: [] }]);
     expect(posted[0]).toMatchObject({ url: "http://fictional-bridge/api/host-chats/presence", auth: "Bearer FICTIONAL-token" });
     // no change: said again only every 30 s
     now += 29_000; await relay.tick();
@@ -92,7 +93,7 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     let now = 0;
     let local = false;
     const told: boolean[] = [];
-    const bridge = new BridgePresence(() => local, (inUse) => told.push(inUse), BRIDGE_PRESENCE_TTL_MS, () => now);
+    const bridge = new BridgePresence(() => local, (inUse) => told.push(inUse), () => {}, BRIDGE_PRESENCE_TTL_MS, () => now);
     bridge.report(true);
     now = 59_999;
     expect(bridge.inUse()).toBe(true);
@@ -115,6 +116,41 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     expect(told).toEqual([true]);
   });
 
+  it("the relay tells each bridge the chats whose goal waits for the owner, and again at once when its list changes", async () => {
+    const lists: Record<string, string[]> = { "pc-a": ["s1"], "pc-b": [] };
+    const posted: { url: string; body: unknown }[] = [];
+    const relay = new PresenceRelay({
+      inUse: () => false,
+      targets: () => [{ id: "pc-a", url: "http://fictional-a", token: "FICTIONAL-token" }, { id: "pc-b", url: "http://fictional-b", token: "FICTIONAL-token" }],
+      waiting: (machineId) => lists[machineId] ?? [],
+      fetch: async (url, init) => { posted.push({ url, body: JSON.parse(String(init.body)) }); return new Response(null, { status: 204 }); },
+      now: () => 0,
+    });
+    await relay.tick();
+    expect(posted.sort((a, b) => a.url.localeCompare(b.url))).toEqual([
+      { url: "http://fictional-a/api/host-chats/presence", body: { in_use: false, wait: ["s1"] } },
+      { url: "http://fictional-b/api/host-chats/presence", body: { in_use: false, wait: [] } },
+    ]);
+    await relay.tick();
+    expect(posted.length).toBe(2);
+    lists["pc-a"] = ["s1", "s2"];
+    await relay.tick();
+    expect(posted.slice(2)).toEqual([{ url: "http://fictional-a/api/host-chats/presence", body: { in_use: false, wait: ["s1", "s2"] } }]);
+  });
+
+  it("the bridge's route hands on the wait list, keeps the last one when an older connection server sends none, and refuses a bad one", async () => {
+    const waits: string[][] = [];
+    const bridge = new BridgePresence(() => false, () => {}, (sessions) => waits.push([...sessions]));
+    expect((await handleBridgePresenceRequest(bridgePost({ in_use: false, wait: ["s1"] }), bridge)).status).toBe(204);
+    expect((await handleBridgePresenceRequest(bridgePost({ in_use: true }), bridge)).status).toBe(204);
+    expect(waits).toEqual([["s1"]]);
+    for (const wait of [[1], "s1", null, Array.from({ length: 501 }, (_, i) => `s${i}`)]) {
+      expect((await handleBridgePresenceRequest(bridgePost({ in_use: false, wait }), bridge)).status).toBe(400);
+    }
+    expect((await handleBridgePresenceRequest(bridgePost({ in_use: false, wait: Array.from({ length: 500 }, (_, i) => `s${i}`) }), bridge)).status).toBe(204);
+    expect(waits.length).toBe(2);
+  });
+
   it("the relay tells remote bridges whether host chats run on the connection server or not", async () => {
     // presenceRelayFor takes no host chats switch: a connection server with them off still relays to a remote PC that has them
     const machines = {
@@ -126,11 +162,11 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
       endpoint: (id: string) => ({ url: `http://fictional-${id}`, token: "FICTIONAL-token" }),
     };
     const posted: string[] = [];
-    const relay = presenceRelayFor(machines, () => true, async (url) => { posted.push(url); return new Response(null, { status: 204 }); })!;
+    const relay = presenceRelayFor(machines, () => true, () => [], async (url) => { posted.push(url); return new Response(null, { status: 204 }); })!;
     await relay.tick();
     // the local PC reads its pages itself; one not connected is not asked
     expect(posted).toEqual(["http://fictional-pc-on/api/host-chats/presence"]);
-    expect(presenceRelayFor(null, () => true, fetch)).toBeNull();
+    expect(presenceRelayFor(null, () => true, () => [], fetch)).toBeNull();
   });
 
   it("a bridge that refuses or is gone is asked \"not in use\" again only after 30 s, or at once on a change", async () => {
@@ -140,7 +176,8 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     const posted: string[] = [];
     const relay = new PresenceRelay({
       inUse: () => inUse,
-      targets: () => [{ url: "http://fictional-old", token: "FICTIONAL-token" }, { url: "http://fictional-gone", token: "FICTIONAL-token" }],
+      targets: () => [{ id: "pc-old", url: "http://fictional-old", token: "FICTIONAL-token" }, { id: "pc-gone", url: "http://fictional-gone", token: "FICTIONAL-token" }],
+      waiting: () => [],
       fetch: async (url) => {
         posted.push(url);
         if (url.startsWith("http://fictional-gone")) throw new Error("FICTIONAL refused");
@@ -173,7 +210,8 @@ describe("presence on the bridges (ask_user_async, ZAC-326)", () => {
     const posted: boolean[] = [];
     const relay = new PresenceRelay({
       inUse: () => inUse,
-      targets: () => [{ url: "http://fictional-bridge", token: "FICTIONAL-token" }],
+      targets: () => [{ id: "pc-fictional", url: "http://fictional-bridge", token: "FICTIONAL-token" }],
+      waiting: () => [],
       fetch: async (_url, init) => {
         posted.push((JSON.parse(String(init.body)) as { in_use: boolean }).in_use);
         if (fail) throw new Error("FICTIONAL refused");

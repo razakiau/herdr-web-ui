@@ -27,6 +27,8 @@ export interface HostGoal {
   doneWhen: string;
   status: GoalStatus;
   pauseReason: string | null;
+  /** an optional question while the owner is away: "assume" takes its recommendation after 60 s, "wait" leaves it for the owner */
+  away: "assume" | "wait";
   capUsd: number;
   /** the chat's priced cost when the goal started */
   baselineUsd: number;
