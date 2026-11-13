@@ -515,7 +515,7 @@ export async function uploadPaneImage(paneId: string, image: Blob, machineId = "
   return ((await response.json()) as { path: string }).path;
 }
 
-async function sendJson(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown): Promise<Response> {
+export async function sendJson(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown): Promise<Response> {
   const response = await fetch(url, {
     method,
     headers: { "content-type": "application/json", "x-herdr-machine": "1" },

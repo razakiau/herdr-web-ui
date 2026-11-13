@@ -858,6 +858,15 @@ const BASE: Record<string, string> = {
   "this chat and the ones after it start a new group": "このチャットとそれ以降のチャットで新しいグループを始めます",
   "{date} – now": "{date} – 現在",
   "… {n} more": "… ほか {n} 件",
+  // a chat's goal (lib/hostGoals.ts)
+  "Goal {spent} / {cap}": "目標 {spent} / {cap}",
+  "Paused · {spent} / {cap}": "一時停止 · {spent} / {cap}",
+  "Goal met · {spent}": "目標達成 · {spent}",
+  "Goal stopped · {spent}": "目標停止 · {spent}",
+  "{n} min in": "{n} 分経過",
+  "{h}h {m}m in": "{h} 時間 {m} 分経過",
+  "1 check": "1 回のチェック",
+  "{n} checks": "{n} 回のチェック",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

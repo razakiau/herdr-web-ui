@@ -224,4 +224,5 @@ export const CHAT_JA: Record<string, string> = {
   "Checkpoint": "チェックポイント",
   "This message can't be shown here.": "このメッセージはここには表示できません。",
   "Go to your message: {text}": "あなたのメッセージへ移動: {text}",
+  "Judge · not met: {reason}": "判定 · 未達成: {reason}",
 };

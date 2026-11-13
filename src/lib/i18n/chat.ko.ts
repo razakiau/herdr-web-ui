@@ -224,4 +224,5 @@ export const CHAT_KO: Record<string, string> = {
   "Checkpoint": "체크포인트",
   "This message can't be shown here.": "이 메시지는 여기에 표시할 수 없습니다.",
   "Go to your message: {text}": "내 메시지로 이동: {text}",
+  "Judge · not met: {reason}": "판정 · 미달성: {reason}",
 };

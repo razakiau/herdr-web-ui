@@ -860,6 +860,15 @@ const BASE: Record<string, string> = {
   "this chat and the ones after it start a new group": "这个聊天及其之后的聊天组成新分组",
   "{date} – now": "{date} – 至今",
   "… {n} more": "… 还有 {n} 个",
+  // a chat's goal (lib/hostGoals.ts)
+  "Goal {spent} / {cap}": "目标 {spent} / {cap}",
+  "Paused · {spent} / {cap}": "已暂停 · {spent} / {cap}",
+  "Goal met · {spent}": "目标已达成 · {spent}",
+  "Goal stopped · {spent}": "目标已停止 · {spent}",
+  "{n} min in": "已进行 {n} 分钟",
+  "{h}h {m}m in": "已进行 {h} 小时 {m} 分钟",
+  "1 check": "1 次检查",
+  "{n} checks": "{n} 次检查",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

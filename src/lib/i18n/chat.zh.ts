@@ -224,4 +224,5 @@ export const CHAT_ZH: Record<string, string> = {
   "Checkpoint": "检查点",
   "This message can't be shown here.": "此消息无法在这里显示。",
   "Go to your message: {text}": "跳转到你的消息：{text}",
+  "Judge · not met: {reason}": "评审 · 未达成：{reason}",
 };

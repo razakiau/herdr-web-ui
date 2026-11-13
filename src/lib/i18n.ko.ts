@@ -856,6 +856,15 @@ const BASE: Record<string, string> = {
   "this chat and the ones after it start a new group": "이 채팅과 그 이후 채팅으로 새 그룹을 시작합니다",
   "{date} – now": "{date} – 현재",
   "… {n} more": "… {n}개 더",
+  // a chat's goal (lib/hostGoals.ts)
+  "Goal {spent} / {cap}": "목표 {spent} / {cap}",
+  "Paused · {spent} / {cap}": "일시 중지 · {spent} / {cap}",
+  "Goal met · {spent}": "목표 달성 · {spent}",
+  "Goal stopped · {spent}": "목표 중지 · {spent}",
+  "{n} min in": "{n}분 경과",
+  "{h}h {m}m in": "{h}시간 {m}분 경과",
+  "1 check": "확인 1회",
+  "{n} checks": "확인 {n}회",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
