@@ -29,7 +29,7 @@ class FakePc implements GoalPc {
   digestText: string | null | "offline" = "USER: FICTIONAL\nAGENT: done";
   offline = false;
   sendOk = true;
-  sent: { session: string; text: string }[] = [];
+  sent: { session: string; text: string; callAt?: string }[] = [];
   async row(session: string): Promise<HostChatRow | null | "offline"> {
     if (this.offline) return "offline";
     return { session, title: "FICTIONAL", status: this.status, modified_at: T1, cwd: null, unread: false, archived: this.archived };
@@ -39,7 +39,7 @@ class FakePc implements GoalPc {
     return { session, models: [{ model: "fictional/work-x", input: this.input, cacheRead: 0, cacheWrite: 0, output: 0, calls: 1 }], lastCallAt: this.lastCallAt, context: null } as HostChatCost;
   }
   async digest(): Promise<string | null | "offline"> { return this.offline ? "offline" : this.digestText; }
-  async send(session: string, text: string): Promise<boolean> { this.sent.push({ session, text }); return this.sendOk; }
+  async send(session: string, text: string, callAt: string): Promise<boolean> { this.sent.push({ session, text, callAt }); return this.sendOk; }
 }
 
 describe("goal runner", () => {
@@ -79,6 +79,8 @@ describe("goal runner", () => {
     await runner(store).tick();
     expect(pc.sent).toHaveLength(1);
     expect(pc.sent[0]!.session).toBe(SESSION);
+    // the judged call names the message, so a re-send of it is the same message
+    expect(pc.sent[0]!.callAt).toBe(T1);
     expect(pc.sent[0]!.text).toBe(`[Goal, check 1] Not done yet: FICTIONAL: no test output shown
 
 Keep working toward the whole goal:

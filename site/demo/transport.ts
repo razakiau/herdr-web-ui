@@ -1071,6 +1071,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   // chat groups (ZAC-265): the demo has none; a change to one is refused as the server refuses a group it has not got
   if (path === "/api/groups") return method === "POST" ? json({ error: { code: "invalid_body", message: "The demo keeps no groups." } }, 400) : json({ groups: [], links: [], summaries: [], digests: [], digestDefaults: { model: "opencode-go-claude-haiku-5-5", effort: "low" } }, 200, { "cache-control": "no-store" });
   if (path.startsWith("/api/groups/")) return json({ error: { code: "group_not_found", message: "The demo keeps no groups." } }, 404);
+  // goals (ZAC-326): the demo runs none; a change to one is refused as the server refuses a chat with no goal
+  if (path === "/api/goals") return method === "GET" ? json({ goals: [] }, 200, { "cache-control": "no-store" }) : json({ error: { code: "method_not_allowed", message: "Use GET /api/goals" } }, 405);
+  if (path.startsWith("/api/goals/")) return json({ error: { code: "not_found", message: "The demo runs no goals." } }, 404);
   if (path === "/api/seen") return method === "POST" ? new Response(null, { status: 204 }) : json({ finishes: [] }, 200, { "cache-control": "no-store" });
   if (path === "/api/preferences") {
     if (method === "GET") return json(preferences, 200, { "cache-control": "no-store" });

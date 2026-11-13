@@ -18,8 +18,11 @@ export interface GoalPc {
   row(session: string): Promise<HostChatRow | null | "offline">;
   cost(session: string, parent: string | null): Promise<HostChatCost | null | "offline">;
   digest(session: string, parent: string | null): Promise<string | null | "offline">;
-  /** POST host-chats/chat/send, mode "queue"; false when it was not delivered */
-  send(session: string, text: string): Promise<boolean>;
+  /**
+   * POST host-chats/chat/send, mode "queue"; false when it was not delivered. `callAt` is the judged
+   * call the turn answers: the message's id is made from it, so a re-send after a restart cannot queue twice.
+   */
+  send(session: string, text: string, callAt: string): Promise<boolean>;
 }
 
 type Prices = { prices: ModelPrices | null; fallback: Record<string, ModelPrice> | null };
@@ -130,7 +133,7 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     const { machineId, session } = goal;
     const callAt = goal.lastJudgedCallAt;
     const text = nextTurnText({ check: goal.judge.checks.length, reason, doneWhen: goal.doneWhen, spentUsd: spent(goal), capUsd: goal.capUsd });
-    const sent = await pc.send(session, text).catch(() => false);
+    const sent = await pc.send(session, text, callAt ?? "").catch(() => false);
     store.update(machineId, session, (each) => {
       const check = each.judge.checks.at(-1);
       if (sent) { if (check && check.callAt === callAt) check.sent = true; return; }
