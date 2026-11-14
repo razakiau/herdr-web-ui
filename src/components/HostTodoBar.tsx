@@ -1,13 +1,15 @@
-import { useState } from "react";
-import { Check, ChevronDown, Circle, CircleCheck, CircleDot, CirclePause, CircleX, Clock, ListChecks, Scale, Target, TriangleAlert, Wallet, X, type LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, CirclePause, CircleX, ListChecks, Pause, Play, Target, TriangleAlert, X, type LucideIcon } from "lucide-react";
 
 import type { GoalCheck, GoalView } from "../../shared/goals.ts";
 import type { HostTodo } from "../../shared/host-chats.ts";
 import { useChatRowToggle } from "../lib/chatRowState.tsx";
-import { capDollars, dollars, goalHead } from "../lib/hostGoals.ts";
-import { useT } from "../lib/i18n.ts";
+import { errorText } from "../lib/hostChats.ts";
+import { capDollars, dollars, goalHead, pauseGoal, pauseReasonWords, raiseGoal, resumeGoal, stopGoal, type GoalRing } from "../lib/hostGoals.ts";
+import { useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { currentTodo } from "../lib/todos.ts";
 import { AnimatedHeight } from "./AnimatedHeight.tsx";
+import { digestModelName } from "./DigestCard.tsx";
 import "./HostTodoBar.css";
 
 const ICON: Record<HostTodo["status"], LucideIcon> = { done: Check, in_progress: CircleDot, pending: Circle, blocked: TriangleAlert };
@@ -19,12 +21,15 @@ const ICON: Record<HostTodo["status"], LucideIcon> = { done: Check, in_progress:
  * and once all are done and the chat is idle. The list starts over at each message, as VS Code's does
  * (the server cuts it: server/agent-host/todos.ts todosSince), so it no longer grows for ever (ZAC-233).
  *
- * A chat's goal (ZAC-326) takes over the head: its spend against the cap and what it is on; open, the
- * todos come first, then the goal's terms and the judge's checks. One tab rather than two, which would
- * be the sandwich ZAC-228 removed. An ended goal can be dismissed, remembered per goal under `dismissKey`.
+ * A chat's goal (ZAC-326) takes over the head (GoalBar): its state, its spend against the cap and what
+ * it is on; open, the todos come first, then the goal. One tab rather than two, which would be the
+ * sandwich ZAC-228 removed. With `machineId` and `session` it pauses, resumes, raises and stops the
+ * goal itself (then `onGoalChanged`), and a stopped one offers `onStartAgain`. An ended goal can be
+ * dismissed, remembered per goal under `dismissKey`.
  */
-export function HostTodoBar({ todos, busy, defaultOpen = false, goal = null, dismissKey }: {
+export function HostTodoBar({ todos, busy, defaultOpen = false, goal = null, dismissKey, machineId, session, onGoalChanged, onStartAgain }: {
   todos: readonly HostTodo[] | undefined; busy: boolean; defaultOpen?: boolean; goal?: GoalView | null; dismissKey?: string;
+  machineId?: string; session?: string; onGoalChanged?: () => void; onStartAgain?: (goal: GoalView) => void;
 }) {
   const t = useT();
   const [chosen, setOpen] = useChatRowToggle("host-todos", null);
@@ -53,25 +58,67 @@ export function HostTodoBar({ todos, busy, defaultOpen = false, goal = null, dis
     </section>;
   }
 
-  // a met goal opens to its summary
-  const open = chosen ?? (defaultOpen || goal.status === "met");
+  return <GoalBar goal={goal} todos={todos} listed={listed} open={chosen ?? (defaultOpen || paused(goal))} setOpen={setOpen} dismissal={ended ? dismissal : null}
+    onDismiss={() => setDismissed((count) => count + 1)} actions={machineId !== undefined && session !== undefined ? { machineId, session, onChanged: onGoalChanged, onStartAgain } : null} />;
+}
+
+interface GoalActions { machineId: string; session: string; onChanged?: (() => void) | undefined; onStartAgain?: ((goal: GoalView) => void) | undefined }
+
+const RING: Record<GoalRing, LucideIcon> = { run: Target, pause: CirclePause, met: CircleCheck, stop: CircleX };
+const paused = (goal: GoalView): boolean => goal.status === "paused" || goal.status === "budget_limited";
+
+/**
+ * The goal's tab (ZAC-326): the head is its state, its spend against the cap and what it is on, with
+ * a pause or resume beside it. Open, the agent's todos first, then the objective, the done-when (two
+ * lines, a tap shows it whole), the card that matters now (the latest check, or why it paused or
+ * stopped with what to do about it), the older checks folded, and one line of judge, away rule and spend.
+ */
+function GoalBar({ goal, todos, listed, open, setOpen, dismissal, onDismiss, actions }: {
+  goal: GoalView; todos: readonly HostTodo[] | undefined; listed: readonly HostTodo[] | null; open: boolean; setOpen(open: boolean | null): void;
+  dismissal: string | null; onDismiss(): void; actions: GoalActions | null;
+}) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  // a goal that pauses asks for something (a raise, a resume): its tab opens to it, whatever was picked before
+  const wasPaused = useRef(paused(goal));
+  useEffect(() => {
+    const now = paused(goal);
+    if (now && !wasPaused.current) setOpen(true);
+    wasPaused.current = now;
+  }, [goal, setOpen]);
   const head = goalHead(goal, todos, Date.now());
-  const Icon = goal.status === "active" ? Target : goal.status === "met" ? CircleCheck : goal.status === "stopped" ? CircleX : CirclePause;
+  const Ring = RING[head.ring];
   const done = listed === null ? 0 : doneOf(listed);
-  return <section className="todo-bar goal-bar">
+  const run = (action: (machine: string, session: string) => Promise<GoalView>): void => {
+    if (actions === null || busy) return;
+    setBusy(true);
+    setFailure(null);
+    void action(actions.machineId, actions.session).then(() => { setBusy(false); actions.onChanged?.(); }, (cause: unknown) => {
+      setBusy(false);
+      setFailure(errorText(cause));
+    });
+  };
+  const headAction = actions === null ? null
+    : goal.status === "active" ? <button type="button" className="goal-bar-act" aria-label={t("Pause goal")} title={t("Pause goal")} disabled={busy} onClick={() => run(pauseGoal)}><Pause aria-hidden="true" /></button>
+    : goal.status === "paused" ? <button type="button" className="goal-bar-act" data-tone="notice" aria-label={t("Resume goal")} title={t("Resume goal")} disabled={busy} onClick={() => run(resumeGoal)}><Play aria-hidden="true" /></button>
+    : null;
+  return <section className="todo-bar goal-bar" data-status={goal.status}>
     <div className="goal-bar-head">
       <button type="button" className="todo-bar-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon className="todo-bar-icon" aria-hidden="true" />
+        <Ring className="todo-bar-icon goal-bar-ring" data-tone={head.tone} aria-hidden="true" />
         <span className="todo-bar-title">{head.title}</span>
-        <span className="todo-bar-track" role="progressbar" aria-valuemin={0} aria-valuemax={goal.capUsd} aria-valuenow={Math.min(goal.spentUsd, goal.capUsd)}>
+        <span className="goal-bar-spend">{head.spent}<span className="goal-bar-cap"> / {head.cap}</span></span>
+        <span className="todo-bar-track" role="progressbar" aria-label={t("Spent of the cap")} aria-valuemin={0} aria-valuemax={goal.capUsd} aria-valuenow={Math.min(goal.spentUsd, goal.capUsd)}>
           <span className="todo-bar-fill" data-tone={head.tone} style={{ width: spendShare(goal.spentUsd, goal.capUsd) }} />
         </span>
         <span className="todo-bar-current">{head.current}</span>
         <ChevronDown className="todo-bar-caret" aria-hidden="true" />
       </button>
-      {ended && dismissal !== null && <button type="button" className="goal-bar-dismiss" aria-label={t("Dismiss goal")} title={t("Dismiss goal")} onClick={() => {
+      {headAction}
+      {dismissal !== null && <button type="button" className="goal-bar-act" aria-label={t("Dismiss goal")} title={t("Dismiss goal")} onClick={() => {
         dismiss(dismissal);
-        setDismissed((count) => count + 1);
+        onDismiss();
       }}><X aria-hidden="true" /></button>}
     </div>
     <AnimatedHeight open={open}>
@@ -85,40 +132,122 @@ export function HostTodoBar({ todos, busy, defaultOpen = false, goal = null, dis
             </span>
           </p>
           <ol className="todo-bar-list goal-bar-todos"><TodoRows todos={listed} /></ol>
-          <p className="goal-bar-section"><Target className="todo-bar-row-icon" aria-hidden="true" /><span>{t("Goal")}</span></p>
         </>}
-        <ol className="todo-bar-list">
-          <GoalRow icon={Target} status="pending" text={t("Goal: {objective}", { objective: goal.objective })} />
-          <GoalRow icon={goal.status === "met" ? Check : Circle} status={goal.status === "met" ? "met" : "pending"} text={t("Done when: {doneWhen}", { doneWhen: goal.doneWhen })} />
-          <GoalRow icon={Scale} status={goal.judge.warning === null ? "pending" : "blocked"}
-            text={goal.judge.warning === null ? t("Judge {model}", { model: goal.judge.model }) : t("Judge {model} · same family", { model: goal.judge.model })} />
-          <GoalRow icon={Clock} status="pending" text={goal.away === "assume" ? t("While you're away: takes its recommended answer") : t("While you're away: waits for you")} />
-          {goal.judge.checks.map((check, index) => <GoalRow key={check.at + index} icon={CHECK_ICON[check.verdict]} status={check.verdict} text={checkText(t, index + 1, check)} />)}
-          <GoalRow icon={Wallet} status={goal.status === "met" ? "met" : "pending"}
-            text={t("Chat {chat} · judge {judge} · cap {cap}", { chat: dollars(goal.chatUsd), judge: dollars(goal.judgeUsd), cap: capDollars(goal.capUsd) })} />
-        </ol>
+        <GoalBody goal={goal} busy={busy} failure={failure} run={actions === null ? null : run}
+          onStartAgain={actions?.onStartAgain === undefined ? null : () => actions.onStartAgain?.(goal)} />
       </>}
     </AnimatedHeight>
   </section>;
 }
 
-const CHECK_ICON: Record<GoalCheck["verdict"], LucideIcon> = { met: Check, not_met: CircleX, impossible: CircleX, error: TriangleAlert };
+function GoalBody({ goal, busy, failure, run, onStartAgain }: {
+  goal: GoalView; busy: boolean; failure: string | null;
+  run: ((action: (machine: string, session: string) => Promise<GoalView>) => void) | null; onStartAgain: (() => void) | null;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const [whenOpen, setWhenOpen] = useState(false);
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  const checks = goal.judge.checks;
+  const latest = checks.at(-1) ?? null;
+  // the older checks, newest first; the latest is the card
+  const earlier = checks.slice(0, -1).map((check, index) => ({ check, n: index + 1 })).reverse();
+  const at = clock(goal.updatedAt, locale);
+  const card = cardOf(goal, latest, checks.length, at, t);
+  const button = (label: string, action: () => void, primary = false) =>
+    <button key={label} type="button" className={`btn goal-card-btn${primary ? " btn-primary" : ""}`} disabled={busy} onClick={action}>{label}</button>;
+  const buttons = run === null ? [] : goal.status === "budget_limited"
+    ? [...(goal.raises ?? []).map((cap, index) => button(t("Raise to {cap}", { cap: capDollars(cap) }), () => run((machine, session) => raiseGoal(machine, session, cap)), index === 0)),
+      button(t("Stop"), () => run(stopGoal))]
+    : goal.status === "paused"
+      ? [button(t("Resume"), () => run(resumeGoal), true), ...(goal.pauseReason === "owner" ? [] : [button(t("Stop"), () => run(stopGoal))])]
+      : [];
+  if (goal.status === "stopped" && onStartAgain !== null) buttons.push(button(t("Start again…"), onStartAgain, true));
+  return <div className="goal-body">
+    <h3 className="goal-obj">{goal.objective}</h3>
+    <button type="button" className="goal-when" aria-expanded={whenOpen} onClick={() => setWhenOpen(!whenOpen)}>
+      <span className="goal-when-k">{t("Done when")}</span> {goal.doneWhen}
+    </button>
+    {card !== null && <GoalCard card={card} actions={buttons} failure={failure} />}
+    {earlier.length > 0 && <>
+      <button type="button" className="goal-earlier" aria-expanded={earlierOpen} onClick={() => setEarlierOpen(!earlierOpen)}>
+        {earlierOpen ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+        {earlier.length === 1 ? t("1 earlier check") : t("{n} earlier checks", { n: earlier.length })}
+      </button>
+      {earlierOpen && <ol className="goal-earlier-list">
+        {earlier.map(({ check, n }) => <li key={check.at + n} data-verdict={check.verdict}>
+          <span className="goal-earlier-n">{n}</span>
+          <span className="goal-earlier-t" title={check.reason}>{verdictWord(check.verdict, t)}: {check.reason}</span>
+        </li>)}
+      </ol>}
+    </>}
+    <p className="goal-meta">
+      <span title={goal.judge.model}>{t("Judge {model}", { model: digestModelName(goal.judge.model) })}</span>
+      {goal.judge.warning === "same_family" && <span className="goal-chip">{t("same family")}</span>}
+      <span className="goal-dot" aria-hidden="true">·</span>
+      <span>{goal.away === "assume" ? t("away: takes its pick") : t("away: waits for you")}</span>
+      <span className="goal-dot" aria-hidden="true">·</span>
+      <span>{t("chat {chat} · judge {judge}", { chat: dollars(goal.chatUsd), judge: dollars(goal.judgeUsd) })}</span>
+    </p>
+  </div>;
+}
 
-function checkText(t: ReturnType<typeof useT>, n: number, check: GoalCheck): string {
-  const reason = check.reason;
-  switch (check.verdict) {
-    case "met": return t("Check {n} · met: {reason}", { n, reason });
-    case "not_met": return t("Check {n} · not met: {reason}", { n, reason });
-    case "impossible": return t("Check {n} · impossible: {reason}", { n, reason });
-    case "error": return t("Check {n} · error: {reason}", { n, reason });
+/** The card under the done-when: what the goal needs now. */
+interface Card { tone: "notice" | "blocked" | "done" | "ended"; Icon: LucideIcon; head: string; text: string | null; more: string | null }
+
+function cardOf(goal: GoalView, latest: GoalCheck | null, n: number, at: string, t: Translate): Card | null {
+  const last = latest === null ? null : t("Last check: {reason}", { reason: latest.reason });
+  if (goal.status === "budget_limited") return { tone: "notice", Icon: CirclePause, head: t("Hit the {cap} cap", { cap: capDollars(goal.capUsd) }), text: last, more: null };
+  if (goal.status === "paused") {
+    if (goal.pauseReason === "owner") return { tone: "notice", Icon: CirclePause, head: t("Paused by you · {time}", { time: at }), text: last, more: null };
+    const why = pauseReasonWords(goal.pauseReason);
+    // an impossible verdict's reason is the pause's: said once
+    return { tone: "notice", Icon: CirclePause, head: t("Paused · {time}", { time: at }), text: why, more: latest !== null && latest.reason !== goal.pauseReason ? last : null };
+  }
+  if (goal.status === "stopped") return { tone: "ended", Icon: CircleX, head: t("Stopped by you · {time}", { time: at }), text: last, more: null };
+  if (latest === null) return null;
+  return {
+    tone: latest.verdict === "met" ? "done" : latest.verdict === "error" ? "blocked" : "notice",
+    Icon: CHECK_ICON[latest.verdict],
+    head: t("Check {n} · {verdict}", { n, verdict: verdictWord(latest.verdict, t) }),
+    text: latest.reason, more: null,
+  };
+}
+
+function GoalCard({ card, actions, failure }: { card: Card; actions: ReactNode[]; failure: string | null }) {
+  const [whole, setWhole] = useState(false);
+  const { Icon } = card;
+  const reason = card.text === null ? null : card.text + (card.more === null ? "" : `\n${card.more}`);
+  return <div className="goal-card" data-tone={card.tone} role="status">
+    <p className="goal-card-head"><Icon aria-hidden="true" /><span>{card.head}</span></p>
+    {reason !== null && <button type="button" className="goal-card-text" aria-expanded={whole} onClick={() => setWhole(!whole)}>{reason}</button>}
+    {actions.length > 0 && <div className="goal-card-actions">{actions}</div>}
+    {failure !== null && <p className="goal-card-error" role="alert">{failure}</p>}
+  </div>;
+}
+
+const CHECK_ICON: Record<GoalCheck["verdict"], LucideIcon> = { met: CircleCheck, not_met: CircleX, impossible: CircleX, error: TriangleAlert };
+
+function verdictWord(verdict: GoalCheck["verdict"], t: Translate): string {
+  switch (verdict) {
+    case "met": return t("met");
+    case "not_met": return t("not met");
+    case "impossible": return t("impossible");
+    case "error": return t("error");
   }
 }
 
-function TodoRows({ todos }: { todos: readonly HostTodo[] }) {
-  return todos.map((todo) => <GoalRow key={todo.id} icon={ICON[todo.status]} status={todo.status} text={todo.title} />);
+/** an ISO time as the hour and minute it was, here */
+function clock(iso: string, locale: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "" : at.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 }
 
-function GoalRow({ icon: Icon, status, text }: { icon: LucideIcon; status: string; text: string }) {
+function TodoRows({ todos }: { todos: readonly HostTodo[] }) {
+  return todos.map((todo) => <TodoRow key={todo.id} icon={ICON[todo.status]} status={todo.status} text={todo.title} />);
+}
+
+function TodoRow({ icon: Icon, status, text }: { icon: LucideIcon; status: string; text: string }) {
   return <li className="todo-bar-row" data-status={status}>
     <Icon className="todo-bar-row-icon" aria-hidden="true" />
     <span className="todo-bar-row-title">{text}</span>

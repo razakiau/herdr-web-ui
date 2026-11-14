@@ -21,6 +21,7 @@ import "./Composer.css";
 import "./HostChatView.css";
 
 import type { JudgeChoice } from "../../shared/goal-budget.ts";
+import type { GoalView } from "../../shared/goals.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { hostSource, keepContext } from "../lib/chatSource.ts";
@@ -53,7 +54,6 @@ import { OpenFileContext } from "../lib/filePaths.ts";
 import { CheckpointBar, CheckpointSheet, filesSince } from "./HostCheckpoint.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { PromptCardView, type PromptChoice } from "./PromptCard.tsx";
-import { GoalPauseCard } from "./GoalPauseCard.tsx";
 import { APPROVALS_LABEL, MODE_LABEL, ModelMarkIcon, ModelPicker, type GoalStart } from "./ModelPicker.tsx";
 import { providerMark, rowDetail, shortModelName } from "../lib/modelProvider.ts";
 import { fetchJudges, goalCheckOf, startGoal, stopGoal, useHostGoal } from "../lib/hostGoals.ts";
@@ -157,6 +157,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const [sheetError, setSheetError] = useState<string | null>(null);
   // the judges a goal started from the settings sheet can take, read as the sheet opens
   const [judges, setJudges] = useState<JudgeChoice[] | null>(null);
+  // the stopped goal the settings sheet's Goal form starts again, null for a new one
+  const [goalAgain, setGoalAgain] = useState<GoalView | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   // OmniRoute's prices, once the context sheet is first opened, or at once while costs are tracked
   // (the meter and the banner weigh a big chat in dollars, ZAC-260); asked again until both tables
@@ -272,8 +274,9 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     });
   };
 
-  const openSheet = (part: "model" | "settings"): void => {
+  const openSheet = (part: "model" | "settings", again: GoalView | null = null): void => {
     setSheet(part);
+    setGoalAgain(again);
     setSheetError(null);
     if (part === "settings") {
       setJudges(null);
@@ -320,11 +323,14 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     }
     return null;
   }, [chat?.turns]);
+  // a stopped goal started again (its tab's Start again…): the settings sheet's Goal form with its terms, and its objective
+  const startGoalAgain = (stopped: GoalView): void => openSheet("settings", stopped);
   const startChatGoal = async (input: GoalStart): Promise<string | null> => {
-    if (goalDraft === null) return "no_objective";
+    const objective = goalAgain?.objective ?? goalDraft;
+    if (objective === null) return "no_objective";
     setSheetError(null);
     try {
-      await startGoal({ machine: machineId, session, objective: goalDraft, doneWhen: input.doneWhen, capUsd: input.capUsd, away: input.away,
+      await startGoal({ machine: machineId, session, objective, doneWhen: input.doneWhen, capUsd: input.capUsd, away: input.away,
         ...(input.judgeModel !== null ? { judgeModel: input.judgeModel } : {}), ...(input.allowUnpriced ? { allowUnpriced: true } : {}) });
     } catch (cause) {
       const code = cause instanceof ApiError ? cause.code ?? "failed" : "failed";
@@ -333,7 +339,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
       return code;
     }
     refreshGoal();
-    if (mounted.current) setSheet(null);
+    if (mounted.current) { setSheet(null); setGoalAgain(null); }
     return null;
   };
   const stopChatGoal = async (): Promise<void> => {
@@ -505,9 +511,6 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
         setChat((current) => current === null ? current : { ...current, prompt: null });
         reread();
       }} />}
-      {/* a paused goal asks in the same card, once the chat's own question is answered (ZAC-326) */}
-      {!chat?.prompt && goal !== null && (goal.status === "paused" || goal.status === "budget_limited") &&
-        <GoalPauseCard machineId={machineId} session={session} goal={goal} onDone={refreshGoal} />}
     </div>
     {look && <div className="checkpoint-bar look-bar">
       <Eye className="checkpoint-bar-icon" aria-hidden="true" />
@@ -566,7 +569,8 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
           onHandoff={onHandoff} handingOff={handingOff} handoffWaiting={handoffWaiting} fresh={fresh} /> : undefined} />}
       draftKey={hostDraftKey(machineId, session)} hostMenus={hostMenus} restored={putBack} keywords={catalog?.agents.map((each) => each.name) ?? []}
       pills={pills} settingsButton={settings} sendMenu={sendMenu}
-      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} goal={goal} dismissKey={`${machineId}:${session}`} />}
+      tray={<HostTodoBar todos={chat?.todos} busy={chat?.busy ?? false} goal={goal} dismissKey={`${machineId}:${session}`}
+        machineId={machineId} session={session} onGoalChanged={refreshGoal} onStartAgain={startGoalAgain} />}
       foot={<HostSessionPills machineId={machineId} session={session} showChanges={showChanges} onChangedPaths={setChangedPaths} changesKey={chat ? `${chat.busy}:${chat.message_ids.length}` : undefined} artifacts={chat?.artifacts ?? []} work={chat?.work ?? []} onOpenFile={(path) => onOpenFile?.(path)}
       onStop={async (id) => { try { await stopHostBackground(machineId, session, id); } finally { reread(); } }}
       onRevealSubagent={(target) => revealSubagent.current?.(target) ?? false} />}
@@ -587,6 +591,6 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
     {attaching !== null && <AttachSheet machineId={machineId} session={session} api={attaching} onClose={() => setAttaching(null)} />}
     {sheet !== null && <ModelPicker machineId={machineId} focus={sheet} models={catalog?.models ?? null} agents={catalog?.agents ?? null} model={model} agent={agent} config={config} error={sheetError}
       onModel={pickModel} switchCost={trackCosts && chatCostLog?.chat ? (target) => switchCostOf(chatCostLog.chat, target, chat?.context?.currentTokens ?? chatCostLog.chat?.context ?? 0, costSettings, Date.now(), sheetPrices) : undefined} onAgent={pickAgent} onConfig={pickConfig}
-      goal={goal} goalDraft={goalDraft} judges={judges} onStartGoal={startChatGoal} onStopGoal={stopChatGoal} onClose={() => setSheet(null)} />}
+      goal={goal} goalDraft={goalAgain?.objective ?? goalDraft} goalAgain={goalAgain} judges={judges} onStartGoal={startChatGoal} onStopGoal={stopChatGoal} onClose={() => { setSheet(null); setGoalAgain(null); }} />}
   </div>;
 }
