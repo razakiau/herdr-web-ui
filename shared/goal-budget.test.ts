@@ -94,6 +94,22 @@ describe("defaultJudge", () => {
   });
 });
 
+describe("defaultJudge with the owner's preferred judge", () => {
+  const models = ["claude/claude-haiku-5-5", "claude/claude-sonnet-5-5", "gpt-6-luna"];
+
+  it("takes the preferred judge when it is on the list, for a Claude worker and for another", () => {
+    expect(defaultJudge("cc/claude-opus-5-5", models, "claude/claude-sonnet-5-5")).toBe("claude/claude-sonnet-5-5");
+    expect(defaultJudge("gpt-6-sol", models, "claude/claude-sonnet-5-5")).toBe("claude/claude-sonnet-5-5");
+    expect(defaultJudge(null, models, "claude/claude-sonnet-5-5")).toBe("claude/claude-sonnet-5-5");
+  });
+
+  it("falls back to the family rule when the preferred judge is not on the list, or is null", () => {
+    expect(defaultJudge("cc/claude-opus-5-5", models, "claude/claude-opus-5-5")).toBe("gpt-6-luna");
+    expect(defaultJudge("cc/claude-opus-5-5", models, null)).toBe("gpt-6-luna");
+    expect(defaultJudge("gpt-6-sol", models, null)).toBe("claude/claude-haiku-5-5");
+  });
+});
+
 describe("judgeChoices", () => {
   // the brief's prices, under one provider: a bare id is looked up in every provider's table
   const prices: ModelPrices = { fictional: { "gpt-5-6-sol": { input: 2, output: 8 }, "deepseek-v4-flash": { input: 0.1, output: 0.4 }, "claude-haiku-5-5": { input: 1, output: 5 }, "claude-opus-5-5": { input: 15, output: 75 } } };
@@ -122,6 +138,28 @@ describe("judgeChoices", () => {
 
   it("labels the default same_family when every model is of the worker's family", () => {
     expect(judgeChoices("omniroute/claude-haiku-5-5", ["claude/claude-haiku-5-5", "claude/claude-sonnet-5-5"], prices, null)[0]).toEqual({ id: "claude/claude-haiku-5-5", why: "same_family" });
+  });
+
+  it("puts the owner's preferred judge first when it is on the list: same_family for a Claude worker, default for another", () => {
+    const models = ["claude-haiku-5-5", "claude-opus-5-5", "gpt-5-6-sol", "deepseek-v4-flash"];
+    expect(judgeChoices("omniroute/claude-haiku-5-5", models, prices, null, "claude-opus-5-5")).toEqual([
+      { id: "claude-opus-5-5", why: "same_family" },
+      { id: "deepseek-v4-flash", why: "cheapest" },
+      { id: "claude-haiku-5-5", why: "same_family" },
+    ]);
+    expect(judgeChoices("fictional/gpt-5-6-sol", models, prices, null, "claude-opus-5-5")).toEqual([
+      { id: "claude-opus-5-5", why: "default" },
+      { id: "deepseek-v4-flash", why: "cheapest" },
+      { id: "gpt-5-6-sol", why: "same_family" },
+    ]);
+  });
+
+  it("ignores a preferred judge that is not on the list, as it does a null one", () => {
+    const models = ["claude-haiku-5-5", "gpt-5-6-sol", "deepseek-v4-flash"];
+    const old = judgeChoices("omniroute/claude-haiku-5-5", models, prices, null);
+    expect(old[0]).toEqual({ id: "gpt-5-6-sol", why: "default" });
+    expect(judgeChoices("omniroute/claude-haiku-5-5", models, prices, null, "claude-sonnet-5-5")).toEqual(old);
+    expect(judgeChoices("omniroute/claude-haiku-5-5", models, prices, null, null)).toEqual(old);
   });
 
   it("without a worker model, offers the first model and the cheapest priced one", () => {

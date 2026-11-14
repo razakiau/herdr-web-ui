@@ -88,6 +88,8 @@ export interface GoalRoutesDeps {
   models: () => Promise<string[]>;
   /** whether a picked judge is one of those models: a hand-made start cannot spend a quota the owner forbids */
   judgeAllowed: (id: string) => boolean;
+  /** the owner's default judge (HERDR_WEB_GOAL_JUDGE), used when it is one of `models`; null for the family rule */
+  preferredJudge: string | null;
   /** a goal was started, raised or resumed: the runner may look at it now rather than on its next tick */
   kick?: () => void;
 }
@@ -125,7 +127,7 @@ export async function handleGoalsRequest(request: Request, pathname: string, dep
     const worker = new URL(request.url).searchParams.get("worker") || null;
     // a list to pick from: with no prices it still offers the default judge
     const [models, priced] = await Promise.all([deps.models().catch(() => []), deps.prices().catch((): Prices => ({ prices: null, fallback: null }))]);
-    return reply({ choices: judgeChoices(worker, models, priced.prices ?? {}, priced.fallback) });
+    return reply({ choices: judgeChoices(worker, models, priced.prices ?? {}, priced.fallback, deps.preferredJudge) });
   }
   const action = /^\/api\/goals\/(start|raise|stop|resume)$/.exec(pathname)?.[1];
   if (!action) return refuse("not_found", "not found", 404);
@@ -201,7 +203,7 @@ async function start(deps: GoalRoutesDeps, machine: string, session: string, bod
     && chatUsd([{ model: lastModel, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, calls: 0 }], priced.prices ?? {}, priced.fallback).unpriced.length > 0) {
     return refuse("unpriced_model", `${lastModel} has no price, so the cap cannot count its spend; send allowUnpriced: true to start anyway`, 400);
   }
-  const model = picked ?? defaultJudge(lastModel, await deps.models().catch(() => []));
+  const model = picked ?? defaultJudge(lastModel, await deps.models().catch(() => []), deps.preferredJudge);
   if (model === null) return refuse("no_judge", "No model to judge with: pick one, or connect OmniRoute", 400);
   const warning = lastModel !== null && modelFamily(model) === modelFamily(lastModel) ? "same_family" : null;
   try {
