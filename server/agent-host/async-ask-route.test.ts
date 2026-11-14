@@ -97,6 +97,22 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect((JSON.parse(readFileSync(join(stateDir, "async-asks.json"), "utf8")) as { id: string; session: string }[]).map((q) => [q.id, q.session])).toEqual([[answer.id, SESSION]]);
   });
 
+  it("shows the agent's message above the question, as ask_user's card does, and keeps it across a restart", async () => {
+    const { endpoint, token, stateDir } = await bridge();
+    const message = "FICTIONAL context:\n\n- the table holds **3 years** of rows\n- nothing reads it since v4";
+    const answer = await (await post(endpoint, { ...ASK, message }, token)).json() as { id: string };
+    const read = async () => (await (await fetch(`${endpoint}/api/host-chats/chat?session=${encodeURIComponent(SESSION)}`, { headers: { authorization: `Bearer ${token}` } })).json() as HostChatRead).prompt;
+    expect(await read()).toMatchObject({ id: answer.id, question: ASK.question, body: message });
+    expect((JSON.parse(readFileSync(join(stateDir, "async-asks.json"), "utf8")) as { message?: string }[])[0]?.message).toBe(message);
+  });
+
+  it("a question with no message, or a blank one, has no body", async () => {
+    const { endpoint, token } = await bridge();
+    await post(endpoint, { ...ASK, message: "  " }, token);
+    const read = await (await fetch(`${endpoint}/api/host-chats/chat?session=${encodeURIComponent(SESSION)}`, { headers: { authorization: `Bearer ${token}` } })).json() as HostChatRead;
+    expect(read.prompt?.body).toBeNull();
+  });
+
   it("refuses a request without the bridge token, a bad body, and a session no row runs on", async () => {
     const { endpoint, token } = await bridge();
     expect((await post(endpoint, ASK)).status).toBe(401);
@@ -105,6 +121,8 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect(await refused({ ...ASK, sdk_session: "" })).toEqual([400, "missing_sdk_session"]);
     expect(await refused({ ...ASK, question: " " })).toEqual([400, "invalid_question"]);
     expect(await refused({ ...ASK, kind: "urgent" })).toEqual([400, "invalid_kind"]);
+    expect(await refused({ ...ASK, message: 42 })).toEqual([400, "invalid_message"]);
+    expect(await refused({ ...ASK, message: "x".repeat(20_001) })).toEqual([400, "invalid_message"]);
     expect(await refused({ ...ASK, options: [] })).toEqual([400, "invalid_options"]);
     expect(await refused({ ...ASK, options: [{ description: "FICTIONAL no label" }] })).toEqual([400, "invalid_options"]);
     expect(await refused({ ...ASK, recommended: 2 })).toEqual([400, "invalid_recommended"]);

@@ -16,6 +16,8 @@ export interface AsyncQuestion {
   /** the chat's row id (HostChatRow.session) */
   session: string;
   question: string;
+  /** the context above the question (ask_user's `message`), markdown; null when the agent sent none */
+  message?: string | null;
   options: { label: string; description?: string }[];
   /** 0-based index into options, null when none */
   recommended: number | null;
@@ -46,7 +48,7 @@ const recommendedFits = (recommended: unknown, count: number): recommended is nu
 function questionOf(value: unknown): AsyncQuestion | null {
   const row = record(value);
   if (!row) return null;
-  const { id, session, question, options, recommended, kind, askedAt, answer } = row;
+  const { id, session, question, message, options, recommended, kind, askedAt, answer } = row;
   if (typeof id !== "string" || typeof session !== "string" || typeof question !== "string" || typeof askedAt !== "number") return null;
   if (kind !== "optional" && kind !== "blocking") return null;
   if (!Array.isArray(options) || !recommendedFits(recommended, options.length)) return null;
@@ -62,7 +64,7 @@ function questionOf(value: unknown): AsyncQuestion | null {
     if (!a || typeof a["label"] !== "string" || typeof a["assumed"] !== "boolean" || typeof a["at"] !== "number") return null;
     given = { label: a["label"], assumed: a["assumed"], at: a["at"] };
   }
-  return { id, session, question, options: opts, recommended, kind, askedAt, answer: given };
+  return { id, session, question, ...(typeof message === "string" ? { message } : {}), options: opts, recommended, kind, askedAt, answer: given };
 }
 
 /** callers get copies, so nothing they change reaches the store unsaved */
