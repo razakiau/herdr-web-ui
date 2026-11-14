@@ -736,7 +736,7 @@ export function createServer(
       if (pathname === "/api/preferences") { setRequestRoute(pathname); return handlePreferencesRequest(request, preferences); }
       // the finishes read in some browser of this server; a watching device reads them and cannot add to them (above)
       if (pathname === "/api/seen") { setRequestRoute(pathname); return handleSeenRequest(request, seen); }
-      // the goals (ZAC-326); a watching device reads them and cannot start, raise, stop or resume one (above)
+      // the goals (ZAC-326); a watching device reads them and cannot start, raise, pause, stop or resume one (above)
       if (pathname === "/api/goals" || pathname.startsWith("/api/goals/")) return handleGoalsRequest(request, pathname,
         { store: goals, pcs: goalPcs, prices: coldPrices, models: curatedModels, judgeAllowed: curatedModelAllowed, preferredJudge, kick: goalTick });
       // the chat groups (ZAC-265); a watching device reads them and cannot change them (above)

@@ -38,29 +38,101 @@
 .todo-bar-row[data-status="in_progress"] .todo-bar-row-icon { color: var(--status-working); }
 .todo-bar-row[data-status="in_progress"] { color: var(--text-strong); }
 .todo-bar-row[data-status="blocked"] .todo-bar-row-icon { color: var(--notice); }
-/* a chat's goal (ZAC-326) owns the head; the meter is its spend against the cap */
-.goal-bar-head { display: flex; align-items: center; }
-.goal-bar-head .todo-bar-head { flex: 1; min-width: 0; }
+/* a chat's goal (ZAC-326) owns the head: its ring, its spend against the cap, a pause or resume beside it */
+/* the head's inset is the row's, not the button's, so the pause or dismiss sits inside it too */
+.goal-bar-head { display: flex; align-items: center; padding: 0 var(--space-2) 0 var(--space-3); }
+.goal-bar-head .todo-bar-head { flex: 1; min-width: 0; padding: 0 var(--space-1) 0 0; }
+.goal-bar-ring { color: var(--accent); }
+.goal-bar-ring[data-tone="notice"] { color: var(--notice); }
+.goal-bar-ring[data-tone="done"] { color: var(--status-done); }
+.goal-bar-ring[data-tone="ended"] { color: var(--text-dim); }
+.goal-bar-spend { flex: none; color: var(--text); font-variant-numeric: tabular-nums; }
+.goal-bar-cap { color: var(--text-dim); }
 .goal-bar .todo-bar-fill[data-tone="notice"] { background: var(--notice); }
 .goal-bar .todo-bar-fill[data-tone="done"] { background: var(--status-done); }
 .goal-bar .todo-bar-fill[data-tone="ended"] { background: var(--text-dim); }
-.goal-bar-dismiss {
-  flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; margin-inline-start: calc(var(--space-2) * -1);
-  padding: 0; border: 0; background: transparent; color: var(--text-dim); cursor: pointer;
+/* a tap target of 44 px wide, as tall as the head */
+.goal-bar-act {
+  flex: none; display: grid; place-items: center; width: 44px; min-height: 2rem; align-self: stretch;
+  padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); cursor: pointer;
 }
-.goal-bar-dismiss:hover { color: var(--text); }
-.goal-bar-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.goal-bar-dismiss svg { width: 1em; height: 1em; }
-/* a section label inside the goal tab, sized and spaced like a todo row */
+.goal-bar-act[data-tone="notice"] { color: var(--notice); }
+.goal-bar-act:hover:not(:disabled) { color: var(--text); }
+.goal-bar-act:disabled { opacity: 0.5; cursor: default; }
+.goal-bar-act:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.goal-bar-act svg { width: 0.9rem; height: 0.9rem; }
+/* pause and play as solid marks, as a media control draws them */
+.goal-bar-act .lucide-pause, .goal-bar-act .lucide-play { fill: currentColor; }
+/* the todos' label inside the goal tab, sized and spaced like a todo row */
 .goal-bar-section {
   display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3) var(--space-1);
   color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-medium, 500); font-variant-numeric: tabular-nums;
 }
 .goal-bar-section + .todo-bar-list { padding-bottom: var(--space-1); }
-.goal-bar-todos + .goal-bar-section { border-top: var(--hairline) solid var(--border); margin: var(--space-1) var(--space-3) 0; padding-inline: 0; }
-.goal-bar .todo-bar-row[data-status="met"] .todo-bar-row-icon { color: var(--status-done); }
-.goal-bar .todo-bar-row[data-status="impossible"] .todo-bar-row-icon,
-.goal-bar .todo-bar-row[data-status="error"] .todo-bar-row-icon { color: var(--notice); }
+.goal-bar-todos { border-bottom: var(--hairline) solid var(--border); margin: 0 var(--space-3); }
+.goal-bar-todos .todo-bar-row { padding-inline: 0; }
+/* the goal itself: objective, done-when, the card that matters now, the older checks, one line of terms */
+.goal-body { padding-top: var(--space-1); max-height: 50vh; overflow-y: auto; }
+.goal-obj {
+  margin: 0; padding: var(--space-1) var(--space-3) 0;
+  color: var(--text-strong); font-size: var(--fs-sm); font-weight: var(--fw-semibold, 600); line-height: var(--lh-tight);
+}
+.goal-when, .goal-card-text {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  width: 100%; margin: 0; padding: 0; border: 0; background: transparent; font: inherit; font-size: var(--fs-xs);
+  line-height: var(--lh-base); text-align: start; cursor: pointer; white-space: pre-line;
+}
+.goal-when[aria-expanded="true"], .goal-card-text[aria-expanded="true"] { display: block; }
+.goal-when { margin-top: 2px; padding: 0 var(--space-3); color: var(--text-dim); }
+.goal-when-k { color: var(--text); font-weight: var(--fw-medium, 500); }
+.goal-when:focus-visible, .goal-card-text:focus-visible, .goal-earlier:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.goal-card {
+  --goal-tone: var(--notice);
+  position: relative;
+  margin: var(--space-2) var(--space-3) 0; padding: var(--space-2) var(--space-3);
+  border-inline-start: 2px solid var(--goal-tone); border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--goal-tone) 9%, transparent);
+}
+.goal-card[data-tone="blocked"] { --goal-tone: var(--status-blocked); }
+.goal-card[data-tone="done"] { --goal-tone: var(--status-done); }
+.goal-card[data-tone="ended"] { --goal-tone: var(--text-dim); }
+.goal-card-head {
+  display: flex; align-items: center; gap: var(--space-1); margin: 0;
+  color: var(--goal-tone); font-size: var(--fs-xs); font-weight: var(--fw-semibold, 600); font-variant-numeric: tabular-nums;
+}
+.goal-card-head svg { flex: none; width: 1em; height: 1em; }
+/* when it paused or stopped: beside the head, outside the live region (it moves with each write) */
+.goal-card-time {
+  position: absolute; top: var(--space-2); inset-inline-end: var(--space-3);
+  color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+}
+.goal-card:has(.goal-card-time) .goal-card-head { padding-inline-end: 3.5em; }
+.goal-card-reason { margin: 2px 0 0; color: var(--text); font-size: var(--fs-xs); line-height: var(--lh-base); overflow-wrap: anywhere; }
+.goal-card-text { margin-top: 2px; color: var(--text); }
+.goal-card-reason + .goal-card-text { color: var(--text-dim); }
+.goal-card-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.goal-card-btn { font-size: var(--fs-xs); }
+.goal-card-error { margin: var(--space-2) 0 0; color: var(--danger-text); font-size: var(--fs-xs); }
+.goal-earlier {
+  display: flex; align-items: center; gap: var(--space-1); width: 100%; min-height: 2.25rem; padding: 0 var(--space-3);
+  border: 0; background: transparent; color: var(--text-dim); font: inherit; font-size: var(--fs-xs); text-align: start; cursor: pointer;
+}
+.goal-earlier:hover { color: var(--text); }
+.goal-earlier svg { flex: none; width: 1em; height: 1em; }
+.goal-earlier-list { margin: 0; padding: 0 var(--space-3) var(--space-1); list-style: none; }
+.goal-earlier-list li { display: flex; gap: var(--space-2); padding: 2px 0; color: var(--text-dim); font-size: var(--fs-xs); line-height: var(--lh-tight); }
+.goal-earlier-n { flex: none; width: 1.2em; font-variant-numeric: tabular-nums; }
+.goal-earlier-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) 6px;
+  margin: var(--space-1) var(--space-3) 0; padding: var(--space-2) 0;
+  border-top: var(--hairline) solid var(--border); color: var(--text-dim); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums;
+}
+.goal-chip {
+  padding: 0 6px; border-radius: var(--radius-pill); color: var(--notice);
+  background: color-mix(in oklab, var(--notice) 14%, transparent); font-weight: var(--fw-medium, 500);
+}
+.goal-dot { opacity: 0.5; }
 @media (prefers-reduced-motion: reduce) {
   .todo-bar-caret, .todo-bar-fill { transition: none; }
 }

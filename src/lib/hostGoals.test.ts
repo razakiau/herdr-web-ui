@@ -6,7 +6,7 @@ import type { HostTodo } from "../../shared/host-chats.ts";
 import type { GoalCheck, GoalView } from "../../shared/goals.ts";
 import { nextTurnText } from "../../server/goals/runner.ts";
 import { noteHostChatMessage } from "./hostChats.ts";
-import { goalCheckOf, goalHead, useHostGoal } from "./hostGoals.ts";
+import { goalCheckOf, goalHead, pauseReasonWords, useHostGoal } from "./hostGoals.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 
@@ -56,16 +56,17 @@ describe("a check message", () => {
 });
 
 describe("a goal's head", () => {
-  it("heads a running goal with its spend and the todo it is on", () => {
+  it("heads a running goal Goal with its spend and the todo it is on", () => {
     expect(goalHead(view({ status: "active", spentUsd: 3.1, capUsd: 25 }), [todo("done"), todo("in_progress", "Import August")], NOW))
-      .toEqual({ title: "Goal $3.10 / $25", current: "1/2 · Import August", tone: "accent" });
+      .toEqual({ title: "Goal", spent: "$3.10", cap: "$25", current: "1/2 · Import August", tone: "accent", ring: "run" });
   });
 
-  it("heads a running goal with no todos with the time it has run", () => {
+  it("heads a running goal with no todos with its checks, else the time it has run", () => {
     const goal = view({ startedAt: new Date(NOW - 61_000).toISOString() });
     expect(goalHead(goal, [], NOW).current).toBe("1 min in");
     expect(goalHead(goal, undefined, NOW).current).toBe("1 min in");
     expect(goalHead(view({ startedAt: new Date(NOW - 65 * 60_000).toISOString() }), undefined, NOW).current).toBe("1h 5m in");
+    expect(goalHead(view({ judge: { model: "judge-model", warning: null, checks: [check(), check(), check()] } }), undefined, NOW).current).toBe("3 checks");
   });
 
   it("turns to notice from 80 % of the cap", () => {
@@ -73,19 +74,41 @@ describe("a goal's head", () => {
     expect(goalHead(view({ spentUsd: 26, capUsd: 25, tone: "over" }), undefined, NOW).tone).toBe("notice");
   });
 
-  it("heads a paused goal Paused · $25.00 / $25, a met one Goal met · $27.10 with its check count", () => {
-    expect(goalHead(view({ status: "budget_limited", spentUsd: 25, capUsd: 25, tone: "over" }), undefined, NOW))
-      .toEqual({ title: "Paused · $25.00 / $25", current: "0 checks", tone: "notice" });
-    expect(goalHead(view({ status: "paused", spentUsd: 4, capUsd: 25.5 }), undefined, NOW).title).toBe("Paused · $4.00 / $25.50");
-    const checks = [check(), check(), check(), check(), check()];
-    expect(goalHead(view({ status: "met", spentUsd: 27.1, judge: { model: "judge-model", warning: null, checks } }), undefined, NOW))
-      .toEqual({ title: "Goal met · $27.10", current: "5 checks", tone: "done" });
-    expect(goalHead(view({ status: "met", spentUsd: 27 }), undefined, NOW).title).toBe("Goal met · $27.00");
+  it("heads a paused goal Paused, with why in a word or two", () => {
+    expect(goalHead(view({ status: "budget_limited", pauseReason: "cap", spentUsd: 25, capUsd: 25, tone: "over" }), undefined, NOW))
+      .toEqual({ title: "Paused", spent: "$25.00", cap: "$25", current: "at cap", tone: "notice", ring: "pause" });
+    expect(goalHead(view({ status: "paused", pauseReason: "owner", spentUsd: 4, capUsd: 25.5 }), [todo("in_progress")], NOW))
+      .toEqual({ title: "Paused", spent: "$4.00", cap: "$25.50", current: "by you", tone: "notice", ring: "pause" });
+    const word = (pauseReason: string, verdict: GoalCheck["verdict"] = "not_met"): string =>
+      goalHead(view({ status: "paused", pauseReason, judge: { model: "judge-model", warning: null, checks: [{ ...check(), verdict }] } }), undefined, NOW).current;
+    expect(word("judge_error: timeout")).toBe("judge error");
+    expect(word("send_failed")).toBe("send failed");
+    expect(word("no_log")).toBe("can't read");
+    expect(word("FICTIONAL the files are gone", "impossible")).toBe("impossible");
+    expect(word("FICTIONAL")).toBe("needs you");
   });
 
-  it("heads a stopped goal as ended, with one check said once", () => {
+  it("heads a met goal Goal met with its check count, a stopped one Stopped by you", () => {
+    const checks = [check(), check(), check(), check(), check()];
+    expect(goalHead(view({ status: "met", spentUsd: 27.1, judge: { model: "judge-model", warning: null, checks } }), undefined, NOW))
+      .toEqual({ title: "Goal met", spent: "$27.10", cap: "$25", current: "5 checks", tone: "done", ring: "met" });
+    expect(goalHead(view({ status: "met", judge: { model: "judge-model", warning: null, checks: [check()] } }), undefined, NOW).current).toBe("1 check");
     expect(goalHead(view({ status: "stopped", spentUsd: 1.234, judge: { model: "judge-model", warning: null, checks: [check()] } }), undefined, NOW))
-      .toEqual({ title: "Goal stopped · $1.23", current: "1 check", tone: "ended" });
+      .toEqual({ title: "Stopped", spent: "$1.23", cap: "$25", current: "by you", tone: "ended", ring: "stop" });
+  });
+});
+
+describe("a pause's reason in words", () => {
+  it("words each known reason, says nothing more for the owner's, and shows an unknown one as it is", () => {
+    expect(pauseReasonWords("owner")).toBeNull();
+    expect(pauseReasonWords(null)).toBeNull();
+    expect(pauseReasonWords("judge_error: OmniRoute refused the token")).toBe("The judge failed: OmniRoute refused the token.");
+    expect(pauseReasonWords("no_chat")).toBe("The chat is gone from its PC.");
+    expect(pauseReasonWords("no_cost")).toBe("Its cost can't be read.");
+    expect(pauseReasonWords("no_log")).toBe("Its log can't be read.");
+    expect(pauseReasonWords("send_failed")).toBe("The next turn couldn't be sent.");
+    expect(pauseReasonWords("cap")).toBe("It reached its cap.");
+    expect(pauseReasonWords("FICTIONAL the files are not on this PC")).toBe("FICTIONAL the files are not on this PC");
   });
 });
 

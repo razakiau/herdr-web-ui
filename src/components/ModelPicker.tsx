@@ -87,6 +87,8 @@ export interface ModelPickerProps {
   goal: GoalView | null;
   /** the objective a goal started now would get: the chat's newest message, null before the first */
   goalDraft: string | null;
+  /** a stopped goal to start again: the Goal form opens with its done-when, cap, judge and away rule */
+  goalAgain?: GoalView | null;
   /** the judges to offer, null while they load */
   judges: JudgeChoice[] | null;
   /** starts the goal; resolves to the server's error code, or null once it runs */
@@ -98,7 +100,7 @@ export interface ModelPickerProps {
 /** What the settings sheet's Goal form starts a goal with. */
 export interface GoalStart { doneWhen: string; capUsd: number; judgeModel: string | null; away: "assume" | "wait"; allowUnpriced: boolean }
 
-export function ModelPicker({ machineId, focus, models, agents, model, agent, config, error, onModel, switchCost, onAgent, onConfig, goal, goalDraft, judges, onStartGoal, onStopGoal, onClose }: ModelPickerProps) {
+export function ModelPicker({ machineId, focus, models, agents, model, agent, config, error, onModel, switchCost, onAgent, onConfig, goal, goalDraft, goalAgain = null, judges, onStartGoal, onStopGoal, onClose }: ModelPickerProps) {
   const t = useT();
   const id = useId();
   const surface = useFocusTrap<HTMLDivElement>(true);
@@ -128,7 +130,7 @@ export function ModelPicker({ machineId, focus, models, agents, model, agent, co
           <ModelList machineId={machineId} models={models} model={model} onModel={onModel} switchCost={switchCost} />
         </div>}
         {focus === "settings" && <SettingsList config={config} agents={agents} agent={agent} models={models} error={error} onConfig={onConfig} onAgent={onAgent}
-          goal={goal} goalDraft={goalDraft} judges={judges} onStartGoal={onStartGoal} onStopGoal={onStopGoal} onClose={onClose} />}
+          goal={goal} goalDraft={goalDraft} goalAgain={goalAgain} judges={judges} onStartGoal={onStartGoal} onStopGoal={onStopGoal} onClose={onClose} />}
       </div>
     </div>,
     document.body,
@@ -215,10 +217,10 @@ function ModelList({ machineId, models, model, onModel, switchCost }: Pick<Model
   </>;
 }
 
-type SettingsListProps = Pick<ModelPickerProps, "config" | "agents" | "agent" | "models" | "error" | "onConfig" | "onAgent" | "goal" | "goalDraft" | "judges" | "onStartGoal" | "onStopGoal" | "onClose">;
+type SettingsListProps = Pick<ModelPickerProps, "config" | "agents" | "agent" | "models" | "error" | "onConfig" | "onAgent" | "goal" | "goalDraft" | "goalAgain" | "judges" | "onStartGoal" | "onStopGoal" | "onClose">;
 
 /** The settings sheet's body, and its footer while the Goal form is open or a goal runs. */
-export function SettingsList({ config, agents, agent, models, error, onConfig, onAgent, goal, goalDraft, judges, onStartGoal, onStopGoal, onClose }: SettingsListProps) {
+export function SettingsList({ config, agents, agent, models, error, onConfig, onAgent, goal, goalDraft, goalAgain = null, judges, onStartGoal, onStopGoal, onClose }: SettingsListProps) {
   const t = useT();
   const [query, setQuery] = useState("");
   const all = agents ?? [];
@@ -226,17 +228,20 @@ export function SettingsList({ config, agents, agent, models, error, onConfig, o
   const shown = words === "" ? all : all.filter((each) => each.name.toLowerCase().includes(words) || (each.description ?? "").toLowerCase().includes(words));
   // a paused goal is still the chat's: it is stopped from here, not started again
   const running = goal !== null && (goal.status === "active" || goal.status === "paused" || goal.status === "budget_limited");
-  const [goalOpen, setGoalOpen] = useState(false);
-  const [doneWhen, setDoneWhen] = useState("");
-  const [budget, setBudget] = useState<number | "other">(DEFAULT_BUDGET);
-  const [otherBudget, setOtherBudget] = useState("");
+  // a stopped goal started again opens the form with its terms (the tab's Start again…)
+  const again = running ? null : goalAgain;
+  const [goalOpen, setGoalOpen] = useState(again !== null);
+  const [doneWhen, setDoneWhen] = useState(again?.doneWhen ?? "");
+  const [budget, setBudget] = useState<number | "other">(again === null ? DEFAULT_BUDGET : (BUDGETS as readonly number[]).includes(again.capUsd) ? again.capUsd : "other");
+  const [otherBudget, setOtherBudget] = useState(again === null || (BUDGETS as readonly number[]).includes(again.capUsd) ? "" : String(again.capUsd));
   // null: the first judge on offer, the server's default
-  const [judge, setJudge] = useState<string | null>(null);
-  const [away, setAway] = useState<"assume" | "wait">("assume");
+  const [judge, setJudge] = useState<string | null>(again?.judge.model ?? null);
+  const [away, setAway] = useState<"assume" | "wait">(again?.away ?? "assume");
   const [unpriced, setUnpriced] = useState(false);
   const [busy, setBusy] = useState(false);
   const goalPicked = running || goalOpen;
-  const pickedJudge = judge ?? judges?.[0]?.id ?? null;
+  // the stopped goal's judge, while it is still one on offer; else the first, the server's default
+  const pickedJudge = judge !== null && (judges === null || judges.some((each) => each.id === judge)) ? judge : judges?.[0]?.id ?? null;
   const capUsd = budget === "other" ? Number(otherBudget) : budget;
   const canStart = !busy && doneWhen.trim() !== "" && Number.isFinite(capUsd) && capUsd > 0;
   const start = (allowUnpriced: boolean): void => {

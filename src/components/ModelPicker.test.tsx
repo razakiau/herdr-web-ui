@@ -62,10 +62,10 @@ describe("Chat settings: Goal", () => {
   const press = async (node: ReactTestInstance): Promise<void> => { await act(async () => { (node.props["onClick"] as () => void)(); }); };
   const goalRow = (root: ReactTestInstance): ReactTestInstance => root.find((each) => each.type === "button" && each.props["data-mode"] === "goal");
 
-  interface Props { goal?: GoalView | null; goalDraft?: string | null; error?: string | null; onStartGoal?: (input: GoalStart) => Promise<string | null>; onStopGoal?: () => Promise<void> }
+  interface Props { goal?: GoalView | null; goalAgain?: GoalView | null; goalDraft?: string | null; error?: string | null; onStartGoal?: (input: GoalStart) => Promise<string | null>; onStopGoal?: () => Promise<void> }
   const element = (props: Props) => createElement(SettingsProvider, { children: createElement(SettingsList, {
     config: CONFIG, agents: [], agent: null, models: MODELS, error: props.error ?? null, onConfig() {}, onAgent() {}, onClose() {},
-    goal: props.goal ?? null, goalDraft: props.goalDraft === undefined ? DRAFT : props.goalDraft, judges: JUDGES,
+    goal: props.goal ?? null, goalAgain: props.goalAgain ?? null, goalDraft: props.goalDraft === undefined ? DRAFT : props.goalDraft, judges: JUDGES,
     onStartGoal: props.onStartGoal ?? (async () => null), onStopGoal: props.onStopGoal ?? (async () => {}),
   }) });
   async function mount(props: Props = {}): Promise<ReactTestInstance> {
@@ -107,6 +107,27 @@ describe("Chat settings: Goal", () => {
     expect(away.map((each) => each.props["aria-pressed"])).toEqual([true, false]);
     expect(button(root, "Start goal")).toBeDefined();
     expect(button(root, "Cancel")).toBeDefined();
+  });
+
+  it("a stopped goal started again opens the form with its done-when, cap, judge and away rule, and starts with them", async () => {
+    const stopped = goal({ status: "stopped", doneWhen: "FICTIONAL verify passes", capUsd: 50, away: "wait", judge: { model: "FICTIONAL-cheap", warning: null, checks: [] } });
+    const calls: GoalStart[] = [];
+    const root = await mount({ goal: stopped, goalAgain: stopped, onStartGoal: async (input) => { calls.push(input); return null; } });
+    expect(goalRow(root).props["aria-pressed"]).toBe(true);
+    expect(group(root, "Done when").find((each) => each.type === "textarea").props["value"]).toBe("FICTIONAL verify passes");
+    expect(classed(group(root, "Budget"), "host-picker-chip").map((each) => each.props["aria-pressed"])).toEqual([false, false, true, false, false]);
+    expect(classed(group(root, "Judge"), "host-picker-option").map((each) => each.props["aria-pressed"])).toEqual([false, true, false]);
+    expect(classed(group(root, "While you're away"), "host-picker-option").map((each) => each.props["aria-pressed"])).toEqual([false, true]);
+    await press(button(root, "Start goal"));
+    expect(calls).toEqual([{ doneWhen: "FICTIONAL verify passes", capUsd: 50, judgeModel: "FICTIONAL-cheap", away: "wait", allowUnpriced: false }]);
+  });
+
+  it("started again with a cap not on offer, it is Other…; with a judge no longer on offer, the default", async () => {
+    const stopped = goal({ status: "stopped", capUsd: 7.5, judge: { model: "FICTIONAL-gone", warning: null, checks: [] } });
+    const root = await mount({ goal: stopped, goalAgain: stopped });
+    expect(classed(group(root, "Budget"), "host-picker-chip").map((each) => each.props["aria-pressed"])).toEqual([false, false, false, false, true]);
+    expect(root.find((each) => each.type === "input" && each.props["aria-label"] === "Budget in dollars").props["value"]).toBe("7.5");
+    expect(classed(group(root, "Judge"), "host-picker-option").map((each) => each.props["aria-pressed"])).toEqual([true, false, false]);
   });
 
   it("starts with what the form says", async () => {

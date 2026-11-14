@@ -1,6 +1,6 @@
 /**
  * /api/goals (ZAC-326 part 2), on the central server: list the goals, start one on a chat, raise its
- * cap, stop it, resume a paused one. And `goalPcOver`, the GoalPc the runner and these routes read a
+ * cap, pause it, stop it, resume a paused one. And `goalPcOver`, the GoalPc the runner and these routes read a
  * PC's chats through: this PC's own host-chats routes, or another PC's bridge with its endpoint token.
  *
  * A watching device's POST is refused before this (server/index.ts, read_only).
@@ -112,6 +112,7 @@ const isEnded = (goal: HostGoal) => goal.status === "met" || goal.status === "st
  *                          400 invalid_judge when judgeModel is not one of the owner's judges
  *   POST /api/goals/raise  { machine, session, capUsd }                `{ goal }`; 409 below_spent, goal_ended
  *   POST /api/goals/stop   { machine, session }                        `{ goal }`
+ *   POST /api/goals/pause  { machine, session }                        `{ goal }`, active → paused by the owner; 409 not_active
  *   POST /api/goals/resume { machine, session }                        `{ goal }`, paused → active; 409 not_paused
  */
 export async function handleGoalsRequest(request: Request, pathname: string, deps: GoalRoutesDeps): Promise<Response> {
@@ -129,7 +130,7 @@ export async function handleGoalsRequest(request: Request, pathname: string, dep
     const [models, priced] = await Promise.all([deps.models().catch(() => []), deps.prices().catch((): Prices => ({ prices: null, fallback: null }))]);
     return reply({ choices: judgeChoices(worker, models, priced.prices ?? {}, priced.fallback, deps.preferredJudge) });
   }
-  const action = /^\/api\/goals\/(start|raise|stop|resume)$/.exec(pathname)?.[1];
+  const action = /^\/api\/goals\/(start|raise|stop|pause|resume)$/.exec(pathname)?.[1];
   if (!action) return refuse("not_found", "not found", 404);
   setRequestRoute(pathname);
   if (request.method !== "POST") return refuse("method_not_allowed", `Use POST ${pathname}`, 405);
@@ -162,6 +163,13 @@ export async function handleGoalsRequest(request: Request, pathname: string, dep
     if (isEnded(goal)) return reply({ goal: goalView(goal) });
     const stopped = store.stop(machine, session);
     return stopped ? reply({ goal: goalView(stopped) }) : noGoal();
+  }
+  if (action === "pause") {
+    if (goal.status !== "active") return refuse("not_active", "Only a running goal pauses", 409);
+    // the runner judges and sends for an active goal only, and its own pauses touch an active one only,
+    // so "owner" stays until the owner resumes; a check the judge was writing is kept (runner.ts step 3)
+    const paused = store.update(machine, session, (each) => { each.status = "paused"; each.pauseReason = "owner"; });
+    return paused ? reply({ goal: goalView(paused) }) : noGoal();
   }
   if (goal.status !== "paused") return refuse("not_paused", "Only a paused goal resumes", 409);
   // the next tick judges the chat as it is now: without it a goal paused on an idle chat would wait forever

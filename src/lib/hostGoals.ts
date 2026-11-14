@@ -1,6 +1,6 @@
 /**
  * A chat's goal (ZAC-326) as the central server runs it (server/goals/, /api/goals): the calls that
- * start, raise, stop and resume one, the hook a chat reads its goal with, the judge's check message
+ * start, raise, pause, stop and resume one, the hook a chat reads its goal with, the judge's check message
  * the runner sends into the chat, and the goal bar's head. Not OmO's goal tools (goals.ts).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -32,6 +32,11 @@ export async function raiseGoal(machine: string, session: string, capUsd: number
 
 export async function stopGoal(machine: string, session: string): Promise<GoalView> {
   return goalFrom(await sendJson("/api/goals/stop", "POST", { machine, session }));
+}
+
+/** The owner's pause: only a running goal pauses (409 not_active otherwise); resume runs it again. */
+export async function pauseGoal(machine: string, session: string): Promise<GoalView> {
+  return goalFrom(await sendJson("/api/goals/pause", "POST", { machine, session }));
 }
 
 export async function resumeGoal(machine: string, session: string): Promise<GoalView> {
@@ -122,33 +127,79 @@ export const dollars = (usd: number): string => `$${usd.toFixed(2)}`;
 /** a cap with no cents when it is a whole number of dollars: $25, $25.50 */
 export const capDollars = (usd: number): string => Number.isInteger(usd) ? `$${usd}` : dollars(usd);
 
-/**
- * The goal bar's head: the spend against the cap (or how the goal ended), what it is on (the current
- * todo, else how long it has run, else how many checks it took) and its colour.
- */
-export function goalHead(goal: GoalView, todos: readonly HostTodo[] | undefined, now: number): { title: string; current: string; tone: "accent" | "notice" | "done" | "ended" } {
-  const spent = dollars(goal.spentUsd);
-  const cap = capDollars(goal.capUsd);
-  const paused = goal.status === "paused" || goal.status === "budget_limited";
-  const title = goal.status === "active" ? t("Goal {spent} / {cap}", { spent, cap })
-    : paused ? t("Paused · {spent} / {cap}", { spent, cap })
-    : goal.status === "met" ? t("Goal met · {spent}", { spent })
-    : t("Goal stopped · {spent}", { spent });
-  const tone = goal.status === "met" ? "done"
-    : goal.status === "stopped" ? "ended"
-    : paused || goal.tone !== "ok" ? "notice"
-    : "accent";
-  return { title, current: currentOf(goal, todos ?? [], now), tone };
+/** The goal's ring in the bar's head: a target while it runs, pause bars, a check, a cross. */
+export type GoalRing = "run" | "pause" | "met" | "stop";
+
+export interface GoalHead {
+  /** "Goal", "Paused", "Goal met", "Stopped" */
+  title: string;
+  /** what it has spent, with its cents, and its cap */
+  spent: string;
+  cap: string;
+  /** a word or two, short enough not to be cut at 390 px: the todo it is on, how long it has run, why it paused */
+  current: string;
+  tone: "accent" | "notice" | "done" | "ended";
+  ring: GoalRing;
 }
 
-function currentOf(goal: GoalView, todos: readonly HostTodo[], now: number): string {
+/**
+ * The goal bar's head: its state, the spend against the cap, what it is on and its colour. A
+ * running goal names the current todo, else how many checks it took, else how long it has run; a
+ * paused one why (by you, at cap…), a stopped one who stopped it (only its owner does), a met one its checks.
+ */
+export function goalHead(goal: GoalView, todos: readonly HostTodo[] | undefined, now: number): GoalHead {
+  const spent = dollars(goal.spentUsd);
+  const cap = capDollars(goal.capUsd);
+  const checks = checkCount(goal.judge.checks.length);
+  switch (goal.status) {
+    case "active":
+      return { title: t("Goal"), spent, cap, current: runningOf(goal, todos ?? [], now), tone: goal.tone === "ok" ? "accent" : "notice", ring: "run" };
+    case "paused":
+    case "budget_limited":
+      return { title: t("Paused"), spent, cap, current: pausedWord(goal), tone: "notice", ring: "pause" };
+    case "met":
+      return { title: t("Goal met"), spent, cap, current: checks, tone: "done", ring: "met" };
+    case "stopped":
+      return { title: t("Stopped"), spent, cap, current: t("by you"), tone: "ended", ring: "stop" };
+  }
+}
+
+const checkCount = (n: number): string => n === 1 ? t("1 check") : t("{n} checks", { n });
+
+function runningOf(goal: GoalView, todos: readonly HostTodo[], now: number): string {
   const todo = currentTodo(todos);
   if (todo !== null) return `${todos.filter((each) => each.status === "done").length}/${todos.length} · ${todo.title}`;
+  if (goal.judge.checks.length > 0) return checkCount(goal.judge.checks.length);
   const started = Date.parse(goal.startedAt);
-  if (goal.status === "active" && Number.isFinite(started)) {
-    const minutes = Math.max(0, Math.floor((now - started) / 60_000));
-    return minutes < 60 ? t("{n} min in", { n: minutes }) : t("{h}h {m}m in", { h: Math.floor(minutes / 60), m: minutes % 60 });
+  if (!Number.isFinite(started)) return checkCount(0);
+  const minutes = Math.max(0, Math.floor((now - started) / 60_000));
+  return minutes < 60 ? t("{n} min in", { n: minutes }) : t("{h}h {m}m in", { h: Math.floor(minutes / 60), m: minutes % 60 });
+}
+
+/** why a goal paused, in a word or two: the owner, the cap, or the runner's code (server/goals/runner.ts) */
+function pausedWord(goal: GoalView): string {
+  if (goal.status === "budget_limited") return t("at cap");
+  const reason = goal.pauseReason ?? "";
+  if (reason === "owner") return t("by you");
+  if (reason === "cap") return t("at cap");
+  if (reason.startsWith("judge_error: ")) return t("judge error");
+  if (reason === "send_failed") return t("send failed");
+  if (reason === "no_chat" || reason === "no_cost" || reason === "no_log") return t("can't read");
+  if (goal.judge.checks.at(-1)?.verdict === "impossible") return t("impossible");
+  return t("needs you");
+}
+
+/** a paused goal's reason in words: the owner, the runner's codes (server/goals/runner.ts), else the judge's own */
+export function pauseReasonWords(reason: string | null): string | null {
+  if (reason === null) return null;
+  if (reason.startsWith("judge_error: ")) return t("The judge failed: {reason}.", { reason: reason.slice("judge_error: ".length) });
+  switch (reason) {
+    case "owner": return null;
+    case "no_chat": return t("The chat is gone from its PC.");
+    case "no_cost": return t("Its cost can't be read.");
+    case "no_log": return t("Its log can't be read.");
+    case "send_failed": return t("The next turn couldn't be sent.");
+    case "cap": return t("It reached its cap.");
+    default: return reason;
   }
-  const checks = goal.judge.checks.length;
-  return checks === 1 ? t("1 check") : t("{n} checks", { n: checks });
 }

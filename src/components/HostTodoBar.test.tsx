@@ -18,6 +18,10 @@ const render = (element: ReactElement): string => {
     else Reflect.deleteProperty(navigator, "languages");
   }
 };
+/** the words of the goal card's buttons */
+const buttonsIn = (html: string): string[] => [...html.matchAll(/<button type="button" class="btn goal-card-btn[^"]*">([^<]*)<\/button>/g)].map((match) => match[1]!);
+/** the goal card's live region: what a screen reader announces when it changes */
+const live = (html: string): string => said(/<div class="goal-card-live" role="status">(.*?)<\/div>/.exec(html)![1]!);
 const text = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 /** the text with React's escaped apostrophe read back */
 const said = (html: string): string => text(html).replaceAll("&#x27;", "'");
@@ -74,13 +78,14 @@ describe("HostTodoBar", () => {
     expect(html).toContain('aria-expanded="true"');
   });
 
-  it("with a goal, the head is the goal's spend against its cap and how long it has run", () => {
-    const html = render(createElement(HostTodoBar, { todos: undefined, busy: true, goal: goal() }));
+  it("with a goal, the head is its ring, Goal, the spend against the cap and how long it has run, and a pause", () => {
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: true, goal: goal(), machineId: "m1", session: "s1" }));
     expect(text(html)).toContain("Goal $0.42 / $25");
     expect(text(html)).toContain("1 min in");
     expect(html).toContain('data-tone="accent"');
     expect(html).toContain("width:1.7%");
-    expect(html).not.toContain("todo-bar-list");
+    expect(html).toContain('aria-label="Pause goal"');
+    expect(html).not.toContain("goal-body");
   });
 
   it("a goal with no cap fills its bar when it has spent, and leaves it empty when not, never NaN", () => {
@@ -91,43 +96,129 @@ describe("HostTodoBar", () => {
     expect(fill({ capUsd: -5, spentUsd: 0 })).toBe("0%");
   });
 
-  it("opened, lists the todos first, then the goal's terms and its checks", () => {
+  it("opened, lists the todos first, then the objective as a title, done-when, and only the latest check in its card", () => {
     const html = render(createElement(HostTodoBar, { todos: SIX, busy: true, defaultOpen: true, goal: goal({
-      judge: { model: "FICTIONAL-judge", warning: "same_family", checks: [check("not_met", "FICTIONAL two left"), check("error", "FICTIONAL timeout")] },
+      judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL first"), check("error", "FICTIONAL timeout"), check("not_met", "FICTIONAL two left")] },
     }) }));
     const sections = [...html.matchAll(/<p class="goal-bar-section">(.*?)<\/p>/g)].map((match) => text(match[1]!));
-    expect(sections).toEqual(["Todos 2/6", "Goal"]);
+    expect(sections).toEqual(["Todos 2/6"]);
     const words = said(html);
-    expect(words.indexOf("Todos 2/6")).toBeLessThan(words.lastIndexOf("FICTIONAL c"));
-    expect(words.indexOf("FICTIONAL f")).toBeLessThan(words.indexOf("Goal: FICTIONAL import Q3"));
-    expect(words.indexOf("Goal: FICTIONAL import Q3")).toBeLessThan(words.indexOf("Done when: FICTIONAL 4 files in"));
-    expect(words).toContain("Judge FICTIONAL-judge · same family");
-    expect(words).toContain("While you're away: takes its recommended answer");
-    expect(words).toContain("Check 1 · not met: FICTIONAL two left");
-    expect(words).toContain("Check 2 · error: FICTIONAL timeout");
-    expect(html.match(/class="todo-bar-row"/g)?.length).toBe(6 + 4 + 2 + 1);
+    expect(words.indexOf("FICTIONAL f")).toBeLessThan(words.indexOf("FICTIONAL import Q3"));
+    expect(html).toContain('<h3 class="goal-obj">FICTIONAL import Q3</h3>');
+    expect(words).not.toContain("Goal:");
+    expect(words.indexOf("FICTIONAL import Q3")).toBeLessThan(words.indexOf("Done when FICTIONAL 4 files in"));
+    expect(/<div class="goal-card" data-tone="(\w+)">/.exec(html)![1]).toBe("notice");
+    expect(live(html)).toBe("Check 3 · not met FICTIONAL two left");
+    // the older ones fold behind one button until it is opened
+    expect(words).toContain("2 earlier checks");
+    expect(html).toContain('class="goal-earlier" aria-expanded="false"');
+    expect(words).not.toContain("FICTIONAL first");
+    expect(words).not.toContain("FICTIONAL timeout");
+    // no checkbox-like rows for the goal: only the todos are rows
+    expect(html.match(/class="todo-bar-row"/g)?.length).toBe(6);
     expect(words).toContain("2/6 · FICTIONAL c");
   });
 
-  it("names the judge plainly when it is not the worker's family, and says when it waits", () => {
-    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, defaultOpen: true, goal: goal({ away: "wait" }) }));
-    const words = said(html);
-    expect(words).toContain("Judge FICTIONAL-judge");
-    expect(words).not.toContain("same family");
-    expect(words).toContain("While you're away: waits for you");
-    expect(html).not.toContain("goal-bar-section");
+  it("an error check's card is blocked, a met one done", () => {
+    const tone = (verdict: GoalCheck["verdict"], status: GoalView["status"] = "active"): string =>
+      /class="goal-card" data-tone="(\w+)"/.exec(render(createElement(HostTodoBar, { todos: undefined, busy: true, defaultOpen: true, goal: goal({ status, judge: { model: "FICTIONAL-judge", warning: null, checks: [check(verdict, "FICTIONAL")] } }) })))![1]!;
+    expect(tone("error")).toBe("blocked");
+    expect(tone("impossible")).toBe("notice");
+    expect(tone("met", "met")).toBe("done");
   });
 
-  it("met, turns green, opens by default and says what it spent", () => {
-    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, goal: goal({
-      status: "met", chatUsd: 24.8, judgeUsd: 1, spentUsd: 25.8, capUsd: 35,
-      judge: { model: "FICTIONAL-judge", warning: null, checks: [check("met", "FICTIONAL all in")] },
+  it("one meta line: the judge's friendly name with a same-family chip, the away rule in words, and the spend", () => {
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, defaultOpen: true, goal: goal({ judge: { model: "cc/claude-sonnet-5-5", warning: "same_family", checks: [] } }) }));
+    const meta = said(/<p class="goal-meta">(.*?)<\/p>/.exec(html)![1]!);
+    expect(meta).toBe("Judge Sonnet 5.5 same family · away: takes its pick · chat $0.40 · judge $0.02");
+    expect(html).toContain('<span class="goal-chip">same family</span>');
+    const plain = said(render(createElement(HostTodoBar, { todos: undefined, busy: false, defaultOpen: true, goal: goal({ away: "wait" }) })));
+    expect(plain).toContain("Judge FICTIONAL-judge");
+    expect(plain).not.toContain("same family");
+    expect(plain).toContain("away: waits for you");
+    expect(plain).not.toContain("goal-bar-section");
+  });
+
+  it("paused by its owner: pause ring, Paused · by you, a resume in the head and in the card with the last check", () => {
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({
+      status: "paused", pauseReason: "owner", judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
     }) }));
-    expect(html).toContain('data-tone="done"');
+    // a paused goal opens to what it asks
     expect(html).toContain('aria-expanded="true"');
-    expect(text(html)).toContain("Goal met · $25.80");
-    expect(text(html)).toContain("Check 1 · met: FICTIONAL all in");
-    expect(text(html)).toContain("Chat $24.80 · judge $1.00 · cap $35");
+    expect(text(html)).toContain("Paused $0.42 / $25");
+    expect(text(html)).toContain("by you");
+    expect(html).toContain("lucide-circle-pause");
+    expect(html).toContain('aria-label="Resume goal"');
+    expect(html).not.toContain('aria-label="Pause goal"');
+    // the live region is the state and the last check: no buttons, and no time that moves with each write
+    expect(live(html)).toBe("Paused by you Last check: FICTIONAL two left");
+    expect(html).toMatch(/<\/div><time class="goal-card-time" dateTime="[^"]+">\d\d:\d\d<\/time>/);
+    expect(buttonsIn(html)).toEqual(["Resume"]);
+  });
+
+  it("the card's live text stays the same when only the goal's update time moves", () => {
+    const at = (updatedAt: string): string => live(render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({
+      status: "paused", pauseReason: "send_failed", updatedAt, judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
+    }) })));
+    expect(at("2026-11-13T10:00:00.000Z")).toBe(at("2026-11-13T11:37:00.000Z"));
+  });
+
+  it("paused for a reason of the runner's: the reason in words, resume or stop", () => {
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({ status: "paused", pauseReason: "judge_error: OmniRoute refused the token" }) }));
+    expect(text(html)).toContain("judge error");
+    expect(said(html)).toContain("The judge failed: OmniRoute refused the token.");
+    expect(buttonsIn(html)).toEqual(["Resume", "Stop"]);
+  });
+
+  it("paused by the runner: its whole reason on a line of its own, then the last check, clamped and tappable", () => {
+    const long = `judge_error: ${"FICTIONAL OmniRoute answered 502 for claude-sonnet-5-5 ".repeat(4).trim()}`;
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({
+      status: "paused", pauseReason: long, judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
+    }) }));
+    const region = /<div class="goal-card-live" role="status">(.*?)<\/div>/.exec(html)![1]!;
+    expect(said(/<p class="goal-card-reason">(.*?)<\/p>/.exec(region)![1]!)).toBe(`The judge failed: ${long.slice("judge_error: ".length)}.`);
+    expect(said(/<button type="button" class="goal-card-text" aria-expanded="false">(.*?)<\/button>/.exec(region)![1]!)).toBe("Last check: FICTIONAL two left");
+    expect(live(html)).toMatch(/^Paused The judge failed: .+\. Last check: FICTIONAL two left$/);
+  });
+
+  it("at its cap: Paused · at cap, the card says the cap and offers the two raises and a stop", () => {
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({
+      status: "budget_limited", pauseReason: "cap", spentUsd: 25.4, tone: "over", raises: [35, 50],
+      judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
+    }) }));
+    expect(text(html)).toContain("Paused $25.40 / $25");
+    expect(text(html)).toContain("at cap");
+    expect(said(html)).toContain("Hit the $25 cap");
+    expect(said(html)).toContain("Last check: FICTIONAL two left");
+    expect(buttonsIn(html)).toEqual(["Raise to $35", "Raise to $50", "Stop"]);
+    expect(html).toContain('class="btn goal-card-btn btn-primary"');
+  });
+
+  it("stopped: a cross in the ring, Stopped · by you, the last check and Start again…", () => {
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, defaultOpen: true, machineId: "m1", session: "s1", onStartAgain() {}, dismissKey: "m1:s1", goal: goal({
+      status: "stopped", judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
+    }) }));
+    expect(html).toContain("lucide-circle-x");
+    expect(text(html)).toContain("Stopped $0.42 / $25");
+    expect(text(html)).toContain("by you");
+    expect(said(html)).toContain("Last check: FICTIONAL two left");
+    expect(buttonsIn(html)).toEqual(["Start again…"]);
+    expect(html).toContain('aria-label="Dismiss goal"');
+  });
+
+  it("met: green with a check in its ring, closed by default, its checks counted", () => {
+    const met = goal({ status: "met", chatUsd: 24.8, judgeUsd: 1, spentUsd: 25.8, capUsd: 35,
+      judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL first"), check("met", "FICTIONAL all in")] } });
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, goal: met }));
+    expect(html).toContain('data-tone="done"');
+    expect(html).toContain("lucide-circle-check");
+    expect(html).toContain('aria-expanded="false"');
+    expect(text(html)).toContain("Goal met $25.80 / $35");
+    expect(text(html)).toContain("2 checks");
+    expect(html).not.toContain("goal-body");
+    const opened = said(render(createElement(HostTodoBar, { todos: undefined, busy: false, defaultOpen: true, goal: met })));
+    expect(opened).toContain("Check 2 · met FICTIONAL all in");
+    expect(opened).toContain("1 earlier check");
   });
 
   it("an ended goal can be dismissed; once it is, only the todos are left", () => {

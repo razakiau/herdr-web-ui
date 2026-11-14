@@ -195,10 +195,35 @@ describe("/api/goals", () => {
     expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "active", pauseReason: null, lastJudgedCallAt: null });
   });
 
+  it("pause: a running goal is paused by its owner, and resume runs it again with no judged call", async () => {
+    await call("/api/goals/start", START);
+    store.update(MACHINE, SESSION, (goal) => { goal.lastJudgedCallAt = T1; });
+    const kicked = kicks;
+    const paused = await call("/api/goals/pause", { machine: MACHINE, session: SESSION });
+    expect(paused).toMatchObject({ status: 200, json: { goal: { status: "paused", pauseReason: "owner", spentUsd: 0 } } });
+    expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "paused", pauseReason: "owner" });
+    // nothing for the runner to do
+    expect(kicks).toBe(kicked);
+    const resumed = await call("/api/goals/resume", { machine: MACHINE, session: SESSION });
+    expect(resumed).toMatchObject({ status: 200, json: { goal: { status: "active", pauseReason: null, lastJudgedCallAt: null } } });
+  });
+
+  it("pause: only a running goal pauses (409 not_active); a chat with no goal is 404", async () => {
+    await call("/api/goals/start", START);
+    for (const [status, pauseReason] of [["paused", "send_failed"], ["budget_limited", "cap"], ["met", null], ["stopped", null]] as const) {
+      store.update(MACHINE, SESSION, (goal) => { goal.status = status; goal.pauseReason = pauseReason; });
+      expect(await call("/api/goals/pause", { machine: MACHINE, session: SESSION }))
+        .toMatchObject({ status: 409, json: { error: { code: "not_active", message: "Only a running goal pauses" } } });
+      expect(store.get(MACHINE, SESSION)).toMatchObject({ status, pauseReason });
+    }
+    expect(await call("/api/goals/pause", { machine: MACHINE, session: "session-unknown" })).toMatchObject({ status: 404, json: { error: { code: "not_found" } } });
+    expect((await call("/api/goals/pause", { machine: MACHINE })).status).toBe(400);
+  });
+
   it("answers 405 to the wrong method and 404 to an unknown action", async () => {
     expect((await call("/api/goals", {})).status).toBe(405);
     expect((await call("/api/goals/start")).status).toBe(405);
-    expect((await call("/api/goals/pause", { machine: MACHINE, session: SESSION })).status).toBe(404);
+    expect((await call("/api/goals/fictional", { machine: MACHINE, session: SESSION })).status).toBe(404);
   });
 
   it("judges: the choices for a worker model from OmniRoute's models and the prices; 405 to a POST", async () => {
@@ -273,7 +298,7 @@ it("a watching device's POST to /api/goals is refused read_only; its GETs are an
   try {
     expect((await fetch(`${base}/api/goals`, { headers })).status).toBe(200);
     expect((await fetch(`${base}/api/goals/judges?worker=cc%2Fclaude-opus-5-5`, { headers })).status).toBe(200);
-    for (const action of ["start", "raise", "stop", "resume"]) {
+    for (const action of ["start", "raise", "stop", "resume", "pause"]) {
       const response = await fetch(`${base}/api/goals/${action}`, { method: "POST", headers, body: JSON.stringify({ ...START, capUsd: 20 }) });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
