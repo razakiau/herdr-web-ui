@@ -394,4 +394,31 @@ Spent $0.80 of $10.00.`);
     expect(calls).toBe(0);
     expect(pc.sent).toHaveLength(0);
   });
+
+  it("a goal its owner paused is not judged, sent for or re-paused, and keeps pauseReason owner", async () => {
+    const store = started();
+    store.update(MACHINE, SESSION, (goal) => { goal.status = "paused"; goal.pauseReason = "owner"; });
+    answers.push(verdict("not_met", "FICTIONAL: never asked"));
+    // a PC that would pause it for another reason changes nothing either
+    pc.chatMissing = true;
+    await runner(store).tick();
+    await runner(store).step(store.get(MACHINE, SESSION)!);
+    expect(calls).toBe(0);
+    expect(pc.sent).toHaveLength(0);
+    expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "paused", pauseReason: "owner", lastJudgedCallAt: null });
+    expect(store.get(MACHINE, SESSION)!.judge.checks).toHaveLength(0);
+  });
+
+  it("paused by its owner while the judge runs: the check is kept, nothing is sent, the pause stays the owner's", async () => {
+    const store = started();
+    answers.push(async () => {
+      store.update(MACHINE, SESSION, (goal) => { goal.status = "paused"; goal.pauseReason = "owner"; });
+      return { text: JSON.stringify({ verdict: "not_met", reason: "FICTIONAL: half done" }), usage: { input: 1000, cached: 0, output: 100 } };
+    });
+    await runner(store).tick();
+    expect(calls).toBe(1);
+    expect(pc.sent).toHaveLength(0);
+    expect(store.get(MACHINE, SESSION)).toMatchObject({ status: "paused", pauseReason: "owner", lastJudgedCallAt: T1 });
+    expect(store.get(MACHINE, SESSION)!.judge.checks.map((check) => check.verdict)).toEqual(["not_met"]);
+  });
 });
