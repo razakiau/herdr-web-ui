@@ -20,6 +20,8 @@ const render = (element: ReactElement): string => {
 };
 /** the words of the goal card's buttons */
 const buttonsIn = (html: string): string[] => [...html.matchAll(/<button type="button" class="btn goal-card-btn[^"]*">([^<]*)<\/button>/g)].map((match) => match[1]!);
+/** the goal card's live region: what a screen reader announces when it changes */
+const live = (html: string): string => said(/<div class="goal-card-live" role="status">(.*?)<\/div>/.exec(html)![1]!);
 const text = (html: string): string => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 /** the text with React's escaped apostrophe read back */
 const said = (html: string): string => text(html).replaceAll("&#x27;", "'");
@@ -105,9 +107,8 @@ describe("HostTodoBar", () => {
     expect(html).toContain('<h3 class="goal-obj">FICTIONAL import Q3</h3>');
     expect(words).not.toContain("Goal:");
     expect(words.indexOf("FICTIONAL import Q3")).toBeLessThan(words.indexOf("Done when FICTIONAL 4 files in"));
-    const card = /<div class="goal-card" data-tone="(\w+)" role="status">(.*?)<\/div>/.exec(html)!;
-    expect(card[1]).toBe("notice");
-    expect(said(card[2]!)).toBe("Check 3 · not met FICTIONAL two left");
+    expect(/<div class="goal-card" data-tone="(\w+)">/.exec(html)![1]).toBe("notice");
+    expect(live(html)).toBe("Check 3 · not met FICTIONAL two left");
     // the older ones fold behind one button until it is opened
     expect(words).toContain("2 earlier checks");
     expect(html).toContain('class="goal-earlier" aria-expanded="false"');
@@ -149,8 +150,17 @@ describe("HostTodoBar", () => {
     expect(html).toContain("lucide-circle-pause");
     expect(html).toContain('aria-label="Resume goal"');
     expect(html).not.toContain('aria-label="Pause goal"');
-    const card = said(/<div class="goal-card" data-tone="notice" role="status">(.*?)<\/div><\/div>/.exec(html)![1]!);
-    expect(card).toMatch(/^Paused by you · \d\d:\d\d Last check: FICTIONAL two left Resume$/);
+    // the live region is the state and the last check: no buttons, and no time that moves with each write
+    expect(live(html)).toBe("Paused by you Last check: FICTIONAL two left");
+    expect(html).toMatch(/<\/div><time class="goal-card-time" dateTime="[^"]+">\d\d:\d\d<\/time>/);
+    expect(buttonsIn(html)).toEqual(["Resume"]);
+  });
+
+  it("the card's live text stays the same when only the goal's update time moves", () => {
+    const at = (updatedAt: string): string => live(render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({
+      status: "paused", pauseReason: "send_failed", updatedAt, judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
+    }) })));
+    expect(at("2026-11-13T10:00:00.000Z")).toBe(at("2026-11-13T11:37:00.000Z"));
   });
 
   it("paused for a reason of the runner's: the reason in words, resume or stop", () => {
@@ -158,6 +168,17 @@ describe("HostTodoBar", () => {
     expect(text(html)).toContain("judge error");
     expect(said(html)).toContain("The judge failed: OmniRoute refused the token.");
     expect(buttonsIn(html)).toEqual(["Resume", "Stop"]);
+  });
+
+  it("paused by the runner: its whole reason on a line of its own, then the last check, clamped and tappable", () => {
+    const long = `judge_error: ${"FICTIONAL OmniRoute answered 502 for claude-sonnet-5-5 ".repeat(4).trim()}`;
+    const html = render(createElement(HostTodoBar, { todos: undefined, busy: false, machineId: "m1", session: "s1", goal: goal({
+      status: "paused", pauseReason: long, judge: { model: "FICTIONAL-judge", warning: null, checks: [check("not_met", "FICTIONAL two left")] },
+    }) }));
+    const region = /<div class="goal-card-live" role="status">(.*?)<\/div>/.exec(html)![1]!;
+    expect(said(/<p class="goal-card-reason">(.*?)<\/p>/.exec(region)![1]!)).toBe(`The judge failed: ${long.slice("judge_error: ".length)}.`);
+    expect(said(/<button type="button" class="goal-card-text" aria-expanded="false">(.*?)<\/button>/.exec(region)![1]!)).toBe("Last check: FICTIONAL two left");
+    expect(live(html)).toMatch(/^Paused The judge failed: .+\. Last check: FICTIONAL two left$/);
   });
 
   it("at its cap: Paused · at cap, the card says the cap and offers the two raises and a stop", () => {

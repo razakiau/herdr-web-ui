@@ -88,6 +88,7 @@
 .goal-when:focus-visible, .goal-card-text:focus-visible, .goal-earlier:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .goal-card {
   --goal-tone: var(--notice);
+  position: relative;
   margin: var(--space-2) var(--space-3) 0; padding: var(--space-2) var(--space-3);
   border-inline-start: 2px solid var(--goal-tone); border-radius: var(--radius-md);
   background: color-mix(in oklab, var(--goal-tone) 9%, transparent);
@@ -100,7 +101,15 @@
   color: var(--goal-tone); font-size: var(--fs-xs); font-weight: var(--fw-semibold, 600); font-variant-numeric: tabular-nums;
 }
 .goal-card-head svg { flex: none; width: 1em; height: 1em; }
+/* when it paused or stopped: beside the head, outside the live region (it moves with each write) */
+.goal-card-time {
+  position: absolute; top: var(--space-2); inset-inline-end: var(--space-3);
+  color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+}
+.goal-card:has(.goal-card-time) .goal-card-head { padding-inline-end: 3.5em; }
+.goal-card-reason { margin: 2px 0 0; color: var(--text); font-size: var(--fs-xs); line-height: var(--lh-base); overflow-wrap: anywhere; }
 .goal-card-text { margin-top: 2px; color: var(--text); }
+.goal-card-reason + .goal-card-text { color: var(--text-dim); }
 .goal-card-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 .goal-card-btn { font-size: var(--fs-xs); }
 .goal-card-error { margin: var(--space-2) 0 0; color: var(--danger-text); font-size: var(--fs-xs); }

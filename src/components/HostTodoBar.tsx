@@ -152,8 +152,9 @@ function GoalBody({ goal, busy, failure, run, onStartAgain }: {
   const latest = checks.at(-1) ?? null;
   // the older checks, newest first; the latest is the card
   const earlier = checks.slice(0, -1).map((check, index) => ({ check, n: index + 1 })).reverse();
-  const at = clock(goal.updatedAt, locale);
-  const card = cardOf(goal, latest, checks.length, at, t);
+  // the goal keeps no pause time of its own: its last update is when it paused or stopped, unless a check landed after
+  const at = { iso: goal.updatedAt, clock: clock(goal.updatedAt, locale) };
+  const card = cardOf(goal, latest, checks.length, t);
   const button = (label: string, action: () => void, primary = false) =>
     <button key={label} type="button" className={`btn goal-card-btn${primary ? " btn-primary" : ""}`} disabled={busy} onClick={action}>{label}</button>;
   const buttons = run === null ? [] : goal.status === "budget_limited"
@@ -168,7 +169,7 @@ function GoalBody({ goal, busy, failure, run, onStartAgain }: {
     <button type="button" className="goal-when" aria-expanded={whenOpen} onClick={() => setWhenOpen(!whenOpen)}>
       <span className="goal-when-k">{t("Done when")}</span> {goal.doneWhen}
     </button>
-    {card !== null && <GoalCard card={card} actions={buttons} failure={failure} />}
+    {card !== null && <GoalCard card={card} at={at} actions={buttons} failure={failure} />}
     {earlier.length > 0 && <>
       <button type="button" className="goal-earlier" aria-expanded={earlierOpen} onClick={() => setEarlierOpen(!earlierOpen)}>
         {earlierOpen ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
@@ -192,35 +193,45 @@ function GoalBody({ goal, busy, failure, run, onStartAgain }: {
   </div>;
 }
 
-/** The card under the done-when: what the goal needs now. */
-interface Card { tone: "notice" | "blocked" | "done" | "ended"; Icon: LucideIcon; head: string; text: string | null; more: string | null }
+/**
+ * The card under the done-when: what the goal needs now. `head`, `reason` (whole) and `text` (two
+ * lines, a tap shows it whole) are its live region and depend only on the goal's state and its checks;
+ * `time` (when it paused or stopped, as near as the goal says) sits outside it, so a write that only
+ * moves the goal's update time announces nothing.
+ */
+interface Card { tone: "notice" | "blocked" | "done" | "ended"; Icon: LucideIcon; head: string; reason: string | null; text: string | null; time: boolean }
 
-function cardOf(goal: GoalView, latest: GoalCheck | null, n: number, at: string, t: Translate): Card | null {
+function cardOf(goal: GoalView, latest: GoalCheck | null, n: number, t: Translate): Card | null {
   const last = latest === null ? null : t("Last check: {reason}", { reason: latest.reason });
-  if (goal.status === "budget_limited") return { tone: "notice", Icon: CirclePause, head: t("Hit the {cap} cap", { cap: capDollars(goal.capUsd) }), text: last, more: null };
+  if (goal.status === "budget_limited") return { tone: "notice", Icon: CirclePause, head: t("Hit the {cap} cap", { cap: capDollars(goal.capUsd) }), reason: null, text: last, time: false };
   if (goal.status === "paused") {
-    if (goal.pauseReason === "owner") return { tone: "notice", Icon: CirclePause, head: t("Paused by you · {time}", { time: at }), text: last, more: null };
-    const why = pauseReasonWords(goal.pauseReason);
-    // an impossible verdict's reason is the pause's: said once
-    return { tone: "notice", Icon: CirclePause, head: t("Paused · {time}", { time: at }), text: why, more: latest !== null && latest.reason !== goal.pauseReason ? last : null };
+    if (goal.pauseReason === "owner") return { tone: "notice", Icon: CirclePause, head: t("Paused by you"), reason: null, text: last, time: true };
+    // the runner's reason in full, then the last check; an impossible verdict's reason is the pause's, said once
+    return { tone: "notice", Icon: CirclePause, head: t("Paused"), reason: pauseReasonWords(goal.pauseReason),
+      text: latest !== null && latest.reason !== goal.pauseReason ? last : null, time: true };
   }
-  if (goal.status === "stopped") return { tone: "ended", Icon: CircleX, head: t("Stopped by you · {time}", { time: at }), text: last, more: null };
+  if (goal.status === "stopped") return { tone: "ended", Icon: CircleX, head: t("Stopped by you"), reason: null, text: last, time: true };
   if (latest === null) return null;
   return {
     tone: latest.verdict === "met" ? "done" : latest.verdict === "error" ? "blocked" : "notice",
     Icon: CHECK_ICON[latest.verdict],
     head: t("Check {n} · {verdict}", { n, verdict: verdictWord(latest.verdict, t) }),
-    text: latest.reason, more: null,
+    reason: null, text: latest.reason, time: false,
   };
 }
 
-function GoalCard({ card, actions, failure }: { card: Card; actions: ReactNode[]; failure: string | null }) {
+/** The card: its live region (head, reason, text), the time beside it, then its buttons and a refusal, outside it. */
+function GoalCard({ card, at, actions, failure }: { card: Card; at: { iso: string; clock: string } | null; actions: ReactNode[]; failure: string | null }) {
   const [whole, setWhole] = useState(false);
   const { Icon } = card;
-  const reason = card.text === null ? null : card.text + (card.more === null ? "" : `\n${card.more}`);
-  return <div className="goal-card" data-tone={card.tone} role="status">
-    <p className="goal-card-head"><Icon aria-hidden="true" /><span>{card.head}</span></p>
-    {reason !== null && <button type="button" className="goal-card-text" aria-expanded={whole} onClick={() => setWhole(!whole)}>{reason}</button>}
+  const time = card.time && at !== null && at.clock !== "" ? at : null;
+  return <div className="goal-card" data-tone={card.tone}>
+    <div className="goal-card-live" role="status">
+      <p className="goal-card-head"><Icon aria-hidden="true" /><span>{card.head}</span></p>
+      {card.reason !== null && <p className="goal-card-reason">{card.reason}</p>}
+      {card.text !== null && <button type="button" className="goal-card-text" aria-expanded={whole} onClick={() => setWhole(!whole)}>{card.text}</button>}
+    </div>
+    {time !== null && <time className="goal-card-time" dateTime={time.iso}>{time.clock}</time>}
     {actions.length > 0 && <div className="goal-card-actions">{actions}</div>}
     {failure !== null && <p className="goal-card-error" role="alert">{failure}</p>}
   </div>;

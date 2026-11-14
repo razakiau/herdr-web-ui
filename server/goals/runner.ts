@@ -147,6 +147,7 @@ export function createGoalRunner(deps: GoalRunnerDeps): { step(goal: HostGoal): 
     if (paused?.status === "paused" && paused.pauseReason === reason) log(`goals: ${goal.machineId}/${goal.session} paused: ${reason}`);
   }
 
+  // an owner pause (routes.ts) cannot recall a send already in flight: that one turn still reaches the chat
   /** Queues the next turn for the goal's last check (saved with sent: false), then marks it sent, or pauses on send_failed. */
   async function sendNext(pc: GoalPc, goal: HostGoal, reason: string): Promise<void> {
     const { machineId, session } = goal;
