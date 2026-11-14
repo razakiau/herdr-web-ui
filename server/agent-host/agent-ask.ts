@@ -11,16 +11,19 @@ import { rowOfSdkHere, type AgentHost } from "./routes.ts";
 export const AGENT_ASK_PATH = "/api/agent-ask";
 
 const QUESTION_MAX = 4_000;
+/** what ask_user's `message` carries: the context the card shows above the question, as markdown */
+const MESSAGE_MAX = 20_000;
 const OPTIONS_MAX = 20;
 const LABEL_MAX = 500;
 
-type Ask = { sdk: string; question: string; options: { label: string; description?: string }[]; recommended: number | null; kind: AskKind };
+type Ask = { sdk: string; question: string; message: string | null; options: { label: string; description?: string }[]; recommended: number | null; kind: AskKind };
 
 /** The body's question, or a refusal that says what is wrong with it. */
 function askOf(body: Record<string, unknown>): Ask | Response {
-  const { sdk_session: sdk, question, options, recommended, kind } = body;
+  const { sdk_session: sdk, question, message, options, recommended, kind } = body;
   if (typeof sdk !== "string" || sdk === "") return badRequest("missing_sdk_session", "sdk_session is required");
   if (typeof question !== "string" || question.trim() === "" || question.length > QUESTION_MAX) return badRequest("invalid_question", `question must be text of at most ${QUESTION_MAX} characters`);
+  if (message !== undefined && message !== null && (typeof message !== "string" || message.length > MESSAGE_MAX)) return badRequest("invalid_message", `message must be text of at most ${MESSAGE_MAX} characters`);
   if (kind !== "optional" && kind !== "blocking") return badRequest("invalid_kind", "kind must be \"optional\" or \"blocking\"");
   if (!Array.isArray(options) || options.length === 0 || options.length > OPTIONS_MAX) return badRequest("invalid_options", `options must list 1 to ${OPTIONS_MAX} choices`);
   const parsed: Ask["options"] = [];
@@ -34,7 +37,7 @@ function askOf(body: Record<string, unknown>): Ask | Response {
   if (recommended !== undefined && recommended !== null && !(Number.isInteger(recommended) && (recommended as number) >= 0 && (recommended as number) < parsed.length)) {
     return badRequest("invalid_recommended", "recommended must be the 0-based index of one of the options");
   }
-  return { sdk, question, options: parsed, recommended: (recommended as number | null | undefined) ?? null, kind };
+  return { sdk, question, message: typeof message === "string" && message.trim() !== "" ? message : null, options: parsed, recommended: (recommended as number | null | undefined) ?? null, kind };
 }
 
 /** Files the question under its chat's row; `changed` tells the pages to read the chat again. */
@@ -47,7 +50,7 @@ export async function handleAgentAsk(request: Request, host: AgentHost, asks: As
   if (ask instanceof Response) return ask;
   const session = rowOf(ask.sdk);
   if (session === null) return jsonResponse({ error: { code: "no_chat", message: "no host chat on this PC runs on that session" } }, 404);
-  const q = asks.add({ session, question: ask.question, options: ask.options, recommended: ask.recommended, kind: ask.kind });
+  const q = asks.add({ session, question: ask.question, message: ask.message, options: ask.options, recommended: ask.recommended, kind: ask.kind });
   changed(session);
   return jsonResponse({ accepted: true, id: q.id });
 }

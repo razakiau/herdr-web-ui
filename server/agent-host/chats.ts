@@ -945,7 +945,7 @@ export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number)
     kind: "question",
     title: count > 1 ? `Question ${at + 1} of ${count}` : "Question",
     question: q.question,
-    body: null,
+    body: q.message ?? null,
     options: [...options, { label: OTHER_LABEL, description: null }],
     multi_select: false,
     custom_option_index: options.length,
