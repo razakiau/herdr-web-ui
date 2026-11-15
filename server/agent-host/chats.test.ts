@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatState, RootState, SessionState, SessionSummary, StateAction, ToolCallResult } from "@microsoft/agent-host-protocol";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
-import { agentsFrom, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
+import { agentsFrom, asyncQuestionPrompt, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
 import { parseInline } from "../../src/lib/markdown.ts";
 import { reducedChat, toolCallActions } from "./fake-host.ts";
 
@@ -1093,6 +1093,13 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
       { kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: [label], custom: null, skipped: false },
       { kind: "text", text: "FICTIONAL and hurry" },
     ]);
+  });
+
+  it("a form's card says the question in its body, after the agent's context: its heading is the first field's", () => {
+    const form: Asked = { ...asked, options: [], recommended: null, kind: "blocking", answer: null,
+      fields: [{ id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }], multi: false, required: true, typed: true }] };
+    expect(asyncQuestionPrompt(form, 0, 1)).toMatchObject({ title: "FICTIONAL store", body: "FICTIONAL keep the table?" });
+    expect(asyncQuestionPrompt({ ...form, message: "FICTIONAL found two tables" }, 0, 1).body).toBe("FICTIONAL found two tables\n\n**FICTIONAL keep the table?**");
   });
 
   it("look-alike text stays a bubble when the store does not know its id: typed, in a chat that never asked, or pruned", () => {

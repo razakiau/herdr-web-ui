@@ -144,7 +144,7 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     const { id } = await response.json() as { id: string };
     const read = await (await fetch(`${endpoint}/api/host-chats/chat?session=${encodeURIComponent(SESSION)}`, { headers: { authorization: `Bearer ${token}` } })).json() as HostChatRead;
     const other = { label: "Other…", description: null };
-    expect(read.prompt).toMatchObject({ id, kind: "question", title: "FICTIONAL store", question: "FICTIONAL where should rows live?", body: "FICTIONAL context", multi_select: false, custom_option_index: 2 });
+    expect(read.prompt).toMatchObject({ id, kind: "question", title: "FICTIONAL store", question: "FICTIONAL where should rows live?", body: "FICTIONAL context\n\n**FICTIONAL: how should the table move?**", multi_select: false, custom_option_index: 2 });
     expect(read.prompt?.away_default).toBeUndefined();
     expect(read.prompt?.form).toEqual([
       { title: "FICTIONAL store", question: "FICTIONAL where should rows live?", options: [{ label: "FICTIONAL Postgres", description: null }, { label: "FICTIONAL SQLite", description: null, recommended: true }, other], multi_select: false, custom_option_index: 2, required: true },

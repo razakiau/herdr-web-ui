@@ -989,7 +989,8 @@ function asyncFormPrompt(q: AsyncQuestion, fields: readonly AsyncField[]): NonNu
     kind: "question",
     title: first.read.title,
     question: first.read.question,
-    body: q.message ?? null,
+    // the heading is the first field's, so the question itself goes in the body, after the agent's context
+    body: q.message ? `${q.message}\n\n**${q.question}**` : q.question,
     options: first.read.options,
     multi_select: first.read.multi_select,
     custom_option_index: first.read.custom_option_index,
