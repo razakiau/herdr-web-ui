@@ -1083,6 +1083,18 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
     }
   });
 
+  it("a form's answer, one line a field, reads back as one question part, and a steer after it stays the user's", () => {
+    const label = "FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e\nFICTIONAL soon\nnotes: (skipped)";
+    const form: Asked = { ...asked, options: [], recommended: null, kind: "blocking", answer: { label, assumed: false, at: 1 },
+      fields: [{ id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }], multi: false, required: true, typed: true }] };
+    const text = `Answer to ${ID} ("FICTIONAL keep the table?"): ${label}`;
+    expect(said(text, storing(form)).parts).toEqual([{ kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: [label], custom: null, skipped: false }]);
+    expect(said(`${text}\n\nFICTIONAL and hurry`, storing(form)).parts).toEqual([
+      { kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: [label], custom: null, skipped: false },
+      { kind: "text", text: "FICTIONAL and hurry" },
+    ]);
+  });
+
   it("look-alike text stays a bubble when the store does not know its id: typed, in a chat that never asked, or pruned", () => {
     const text = `Answer to ask-99999999 ("FICTIONAL keep the table?"): FICTIONAL keep`;
     expect(said(text, storing(asked)).parts).toEqual([{ kind: "text", text }]);

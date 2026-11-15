@@ -125,6 +125,80 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect(read.prompt?.body).toBeNull();
   });
 
+  // ask_user's requestedSchema, as the shim sends it for ask_user_async (ZAC-326)
+  const SCHEMA = {
+    properties: {
+      store: { type: "string", title: "FICTIONAL store", description: "FICTIONAL where should rows live?", enum: ["pg", "sqlite"], enumNames: ["FICTIONAL Postgres", "FICTIONAL SQLite"], default: "sqlite" },
+      checks: { type: "array", title: "FICTIONAL checks", items: { anyOf: [{ const: "lint", title: "FICTIONAL lint" }, { const: "test", title: "FICTIONAL test" }] }, default: ["test"] },
+      migrate: { type: "boolean", title: "FICTIONAL migrate now?" },
+      notes: { type: "string", description: "FICTIONAL anything else?" },
+    },
+    required: ["store", "migrate"],
+  };
+  const FORM = { sdk_session: UUID, question: "FICTIONAL: how should the table move?", message: "FICTIONAL context", requested_schema: SCHEMA, kind: "blocking" };
+
+  it("a question with requested_schema is a form: one page a field, as ask_user's card (ZAC-326)", async () => {
+    const { endpoint, token } = await bridge();
+    const response = await post(endpoint, FORM, token);
+    expect(response.status).toBe(200);
+    const { id } = await response.json() as { id: string };
+    const read = await (await fetch(`${endpoint}/api/host-chats/chat?session=${encodeURIComponent(SESSION)}`, { headers: { authorization: `Bearer ${token}` } })).json() as HostChatRead;
+    const other = { label: "Other…", description: null };
+    expect(read.prompt).toMatchObject({ id, kind: "question", title: "FICTIONAL store", question: "FICTIONAL where should rows live?", body: "FICTIONAL context", multi_select: false, custom_option_index: 2 });
+    expect(read.prompt?.away_default).toBeUndefined();
+    expect(read.prompt?.form).toEqual([
+      { title: "FICTIONAL store", question: "FICTIONAL where should rows live?", options: [{ label: "FICTIONAL Postgres", description: null }, { label: "FICTIONAL SQLite", description: null, recommended: true }, other], multi_select: false, custom_option_index: 2, required: true },
+      { title: "FICTIONAL checks", question: "FICTIONAL checks", options: [{ label: "FICTIONAL lint", description: null }, { label: "FICTIONAL test", description: null, recommended: true }, other], multi_select: true, custom_option_index: 2, required: false },
+      { title: "FICTIONAL migrate now?", question: "FICTIONAL migrate now?", options: [{ label: "Yes", description: null }, { label: "No", description: null }], multi_select: false, custom_option_index: null, required: true },
+      { title: "", question: "FICTIONAL anything else?", options: [{ label: "Answer", description: null }], multi_select: false, custom_option_index: 0, required: false },
+    ]);
+    expect(read.prompt?.host).toEqual({ async_id: id, option_ids: ["0", "1", ""], form: [
+      { question_id: "store", option_ids: ["0", "1", ""] }, { question_id: "checks", option_ids: ["0", "1", ""] }, { question_id: "migrate", option_ids: ["0", "1"] }, { question_id: "notes", option_ids: [""] },
+    ] });
+  });
+
+  it("refuses a malformed requested_schema, and a form with no fields (ZAC-326)", async () => {
+    const { endpoint, token } = await bridge();
+    const refused = async (schema: unknown) => { const response = await post(endpoint, { ...FORM, requested_schema: schema }, token); return [response.status, ((await response.json()) as { error: { code: string } }).error.code]; };
+    expect(await refused({ properties: {} })).toEqual([400, "invalid_schema"]);
+    expect(await refused("FICTIONAL")).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: { a: { type: "object" } } })).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: { a: { type: "string", enum: [] } } })).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: { a: { type: "string", enum: ["x".repeat(501)] } } })).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: { a: { type: "array", items: { anyOf: [{ title: "no const" }] } } } })).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: { a: { type: "boolean" } }, required: "a" })).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`f${i}`, { type: "string" }])) })).toEqual([400, "invalid_schema"]);
+    // without a schema, options are still required
+    const plain = await post(endpoint, { ...FORM, requested_schema: undefined }, token);
+    expect(plain.status).toBe(400);
+  });
+
+  it("a form is answered whole: one line a field in the answer the chat gets; a required field left empty is refused (ZAC-326)", async () => {
+    const { endpoint, token, stateDir } = await bridge();
+    const { id } = await (await post(endpoint, FORM, token)).json() as { id: string };
+    const answer = (body: Record<string, unknown>) => fetch(`${endpoint}/api/host-chats/chat/answer`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ session: SESSION, async_id: id, ...body }),
+    });
+    const refused = async (body: Record<string, unknown>) => { const response = await answer(body); return [response.status, ((await response.json()) as { error: { code: string } }).error.code]; };
+    expect(await refused({ answers: { store: { option_ids: ["1"] }, migrate: null } })).toEqual([400, "missing_answer"]);
+    expect(await refused({ answers: { store: { option_ids: ["5"] }, migrate: { option_ids: ["0"] } } })).toEqual([400, "invalid_answer"]);
+    expect(await refused({ answers: { store: { option_ids: ["0", "1"] }, migrate: { option_ids: ["0"] } } })).toEqual([400, "invalid_answer"]);
+    expect(await refused({ answers: { store: { option_ids: ["1"] }, migrate: { text: "FICTIONAL maybe" } } })).toEqual([400, "invalid_answer"]);
+    expect(await refused({ option_ids: ["0"] })).toEqual([400, "invalid_answer"]);
+    const stored = () => (JSON.parse(readFileSync(join(stateDir, "async-asks.json"), "utf8")) as { id: string; answer: { label: string } | null }[]).find((q) => q.id === id)?.answer ?? null;
+    expect(stored()).toBeNull();
+    const response = await answer({ answers: {
+      store: { option_ids: ["1"] },
+      checks: { option_ids: ["0", ""], text: "FICTIONAL e2e\n\n\nFICTIONAL soon" },
+      migrate: { option_ids: ["1"] },
+      notes: null,
+    } });
+    expect(response.status).toBe(200);
+    expect(stored()?.label).toBe("FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e\nFICTIONAL soon\nFICTIONAL migrate now?: No\nnotes: (skipped)");
+    // answered once
+    expect((await answer({ answers: { store: { option_ids: ["0"] }, migrate: { option_ids: ["0"] } } })).status).toBe(409);
+  });
+
   it("refuses a request without the bridge token, a bad body, and a session no row runs on", async () => {
     const { endpoint, token } = await bridge();
     expect((await post(endpoint, ASK)).status).toBe(401);

@@ -22,7 +22,7 @@ import "./HostChatView.css";
 
 import type { JudgeChoice } from "../../shared/goal-budget.ts";
 import type { GoalView } from "../../shared/goals.ts";
-import type { HostAgent, HostChatRead, HostChatRow, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
+import type { HostAgent, HostChatRead, HostChatRow, HostFormAnswer, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
 import { hostSource, keepContext } from "../lib/chatSource.ts";
 import {
@@ -88,20 +88,22 @@ type HostPrompt = NonNullable<HostChatRead["prompt"]>;
 export function HostPromptCard({ machineId, session, prompt, onPromptChanged, onAnswered }: {
   machineId: string; session: string; prompt: HostPrompt; onPromptChanged(): void; onAnswered(): void;
 }) {
+  /** a form's pages as the bridge takes them: each question's option ids, by its id; null for one left empty */
+  const formAnswers = (refs: { question_id: string; option_ids: string[] }[], entries: NonNullable<PromptChoice["form"]>): HostFormAnswer["answers"] =>
+    Object.fromEntries(refs.map((each, index) => {
+      const entry = entries[index] ?? null;
+      const custom = prompt.form?.[index]?.custom_option_index ?? null;
+      if (entry === null) return [each.question_id, null];
+      const picked = entry.option_indices.map((at) => each.option_ids[at] ?? "").filter((id) => id !== "");
+      // typed words name the "Other…" slot, whose host id is empty: the text goes as freeformValues
+      const typed = entry.custom_text !== undefined && custom !== null ? [each.option_ids[custom] ?? ""] : [];
+      return [each.question_id, { ...(picked.length + typed.length > 0 ? { option_ids: [...picked, ...typed] } : {}), ...(entry.custom_text !== undefined ? { text: entry.custom_text } : {}) }];
+    }));
   const submit = async (choice: PromptChoice): Promise<void> => {
     const ref = prompt.host;
     if ("request_id" in ref) {
       if (choice.form && ref.form) {
-        const answers = Object.fromEntries(ref.form.map((each, index) => {
-          const entry = choice.form?.[index] ?? null;
-          const custom = prompt.form?.[index]?.custom_option_index ?? null;
-          if (entry === null) return [each.question_id, null];
-          const picked = entry.option_indices.map((at) => each.option_ids[at] ?? "").filter((id) => id !== "");
-          // typed words name the "Other…" slot, whose host id is empty: the text goes as freeformValues
-          const typed = entry.custom_text !== undefined && custom !== null ? [each.option_ids[custom] ?? ""] : [];
-          return [each.question_id, { ...(picked.length + typed.length > 0 ? { option_ids: [...picked, ...typed] } : {}), ...(entry.custom_text !== undefined ? { text: entry.custom_text } : {}) }];
-        }));
-        await answerHostForm(machineId, { session, request_id: ref.request_id, answers });
+        await answerHostForm(machineId, { session, request_id: ref.request_id, answers: formAnswers(ref.form, choice.form) });
         return;
       }
       const picked = choice.option_indices ?? (choice.option_index !== undefined ? [choice.option_index] : []);
@@ -116,6 +118,11 @@ export function HostPromptCard({ machineId, session, prompt, onPromptChanged, on
       return;
     }
     if ("async_id" in ref) {
+      // a form the agent asked without stopping (ask_user_async's requested_schema): answered whole
+      if (choice.form && ref.form) {
+        await answerHost(machineId, { session, async_id: ref.async_id, answers: formAnswers(ref.form, choice.form) });
+        return;
+      }
       // a question the agent asked without stopping (ZAC-326): the option picked, else the words typed
       const optionId = choice.custom_text === undefined && choice.option_index !== undefined ? ref.option_ids[choice.option_index] : undefined;
       await answerHost(machineId, { session, async_id: ref.async_id, ...(optionId !== undefined ? { option_ids: [optionId] } : { text: choice.custom_text ?? "" }) });

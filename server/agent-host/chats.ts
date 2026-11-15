@@ -47,7 +47,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
 import { todosSince, type StoredTodo } from "./todos.ts";
-import type { AsyncQuestion } from "./async-ask.ts";
+import type { AsyncField, AsyncQuestion } from "./async-ask.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
@@ -938,6 +938,7 @@ function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<HostCh
  * optional one with a recommendation says what it goes with when nobody has Ovis open.
  */
 export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number): NonNullable<HostChatRead["prompt"]> {
+  if (q.fields && q.fields.length > 0) return asyncFormPrompt(q, q.fields);
   const options: InteractivePromptOption[] = q.options.map((option, index) => ({
     label: option.label, description: option.description ?? null, ...(index === q.recommended ? { recommended: true as const } : {}),
   }));
@@ -953,6 +954,47 @@ export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number)
     custom_option_index: options.length,
     ...(q.kind === "optional" && q.recommended !== null ? { away_default: q.recommended + 1 } : {}),
     host: { async_id: q.id, option_ids: q.options.map((_, index) => String(index)) },
+  };
+}
+
+/**
+ * A field of an async form as the card asks it, as questionOptions does a host question's: its
+ * options by index ("0".."n-1"), the default marked, then the typed slot (`""`) when it takes one;
+ * a field with no options is a typed answer alone.
+ */
+function asyncFieldOptions(field: AsyncField): { options: InteractivePromptOption[]; ids: string[]; custom: number | null } {
+  if (field.options.length === 0) return { options: [{ label: ANSWER_LABEL, description: null }], ids: [NO_ID], custom: 0 };
+  const picks = field.default === undefined ? [] : [field.default].flat();
+  const options: InteractivePromptOption[] = field.options.map((option) => ({
+    label: option.label, description: option.description ?? null, ...(picks.includes(option.value) ? { recommended: true as const } : {}),
+  }));
+  const ids = field.options.map((_, index) => String(index));
+  if (!field.typed) return { options, ids, custom: null };
+  return { options: [...options, { label: OTHER_LABEL, description: null }], ids: [...ids, NO_ID], custom: options.length };
+}
+
+/** An async question that is a form (ask_user's requestedSchema): paged and answered whole, as questionPrompt's form. No away default: a form is never answered for the owner. */
+function asyncFormPrompt(q: AsyncQuestion, fields: readonly AsyncField[]): NonNullable<HostChatRead["prompt"]> {
+  const form = fields.map((field) => {
+    const own = asyncFieldOptions(field);
+    return {
+      read: { title: field.title, question: field.question, options: own.options, multi_select: field.multi, custom_option_index: own.custom, required: field.required },
+      ref: { question_id: field.id, option_ids: own.ids },
+    };
+  });
+  const first = form[0]!;
+  return {
+    id: q.id,
+    agent: PROMPT_AGENT,
+    kind: "question",
+    title: first.read.title,
+    question: first.read.question,
+    body: q.message ?? null,
+    options: first.read.options,
+    multi_select: first.read.multi_select,
+    custom_option_index: first.read.custom_option_index,
+    form: form.map((each) => each.read),
+    host: { async_id: q.id, option_ids: first.ref.option_ids, form: form.map((each) => each.ref) },
   };
 }
 

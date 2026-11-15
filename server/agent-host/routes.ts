@@ -67,7 +67,7 @@ import { workOf } from "./artifacts.ts";
 import { digestOf } from "../goals/judge.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
-import type { AsyncAskStore, AsyncQuestion } from "./async-ask.ts";
+import type { AsyncAskStore, AsyncField, AsyncQuestion } from "./async-ask.ts";
 import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff, type HandoffDone } from "./handoff.ts";
 
 /** What the routes use of a AgentHostConnection, so they can be tested against a stub. */
@@ -1895,6 +1895,36 @@ function deliverAsync(call: Pick<Call, "host" | "asks">, session: string, channe
   return answered;
 }
 
+/** Typed words as one line or several, never a blank line: STEER_JOIN ("\n\n") is what parts a turn's messages (chats.ts asyncAnswerAt). */
+const withoutBlankLines = (words: string): string => words.replace(/\r\n?/g, "\n").replace(/\n(?:[ \t]*\n)+/g, "\n").trim();
+
+/**
+ * A form's answers (an async question with fields) as the label the chat gets: one line a field,
+ * `<title>: <picked labels, then the typed words, joined ", ">`, or `<title>: (skipped)` for an
+ * optional one left empty. Refuses an option id no field option has, several picks on a
+ * single-choice field, typed words a field does not take, and a required field left empty.
+ */
+function asyncFormLabel(fields: readonly AsyncField[], given: Record<string, unknown>): string {
+  return fields.map((field) => {
+    const name = field.title.trim() || field.id;
+    const entry = given[field.id];
+    if (entry !== undefined && entry !== null && (typeof entry !== "object" || Array.isArray(entry))) refuse(badRequest("invalid_answer", "each answer must be an object or null"));
+    const ids = (entry as { option_ids?: unknown } | null | undefined)?.option_ids;
+    const typed = (entry as { text?: unknown } | null | undefined)?.text;
+    if (ids !== undefined && !(Array.isArray(ids) && ids.every(text))) refuse(badRequest("invalid_answer", "option_ids must be strings"));
+    if (typed !== undefined && !text(typed)) refuse(badRequest("invalid_answer", "text must be a string"));
+    // "" is the typed slot: the words are the answer
+    const picked = ((ids as string[] | undefined) ?? []).filter((id) => id !== "").map((id) => /^\d+$/.test(id) ? field.options[Number(id)] : undefined);
+    if (picked.some((option) => option === undefined)) refuse(badRequest("invalid_answer", "option_ids names no option of this field"));
+    if (!field.multi && picked.length > 1) refuse(badRequest("invalid_answer", "a single-choice field takes one option"));
+    const words = typeof typed === "string" ? withoutBlankLines(typed) : "";
+    if (words !== "" && !field.typed) refuse(badRequest("invalid_answer", "this field takes no typed answer"));
+    const said = [...picked.map((option) => option!.label), ...(words !== "" ? [words] : [])];
+    if (said.length === 0 && field.required) refuse(badRequest("missing_answer", "a required field needs an answer"));
+    return `${name}: ${said.length > 0 ? said.join(", ") : "(skipped)"}`;
+  }).map(withoutBlankLines).join("\n");
+}
+
 /**
  * An async question's answer (ZAC-326): an option by its index, or typed text. Recorded first, so a
  * second answer finds it answered (prompt_changed), then sent to the chat: a steer while its turn
@@ -1906,11 +1936,22 @@ async function answerAsync(call: Call, session: string, asyncId: unknown): Promi
   if (!text(asyncId) || asyncId === "") return badRequest("missing_async_id", "async_id must be a question id");
   const rawIds = call.body["option_ids"];
   const typed = call.body["text"];
+  const whole = call.body["answers"];
   if (rawIds !== undefined && !(Array.isArray(rawIds) && rawIds.every(text))) return badRequest("invalid_answer", "option_ids must be strings");
   if (typed !== undefined && !text(typed)) return badRequest("invalid_answer", "text must be a string");
+  if (whole !== undefined && (whole === null || typeof whole !== "object" || Array.isArray(whole))) return badRequest("invalid_answer", "answers must be an object");
   const correction = call.body["correction"] === true;
   const q = call.asks?.get(asyncId) ?? null;
   if (!q || q.session !== session || (correction ? !q.answer?.assumed : q.answer)) gone();
+  // a form is answered whole, by `answers`; a question of its own by an option or typed words
+  if (q!.fields && (rawIds !== undefined || typed !== undefined)) return badRequest("invalid_answer", "a form is answered with answers");
+  if (!q!.fields && whole !== undefined) return badRequest("invalid_answer", "only a form is answered with answers");
+  if (q!.fields) {
+    const label = asyncFormLabel(q!.fields, whole === undefined ? {} : whole as Record<string, unknown>);
+    const { channel, chat } = await watched(call, session);
+    deliverAsync(call, session, channel, chat, q!, label, "answer", idOf(call.body["id"])) ?? gone();
+    return jsonResponse({ ok: true });
+  }
   const picked = ((rawIds as string[] | undefined) ?? []).find((id) => id !== "");
   const index = picked === undefined ? -1 : Number(picked);
   const words = typeof typed === "string" ? typed.trim() : "";

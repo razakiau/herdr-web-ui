@@ -61,6 +61,20 @@ describe("AsyncAskStore", () => {
     expect(store.due().map((d) => d.id)).toEqual([q.id]);
   });
 
+  test("due() never answers a form, and a form's fields survive a reload next to a question filed before forms", () => {
+    const fields = [{ id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "A", value: "a" }], multi: false, required: true, typed: true, default: "a" }];
+    // an optional form with a recommendation into its own options would be due, were it not a form
+    const store = new AsyncAskStore(file, now);
+    const form = store.add({ session: SESSION, question: "FICTIONAL: the form?", options: OPTIONS, recommended: 0, kind: "optional", fields });
+    const plain = ask(store);
+    clock = 60_000;
+    expect(store.due().map((d) => d.id)).toEqual([plain.id]);
+    const again = new AsyncAskStore(file, now);
+    expect(again.get(form.id)?.fields).toEqual(fields);
+    expect(again.get(plain.id)).not.toBeNull();
+    expect(again.get(plain.id)?.fields).toBeUndefined();
+  });
+
   test("due() leaves out the questions of a chat whose goal waits for the owner", () => {
     const store = new AsyncAskStore(file, now);
     const s1 = store.add({ session: "s1", question: "FICTIONAL: which way?", options: OPTIONS, recommended: 0, kind: "optional" });
