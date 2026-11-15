@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction, ToolCallResult, Turn } from "@microsoft/agent-host-protocol";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import type { HostChatRead, AgentHostState } from "../../shared/host-chats.ts";
@@ -749,6 +749,36 @@ describe("host chat read and write routes", () => {
     return { host, watched };
   };
   const chatPath = (session: string) => `/api/host-chats/chat?session=${encodeURIComponent(session)}`;
+
+  it("a chat too big for one WebSocket message answers 413 chat_too_big with its record's size; the PC's other chat still reads, live, on the same connection (ZAC-337)", async () => {
+    const home = temp();
+    const record = join(home, "session-state", uuid(2), "events.jsonl");
+    mkdirSync(dirname(record), { recursive: true });
+    writeFileSync(record, "");
+    truncateSync(record, 242 * 2 ** 20);
+    const before = process.env["COPILOT_HOME"];
+    process.env["COPILOT_HOME"] = home;
+    try {
+      // just over what Bun's client takes in one message (128 MB passes, 129 MB closes with 1009)
+      const r = await rig({ padSnapshots: { [chatUri(2)]: 129 * 2 ** 20 } });
+      const read = (n: number) => call(r, `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(n))}`);
+      expect((await read(1)).status).toBe(200);
+
+      expect(await read(2)).toEqual({ status: 413, json: { error: { code: "chat_too_big", message: "this chat is too big to open (its record is 242 MB)", record_bytes: 242 * 2 ** 20 } } });
+
+      // the shared connection never dropped: one handshake, and chat 1's updates still arrive on it
+      expect(r.conn.state().state).toBe("connected");
+      expect(r.fake.requests.filter((each) => each.method === "initialize" && (each.params as { clientId: string }).clientId === "herdr-web-0000test")).toHaveLength(1);
+      r.fake.push(chatUri(1), { type: "chat/turnStarted", turnId: "FICTIONAL-live", startedAt: AT, message: user("FICTIONAL after the big one") } as unknown as StateAction);
+      await until("chat 1's live turn", () => r.conn.chat(sessionUri(1))?.activeTurn !== undefined);
+      expect((await read(1)).status).toBe(200);
+      // asked again, it is answered from memory: the host is not made to send it again
+      expect((await read(2)).status).toBe(413);
+      expect(r.fake.requests.filter((each) => each.method === "subscribe" && (each.params as { channel: string }).channel === chatUri(2))).toHaveLength(1);
+    } finally {
+      if (before === undefined) delete process.env["COPILOT_HOME"]; else process.env["COPILOT_HOME"] = before;
+    }
+  });
 
   it("a read subscribes its newest 20 subagent chats, and an older one still reads when its row opens", async () => {
     const { workers, parent, chats } = manySubagents(21);
@@ -1903,7 +1933,8 @@ describe("host chat changes: VS Code's Changes pill (the chat's changeset)", () 
       files: [{ id: "f-a", path: "/tmp/fictional-repo/a.ts", kind: "edit", added: 4, removed: 1 }, { id: "f-b", path: "/tmp/fictional-repo/b.ts", kind: "create", added: 2, removed: 0 }],
     } } });
     expect(r.fake.requests.filter((each) => each.method === "subscribe" && (each.params as { channel: string }).channel === CS).length).toBe(1);
-    await until("the unsubscribe", () => r.fake.requests.some((each) => each.method === "unsubscribe" && (each.params as { channel: string }).channel === CS));
+    // read over a socket of its own (ZAC-337), which closes after the read: nothing holds the channel
+    await until("the reading socket's close", () => r.fake.peers() === 1);
   });
 
   it("a session-kind changeset wins over the first one, as VS Code's default", async () => {

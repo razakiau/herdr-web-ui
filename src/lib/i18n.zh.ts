@@ -197,6 +197,8 @@ const BASE: Record<string, string> = {
   "The PC took too long": "电脑响应太慢",
   "Can't reach the PC": "无法连接到电脑",
   "PC disk is full": "电脑磁盘已满",
+  "This chat is too big to open": "此聊天太大，无法打开",
+  "The PC's other chats are not affected. Open this one in VS Code on the PC.": "电脑上的其他聊天不受影响。请在电脑上的 VS Code 中打开此聊天。",
   "No permission on the PC": "电脑上没有权限",
   "Pair it again in Settings → Phone & devices.": "请在设置 → 手机和设备中重新配对。",
   "Refresh and try again.": "请刷新后重试。",

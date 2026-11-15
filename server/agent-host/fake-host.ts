@@ -63,6 +63,11 @@ export interface FakeAgentHostSeed {
   refuse?: string;
   /** Write this host's own `standalone` registry entry into this directory. */
   entryDir?: string;
+  /**
+   * Per channel: how many characters of padding its subscribe's snapshot carries (`state.padding`),
+   * so the answer is as big as a real chat that outgrew one WebSocket message.
+   */
+  padSnapshots?: Record<string, number>;
   /** Per channel: how many of its next subscribes fail (as a host that times out or lost it would). */
   failSubscribes?: Record<string, number>;
   /** Per channel: the items a `completions` request answers (none: an empty list). */
@@ -204,7 +209,8 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
         if (failing > 0) { failSubscribes[channel] = failing - 1; fail(-32603, `FICTIONAL subscribe failure on ${channel}`); return; }
         const state = states[channel] ?? chats[channel] ?? seed.changesets?.[channel];
         if (!state) { fail(-32008, `no such channel ${channel}`); return; }
-        ok({ snapshot: { resource: channel, fromSeq: serverSeq, state } });
+        const padding = seed.padSnapshots?.[channel];
+        ok({ snapshot: { resource: channel, fromSeq: serverSeq, state: padding === undefined ? state : { ...state, padding: "x".repeat(padding) } } });
         return;
       }
       case "createSession": {

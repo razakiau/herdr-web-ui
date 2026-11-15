@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatState, SessionModelInfo, SessionState, SessionSummary, StateAction } from "@microsoft/agent-host-protocol";
-import { PUSH_WINDOW_MS, AgentHostConnection, type AgentHostConnectionOptions, type AgentHostEvent } from "./connection.ts";
+import { PUSH_WINDOW_MS, TOO_BIG_MEMO_MS, AgentHostConnection, AgentHostError, type AgentHostConnectionOptions, type AgentHostEvent } from "./connection.ts";
 import { fakeAgentHost, type FakeAgentHost, type FakeAgentHostSeed } from "./fake-host.ts";
 
 // Stands in for the reconnect backoff (1 s, 2 s, 4 s …) so a restart is seen within a test.
@@ -141,6 +141,8 @@ describe("agent host connection", () => {
     expect(after.map((r) => [r.method, (r.params as { channel: string }).channel])).toEqual([
       ["subscribe", sessionUri(1)],
       ["dispatchAction", sessionUri(1)],
+      // the chat is read alone first (a socket of its own, ZAC-337), then subscribed on the shared one
+      ["subscribe", chatUri(1)],
       ["subscribe", chatUri(1)],
     ]);
     expect(fake.dispatched).toEqual([{ channel: sessionUri(1), action: { type: "session/activeClientSet", activeClient: { clientId: "herdr-web-0000test", displayName: "herdr-web", tools: [] } } as unknown as StateAction }]);
@@ -156,7 +158,8 @@ describe("agent host connection", () => {
 
     // a second watcher shares the subscription; only the last release unsubscribes both
     const second = await conn.watch(sessionUri(1));
-    expect(fake.requests.filter((r) => r.method === "subscribe")).toHaveLength(2);
+    // session, the chat read alone, the chat: the second watcher asks for nothing
+    expect(fake.requests.filter((r) => r.method === "subscribe")).toHaveLength(3);
     release();
     release();
     expect(fake.requests.some((r) => r.method === "unsubscribe")).toBe(false);
@@ -446,5 +449,93 @@ describe("agent host connection", () => {
     expect(second.dispatched.filter((d) => d.action.type === "chat/turnStarted")).toEqual([]);
     // the only thing it sends is the watch's own active-client mark on the session, which a new host does not know
     expect(second.dispatched.map((d) => [d.channel, d.action.type])).toEqual([[sessionUri(1), "session/activeClientSet"]]);
+  });
+
+  // ZAC-337: Bun's WebSocket client closes on a message over 128 MB (1009); on the shared socket
+  // that close dropped every chat on the PC (live: a 156 MB snapshot on the Mac)
+  describe("a chat too big for one WebSocket message", () => {
+    /** Just over what Bun's client takes in one message (128 MB passes, 129 MB closes). */
+    const TOO_BIG = 129 * 2 ** 20;
+    const twoChats = (padded: Record<string, number>): Partial<FakeAgentHostSeed> => ({
+      states: { [sessionUri(1)]: sessionState(1), [sessionUri(2)]: sessionState(2) },
+      chats: { [chatUri(1)]: chatState(1), [chatUri(2)]: chatState(2) },
+      padSnapshots: padded,
+    });
+    const sharedInits = (fake: FakeAgentHost) => fake.requests.filter((r) => r.method === "initialize" && (r.params as { clientId?: string }).clientId === "herdr-web-0000test").length;
+    const codeOf = async (taking: Promise<unknown>): Promise<string> => {
+      try { await taking; return "ok"; } catch (error) { return error instanceof AgentHostError ? error.code : String(error); }
+    };
+
+    it("fails alone as too_big: the shared socket stays up and the PC's other chat keeps its live updates", async () => {
+      const { home, env, entries } = tempHome();
+      const fake = await host(entries, twoChats({ [chatUri(2)]: TOO_BIG }));
+      const { conn } = connection({ home, env });
+      conn.start();
+      await until("connected", () => conn.state().state === "connected");
+      await conn.watch(sessionUri(1));
+
+      expect(await codeOf(conn.watch(sessionUri(2)))).toBe("too_big");
+
+      expect(conn.state().state).toBe("connected");
+      expect(sharedInits(fake)).toBe(1);
+      expect(conn.watching(sessionUri(2))).toBe(false);
+      fake.push(chatUri(1), turnStarted("FICTIONAL still live"));
+      await until("chat 1's live update", () => conn.chat(sessionUri(1))?.activeTurn !== undefined);
+      // the reading socket is closed after its read: only the shared one is left
+      await until("one peer", () => fake.peers() === 1);
+      expect(sharedInits(fake)).toBe(1);
+    });
+
+    it("a chat that fits is read alone first, then subscribed on the shared socket, and its reading socket closes", async () => {
+      const { home, env, entries } = tempHome();
+      const fake = await host(entries, twoChats({}));
+      const { conn } = connection({ home, env });
+      conn.start();
+      await until("connected", () => conn.state().state === "connected");
+      await conn.watch(sessionUri(2));
+      expect(conn.chat(sessionUri(2))?.title).toBe("FICTIONAL_chat_2");
+      const inits = fake.requests.filter((r) => r.method === "initialize").map((r) => r.params as { clientId: string; initialSubscriptions?: string[] });
+      // its own clientId, so the host never takes it for the shared client reconnecting, and no root snapshot
+      expect(inits.map((each) => [each.clientId, each.initialSubscriptions ?? null])).toEqual([["herdr-web-0000test", ["ahp-root://"]], ["herdr-web-0000test-read-1", null]]);
+      expect(fake.requests.filter((r) => r.method === "subscribe" && (r.params as { channel: string }).channel === chatUri(2))).toHaveLength(2);
+      await until("one peer", () => fake.peers() === 1);
+    });
+
+    it("is answered too_big for TOO_BIG_MEMO_MS without asking the host again, then read again", async () => {
+      const { home, env, entries } = tempHome();
+      const fake = await host(entries, twoChats({ [chatUri(2)]: TOO_BIG }));
+      let now = 1_000_000;
+      const { conn } = connection({ home, env, deps: { spawn: () => {}, sleep: quick, now: () => now } });
+      conn.start();
+      await until("connected", () => conn.state().state === "connected");
+      const reads = () => fake.requests.filter((r) => r.method === "subscribe" && (r.params as { channel: string }).channel === chatUri(2)).length;
+
+      expect(await codeOf(conn.watch(sessionUri(2)))).toBe("too_big");
+      expect(reads()).toBe(1);
+      now += TOO_BIG_MEMO_MS - 1;
+      expect(await codeOf(conn.watch(sessionUri(2)))).toBe("too_big");
+      expect(reads()).toBe(1);
+      now += 1;
+      expect(await codeOf(conn.watch(sessionUri(2)))).toBe("too_big");
+      expect(reads()).toBe(2);
+      expect(sharedInits(fake)).toBe(1);
+    });
+
+    it("a changeset read once (snapshotOf) goes over a socket of its own, so one too big fails alone", async () => {
+      const { home, env, entries } = tempHome();
+      const changeset = "ahp-changeset:/FICTIONAL";
+      const fake = await host(entries, { ...twoChats({ [changeset]: TOO_BIG }), changesets: { [changeset]: { files: [] } } });
+      const { conn } = connection({ home, env });
+      conn.start();
+      await until("connected", () => conn.state().state === "connected");
+      await conn.watch(sessionUri(1));
+
+      expect(await codeOf(conn.snapshotOf(changeset))).toBe("too_big");
+
+      expect(conn.state().state).toBe("connected");
+      expect(sharedInits(fake)).toBe(1);
+      fake.push(chatUri(1), turnStarted("FICTIONAL still live"));
+      await until("chat 1's live update", () => conn.chat(sessionUri(1))?.activeTurn !== undefined);
+    });
   });
 });
