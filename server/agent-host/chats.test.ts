@@ -1083,16 +1083,22 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
     }
   });
 
-  it("a form's answer, one line a field, reads back as one question part, and a steer after it stays the user's", () => {
-    const label = "FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e\nFICTIONAL soon\nnotes: (skipped)";
-    const form: Asked = { ...asked, options: [], recommended: null, kind: "blocking", answer: { label, assumed: false, at: 1 },
-      fields: [{ id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }], multi: false, required: true, typed: true }] };
+  it("a form's answer reads back as one question part a field, as an ask_user form, and a steer after it stays the user's", () => {
+    const label = "FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e, FICTIONAL soon\nand later\nnotes: (skipped)";
+    const form: Asked = { ...asked, message: "FICTIONAL found two tables", options: [], recommended: null, kind: "blocking", answer: { label, assumed: false, at: 1 },
+      fields: [
+        { id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }, { label: "FICTIONAL Postgres", value: "pg" }], multi: false, required: true, typed: true },
+        { id: "checks", title: "FICTIONAL checks", question: "FICTIONAL which checks?", options: [{ label: "FICTIONAL lint", value: "lint" }, { label: "FICTIONAL e2e", value: "e2e" }], multi: true, required: false, typed: true },
+        { id: "notes", title: "", question: "notes", options: [], multi: false, required: false, typed: true },
+      ] };
+    const parts = [
+      { kind: "question", text: "FICTIONAL where?", report: "FICTIONAL found two tables\n\n**FICTIONAL keep the table?**", options: ["FICTIONAL SQLite", "FICTIONAL Postgres"], chosen: ["FICTIONAL SQLite"], custom: null, skipped: false },
+      { kind: "question", text: "FICTIONAL which checks?", options: ["FICTIONAL lint", "FICTIONAL e2e"], multi: true, chosen: ["FICTIONAL lint", "FICTIONAL e2e"], custom: "FICTIONAL soon\nand later", skipped: false },
+      { kind: "question", text: "notes", options: [], chosen: [], custom: null, skipped: true },
+    ] satisfies ConversationPart[];
     const text = `Answer to ${ID} ("FICTIONAL keep the table?"): ${label}`;
-    expect(said(text, storing(form)).parts).toEqual([{ kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: [label], custom: null, skipped: false }]);
-    expect(said(`${text}\n\nFICTIONAL and hurry`, storing(form)).parts).toEqual([
-      { kind: "question", text: "FICTIONAL keep the table?", options: [], chosen: [label], custom: null, skipped: false },
-      { kind: "text", text: "FICTIONAL and hurry" },
-    ]);
+    expect(said(text, storing(form)).parts).toEqual(parts);
+    expect(said(`${text}\n\nFICTIONAL and hurry`, storing(form)).parts).toEqual([...parts, { kind: "text", text: "FICTIONAL and hurry" } satisfies ConversationPart]);
   });
 
   it("a form's card says the question in its body, after the agent's context: its heading is the first field's", () => {

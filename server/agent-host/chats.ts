@@ -449,7 +449,7 @@ const STEER_JOIN = "\n\n";
  * the label after it is the longest the question could have had (its stored answer, one of its
  * options) that ends there, less an assumed answer's away suffix; else it runs to the first join.
  */
-function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part: Extract<ConversationPart, { kind: "question" }>; end: number } | null {
+function asyncAnswerAt(text: string, at: number, context?: ReadContext): { parts: QuestionPart[]; end: number } | null {
   const head = ASYNC_ANSWER_HEAD.exec(text.slice(at, at + 64));
   if (!head) return null;
   const [opening, form, id] = head as unknown as [string, string, string];
@@ -471,17 +471,55 @@ function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part:
   const rest = text.slice(from, end);
   const label = fits ? fits.label : assumed && rest.endsWith(AWAY_SUFFIX) ? rest.slice(0, -AWAY_SUFFIX.length) : rest;
   if (label.trim() === "") return null;
+  if (asked.fields && asked.fields.length > 0) return { end, parts: asyncFormParts(asked, asked.fields, label) };
   return {
     end,
-    part: {
+    parts: [{
       kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
       // the context it was asked with folds above it, as an ask_user report does (QuestionSummary)
       ...(asked.message ? { report: asked.message } : {}),
       ...(assumed ? { assumed: true as const } : {}),
       // correctable while the store still holds the assumed answer: once corrected, it is the user's
       ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
-    },
+    }],
   };
+}
+
+type QuestionPart = Extract<ConversationPart, { kind: "question" }>;
+
+/**
+ * A form's answer (routes.ts asyncFormLabel: one `<title>: <answer>` line a field, in field order)
+ * as one question part a field, as an ask_user form reads (questionParts): on one line the answers
+ * ran together, cut short, and could not be opened (owner's probe, 2026-11-15). The report leads
+ * the first, with the question itself, as the card's body. A line that starts no next field
+ * continues the one before (typed words may hold newlines). Picked labels are read off the front
+ * of a field's answer, longest first; what is left is the typed answer.
+ */
+function asyncFormParts(asked: AsyncQuestion, fields: readonly AsyncField[], label: string): QuestionPart[] {
+  const said = new Map<string, string>();
+  let at = -1;
+  for (const line of label.split("\n")) {
+    const next = fields[at + 1];
+    if (next && line.startsWith(`${next.title.trim() || next.id}: `)) {
+      at += 1;
+      said.set(next.id, line.slice(`${next.title.trim() || next.id}: `.length));
+    } else if (at >= 0) said.set(fields[at]!.id, `${said.get(fields[at]!.id)}\n${line}`);
+  }
+  const report = asked.message ? `${asked.message}\n\n**${asked.question}**` : asked.question;
+  return fields.map((field, index) => {
+    const answer = said.get(field.id);
+    const options = field.options.map((option) => option.label);
+    const lead = { kind: "question" as const, text: field.question, ...(index === 0 ? { report } : {}), options, ...(field.multi ? { multi: true as const } : {}) };
+    if (answer === undefined || answer === "(skipped)") return { ...lead, chosen: [], custom: null, skipped: true };
+    const chosen: string[] = [];
+    let rest = answer;
+    for (let found = true; found && rest !== "";) {
+      const label = [...options].sort((a, b) => b.length - a.length).find((each) => !chosen.includes(each) && (rest === each || rest.startsWith(`${each}, `)));
+      found = label !== undefined;
+      if (label !== undefined) { chosen.push(label); rest = rest.slice(Math.min(rest.length, label.length + 2)); }
+    }
+    return { ...lead, chosen, custom: rest === "" ? null : rest, skipped: false };
+  });
 }
 
 /**
@@ -500,7 +538,7 @@ function userTextParts(text: string, context?: ReadContext): ConversationPart[] 
     const found = asyncAnswerAt(text, at, context);
     if (found) {
       said(Math.max(words, at - STEER_JOIN.length));
-      parts.push(found.part);
+      parts.push(...found.parts);
       words = Math.min(text.length, found.end + STEER_JOIN.length);
       at = words;
       continue;
