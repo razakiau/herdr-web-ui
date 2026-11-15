@@ -47,7 +47,7 @@ import {
 } from "@microsoft/agent-host-protocol";
 import { artifactsOf, workOf } from "./artifacts.ts";
 import { todosSince, type StoredTodo } from "./todos.ts";
-import type { AsyncQuestion } from "./async-ask.ts";
+import type { AsyncField, AsyncQuestion } from "./async-ask.ts";
 import type { ConversationPart, ConversationTurn, FileEditKind, InteractivePromptOption, ToolEdit } from "../../shared/protocol.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostCheckpoint, HostCommand, HostContextUsage, HostModel, HostTokenTotal } from "../../shared/host-chats.ts";
 import { IMAGE_TYPES } from "../conversation.ts";
@@ -449,7 +449,7 @@ const STEER_JOIN = "\n\n";
  * the label after it is the longest the question could have had (its stored answer, one of its
  * options) that ends there, less an assumed answer's away suffix; else it runs to the first join.
  */
-function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part: Extract<ConversationPart, { kind: "question" }>; end: number } | null {
+function asyncAnswerAt(text: string, at: number, context?: ReadContext): { parts: QuestionPart[]; end: number } | null {
   const head = ASYNC_ANSWER_HEAD.exec(text.slice(at, at + 64));
   if (!head) return null;
   const [opening, form, id] = head as unknown as [string, string, string];
@@ -471,15 +471,57 @@ function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part:
   const rest = text.slice(from, end);
   const label = fits ? fits.label : assumed && rest.endsWith(AWAY_SUFFIX) ? rest.slice(0, -AWAY_SUFFIX.length) : rest;
   if (label.trim() === "") return null;
+  if (asked.fields && asked.fields.length > 0) return { end, parts: asyncFormParts(asked, asked.fields, label) };
   return {
     end,
-    part: {
+    parts: [{
       kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
+      // the context it was asked with folds above it, as an ask_user report does (QuestionSummary)
+      ...(asked.message ? { report: asked.message } : {}),
       ...(assumed ? { assumed: true as const } : {}),
       // correctable while the store still holds the assumed answer: once corrected, it is the user's
       ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
-    },
+    }],
   };
+}
+
+type QuestionPart = Extract<ConversationPart, { kind: "question" }>;
+
+/**
+ * A form's answer (routes.ts asyncFormLabel: one `<title>: <answer>` line a field, in field order)
+ * as one question part a field, as an ask_user form reads (questionParts): on one line the answers
+ * ran together, cut short, and could not be opened (owner's probe, 2026-11-15). The report leads
+ * the first, with the question itself, as the card's body. An indented line, or one that starts
+ * no next field, continues the one before (typed words may hold newlines). Picked labels are read
+ * off the front of a field's answer, longest first (one on a single choice); the rest is typed.
+ */
+function asyncFormParts(asked: AsyncQuestion, fields: readonly AsyncField[], label: string): QuestionPart[] {
+  const said = new Map<string, string>();
+  let at = -1;
+  for (const line of label.split("\n")) {
+    const next = fields[at + 1];
+    // typed words' later lines come indented (routes.ts asyncFormLabel); an older answer's do not
+    if (line.startsWith("  ") && at >= 0) said.set(fields[at]!.id, `${said.get(fields[at]!.id)}\n${line.slice(2)}`);
+    else if (next && line.startsWith(`${next.title.trim() || next.id}: `)) {
+      at += 1;
+      said.set(next.id, line.slice(`${next.title.trim() || next.id}: `.length));
+    } else if (at >= 0) said.set(fields[at]!.id, `${said.get(fields[at]!.id)}\n${line}`);
+  }
+  const report = asked.message ? `${asked.message}\n\n**${asked.question}**` : asked.question;
+  return fields.map((field, index) => {
+    const answer = said.get(field.id);
+    const options = field.options.map((option) => option.label);
+    const lead = { kind: "question" as const, text: field.question, ...(index === 0 ? { report } : {}), options, ...(field.multi ? { multi: true as const } : {}) };
+    if (answer === undefined || answer === "(skipped)") return { ...lead, chosen: [], custom: null, skipped: true };
+    const chosen: string[] = [];
+    let rest = answer;
+    for (let found = true; found && rest !== "" && (field.multi || chosen.length === 0);) {
+      const label = [...options].sort((a, b) => b.length - a.length).find((each) => !chosen.includes(each) && (rest === each || rest.startsWith(`${each}, `)));
+      found = label !== undefined;
+      if (label !== undefined) { chosen.push(label); rest = rest.slice(Math.min(rest.length, label.length + 2)); }
+    }
+    return { ...lead, chosen, custom: rest === "" ? null : rest, skipped: false };
+  });
 }
 
 /**
@@ -498,7 +540,7 @@ function userTextParts(text: string, context?: ReadContext): ConversationPart[] 
     const found = asyncAnswerAt(text, at, context);
     if (found) {
       said(Math.max(words, at - STEER_JOIN.length));
-      parts.push(found.part);
+      parts.push(...found.parts);
       words = Math.min(text.length, found.end + STEER_JOIN.length);
       at = words;
       continue;
@@ -936,6 +978,7 @@ function approvalPrompt(turnId: string, tool: ToolCallState): NonNullable<HostCh
  * optional one with a recommendation says what it goes with when nobody has Ovis open.
  */
 export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number): NonNullable<HostChatRead["prompt"]> {
+  if (q.fields && q.fields.length > 0) return asyncFormPrompt(q, q.fields);
   const options: InteractivePromptOption[] = q.options.map((option, index) => ({
     label: option.label, description: option.description ?? null, ...(index === q.recommended ? { recommended: true as const } : {}),
   }));
@@ -951,6 +994,48 @@ export function asyncQuestionPrompt(q: AsyncQuestion, at: number, count: number)
     custom_option_index: options.length,
     ...(q.kind === "optional" && q.recommended !== null ? { away_default: q.recommended + 1 } : {}),
     host: { async_id: q.id, option_ids: q.options.map((_, index) => String(index)) },
+  };
+}
+
+/**
+ * A field of an async form as the card asks it, as questionOptions does a host question's: its
+ * options by index ("0".."n-1"), the default marked, then the typed slot (`""`) when it takes one;
+ * a field with no options is a typed answer alone.
+ */
+function asyncFieldOptions(field: AsyncField): { options: InteractivePromptOption[]; ids: string[]; custom: number | null } {
+  if (field.options.length === 0) return { options: [{ label: ANSWER_LABEL, description: null }], ids: [NO_ID], custom: 0 };
+  const picks = field.default === undefined ? [] : [field.default].flat();
+  const options: InteractivePromptOption[] = field.options.map((option) => ({
+    label: option.label, description: option.description ?? null, ...(picks.includes(option.value) ? { recommended: true as const } : {}),
+  }));
+  const ids = field.options.map((_, index) => String(index));
+  if (!field.typed) return { options, ids, custom: null };
+  return { options: [...options, { label: OTHER_LABEL, description: null }], ids: [...ids, NO_ID], custom: options.length };
+}
+
+/** An async question that is a form (ask_user's requestedSchema): paged and answered whole, as questionPrompt's form. No away default: a form is never answered for the owner. */
+function asyncFormPrompt(q: AsyncQuestion, fields: readonly AsyncField[]): NonNullable<HostChatRead["prompt"]> {
+  const form = fields.map((field) => {
+    const own = asyncFieldOptions(field);
+    return {
+      read: { title: field.title, question: field.question, options: own.options, multi_select: field.multi, custom_option_index: own.custom, required: field.required },
+      ref: { question_id: field.id, option_ids: own.ids },
+    };
+  });
+  const first = form[0]!;
+  return {
+    id: q.id,
+    agent: PROMPT_AGENT,
+    kind: "question",
+    title: first.read.title,
+    question: first.read.question,
+    // the heading is the first field's, so the question itself goes in the body, after the agent's context
+    body: q.message ? `${q.message}\n\n**${q.question}**` : q.question,
+    options: first.read.options,
+    multi_select: first.read.multi_select,
+    custom_option_index: first.read.custom_option_index,
+    form: form.map((each) => each.read),
+    host: { async_id: q.id, option_ids: first.ref.option_ids, form: form.map((each) => each.ref) },
   };
 }
 

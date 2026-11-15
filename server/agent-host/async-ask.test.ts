@@ -24,6 +24,16 @@ const ask = (store: AsyncAskStore, extra: { kind?: "optional" | "blocking"; reco
   store.add({ session: SESSION, question: "FICTIONAL: which way?", options: OPTIONS, recommended: extra.recommended === undefined ? 0 : extra.recommended, kind: extra.kind ?? "optional" });
 
 describe("AsyncAskStore", () => {
+  test("tells its listener the chat of each question it drops, and nothing for an unknown id", () => {
+    const store = new AsyncAskStore(file, now);
+    const told: string[] = [];
+    store.onDropped = (session) => told.push(session);
+    const q = ask(store);
+    expect(store.drop("ask-00000000")).toBe(false);
+    expect(store.drop(q.id)).toBe(true);
+    expect(told).toEqual([q.session]);
+  });
+
   test("due() is empty while a page is in use", () => {
     const store = new AsyncAskStore(file, now);
     ask(store);
@@ -59,6 +69,20 @@ describe("AsyncAskStore", () => {
     expect(store.due()).toEqual([]);
     clock = 160_000;
     expect(store.due().map((d) => d.id)).toEqual([q.id]);
+  });
+
+  test("due() never answers a form, and a form's fields survive a reload next to a question filed before forms", () => {
+    const fields = [{ id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "A", value: "a" }], multi: false, required: true, typed: true, default: "a" }];
+    // an optional form with a recommendation into its own options would be due, were it not a form
+    const store = new AsyncAskStore(file, now);
+    const form = store.add({ session: SESSION, question: "FICTIONAL: the form?", options: OPTIONS, recommended: 0, kind: "optional", fields });
+    const plain = ask(store);
+    clock = 60_000;
+    expect(store.due().map((d) => d.id)).toEqual([plain.id]);
+    const again = new AsyncAskStore(file, now);
+    expect(again.get(form.id)?.fields).toEqual(fields);
+    expect(again.get(plain.id)).not.toBeNull();
+    expect(again.get(plain.id)?.fields).toBeUndefined();
   });
 
   test("due() leaves out the questions of a chat whose goal waits for the owner", () => {

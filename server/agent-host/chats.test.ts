@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatState, RootState, SessionState, SessionSummary, StateAction, ToolCallResult } from "@microsoft/agent-host-protocol";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
-import { agentsFrom, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
+import { agentsFrom, asyncQuestionPrompt, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
 import { parseInline } from "../../src/lib/markdown.ts";
 import { reducedChat, toolCallActions } from "./fake-host.ts";
 
@@ -1071,6 +1071,9 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
     expect(said(`Correction to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`, context).parts).toEqual([
       { kind: "question", text: "FICTIONAL keep the table?", options, chosen: ["FICTIONAL keep"], custom: null, skipped: false },
     ]);
+    // the context the question came with is its report, folded above it as an ask_user's is
+    const report = "FICTIONAL **Built** plan 1.\n\n- one";
+    expect(said(`Answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`, storing({ ...asked, message: report })).parts[0]).toMatchObject({ report, chosen: ["FICTIONAL keep"] });
     // the suffix is optional, in any form
     expect(said(`Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop`, context).parts[0]).toMatchObject({ chosen: ["FICTIONAL drop"], assumed: true });
     // plain user text stays a bubble, and so does text that only looks close
@@ -1078,6 +1081,31 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
       `Answer to ${ID} ("FICTIONAL keep the table?"): `, `Answer to ${ID} ("FICTIONAL another question?"): FICTIONAL keep`]) {
       expect(said(text, context).parts).toEqual([{ kind: "text", text }]);
     }
+  });
+
+  it("a form's answer reads back as one question part a field, as an ask_user form, and a steer after it stays the user's", () => {
+    const label = "FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e, FICTIONAL soon\n  notes: later\nnotes: (skipped)";
+    const form: Asked = { ...asked, message: "FICTIONAL found two tables", options: [], recommended: null, kind: "blocking", answer: { label, assumed: false, at: 1 },
+      fields: [
+        { id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }, { label: "FICTIONAL Postgres", value: "pg" }], multi: false, required: true, typed: true },
+        { id: "checks", title: "FICTIONAL checks", question: "FICTIONAL which checks?", options: [{ label: "FICTIONAL lint", value: "lint" }, { label: "FICTIONAL e2e", value: "e2e" }], multi: true, required: false, typed: true },
+        { id: "notes", title: "", question: "notes", options: [], multi: false, required: false, typed: true },
+      ] };
+    const parts = [
+      { kind: "question", text: "FICTIONAL where?", report: "FICTIONAL found two tables\n\n**FICTIONAL keep the table?**", options: ["FICTIONAL SQLite", "FICTIONAL Postgres"], chosen: ["FICTIONAL SQLite"], custom: null, skipped: false },
+      { kind: "question", text: "FICTIONAL which checks?", options: ["FICTIONAL lint", "FICTIONAL e2e"], multi: true, chosen: ["FICTIONAL lint", "FICTIONAL e2e"], custom: "FICTIONAL soon\nnotes: later", skipped: false },
+      { kind: "question", text: "notes", options: [], chosen: [], custom: null, skipped: true },
+    ] satisfies ConversationPart[];
+    const text = `Answer to ${ID} ("FICTIONAL keep the table?"): ${label}`;
+    expect(said(text, storing(form)).parts).toEqual(parts);
+    expect(said(`${text}\n\nFICTIONAL and hurry`, storing(form)).parts).toEqual([...parts, { kind: "text", text: "FICTIONAL and hurry" } satisfies ConversationPart]);
+  });
+
+  it("a form's card says the question in its body, after the agent's context: its heading is the first field's", () => {
+    const form: Asked = { ...asked, options: [], recommended: null, kind: "blocking", answer: null,
+      fields: [{ id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }], multi: false, required: true, typed: true }] };
+    expect(asyncQuestionPrompt(form, 0, 1)).toMatchObject({ title: "FICTIONAL store", body: "FICTIONAL keep the table?" });
+    expect(asyncQuestionPrompt({ ...form, message: "FICTIONAL found two tables" }, 0, 1).body).toBe("FICTIONAL found two tables\n\n**FICTIONAL keep the table?**");
   });
 
   it("look-alike text stays a bubble when the store does not know its id: typed, in a chat that never asked, or pruned", () => {

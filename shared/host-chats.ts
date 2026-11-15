@@ -59,8 +59,8 @@ export interface HostAgent { uri: string; name: string; description: string | nu
 export type HostPromptRef =
   | { request_id: string; question_id: string; option_ids: string[]; /** a form's questions, parallel to the prompt's `form` */ form?: { question_id: string; option_ids: string[] }[] }
   | { tool_call_id: string; turn_id: string; option_ids: string[]; approves: boolean[] }
-  /** a question the agent asked without stopping its turn (ask_user_async, ZAC-326): its options by index, "0".."n-1" */
-  | { async_id: string; option_ids: string[] };
+  /** a question the agent asked without stopping its turn (ask_user_async, ZAC-326): its options by index, "0".."n-1"; a form's fields as a host form's */
+  | { async_id: string; option_ids: string[]; form?: { question_id: string; option_ids: string[] }[] };
 
 /** GET /api/host-chats/chat: one chat, read. */
 /** The chat's context window, as VS Code reads `copilot.usageInfo` (readCopilotContextUsage). */
@@ -212,10 +212,14 @@ export interface HostSendResult { queued: boolean; joined?: true }
 export interface HostAnswer { session: string; request_id: string; question_id: string; option_ids?: string[]; text?: string; skip?: true }
 /**
  * An async question's answer (ask_user_async, ZAC-326): one option by its id ("0".."n-1"), or typed
- * text. `correction`: it replaces the answer the bridge assumed while the user was away (the
+ * text, or a form's `answers`. `correction`: it replaces the answer the bridge assumed while the user was away (the
  * transcript's Change), and goes to the chat as `Correction to …`.
  */
-export interface HostAsyncAnswer { session: string; async_id: string; option_ids?: [string]; text?: string; correction?: true }
+export interface HostAsyncAnswer {
+  session: string; async_id: string; option_ids?: [string]; text?: string; correction?: true;
+  /** a form's answers by field id, as HostFormAnswer's (option ids by index, `""` the typed slot); `null` for an optional field left empty */
+  answers?: Record<string, { option_ids?: string[]; text?: string } | null>;
+}
 /**
  * A form answered whole: each question's answer by its id, `null` for an optional one left empty
  * (sent as skipped). A required one with no answer is refused, and nothing reaches the host.

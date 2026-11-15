@@ -335,6 +335,11 @@ export function createServer(
   agentHostConnection?.start();
   // the questions this PC's agents ask without stopping their turn (ask_user_async, ZAC-326), kept across restarts
   const asyncAsks = agentHostConnection ? new AsyncAskStore(join(stateDir, "async-asks.json")) : null;
+  // a question dropped (Stop, a chat gone): the chat's card and its row's "asks" go on every page
+  if (asyncAsks) asyncAsks.onDropped = (session) => {
+    broadcastAll({ type: "host-chat-changed", session });
+    broadcastAll({ type: "host-chat-changed", session: null });
+  };
   // the goals of every PC's chats (ZAC-326 part 2), kept here; see goalPcs and the runner below
   const goals = new GoalStore(stateDir);
   // the chats on a PC whose running goal leaves its optional questions for the owner, however long they are away

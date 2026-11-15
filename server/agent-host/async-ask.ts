@@ -10,6 +10,23 @@ import { dirname } from "node:path";
 
 export type AskKind = "optional" | "blocking";
 
+/**
+ * One field of a form question (ask_user's `requestedSchema`, parsed by agent-ask.ts): its choices
+ * by value, or none for a typed answer only. `typed`: whether a typed answer is taken ("Other…").
+ */
+export interface AsyncField {
+  id: string;
+  title: string;
+  /** what the card asks: the field's description, else its title, else its id */
+  question: string;
+  options: { label: string; value: string; description?: string }[];
+  multi: boolean;
+  required: boolean;
+  typed: boolean;
+  /** the agent's pick: an option's value, several for a multi-select one */
+  default?: string | string[];
+}
+
 export interface AsyncQuestion {
   /** "ask-" + 8 hex */
   id: string;
@@ -22,6 +39,8 @@ export interface AsyncQuestion {
   /** 0-based index into options, null when none */
   recommended: number | null;
   kind: AskKind;
+  /** a form (ask_user's requestedSchema): its fields, answered whole; never answered for the owner while away */
+  fields?: AsyncField[];
   /** epoch ms */
   askedAt: number;
   answer: { label: string; assumed: boolean; at: number } | null;
@@ -44,11 +63,30 @@ const record = (value: unknown): Row | null => value !== null && typeof value ==
 const recommendedFits = (recommended: unknown, count: number): recommended is number | null =>
   recommended === null || (Number.isInteger(recommended) && (recommended as number) >= 0 && (recommended as number) < count);
 
+const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((each) => typeof each === "string");
+
+/** A stored form field, or null for anything else. */
+function fieldOf(value: unknown): AsyncField | null {
+  const f = record(value);
+  if (!f) return null;
+  const { id, title, question, options, multi, required, typed } = f;
+  if (typeof id !== "string" || typeof title !== "string" || typeof question !== "string" || !Array.isArray(options)) return null;
+  if (typeof multi !== "boolean" || typeof required !== "boolean" || typeof typed !== "boolean") return null;
+  const opts: AsyncField["options"] = [];
+  for (const option of options) {
+    const o = record(option);
+    if (!o || typeof o["label"] !== "string" || typeof o["value"] !== "string") return null;
+    opts.push({ label: o["label"], value: o["value"], ...(typeof o["description"] === "string" ? { description: o["description"] } : {}) });
+  }
+  const pick = f["default"];
+  return { id, title, question, options: opts, multi, required, typed, ...(typeof pick === "string" || strings(pick) ? { default: pick } : {}) };
+}
+
 /** A stored question, or null for anything else the file holds. */
 function questionOf(value: unknown): AsyncQuestion | null {
   const row = record(value);
   if (!row) return null;
-  const { id, session, question, message, options, recommended, kind, askedAt, answer } = row;
+  const { id, session, question, message, options, recommended, kind, fields, askedAt, answer } = row;
   if (typeof id !== "string" || typeof session !== "string" || typeof question !== "string" || typeof askedAt !== "number") return null;
   if (kind !== "optional" && kind !== "blocking") return null;
   if (!Array.isArray(options) || !recommendedFits(recommended, options.length)) return null;
@@ -58,13 +96,24 @@ function questionOf(value: unknown): AsyncQuestion | null {
     if (!o || typeof o["label"] !== "string") return null;
     opts.push(typeof o["description"] === "string" ? { label: o["label"], description: o["description"] } : { label: o["label"] });
   }
+  // a question filed before forms has none
+  let form: AsyncField[] | undefined;
+  if (fields !== undefined) {
+    if (!Array.isArray(fields)) return null;
+    form = [];
+    for (const each of fields) {
+      const field = fieldOf(each);
+      if (!field) return null;
+      form.push(field);
+    }
+  }
   let given: AsyncQuestion["answer"] = null;
   if (answer !== null) {
     const a = record(answer);
     if (!a || typeof a["label"] !== "string" || typeof a["assumed"] !== "boolean" || typeof a["at"] !== "number") return null;
     given = { label: a["label"], assumed: a["assumed"], at: a["at"] };
   }
-  return { id, session, question, ...(typeof message === "string" ? { message } : {}), options: opts, recommended, kind, askedAt, answer: given };
+  return { id, session, question, ...(typeof message === "string" ? { message } : {}), options: opts, recommended, kind, ...(form ? { fields: form } : {}), askedAt, answer: given };
 }
 
 /** callers get copies, so nothing they change reaches the store unsaved */
@@ -96,7 +145,7 @@ export class AsyncAskStore {
     if (!recommendedFits(q.recommended, q.options.length)) throw new Error(`recommended must be null or an option index below ${q.options.length}`);
     let id: string;
     do id = `ask-${randomBytes(4).toString("hex")}`; while (this.questions.has(id));
-    const stored: AsyncQuestion = { ...q, options: q.options.map((o) => ({ ...o })), id, askedAt: this.now(), answer: null };
+    const stored: AsyncQuestion = { ...structuredClone(q), id, askedAt: this.now(), answer: null };
     this.questions.set(id, stored);
     this.save();
     return copy(stored);
@@ -162,10 +211,15 @@ export class AsyncAskStore {
 
   /** Forgets a question, saved: one whose chat no longer exists. False when the id is unknown. */
   drop(id: string): boolean {
-    if (!this.questions.delete(id)) return false;
+    const q = this.questions.get(id);
+    if (!q || !this.questions.delete(id)) return false;
     this.save();
+    this.onDropped?.(q.session);
     return true;
   }
+
+  /** Told of each dropped question's chat (Stop, the sweep), so the pages read it again: no card stays up elsewhere. */
+  onDropped: ((session: string) => void) | null = null;
 
   /** Whether some page has Ovis open; going from in use to not records when it closed. */
   setInUse(inUse: boolean): void {
@@ -178,12 +232,12 @@ export class AsyncAskStore {
     this.waiting[source] = new Set(sessions);
   }
 
-  /** Optional questions with a recommendation, unanswered, whose user has been away AWAY_AFTER_MS, outside the waiting chats. */
+  /** Optional questions with a recommendation, unanswered, whose user has been away AWAY_AFTER_MS, outside the waiting chats. Never a form. */
   due(): AsyncQuestion[] {
     if (this.inUse) return [];
     const now = this.now();
     return [...this.questions.values()]
-      .filter((q) => q.kind === "optional" && q.recommended !== null && !q.answer && !this.waiting.local.has(q.session) && !this.waiting.relay.has(q.session) && now - Math.max(q.askedAt, this.lastInUseAt) >= AWAY_AFTER_MS)
+      .filter((q) => q.kind === "optional" && q.recommended !== null && !q.fields && !q.answer && !this.waiting.local.has(q.session) && !this.waiting.relay.has(q.session) && now - Math.max(q.askedAt, this.lastInUseAt) >= AWAY_AFTER_MS)
       .sort((a, b) => a.askedAt - b.askedAt)
       .map(copy);
   }
