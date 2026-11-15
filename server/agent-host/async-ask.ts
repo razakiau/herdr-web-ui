@@ -211,10 +211,15 @@ export class AsyncAskStore {
 
   /** Forgets a question, saved: one whose chat no longer exists. False when the id is unknown. */
   drop(id: string): boolean {
-    if (!this.questions.delete(id)) return false;
+    const q = this.questions.get(id);
+    if (!q || !this.questions.delete(id)) return false;
     this.save();
+    this.onDropped?.(q.session);
     return true;
   }
+
+  /** Told of each dropped question's chat (Stop, the sweep), so the pages read it again: no card stays up elsewhere. */
+  onDropped: ((session: string) => void) | null = null;
 
   /** Whether some page has Ovis open; going from in use to not records when it closed. */
   setInUse(inUse: boolean): void {

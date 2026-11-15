@@ -167,10 +167,15 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect(await refused({ properties: { a: { type: "string", enum: ["x".repeat(501)] } } })).toEqual([400, "invalid_schema"]);
     expect(await refused({ properties: { a: { type: "array", items: { anyOf: [{ title: "no const" }] } } } })).toEqual([400, "invalid_schema"]);
     expect(await refused({ properties: { a: { type: "boolean" } }, required: "a" })).toEqual([400, "invalid_schema"]);
+    // the answer is one line a field, read back by its title or id
+    expect(await refused({ properties: { a: { type: "string", title: "FICTIONAL two\nlines" } } })).toEqual([400, "invalid_schema"]);
+    expect(await refused({ properties: { "a\nb": { type: "string" } } })).toEqual([400, "invalid_schema"]);
     expect(await refused({ properties: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`f${i}`, { type: "string" }])) })).toEqual([400, "invalid_schema"]);
     // without a schema, options are still required
     const plain = await post(endpoint, { ...FORM, requested_schema: undefined }, token);
     expect(plain.status).toBe(400);
+    // an optional form with a `recommended`, as ASK_RULE asks of an optional question: taken, the pick let go (a form's picks are its defaults)
+    expect((await post(endpoint, { ...FORM, kind: "optional", recommended: 0 }, token)).status).toBe(200);
   });
 
   it("a form is answered whole: one line a field in the answer the chat gets; a required field left empty is refused (ZAC-326)", async () => {
@@ -189,12 +194,12 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect(stored()).toBeNull();
     const response = await answer({ answers: {
       store: { option_ids: ["1"] },
-      checks: { option_ids: ["0", ""], text: "FICTIONAL e2e\n\n\nFICTIONAL soon" },
+      checks: { option_ids: ["0", ""], text: "FICTIONAL e2e\n\n\nFICTIONAL migrate now?: soon" },
       migrate: { option_ids: ["1"] },
       notes: null,
     } });
     expect(response.status).toBe(200);
-    expect(stored()?.label).toBe("FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e\nFICTIONAL soon\nFICTIONAL migrate now?: No\nnotes: (skipped)");
+    expect(stored()?.label).toBe("FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e\n  FICTIONAL migrate now?: soon\nFICTIONAL migrate now?: No\nnotes: (skipped)");
     // answered once
     expect((await answer({ answers: { store: { option_ids: ["0"] }, migrate: { option_ids: ["0"] } } })).status).toBe(409);
   });

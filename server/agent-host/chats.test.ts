@@ -1084,7 +1084,7 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
   });
 
   it("a form's answer reads back as one question part a field, as an ask_user form, and a steer after it stays the user's", () => {
-    const label = "FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e, FICTIONAL soon\nand later\nnotes: (skipped)";
+    const label = "FICTIONAL store: FICTIONAL SQLite\nFICTIONAL checks: FICTIONAL lint, FICTIONAL e2e, FICTIONAL soon\n  notes: later\nnotes: (skipped)";
     const form: Asked = { ...asked, message: "FICTIONAL found two tables", options: [], recommended: null, kind: "blocking", answer: { label, assumed: false, at: 1 },
       fields: [
         { id: "store", title: "FICTIONAL store", question: "FICTIONAL where?", options: [{ label: "FICTIONAL SQLite", value: "sqlite" }, { label: "FICTIONAL Postgres", value: "pg" }], multi: false, required: true, typed: true },
@@ -1093,7 +1093,7 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
       ] };
     const parts = [
       { kind: "question", text: "FICTIONAL where?", report: "FICTIONAL found two tables\n\n**FICTIONAL keep the table?**", options: ["FICTIONAL SQLite", "FICTIONAL Postgres"], chosen: ["FICTIONAL SQLite"], custom: null, skipped: false },
-      { kind: "question", text: "FICTIONAL which checks?", options: ["FICTIONAL lint", "FICTIONAL e2e"], multi: true, chosen: ["FICTIONAL lint", "FICTIONAL e2e"], custom: "FICTIONAL soon\nand later", skipped: false },
+      { kind: "question", text: "FICTIONAL which checks?", options: ["FICTIONAL lint", "FICTIONAL e2e"], multi: true, chosen: ["FICTIONAL lint", "FICTIONAL e2e"], custom: "FICTIONAL soon\nnotes: later", skipped: false },
       { kind: "question", text: "notes", options: [], chosen: [], custom: null, skipped: true },
     ] satisfies ConversationPart[];
     const text = `Answer to ${ID} ("FICTIONAL keep the table?"): ${label}`;

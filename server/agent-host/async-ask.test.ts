@@ -24,6 +24,16 @@ const ask = (store: AsyncAskStore, extra: { kind?: "optional" | "blocking"; reco
   store.add({ session: SESSION, question: "FICTIONAL: which way?", options: OPTIONS, recommended: extra.recommended === undefined ? 0 : extra.recommended, kind: extra.kind ?? "optional" });
 
 describe("AsyncAskStore", () => {
+  test("tells its listener the chat of each question it drops, and nothing for an unknown id", () => {
+    const store = new AsyncAskStore(file, now);
+    const told: string[] = [];
+    store.onDropped = (session) => told.push(session);
+    const q = ask(store);
+    expect(store.drop("ask-00000000")).toBe(false);
+    expect(store.drop(q.id)).toBe(true);
+    expect(told).toEqual([q.session]);
+  });
+
   test("due() is empty while a page is in use", () => {
     const store = new AsyncAskStore(file, now);
     ask(store);

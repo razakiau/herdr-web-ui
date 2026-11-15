@@ -48,6 +48,8 @@ function fieldOf(id: string, spec: unknown, required: boolean): AsyncField | str
   if (!isJsonObject(spec)) return `${where} must be an object`;
   const { type, title, description, default: pick } = spec;
   if (title !== undefined && !label(title)) return `${where}: title must be text of at most ${LABEL_MAX} characters`;
+  // the answer is one `<title or id>: …` line a field, read back by them (chats.ts asyncFormParts)
+  if (/[\r\n]/.test(id) || (typeof title === "string" && /[\r\n]/.test(title))) return `${where}: an id or title takes no line break`;
   if (description !== undefined && (typeof description !== "string" || description.length > QUESTION_MAX)) return `${where}: description must be text of at most ${QUESTION_MAX} characters`;
   const question = [description, title].find((each): each is string => typeof each === "string" && each.trim() !== "") ?? id;
   const base = { id, title: (title as string | undefined) ?? "", question, required };
@@ -114,10 +116,11 @@ function askOf(body: Record<string, unknown>): Ask | Response {
     if (description !== undefined && typeof description !== "string") return badRequest("invalid_options", "an option's description must be text");
     parsed.push(description === undefined ? { label } : { label, description });
   }
-  if (recommended !== undefined && recommended !== null && !(Number.isInteger(recommended) && (recommended as number) >= 0 && (recommended as number) < parsed.length)) {
+  // a form's picks are its fields' defaults: `recommended`, which ASK_RULE asks of an optional question, is let go
+  if (!fields && recommended !== undefined && recommended !== null && !(Number.isInteger(recommended) && (recommended as number) >= 0 && (recommended as number) < parsed.length)) {
     return badRequest("invalid_recommended", "recommended must be the 0-based index of one of the options");
   }
-  return { sdk, question, message: typeof message === "string" && message.trim() !== "" ? message : null, options: parsed, recommended: (recommended as number | null | undefined) ?? null, kind, ...(fields ? { fields } : {}) };
+  return { sdk, question, message: typeof message === "string" && message.trim() !== "" ? message : null, options: parsed, recommended: fields ? null : (recommended as number | null | undefined) ?? null, kind, ...(fields ? { fields } : {}) };
 }
 
 /** Files the question under its chat's row; `changed` tells the pages to read the chat again. */

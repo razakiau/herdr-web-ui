@@ -1917,7 +1917,8 @@ function asyncFormLabel(fields: readonly AsyncField[], given: Record<string, unk
     const picked = ((ids as string[] | undefined) ?? []).filter((id) => id !== "").map((id) => /^\d+$/.test(id) ? field.options[Number(id)] : undefined);
     if (picked.some((option) => option === undefined)) refuse(badRequest("invalid_answer", "option_ids names no option of this field"));
     if (!field.multi && picked.length > 1) refuse(badRequest("invalid_answer", "a single-choice field takes one option"));
-    const words = typeof typed === "string" ? withoutBlankLines(typed) : "";
+    // its later lines indented: only a field's own line starts at the left (chats.ts asyncFormParts reads it so)
+    const words = typeof typed === "string" ? withoutBlankLines(typed).replace(/\n/g, "\n  ") : "";
     if (words !== "" && !field.typed) refuse(badRequest("invalid_answer", "this field takes no typed answer"));
     const said = [...picked.map((option) => option!.label), ...(words !== "" ? [words] : [])];
     if (said.length === 0 && field.required) refuse(badRequest("missing_answer", "a required field needs an answer"));

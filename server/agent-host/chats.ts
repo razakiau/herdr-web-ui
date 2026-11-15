@@ -491,16 +491,18 @@ type QuestionPart = Extract<ConversationPart, { kind: "question" }>;
  * A form's answer (routes.ts asyncFormLabel: one `<title>: <answer>` line a field, in field order)
  * as one question part a field, as an ask_user form reads (questionParts): on one line the answers
  * ran together, cut short, and could not be opened (owner's probe, 2026-11-15). The report leads
- * the first, with the question itself, as the card's body. A line that starts no next field
- * continues the one before (typed words may hold newlines). Picked labels are read off the front
- * of a field's answer, longest first; what is left is the typed answer.
+ * the first, with the question itself, as the card's body. An indented line, or one that starts
+ * no next field, continues the one before (typed words may hold newlines). Picked labels are read
+ * off the front of a field's answer, longest first (one on a single choice); the rest is typed.
  */
 function asyncFormParts(asked: AsyncQuestion, fields: readonly AsyncField[], label: string): QuestionPart[] {
   const said = new Map<string, string>();
   let at = -1;
   for (const line of label.split("\n")) {
     const next = fields[at + 1];
-    if (next && line.startsWith(`${next.title.trim() || next.id}: `)) {
+    // typed words' later lines come indented (routes.ts asyncFormLabel); an older answer's do not
+    if (line.startsWith("  ") && at >= 0) said.set(fields[at]!.id, `${said.get(fields[at]!.id)}\n${line.slice(2)}`);
+    else if (next && line.startsWith(`${next.title.trim() || next.id}: `)) {
       at += 1;
       said.set(next.id, line.slice(`${next.title.trim() || next.id}: `.length));
     } else if (at >= 0) said.set(fields[at]!.id, `${said.get(fields[at]!.id)}\n${line}`);
@@ -513,7 +515,7 @@ function asyncFormParts(asked: AsyncQuestion, fields: readonly AsyncField[], lab
     if (answer === undefined || answer === "(skipped)") return { ...lead, chosen: [], custom: null, skipped: true };
     const chosen: string[] = [];
     let rest = answer;
-    for (let found = true; found && rest !== "";) {
+    for (let found = true; found && rest !== "" && (field.multi || chosen.length === 0);) {
       const label = [...options].sort((a, b) => b.length - a.length).find((each) => !chosen.includes(each) && (rest === each || rest.startsWith(`${each}, `)));
       found = label !== undefined;
       if (label !== undefined) { chosen.push(label); rest = rest.slice(Math.min(rest.length, label.length + 2)); }
