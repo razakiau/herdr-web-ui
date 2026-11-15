@@ -106,6 +106,18 @@ describe("POST /api/agent-ask (ask_user_async, ZAC-326)", () => {
     expect((JSON.parse(readFileSync(join(stateDir, "async-asks.json"), "utf8")) as { message?: string }[])[0]?.message).toBe(message);
   });
 
+  it("Stop on a chat whose turn ended with questions open drops them: the card goes and the chat is no longer waiting", async () => {
+    const { endpoint, token, stateDir } = await bridge();
+    await post(endpoint, ASK, token);
+    await post(endpoint, { ...ASK, kind: "blocking" }, token);
+    const read = async () => (await (await fetch(`${endpoint}/api/host-chats/chat?session=${encodeURIComponent(SESSION)}`, { headers: { authorization: `Bearer ${token}` } })).json() as HostChatRead).prompt;
+    expect(await read()).toMatchObject({ title: "Question 1 of 2" });
+    const stopped = await fetch(`${endpoint}/api/host-chats/chat/stop`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ session: SESSION }) });
+    expect(stopped.status).toBe(200);
+    expect(await read()).toBeNull();
+    expect(JSON.parse(readFileSync(join(stateDir, "async-asks.json"), "utf8"))).toEqual([]);
+  });
+
   it("a question with no message, or a blank one, has no body", async () => {
     const { endpoint, token } = await bridge();
     await post(endpoint, { ...ASK, message: "  " }, token);

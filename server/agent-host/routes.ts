@@ -1280,10 +1280,16 @@ async function writeConfig(call: Call): Promise<Response> {
   return jsonResponse({ ok: true });
 }
 
+/**
+ * Stop: cancels the running turn, and drops the chat's open async questions (ZAC-326). A turn that
+ * ended with one open has nothing to cancel, so without the drop the card stayed, the chat stayed
+ * "waiting", and Stop did nothing (owner, 2026-11-15). A cancelled ask_user goes the same way.
+ */
 async function stopTurn(call: Call): Promise<Response> {
   const session = sessionOf(call.body);
   const { channel, chat } = await watched(call, session);
   if (chat.activeTurn) call.host.dispatch(channel, { type: ActionType.ChatTurnCancelled, turnId: chat.activeTurn.id, duration: 0 } as StateAction);
+  for (const q of call.asks?.pending(session) ?? []) call.asks!.drop(q.id);
   return jsonResponse({ ok: true });
 }
 
