@@ -7,6 +7,7 @@ import { acquireOwnerDirectory } from "./owner-guard.ts";
 import { parseProcessLine, refusedSocket, staleMarker } from "./herdr-marker.ts";
 import { psQuote } from "./powershell.ts";
 import { ShellAgentLocator } from "./shell-agent.ts";
+import { startRecordSweep } from "./agent-host/slim-records.ts";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -99,7 +100,9 @@ try {
     server.stop();
     throw new Error(`This bridge stopped because it was not registered (descriptor ${descriptor})`);
   }
-  const close = () => { registration.close(); server.stop(); setTimeout(() => process.exit(0), 2000); };
+  // this PC's Copilot records lose their old pictures, so the next load fits in one message (ZAC-337)
+  const sweep = agentHost.enabled ? startRecordSweep() : null;
+  const close = () => { sweep?.stop(); registration.close(); server.stop(); setTimeout(() => process.exit(0), 2000); };
   process.on("SIGTERM", close);
   process.on("SIGINT", close);
   }
