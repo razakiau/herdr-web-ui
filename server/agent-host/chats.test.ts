@@ -1071,6 +1071,9 @@ describe("async question answers in the transcript (ask_user_async, ZAC-326)", (
     expect(said(`Correction to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`, context).parts).toEqual([
       { kind: "question", text: "FICTIONAL keep the table?", options, chosen: ["FICTIONAL keep"], custom: null, skipped: false },
     ]);
+    // the context the question came with is its report, folded above it as an ask_user's is
+    const report = "FICTIONAL **Built** plan 1.\n\n- one";
+    expect(said(`Answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL keep`, storing({ ...asked, message: report })).parts[0]).toMatchObject({ report, chosen: ["FICTIONAL keep"] });
     // the suffix is optional, in any form
     expect(said(`Assumed answer to ${ID} ("FICTIONAL keep the table?"): FICTIONAL drop`, context).parts[0]).toMatchObject({ chosen: ["FICTIONAL drop"], assumed: true });
     // plain user text stays a bubble, and so does text that only looks close

@@ -475,6 +475,8 @@ function asyncAnswerAt(text: string, at: number, context?: ReadContext): { part:
     end,
     part: {
       kind: "question", text: asked.question, options: asked.options.map((option) => option.label), chosen: [label], custom: null, skipped: false,
+      // the context it was asked with folds above it, as an ask_user report does (QuestionSummary)
+      ...(asked.message ? { report: asked.message } : {}),
       ...(assumed ? { assumed: true as const } : {}),
       // correctable while the store still holds the assumed answer: once corrected, it is the user's
       ...(assumed && asked.answer?.assumed ? { correctable: { session: asked.session, async_id: id } } : {}),
