@@ -354,7 +354,8 @@ async function answer(request: Request, route: string, host: AgentHost | null, c
     return await (get ?? post)!({ host, leases: leasesOf(host, clock), clock: clock ?? realClock, url: new URL(request.url), body, asks });
   } catch (error) {
     if (error instanceof Refusal) return error.response;
-    return failure(error, host);
+    const session = new URL(request.url).searchParams.get("session") ?? body["session"];
+    return failure(error, host, text(session) ? session : null);
   }
 }
 
@@ -362,9 +363,33 @@ function hostDown(host: AgentHost): Response {
   return jsonResponse({ error: { code: "agent_host_down", message: "the agent host is not connected" }, host: host.state() }, 503);
 }
 
-function failure(error: unknown, host: AgentHost): Response {
+/**
+ * The size of the CLI record (`session-state/<id>/events.jsonl`) a chat runs on, the best word on how
+ * big its snapshot is when the host could not send it; null when the chat names none.
+ */
+export function recordBytes(session: string): number | null {
+  try {
+    const id = cliSessionOf(session);
+    return id === null ? null : statSync(join(defaultCopilotHome(), "session-state", id, "events.jsonl")).size;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A chat whose snapshot is more than one WebSocket message takes (ZAC-337): it fails alone, 413, and
+ * says so, with its record's size when it has one. The PC's other chats and its connection stay up.
+ */
+function tooBig(session: string | null): Response {
+  const bytes = session === null ? null : recordBytes(session);
+  const size = bytes === null ? "" : ` (its record is ${Math.round(bytes / 2 ** 20)} MB)`;
+  return jsonResponse({ error: { code: "chat_too_big", message: `this chat is too big to open${size}`, record_bytes: bytes } }, 413);
+}
+
+function failure(error: unknown, host: AgentHost, session: string | null = null): Response {
   if (error instanceof AgentHostError) {
     if (error.code === "not_connected") return hostDown(host);
+    if (error.code === "too_big") return tooBig(session);
     return jsonResponse({ error: { code: "agent_host_failed", message: `the agent host failed the request (${error.code})` } }, 502);
   }
   return errorResponse(error);

@@ -41,6 +41,15 @@ const SENTENCE_BY_CODE: Readonly<Record<string, () => string>> = {
   preferences_unwritable: () => t("The server cannot save settings: check that its state folder is writable."),
 };
 
+/**
+ * A failure the server names by a code of its own that trying again will not change: its cause and
+ * advice, in place of the status's. server/agent-host/routes.ts: a chat whose snapshot is more than
+ * the PC's bridge takes in one message (ZAC-337); its words keep the record's size.
+ */
+const CAUSE_BY_CODE: Readonly<Record<string, { cause: () => string; advice: () => string }>> = {
+  chat_too_big: { cause: () => t("This chat is too big to open"), advice: () => t("The PC's other chats are not affected. Open this one in VS Code on the PC.") },
+};
+
 /** The server's own words when herdr itself is away (server/herdr/client.ts names the socket it tried). */
 const HERDR_AWAY = /cannot reach herdr/i;
 
@@ -126,6 +135,8 @@ export function machineErrorText(words: string, translateIn: Translate): string 
 export function userFailure(cause: unknown): UserFailure {
   const kind = kindOf(cause);
   const original = ownWords(cause).trim();
+  const byCode = cause instanceof ApiError && cause.code !== null && Object.hasOwn(CAUSE_BY_CODE, cause.code) ? CAUSE_BY_CODE[cause.code] : undefined;
+  if (byCode) return { kind, cause: byCode.cause(), advice: byCode.advice(), detail: original === "" ? null : original };
   const named = NAMED_CAUSES.find(([pattern]) => pattern.test(original))?.[1];
   return { kind, cause: named?.() ?? CAUSE[kind]?.() ?? null, advice: ADVICE[kind]?.() ?? null, detail: original === "" ? null : original };
 }

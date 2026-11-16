@@ -3,7 +3,7 @@ import { ApiError, fetchSession } from "./api.ts";
 import { withChatReadDeadline } from "./chatReadDeadline.ts";
 import { setCurrentLanguage, translate } from "./i18n.ts";
 import { RemoteResponseInvalid, RemoteResponseTooLarge } from "../../server/remote-json.ts";
-import { machineErrorText, saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
+import { machineErrorText, offersRetry, saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
 
 const api = (status: number, detail = "herdr said no") => new ApiError("/api/x", status, detail, null);
 
@@ -138,6 +138,15 @@ describe("userFailure", () => {
     expect(userFailure(api(404))).toEqual({ kind: "gone", cause: "It no longer exists on the PC", advice: "Refresh and try again.", detail: "herdr said no" });
     expect(userFailure(api(409))).toEqual({ kind: "changed", cause: "It changed on the PC", advice: "Check it and try again.", detail: "herdr said no" });
     expect(userFailure(new TypeError("Failed to fetch"))).toEqual({ kind: "unreachable", cause: "Can't reach the PC", advice: "Check your connection, then try again.", detail: "Failed to fetch" });
+  });
+
+  it("a chat too big to open says so, keeps the record's size in its details, and offers no Try again (ZAC-337)", () => {
+    const tooBig = new ApiError("/api/machines/pc/host-chats/chat", 413, "this chat is too big to open (its record is 242 MB)", "chat_too_big");
+    const failure = userFailure(tooBig);
+    expect(failure).toEqual({ kind: "unknown", cause: "This chat is too big to open", advice: "The PC's other chats are not affected. Open this one in VS Code on the PC.", detail: "this chat is too big to open (its record is 242 MB)" });
+    expect(offersRetry(failure)).toBe(false);
+    setCurrentLanguage("ja");
+    expect(userFailure(tooBig).cause).toBe("このチャットは大きすぎて開けません");
   });
 
   it("reads a timeout as slow, with trying again as the only advice", async () => {

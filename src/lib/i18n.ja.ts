@@ -195,6 +195,8 @@ const BASE: Record<string, string> = {
   "The PC took too long": "PC の応答が遅すぎました",
   "Can't reach the PC": "PC に接続できません",
   "PC disk is full": "PC のディスクがいっぱいです",
+  "This chat is too big to open": "このチャットは大きすぎて開けません",
+  "The PC's other chats are not affected. Open this one in VS Code on the PC.": "PC の他のチャットには影響しません。このチャットは PC の VS Code で開いてください。",
   "No permission on the PC": "PC で権限がありません",
   "Pair it again in Settings → Phone & devices.": "設定 → スマートフォンとデバイスでもう一度ペアリングしてください。",
   "Refresh and try again.": "更新してからもう一度お試しください。",

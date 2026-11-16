@@ -12,6 +12,9 @@
  *   the URL.
  * - Nothing is ever re-sent: a dispatch goes out once, now, or throws. A reconnect re-initializes
  *   with the same clientId and resubscribes; it replays no dispatch.
+ * - No chat is subscribed on the shared socket before its snapshot was read whole over a socket of
+ *   its own (readAlone): Bun's WebSocket client closes on a message over 128 MB (1009, "Message
+ *   too big"), and on the shared socket that close drops every chat on the PC (ZAC-337).
  */
 import { randomBytes } from "node:crypto";
 import type {
@@ -44,8 +47,11 @@ export interface AgentHostConnectionOptions {
 }
 export type AgentHostEvent = { kind: "host" } | { kind: "chats" } | { kind: "chat"; session: string };
 
-/** Why a call to the host failed, by code only: `message` never carries the host's URL or token. */
-export type AgentHostErrorCode = "not_connected" | "connect_failed" | "refused" | "rpc_error" | "timeout";
+/**
+ * Why a call to the host failed, by code only: `message` never carries the host's URL or token.
+ * `too_big`: the chat's snapshot is more than this runtime's WebSocket takes in one message.
+ */
+export type AgentHostErrorCode = "not_connected" | "connect_failed" | "refused" | "rpc_error" | "timeout" | "too_big";
 export class AgentHostError extends Error {
   constructor(readonly code: AgentHostErrorCode, readonly rpcCode?: number) {
     super(rpcCode === undefined ? code : `${code} ${rpcCode}`);
@@ -65,6 +71,13 @@ const BACKOFF_MAX_MS = 30_000;
  */
 export const RECHECK_MS = 30_000;
 const PROCESS_CLIENT_ID = `herdr-web-${randomBytes(4).toString("hex")}`;
+/** The close code of a WebSocket that got a message larger than it takes (RFC 6455): Bun's client over 128 MB. */
+export const MESSAGE_TOO_BIG = 1009;
+/**
+ * How long a chat found too big is answered too_big without reading it again: each read of one
+ * pulls up to 128 MB from the host before the close, and a phone may ask again at once.
+ */
+export const TOO_BIG_MEMO_MS = 5 * 60_000;
 /**
  * The shortest gap between two pushes of the same chat (or of the chat list): a streaming reply
  * changes its chat every few ms, and every push goes to every phone, which then reads the chat.
@@ -129,7 +142,8 @@ interface Watch { count: number; session: string; chat: string | null; ready: Pr
 /** A chat watched on its own (a subagent's worker chat), for the session whose chat started it. */
 /** `inner`: the worker's own chat when its URI names a session (VS Code 1.142 names subagents `<session>/subagent/<id>`). */
 interface ChatWatch { count: number; session: string; ready: Promise<void>; inner?: string }
-interface Live { client: AhpClient; closed: Promise<void> }
+interface Live { client: AhpClient; closed: Promise<void>; entry: HostEntry }
+
 
 export class AgentHostConnection {
   readonly clientId: string;
@@ -150,6 +164,9 @@ export class AgentHostConnection {
   private readonly fromSeq = new Map<string, number>();
   /** Per channel whose subscribe is in flight: the actions that arrived before its snapshot. */
   private readonly early = new Map<string, ActionEnvelope[]>();
+  /** Per chat channel found too big: until when it is answered too_big without asking the host. */
+  private readonly tooBig = new Map<string, number>();
+  private readAlones = 0;
   private live: Live | null = null;
   private running: Promise<void> | null = null;
   private stopped = false;
@@ -299,21 +316,59 @@ export class AgentHostConnection {
   }
 
   /**
-   * A channel's state once, without keeping it (a changeset: VS Code's Changes pill reads one):
-   * subscribed, its snapshot taken, unsubscribed at once. Its later actions go nowhere.
+   * A channel's state once, without keeping it (a changeset: VS Code's Changes pill reads one): read
+   * over a socket of its own (readAlone), so a snapshot too big for one message closes only that one.
    */
   async snapshotOf(uri: string): Promise<unknown> {
-    const live = this.live;
-    if (!live) throw new AgentHostError("not_connected");
+    return (await this.readAlone(uri))?.state;
+  }
+
+  /**
+   * `uri`'s snapshot over a short-lived socket of its own, closed after the read: a snapshot too big
+   * for one WebSocket message (MESSAGE_TOO_BIG) closes that socket, never the shared one, and throws
+   * too_big. Its own clientId, so the host never takes it for the shared client reconnecting, and no
+   * initial subscription: the root's snapshot is not sent again.
+   */
+  private async readAlone(uri: string): Promise<Snapshot | undefined> {
+    const entry = this.live?.entry;
+    if (!entry) throw new AgentHostError("not_connected");
+    let socket: WebSocketTransport;
     try {
-      const { result, subscription } = await live.client.subscribe(uri);
-      void subscription.close();
-      return result.snapshot?.state;
+      socket = await WebSocketTransport.connect(`ws://${entry.host}:${entry.port}/?tkn=${encodeURIComponent(entry.token)}`);
+    } catch {
+      throw new AgentHostError("connect_failed");
+    }
+    const client = new AhpClient(socket);
+    client.connect();
+    try {
+      this.readAlones += 1;
+      await client.initialize({ clientId: `${this.clientId}-read-${this.readAlones}`, protocolVersions: PROTOCOL_VERSIONS });
+      const { result } = await client.subscribe(uri);
+      return result.snapshot;
     } catch (error) {
-      throw coded(error);
+      throw socket.lastClose?.code === MESSAGE_TOO_BIG ? new AgentHostError("too_big") : coded(error);
     } finally {
-      // a channel this connection watches for a chat is not let go of
-      if (!this.watchersOf(uri).length) void live.client.unsubscribe(uri).catch(() => {});
+      await client.shutdown();
+    }
+  }
+
+  /**
+   * Throws too_big when chat `channel`'s snapshot is more than one WebSocket message takes, read
+   * alone (readAlone) or remembered from a read in the last TOO_BIG_MEMO_MS; any other failure of
+   * that read is thrown as it is. Only a chat that passed is subscribed on the shared socket.
+   */
+  private async fits(channel: string): Promise<void> {
+    const until = this.tooBig.get(channel);
+    if (until !== undefined && this.now() < until) throw new AgentHostError("too_big");
+    this.tooBig.delete(channel);
+    try {
+      await this.readAlone(channel);
+    } catch (error) {
+      if (error instanceof AgentHostError && error.code === "too_big") {
+        this.tooBig.set(channel, this.now() + TOO_BIG_MEMO_MS);
+        console.warn("agent-host: a chat's snapshot is too big for one WebSocket message; it was read alone and not opened");
+      }
+      throw error;
     }
   }
 
@@ -407,7 +462,7 @@ export class AgentHostConnection {
     const events = client.events();
     const closed = this.pump(events);
     if (this.stopped) { await client.shutdown(); return "never"; }
-    this.live = { client, closed };
+    this.live = { client, closed, entry };
     let connected = false;
     try {
       const init = await client.initialize({ clientId: this.clientId, protocolVersions: PROTOCOL_VERSIONS, initialSubscriptions: [ROOT] });
@@ -547,6 +602,8 @@ export class AgentHostConnection {
 
   /** Subscribes `channel`, holding back the actions that arrive before its snapshot. */
   private async subscribe(client: AhpClient, channel: string, kind: "session" | "chat"): Promise<Snapshot> {
+    // a chat too big for one message is never asked for here: its close would drop every chat
+    if (kind === "chat") await this.fits(channel);
     this.early.set(channel, []);
     let result: SubscribeResult;
     try {

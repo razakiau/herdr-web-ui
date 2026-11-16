@@ -193,6 +193,8 @@ const BASE: Record<string, string> = {
   "The PC took too long": "PC 응답이 너무 늦음",
   "Can't reach the PC": "PC에 연결할 수 없음",
   "PC disk is full": "PC 디스크가 가득 참",
+  "This chat is too big to open": "이 채팅은 너무 커서 열 수 없습니다",
+  "The PC's other chats are not affected. Open this one in VS Code on the PC.": "PC의 다른 채팅에는 영향이 없습니다. 이 채팅은 PC의 VS Code에서 여세요.",
   "No permission on the PC": "PC에서 권한 없음",
   "Pair it again in Settings → Phone & devices.": "설정 → 폰 및 기기에서 다시 페어링하세요.",
   "Refresh and try again.": "새로 고친 뒤 다시 시도하세요.",
