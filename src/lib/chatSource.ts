@@ -11,7 +11,7 @@ import type { HostChatRead, HostEditDiff } from "../../shared/host-chats.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError, getJson, type ConversationPageQuery } from "./api.ts";
-import { fetchHostChat, storedHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
+import { fetchHostChat, flushHostChat, storedHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
 
 export interface ChatSource {
@@ -62,6 +62,16 @@ export interface HostChatSource extends ChatSource {
   last(): HostChatRead | null;
 }
 
+/** A kept read's signature as it is shown before the network answers: never one a network read has. */
+const storedSignature = (signature: string): string => `${signature}#stored`;
+
+/**
+ * The read a host chat's screen shows after `next` comes: an unchanged one keeps the object shown;
+ * a kept read shown before the network answered is always replaced (its signature is its own).
+ */
+export const keepShownRead = (current: HostChatRead | null, next: HostChatRead): HostChatRead =>
+  current !== null && current.signature === next.signature ? current : next;
+
 const changed = (detail: string): ApiError => new ApiError("host-chats/chat", 409, detail, "history_changed");
 
 /**
@@ -84,7 +94,7 @@ const changed = (detail: string): ApiError => new ApiError("host-chats/chat", 40
  * A cursor not known, or whose turn the chat no longer has, answers 409 `history_changed`, as a
  * pane's does: ChatView drops the older pages and reads again. Its history is the session.
  */
-export function hostSource(machineId: string, session: string): HostChatSource {
+export function hostSource(machineId: string, session: string, options: { keep?: boolean } = {}): HostChatSource {
   const query = (ref: string): string => new URLSearchParams({ session, ref }).toString();
   /** the turn id each cursor's window started at */
   const starts = new Map<string, string | null>();
@@ -95,7 +105,9 @@ export function hostSource(machineId: string, session: string): HostChatSource {
   let lastPage: { from: string | undefined; signature: string; answer: ConversationResponse } | null = null;
   const readListeners = new Set<(read: HostChatRead) => void>();
   const changeListeners = new Set<() => void>();
-  const fetchRead = (before?: string): Promise<HostChatRead> => fetchHostChat(machineId, session, before);
+  /** a newest read answered or failed: the kept read is never laid out after it */
+  let settled = false;
+  const fetchRead = (before?: string): Promise<HostChatRead> => fetchHostChat(machineId, session, before, undefined, { keep: options.keep === true });
   let holders = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -156,20 +168,21 @@ export function hostSource(machineId: string, session: string): HostChatSource {
         remember(read);
         return answer(read, 0, end, read.cursor);
       }
-      const read = await fetchRead();
+      let read: HostChatRead;
+      try { read = await fetchRead(); } finally { settled = true; }
       heard(read);
       return newestAnswer(read, page);
     },
     // the read this device kept, laid out as the newest page before the network answers; nothing
     // once a read came (it is newer)
     async stored() {
-      if (lastRead !== null) return null;
+      if (!options.keep || settled || lastRead !== null) return null;
       const read = await storedHostChat(machineId, session).catch(() => null);
-      if (read === null || lastRead !== null) return null;
-      // a kept question may have been answered since: only the network's read offers one
-      const shown: HostChatRead = { ...read, prompt: null, confirmations: 0 };
-      heard(shown);
-      return newestAnswer(shown, {});
+      if (read === null || settled || lastRead !== null) return null;
+      // a kept question may have been answered since: only the network's read offers one. Its own
+      // signature, so the first network read always replaces it (keepShownRead), even unchanged
+      heard({ ...read, prompt: null, confirmations: 0, signature: storedSignature(read.signature) });
+      return newestAnswer(read, {});
     },
     image: (ref) => machinePath(machineId, `host-chats/image?${query(ref)}`),
     // the read route takes a subagent's chat URI as its `session` once this chat's read found it
@@ -192,6 +205,8 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       } else if (holders === 0 && timer !== undefined) {
         clearInterval(timer);
         timer = undefined;
+        // the chat is left: what changed while it was busy goes to the device now
+        if (options.keep) flushHostChat(machineId, session);
       }
     },
     onChange(listener) {

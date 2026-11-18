@@ -48,15 +48,21 @@ export function indexedDbReadStore(factory: IDBFactory | undefined = globalThis.
   // transaction may let it commit first on some browsers
   return {
     async get(key) {
-      const tx = (await db()).transaction([READS, LRU], "readwrite");
+      const base = await db();
+      // a read only: it never waits behind a write of another chat's big read
+      const tx = base.transaction(READS, "readonly");
       let json: unknown = null;
       const read = tx.objectStore(READS).get(key);
-      read.onsuccess = () => {
-        json = read.result;
-        if (typeof json === "string") tx.objectStore(LRU).put({ at: Date.now() }, key);
-      };
+      read.onsuccess = () => { json = read.result; };
       await finished(tx);
-      return typeof json === "string" ? json : null;
+      if (typeof json !== "string") return null;
+      // the use is noted apart, and not waited for
+      try {
+        const touch = base.transaction(LRU, "readwrite");
+        touch.objectStore(LRU).put({ at: Date.now() }, key);
+        void finished(touch).catch(() => undefined);
+      } catch { /* a closing database: the use goes unnoted */ }
+      return json;
     },
     async put(key, json) {
       const tx = (await db()).transaction([READS, LRU], "readwrite");

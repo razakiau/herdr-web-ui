@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { HostChatRead, HostChatRow } from "../../shared/host-chats.ts";
 import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
-import { chatAge, fetchChatCost, fetchHostCosts, setHostReadStore, storedHostChat } from "./hostChats.ts";
+import { chatAge, fetchChatCost, fetchHostCosts, flushHostChat, keptInMemory, KEPT_MEMORY_BUDGET, setHostReadStore, storedHostChat, STORE_BUSY_EVERY_MS } from "./hostChats.ts";
 import { STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
 import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, sendHostPendingNow, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
@@ -811,6 +811,7 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     return { rows, puts, store };
   };
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const KEEP = { keep: true };
 
   it("sends the kept base back and rebuilds the full read from the delta, deep equal to a full read", async () => {
     setHostReadStore(null);
@@ -818,9 +819,9 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     const later = full(4, "HASH4aaaaaaa");
     const { commands: _commands, ...noCommands } = later;
     const asked = serve(first, { ...noCommands, turns: later.turns.slice(6), delta: { from: 6 }, commands_same: true } as HostChatRead);
-    expect(await fetchHostChat("desk", "s1")).toEqual(first);
+    expect(await fetchHostChat("desk", "s1", undefined, undefined, KEEP)).toEqual(first);
     expect(asked[0]!.has("known")).toBe(false);
-    expect(await fetchHostChat("desk", "s1")).toEqual(later);
+    expect(await fetchHostChat("desk", "s1", undefined, undefined, KEEP)).toEqual(later);
     expect(asked[1]!.get("known")).toBe("6.HASH3aaaaaaa");
     expect(asked[1]!.get("commands")).toBe("CMDS0000hash");
   });
@@ -830,8 +831,8 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     const first = full(1, "HASH1aaaaaaa");
     const later = full(5, "HASH5aaaaaaa");
     const asked = serve(first, { ...later, turns: later.turns.slice(8), delta: { from: 8 } }, later);
-    await fetchHostChat("desk", "s1");
-    expect(await fetchHostChat("desk", "s1")).toEqual(later);
+    await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    expect(await fetchHostChat("desk", "s1", undefined, undefined, KEEP)).toEqual(later);
     expect(asked).toHaveLength(3);
     expect(asked[2]!.has("known")).toBe(false);
     expect(asked[2]!.has("commands")).toBe(false);
@@ -842,7 +843,7 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     setHostReadStore(store);
     const page = { ...full(2, "unused"), base: undefined, commands_hash: undefined };
     const asked = serve(page);
-    await fetchHostChat("desk", "s1", "cursor-1");
+    await fetchHostChat("desk", "s1", "cursor-1", undefined, KEEP);
     await settle();
     expect(asked[0]!.has("known")).toBe(false);
     expect(asked[0]!.get("before")).toBe("cursor-1");
@@ -857,7 +858,7 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     expect(await storedHostChat("desk", "s1")).toEqual(kept);
     const later = full(3, "HASH3aaaaaaa");
     const asked = serve({ ...later, turns: later.turns.slice(4), delta: { from: 4 } });
-    expect(await fetchHostChat("desk", "s1")).toEqual(later);
+    expect(await fetchHostChat("desk", "s1", undefined, undefined, KEEP)).toEqual(later);
     expect(asked[0]!.get("known")).toBe("4.HASH2aaaaaaa");
     await settle();
     expect(puts).toEqual(["desk\ns1"]);
@@ -873,9 +874,61 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     expect(rows.has("desk\ns1")).toBe(false);
     const big = full(1, "HASHBIGaaaaa", { title: "x".repeat(STORED_READ_MAX_BYTES) });
     serve(big);
-    await fetchHostChat("desk", "s1");
+    await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
     await settle();
     expect(puts).toEqual([]);
     expect(rows.has("desk\ns1")).toBe(false);
+  });
+
+  it("a read without keep (a group's member read, a subagent's turns) sends no known and keeps nothing", async () => {
+    const { store, puts } = memoryStore();
+    setHostReadStore(store);
+    const asked = serve(full(2, "HASH2aaaaaaa"), full(2, "HASH2aaaaaaa"));
+    await fetchHostChat("desk", "s1");
+    await fetchHostChat("desk", "s1");
+    await settle();
+    expect(asked.map((query) => query.has("known"))).toEqual([false, false]);
+    expect(keptInMemory()).toEqual([]);
+    expect(puts).toEqual([]);
+  });
+
+  it("memory keeps reads up to a byte budget, and always the newest", async () => {
+    setHostReadStore(null);
+    const big = (n: number) => full(1, `HASHbig${n}aaaa`, { session: `s${n}`, title: "x".repeat(15 * 1024 * 1024) });
+    serve(big(1), big(2), big(3), full(1, "HASHhugeaaaa", { title: "x".repeat(50 * 1024 * 1024) }));
+    for (const n of [1, 2, 3]) await fetchHostChat("desk", `s${n}`, undefined, undefined, KEEP);
+    expect(keptInMemory().map((entry) => entry.key)).toEqual(["desk\ns2", "desk\ns3"]);
+    expect(keptInMemory().reduce((sum, entry) => sum + entry.size, 0)).toBeLessThanOrEqual(KEPT_MEMORY_BUDGET);
+    await fetchHostChat("desk", "s4", undefined, undefined, KEEP);
+    expect(keptInMemory().map((entry) => entry.key)).toEqual(["desk\ns4"]);
+  });
+
+  it("a busy chat goes to the device at most every 30 s, then when it goes idle, and when it is left", async () => {
+    const { store, rows, puts } = memoryStore();
+    setHostReadStore(store);
+    let now = Date.parse("2026-11-18T12:00:00Z");
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const busy = (n: number) => full(1, "HASH1aaaaaaa", { busy: true, status: "working", signature: `busy-${n}` });
+      serve(busy(1), busy(2), busy(3), busy(4), full(1, "HASH1aaaaaaa", { signature: "idle" }));
+      const read = () => fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+      await read();
+      now += 5_000; await read();
+      await settle();
+      expect(puts).toHaveLength(1);
+      now += STORE_BUSY_EVERY_MS; await read();
+      await settle();
+      expect(puts).toHaveLength(2);
+      now += 1_000; await read();
+      flushHostChat("desk", "s1");
+      await settle();
+      expect(puts).toHaveLength(3);
+      expect(JSON.parse(rows.get("desk\ns1")!).signature).toBe("busy-4");
+      flushHostChat("desk", "s1");
+      await read();
+      await settle();
+      expect(puts).toHaveLength(4);
+      expect(JSON.parse(rows.get("desk\ns1")!).signature).toBe("idle");
+    } finally { clock.mockRestore(); }
   });
 });

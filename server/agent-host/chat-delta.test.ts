@@ -101,6 +101,18 @@ describe("CT 208's proxy for a bridge before ZAC-340", () => {
     expect(applyDelta(first, next)).toEqual(deltaRead(current, new URLSearchParams()));
   });
 
+  it("an answer that already has its base or a delta is passed on as it is, header or not", async () => {
+    const before = deltaRead(chatRead(2), new URLSearchParams());
+    const answered = deltaRead(chatRead(3), query(before));
+    expect(answered.delta).toEqual({ from: 4 });
+    // no header (a proxy or bridge between that drops it): the delta must not be made again over the tail
+    const headerless = bridge(() => answered);
+    expect(await headerless.get(`?session=s&${query(before).toString()}`)).toEqual(answered);
+    const full = deltaRead(chatRead(3), new URLSearchParams());
+    const withBase = bridge(() => full);
+    expect(await withBase.get(`?session=s&known=${encodeURIComponent("4.AAAAAAAAAAAAAAAAAAAAAA")}`)).toEqual(full);
+  });
+
   it("passes a new bridge's answer and an older page on as they are", async () => {
     const answered = deltaRead(chatRead(2), new URLSearchParams());
     const fresh = bridge(() => answered, { [DELTA_HEADER]: "1" });

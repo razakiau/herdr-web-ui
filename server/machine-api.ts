@@ -231,7 +231,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         // against the phone's `known` is made here, so the leg to the phone carries only what changed
         if (path === "host-chats/chat" && request.method === "GET" && response.ok && body && !url.searchParams.has("before") && !response.headers.has(DELTA_HEADER)) {
           const answer = parseJson<HostChatRead>(body);
-          if (Array.isArray(answer.turns)) body = new TextEncoder().encode(JSON.stringify(deltaRead(answer, url.searchParams)));
+          // an answer with its base or a delta already came from a bridge that made it: never twice
+          if (Array.isArray(answer.turns) && answer.base === undefined && answer.delta === undefined) body = new TextEncoder().encode(JSON.stringify(deltaRead(answer, url.searchParams)));
         }
         return new Response(body, { status: response.status, headers: {
           "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", ...(etag ? { etag } : {}),

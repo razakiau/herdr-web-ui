@@ -1784,6 +1784,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
   /** the socket has been connected since this pane showed: only then is a connected edge a reconnect */
   const wasConnected = useRef(connected);
   const seenInvalidation = useRef({ pane: paneId, key: invalidationKey });
+  /** a read of this chat answered or failed since it showed: a host chat's kept read is no longer drawn (ZAC-340) */
+  const networkRead = useRef(false);
 
   const dropOlder = (): void => {
     olderGeneration.current += 1; loadingOlder.current = false;
@@ -1834,6 +1836,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
     pagingAway.current = false; stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setAway(false); setLoaded(false); setError(null); setErrorStatus(null); setFailures(0); setPrompt(null); setAbandoned(null); setRestored(null); setOutcomes([]); setScreenRead(false);
     dropOlder();
     lastAnswer.current = null;
+    networkRead.current = false;
     setSentOver(null);
     wasConnected.current = connected;
     // Stale while revalidating: the last answer read for this pane draws before paint, and the
@@ -1849,7 +1852,8 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
     if (hosted && chat.stored) {
       const key = scopeId;
       const generation = olderGeneration.current;
-      const current = (): boolean => shownPane.current === key && lastAnswer.current === null && generation === olderGeneration.current;
+      // never once a network read answered or failed: the kept read must not hide an error, nor replace newer turns
+      const current = (): boolean => shownPane.current === key && !networkRead.current && lastAnswer.current === null && generation === olderGeneration.current;
       void chat.stored().then(async (kept) => {
         if (kept === null || !current()) return;
         if (loadedChatTimeline() === null) { await loadChatTimeline(); if (!current()) return; }
@@ -1914,7 +1918,7 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
       try {
         let conversation;
         try {
-          conversation = await chat.read(page);
+          conversation = await chat.read(page).finally(() => { if (!cancelled) networkRead.current = true; });
         } catch (cause) {
           // a new session or a Codex backtrack replaced the transcript the older pages came from
           if (heldFrom.current === null || !(cause instanceof ApiError) || cause.status !== 409) throw cause;
