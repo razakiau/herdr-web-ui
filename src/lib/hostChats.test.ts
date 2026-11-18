@@ -839,6 +839,25 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
     expect(asked[2]!.has("commands")).toBe(false);
   });
 
+  it("a delta that does not join keeps the commands held while the tail read again defers them", async () => {
+    setHostReadStore(null);
+    const first = full(1, "HASH1aaaaaaa");
+    const later = full(5, "HASH5aaaaaaa");
+    const { commands: _commands, ...noCommands } = later;
+    // the read again has nothing known: the server answers a tail and defers the "/" list
+    const tail = { ...noCommands, turns: later.turns.slice(4), offset: 4, base: { from: 4, n: 10, hash: "HASH5tailaaa", anchor: "t2" }, commands_deferred: true } as HostChatRead;
+    const asked = serve(first, { ...later, turns: later.turns.slice(8), delta: { from: 8 } }, tail, later);
+    await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    const again = await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    expect(again.turns).toEqual(later.turns.slice(4));
+    // the screen never loses the "/" list it had: the commands held stand in until the next read brings them
+    expect(again.commands).toEqual(first.commands);
+    expect(again.commands_deferred).toBe(true);
+    await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    // that next read asks for them (no digest sent)
+    expect(asked[3]!.has("commands")).toBe(false);
+  });
+
   it("an older page (before) sends no known and is not kept", async () => {
     const { store, puts } = memoryStore();
     setHostReadStore(store);

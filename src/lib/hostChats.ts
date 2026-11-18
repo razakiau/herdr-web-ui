@@ -130,6 +130,10 @@ export async function fetchHostChat(machineId: string, session: string, before?:
       forgetKept(key);
       const again = await ask({ [TAIL_PARAM]: "1" });
       full = applyDelta(null, again.body) ?? again.body;
+      // read again with nothing known, the tail defers the "/" list: the one held stands in (still
+      // deferred, so the next read asks for it), else the screen's list would go empty meanwhile
+      const held = prev?.read.commands;
+      if (full.commands_deferred === true && full.commands.length === 0 && Array.isArray(held) && held.length > 0) full = { ...full, commands: held };
       size = again.size;
     }
     read = full;
