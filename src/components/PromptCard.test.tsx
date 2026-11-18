@@ -48,6 +48,19 @@ describe("PromptCardView", () => {
   });
 });
 
+describe("a form's pager", () => {
+  const page = (title: string) => ({ title, question: `${title}?`, options: [{ label: "Yes", description: null }], multi_select: false, custom_option_index: null, required: true });
+  const form = prompt({ form: [page("FICTIONAL one"), page("FICTIONAL two")] });
+  const button = (html: string, label: string): string => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+
+  it("Next browses on from a required question left unanswered: Submit is what asks for it", () => {
+    const html = render(true, form);
+    expect(button(html, "Next question")).not.toBe("");
+    expect(button(html, "Next question")).not.toContain("disabled");
+    expect(button(html, "Previous question")).toContain("disabled");
+  });
+});
+
 describe("a Copilot card's extras", () => {
   const renderWith = (extra: Record<string, unknown>, value = prompt()): string => {
     const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
