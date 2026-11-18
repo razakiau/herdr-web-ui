@@ -2539,3 +2539,61 @@ describe("host chat async questions (ask_user_async, ZAC-326)", () => {
     expect(await rowOf()).not.toHaveProperty("waiting");
   });
 });
+
+describe("host chat reads that send only what changed (ZAC-340)", () => {
+  const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
+  const texts = (read: HostChatRead) => read.turns.filter((t) => t.role === "user").map((t) => (t.parts[0] as { text: string }).text);
+  const known = (read: HostChatRead) => `&known=${read.base!.n}.${read.base!.hash}&commands=${read.commands_hash!}`;
+
+  it("an idle chat read again with its known prefix answers no turns and leaves its commands out", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: [turn("t1", "FICTIONAL one"), turn("t2", "FICTIONAL two")] }), [chatUri(2)]: chatState(2) } });
+    const full = (await call(r, path)).json as HostChatRead;
+    expect(full.base).toEqual({ n: 4, hash: expect.any(String) });
+    expect(full.delta).toBeUndefined();
+    const again = (await call(r, `${path}${known(full)}`)).json as HostChatRead;
+    expect(again.delta).toEqual({ from: 4 });
+    expect(again.turns).toEqual([]);
+    expect(again.commands_same).toBe(true);
+    expect("commands" in again).toBe(false);
+    expect(again.message_ids).toEqual(full.message_ids);
+    expect(again.signature).toBe(full.signature);
+  });
+
+  it("a known prefix that hashes otherwise, or is no prefix, gets the whole read: never an error", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: [turn("t1", "FICTIONAL one")] }), [chatUri(2)]: chatState(2) } });
+    for (const query of ["&known=2.AAAAAAAAAAAAAAAAAAAAAA&commands=nope", "&known=99.AAAAAAAAAAAAAAAAAAAAAA", "&known=garbage"]) {
+      const read = await call(r, `${path}${query}`);
+      expect(read.status).toBe(200);
+      expect(read.json.delta).toBeUndefined();
+      // the whole read, with the base the next read can send back
+      expect(read.json.base.n).toBe(2);
+      expect(texts(read.json)).toEqual(["FICTIONAL one"]);
+      expect(Array.isArray(read.json.commands)).toBe(true);
+    }
+  });
+
+  it("a busy chat's base leaves out its last host turn: it is sent again on every read", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { status: 8, turns: [turn("t1", "FICTIONAL done")], activeTurn: active() }), [chatUri(2)]: chatState(2) } });
+    const full = (await call(r, path)).json as HostChatRead;
+    expect(full.busy).toBe(true);
+    expect(full.turns).toHaveLength(4);
+    expect(full.base!.n).toBe(2);
+    const again = (await call(r, `${path}${known(full)}`)).json as HostChatRead;
+    expect(again.delta).toEqual({ from: 2 });
+    expect(texts(again)).toEqual(["FICTIONAL working"]);
+    expect(again.turns).toEqual(full.turns.slice(2));
+  });
+
+  it("an older page (before) is read whole, with no base, whatever known says", async () => {
+    const r = await rig({
+      chats: { [chatUri(1)]: chatState(1, { turns: [turn("t3", "FICTIONAL third")], turnsNextCursor: "page-2" }), [chatUri(2)]: chatState(2) },
+      older: { [chatUri(1)]: { turns: [turn("t1", "FICTIONAL first"), turn("t2", "FICTIONAL second"), turn("t3", "FICTIONAL third")] } },
+    });
+    const first = (await call(r, path)).json as HostChatRead;
+    const older = (await call(r, `${path}&before=page-2${known(first)}`)).json as HostChatRead;
+    expect(texts(older)).toEqual(["FICTIONAL first", "FICTIONAL second", "FICTIONAL third"]);
+    expect(older.base).toBeUndefined();
+    expect(older.delta).toBeUndefined();
+    expect(Array.isArray(older.commands)).toBe(true);
+  });
+});
