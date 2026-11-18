@@ -931,4 +931,35 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
       expect(JSON.parse(rows.get("desk\ns1")!).signature).toBe("idle");
     } finally { clock.mockRestore(); }
   });
+
+  it("the size kept in memory stays near the read's real size over 100 unchanged idle reads and 100 busy ones", async () => {
+    setHostReadStore(null);
+    const idle = full(20, "HASHidleaaaa", { title: "y".repeat(50_000) });
+    let next: HostChatRead = idle;
+    let reply: (asked: URLSearchParams) => HostChatRead = () => idle;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const answer = reply(new URL(String(input), "http://x").searchParams);
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const read = () => fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    const near = () => {
+      const real = JSON.stringify(next).length;
+      expect(Math.abs(keptInMemory()[0]!.size - real) / real).toBeLessThan(0.1);
+    };
+    await read();
+    // idle, unchanged: no turns, commands left out
+    reply = () => { const { commands: _c, ...rest } = idle; return { ...rest, turns: [], delta: { from: 40 }, commands_same: true } as unknown as HostChatRead; };
+    for (let i = 0; i < 100; i++) await read();
+    near();
+    // busy: its last host turn grows a little on every read, and is sent again each time
+    for (let i = 0; i < 100; i++) {
+      const turns = [...idle.turns.slice(0, 38), ...pair(19, `FICTIONAL working ${"z".repeat(i * 100)}`)];
+      next = { ...idle, busy: true, status: "working", turns, signature: `busy-${i}`, base: { n: 38, hash: "HASHbusyaaaa" } };
+      const sent = next;
+      // the first busy read changed a turn the idle base held: the server answers it whole
+      reply = i === 0 ? () => sent : () => { const { commands: _c, ...rest } = sent; return { ...rest, turns: sent.turns.slice(38), delta: { from: 38 }, commands_same: true } as HostChatRead; };
+      expect(await read()).toEqual(next);
+    }
+    near();
+  });
 });

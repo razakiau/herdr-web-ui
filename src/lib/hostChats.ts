@@ -115,8 +115,12 @@ export async function fetchHostChat(machineId: string, session: string, before?:
     if (prev?.read.commands_hash) sent[COMMANDS_PARAM] = prev.read.commands_hash;
     const { body: answer, size: answered } = await ask(sent);
     let full = answer.delta !== undefined && answer.delta.from !== prev?.read.base?.n ? null : applyDelta(prev?.read ?? null, answer);
-    // what the full read weighs, without serializing it: the kept prefix's share of the kept read, and the answer
-    let size = answer.delta !== undefined && prev ? Math.round(prev.size * (answer.delta.from / Math.max(1, prev.read.turns.length))) + answered : answered;
+    // what the full read weighs, without serializing all of it: the kept read less the turns the
+    // delta replaces, plus the turns it brings (both a tail: none for an unchanged idle chat, the
+    // last host turn for a busy one); write() puts the real size back whenever it serializes
+    let size = answer.delta !== undefined && prev
+      ? Math.max(0, prev.size - JSON.stringify(prev.read.turns.slice(answer.delta.from)).length + JSON.stringify(answer.turns).length)
+      : answered;
     if (full === null) {
       forgetKept(key);
       const again = await ask({});
@@ -187,8 +191,10 @@ function write(key: string, entry: Kept): void {
   if (!to || entry.written === entry.read.signature) return;
   entry.written = entry.read.signature;
   entry.writtenAt = Date.now();
-  if (entry.size > STORED_READ_MAX_BYTES) { void to.delete(key).catch(() => undefined); return; }
+  // the estimate only spares serializing a read clearly too big; the real length decides
+  if (entry.size > 2 * STORED_READ_MAX_BYTES) { void to.delete(key).catch(() => undefined); return; }
   const json = JSON.stringify(entry.read);
+  entry.size = json.length;
   if (json.length > STORED_READ_MAX_BYTES) { void to.delete(key).catch(() => undefined); return; }
   void to.put(key, json).catch(() => undefined);
 }
