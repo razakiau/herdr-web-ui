@@ -5,7 +5,7 @@
  */
 import { createHash, type Hash } from "node:crypto";
 import type { HostChatRead } from "../../shared/host-chats.ts";
-import { ANCHOR_PARAM, baseTurns, COMMANDS_PARAM, KNOWN_PARAM, PAGE_PARAM, parseKnown, tailStart, TAIL_PARAM, type HostChatBase, type HostChatPage } from "../../shared/host-chat-delta.ts";
+import { ANCHOR_PARAM, baseTurns, COMMANDS_PARAM, KNOWN_PARAM, PAGE_MAX_CHARS, PAGE_PARAM, parseKnown, tailStart, TAIL_PARAM, type HostChatBase, type HostChatPage } from "../../shared/host-chat-delta.ts";
 
 const digest = (hash: Hash): string => hash.digest("base64url").slice(0, 22);
 
@@ -53,7 +53,7 @@ export function pageBefore(read: HostChatRead, id: string): HostChatPage {
   const at = read.message_ids.indexOf(id);
   if (at < 0 || 2 * at >= read.turns.length) throw new WindowMoved(`no turn ${id} in the chat's window`);
   const end = 2 * at;
-  const start = tailStart(read.turns, end);
+  const start = tailStart(read.turns, end, PAGE_MAX_CHARS);
   return { session: read.session, page: true, turns: read.turns.slice(start, end), offset: start, cursor: read.cursor, message_ids: read.message_ids.slice(start / 2, end / 2) };
 }
 
@@ -66,7 +66,7 @@ export function pageBefore(read: HostChatRead, id: string): HostChatPage {
  * match, or is no `known`, is never an error. A page is chatAnswer's.
  */
 export function deltaRead(read: HostChatRead, query: URLSearchParams): HostChatRead {
-  const { delta: _delta, commands_same: _same, base: _base, commands_hash: _commandsHash, offset: _offset, anchor_at: _anchorAt, ...full } = read;
+  const { delta: _delta, commands_same: _same, commands_deferred: _deferred, base: _base, commands_hash: _commandsHash, offset: _offset, anchor_at: _anchorAt, ...full } = read;
   const total = full.turns.length;
   const known = parseKnown(query.get(KNOWN_PARAM));
   let match: { from: number; n: number; ranged: boolean } | null = null;
@@ -97,6 +97,10 @@ export function deltaRead(read: HostChatRead, query: URLSearchParams): HostChatR
   if (query.get(COMMANDS_PARAM) === commands_hash) {
     delete (out as Partial<HostChatRead>).commands;
     out.commands_same = true;
+  } else if (known === null && query.get(TAIL_PARAM) === "1") {
+    // a first open (nothing known): the "/" list waits for the next read, which knows the tail
+    delete (out as Partial<HostChatRead>).commands;
+    out.commands_deferred = true;
   }
   return out;
 }

@@ -25,8 +25,10 @@ export const TAIL_PARAM = "tail";
 export const PAGE_PARAM = "page_before";
 /** A tail, and each page, holds this many host turns at most… */
 export const TAIL_HOST_TURNS = 10;
-/** …and its turns this many characters serialized at most, older turns going first, one host turn at least. */
+/** …and a tail's turns this many characters serialized at most, older turns going first, one host turn at least… */
 export const TAIL_MAX_CHARS = 150 * 1024;
+/** …and a page's this many: a scroll up waits on the line anyway, and fewer pages mean fewer waits. */
+export const PAGE_MAX_CHARS = 600 * 1024;
 
 /**
  * Turns before a host turn of the window, read from the bridge one page at a time (`page_before`):
@@ -40,16 +42,17 @@ export interface HostChatPage {
 }
 
 /**
- * Where a tail (or a page ending at `end`) starts: the last TAIL_HOST_TURNS host turns before
- * `end`, fewer while they weigh over TAIL_MAX_CHARS, never less than one host turn. `size` gives
- * a turn's serialized length.
+ * Where a tail (or a page ending at `end`, with `max` PAGE_MAX_CHARS) starts: the last
+ * TAIL_HOST_TURNS host turns before `end`, fewer while they weigh over `max` characters
+ * serialized, never less than one host turn.
  */
-export function tailStart(turns: readonly unknown[], end = turns.length, size: (turn: unknown) => number = (turn) => JSON.stringify(turn).length): number {
+export function tailStart(turns: readonly unknown[], end = turns.length, max = TAIL_MAX_CHARS): number {
+  const size = (turn: unknown): number => JSON.stringify(turn).length;
   let start = Math.max(0, end - 2 * TAIL_HOST_TURNS);
   start -= start % 2;
   const sizes = turns.slice(start, end).map(size);
   let total = sizes.reduce((sum, each) => sum + each, 0);
-  while (start < end - 2 && total > TAIL_MAX_CHARS) {
+  while (start < end - 2 && total > max) {
     total -= sizes.shift()! + (sizes.shift() ?? 0);
     start += 2;
   }
@@ -96,6 +99,8 @@ export function parseKnown(value: string | null): HostChatBase | null {
  */
 export function applyDelta(prev: HostChatRead | null, next: HostChatRead): HostChatRead | null {
   const { delta, commands_same: same, anchor_at: anchorAt, ...rest } = next;
+  // a first open's tail without its commands: none held yet (the next read brings them)
+  if (next.commands_deferred === true && next.commands === undefined) return applyDelta(prev, { ...next, commands: [] });
   if (delta === undefined && same === undefined) return next;
   let turns = next.turns;
   let offset = 0;

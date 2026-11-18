@@ -113,7 +113,8 @@ export async function fetchHostChat(machineId: string, session: string, before?:
     // nothing that joins: only the chat's last turns, the older ones paged in as the user scrolls (fetchHostChatPage)
     const sent: Record<string, string> = { [TAIL_PARAM]: "1" };
     if (prev?.read.base) Object.assign(sent, knownQuery(prev.read.base));
-    if (prev?.read.commands_hash) sent[COMMANDS_PARAM] = prev.read.commands_hash;
+    // commands held: their digest; none held (a first open's tail deferred them): the answer brings them
+    if (prev?.read.commands_hash && !prev.read.commands_deferred) sent[COMMANDS_PARAM] = prev.read.commands_hash;
     const { body: answer, size: answered } = await ask(sent);
     // a delta answers the very range sent: its length from the base's first turn, wherever that turn is now
     const base = prev?.read.base;

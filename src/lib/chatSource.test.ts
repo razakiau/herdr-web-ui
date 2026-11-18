@@ -474,6 +474,36 @@ describe("hostSource: a chat's first open pages its older turns in (ZAC-340 part
     expect(answers[3]).toMatchObject({ delta: { from: 60 }, turns: [] });
   });
 
+  it("a first open comes without the \"/\" list and reads once more at once, which brings it to the screen", async () => {
+    setHostReadStore(null);
+    const commands = [{ name: "FICTIONAL-skill", description: "FICTIONAL", kind: "skill" }] as unknown as HostChatRead["commands"];
+    const chat = hostRead(ids, null, { commands });
+    const { asked, answers } = bridge(() => chat);
+    const source = hostSource("m", "s", { keep: true });
+    let shown: HostChatRead | null = null;
+    source.onRead((next) => { shown = keepShownRead(shown, next); });
+    let rereads = 0;
+    source.onChange(() => { rereads += 1; });
+    await source.read();
+    expect(answers[0]).toMatchObject({ commands_deferred: true });
+    expect(shown!.commands).toEqual([]);
+    await Promise.resolve();
+    // the screen's listener reads again: one change, the next read sends no commands digest
+    expect(rereads).toBe(1);
+    await source.read();
+    expect(asked[1]!.has("commands")).toBe(false);
+    expect(asked[1]!.has("known")).toBe(true);
+    expect(shown!.commands).toEqual(commands);
+    expect(shown!.commands_deferred).toBeUndefined();
+    // held now: later reads send the digest, and no more extra reads
+    await source.read();
+    await Promise.resolve();
+    expect(asked[2]!.has("commands")).toBe(true);
+    expect(answers[2]).toMatchObject({ commands_same: true });
+    expect(shown!.commands).toEqual(commands);
+    expect(rereads).toBe(1);
+  });
+
   it("a page whose turn the chat no longer has is history_changed: ChatView drops its older pages and reads again", async () => {
     setHostReadStore(null);
     let chat = hostRead(ids, null);

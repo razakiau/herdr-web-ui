@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import type { HostChatRead } from "../../shared/host-chats.ts";
 import type { ConversationTurn } from "../../shared/protocol.ts";
-import { applyDelta, knownParam, knownQuery, prependPage, TAIL_MAX_CHARS } from "../../shared/host-chat-delta.ts";
+import { applyDelta, knownParam, knownQuery, PAGE_MAX_CHARS, prependPage, TAIL_MAX_CHARS } from "../../shared/host-chat-delta.ts";
 import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
 import { DELTA_HEADER, DELTA_LEVEL, deltaRead, pageBefore, prefixHashes, WindowMoved } from "./chat-delta.ts";
@@ -149,13 +149,16 @@ describe("the first open of a chat: its last turns, the older ones paged in (ZAC
   });
 
   it("paging the turns before the tail back in gives the full read's turns, deep equal", () => {
-    const whole = sized(40, (i) => (i * 7919) % 30_000);
-    let held = deltaRead(whole, tail);
+    const whole = sized(120, (i) => (i * 7919) % 60_000);
+    let held = applyDelta(null, deltaRead(whole, tail))!;
     expect(held.offset).toBeGreaterThan(0);
     let pages = 0;
     while ((held.offset ?? 0) > 0) {
       const page = pageBefore(whole, held.message_ids[held.offset! / 2]!);
-      expect(chars(page.turns) <= TAIL_MAX_CHARS || page.turns.length === 2).toBe(true);
+      // a page holds up to 600 KB (a tail 150 KB), one host turn at least
+      expect(chars(page.turns) <= PAGE_MAX_CHARS || page.turns.length === 2).toBe(true);
+      // cut by size, not by count: one host turn more would have been over
+      if (page.offset > 0 && page.turns.length < 20) expect(chars(whole.turns.slice(page.offset - 2, page.offset + page.turns.length))).toBeGreaterThan(PAGE_MAX_CHARS);
       held = prependPage(held, page)!;
       pages += 1;
     }
@@ -165,14 +168,18 @@ describe("the first open of a chat: its last turns, the older ones paged in (ZAC
   });
 
   it("a tail chat read again is a delta from its range, idle, busy, and after the window grew before it", () => {
-    const before = deltaRead(chatRead(30), tail);
-    const known = (read: HostChatRead) => new URLSearchParams({ ...knownQuery(read.base!), commands: read.commands_hash!, tail: "1" });
-    // idle, unchanged
+    // as the client holds it: a first open's tail, its commands deferred
+    const before = applyDelta(null, deltaRead(chatRead(30), tail))!;
+    expect(before.commands).toEqual([]);
+    // as the client asks: no commands digest while it holds none
+    const known = (read: HostChatRead) => new URLSearchParams({ ...knownQuery(read.base!), ...(read.commands_deferred ? {} : { commands: read.commands_hash! }), tail: "1" });
+    // idle, unchanged: the commands come now
     const same = deltaRead(chatRead(30), known(before));
     expect(same.delta).toEqual({ from: 60 });
     expect(same.anchor_at).toBe(40);
     expect(same.turns).toEqual([]);
-    expect(applyDelta(before, same)).toEqual(before);
+    const { commands_deferred: _deferred, ...fuller } = before;
+    expect(applyDelta(before, same)).toEqual({ ...fuller, commands: chatRead(30).commands });
     // a new host turn, then busy with it running
     const grown = deltaRead(chatRead(31, { busy: true, status: "working" }), known(before));
     expect(grown.turns).toEqual(chatRead(31).turns.slice(60));
@@ -187,6 +194,22 @@ describe("the first open of a chat: its last turns, the older ones paged in (ZAC
     const after = applyDelta(held, moved)!;
     expect(after.offset).toBe(48);
     expect(after.turns).toEqual(older.turns.slice(48));
+  });
+
+  it("a first open's tail leaves the commands for the next read, which brings them; a read knowing anything never defers them", () => {
+    const first = deltaRead(chatRead(30), tail);
+    expect("commands" in first).toBe(false);
+    expect(first.commands_deferred).toBe(true);
+    const next = deltaRead(chatRead(30), new URLSearchParams({ ...knownQuery(first.base!), tail: "1" }));
+    expect(next.delta).toEqual({ from: 60 });
+    expect(next.commands).toEqual(chatRead(30).commands);
+    expect(next.commands_deferred).toBeUndefined();
+    // a known that no longer matches gets a tail again, with its commands
+    const stale = deltaRead(chatRead(30), new URLSearchParams({ known: "40.60.AAAAAAAAAAAAAAAAAAAAAA", anchor: "t20", tail: "1" }));
+    expect(stale.offset).toBe(40);
+    expect(stale.commands).toEqual(chatRead(30).commands);
+    // a whole read (no tail) is never without them
+    expect(deltaRead(chatRead(30), new URLSearchParams()).commands).toEqual(chatRead(30).commands);
   });
 
   it("a page before a turn the window no longer has is refused: 409 history_changed at the route", () => {
@@ -217,6 +240,8 @@ describe("CT 208's proxy, first open, for a bridge before bundle 1105", () => {
       const first = (await get("tail=1")).body as HostChatRead;
       expect(first.offset).toBe(40);
       expect(first.turns).toEqual(chatRead(30).turns.slice(40));
+      expect(first.commands_deferred).toBe(true);
+      expect("commands" in first).toBe(false);
       const again = (await get(new URLSearchParams({ ...knownQuery(first.base!), tail: "1" }).toString())).body as HostChatRead;
       expect(again.delta).toEqual({ from: 60 });
       expect(again.turns).toEqual([]);

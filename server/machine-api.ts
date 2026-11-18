@@ -233,7 +233,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         if (path === "host-chats/chat" && request.method === "GET" && response.ok && body && !url.searchParams.has("before") && response.headers.get(DELTA_HEADER) !== DELTA_LEVEL) {
           const answer = parseJson<HostChatRead>(body);
           // an answer that already is a delta or a tail was made by the bridge: never twice
-          if (Array.isArray(answer.turns) && answer.delta === undefined && answer.offset === undefined) {
+          if (Array.isArray(answer.turns) && answer.delta === undefined && answer.offset === undefined && answer.commands_deferred === undefined && answer.commands_same === undefined) {
             try { body = new TextEncoder().encode(JSON.stringify(chatAnswer(answer, url.searchParams))); }
             catch (error) {
               if (error instanceof WindowMoved) return fail("history_changed", error.message, 409);

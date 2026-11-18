@@ -208,6 +208,11 @@ export interface HostChatRead {
   /** `commands` is left out: they are the ones the client's `commands` digest names */
   commands_same?: true;
   /**
+   * A first open's tail read (ZAC-340 part 2) leaves `commands` out to show sooner: the client
+   * holds none (`commands` is empty) and its next read, which sends no commands digest, brings them
+   */
+  commands_deferred?: true;
+  /**
    * The turns start past the window's start, at its turn `offset` (a tail read, ZAC-340 part 2):
    * the turns before are paged in (`page_before`). Absent: from the window's start.
    */

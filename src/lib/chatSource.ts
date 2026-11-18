@@ -67,10 +67,12 @@ const storedSignature = (signature: string): string => `${signature}#stored`;
 
 /**
  * The read a host chat's screen shows after `next` comes: an unchanged one keeps the object shown;
- * a kept read shown before the network answered is always replaced (its signature is its own).
+ * a kept read shown before the network answered is always replaced (its signature is its own), and
+ * so is one whose commands were deferred.
  */
 export const keepShownRead = (current: HostChatRead | null, next: HostChatRead): HostChatRead =>
-  current !== null && current.signature === next.signature ? current : next;
+  // the signature does not cover the commands: a read that brings them deferred replaces one without
+  current !== null && current.signature === next.signature && current.commands_deferred === next.commands_deferred ? current : next;
 
 /** A cursor past a tail read's start: the page before the host turn of this id (never one the host gives). */
 const PAGE_CURSOR = "ovis-page:";
@@ -110,6 +112,8 @@ export function hostSource(machineId: string, session: string, options: { keep?:
   const changeListeners = new Set<() => void>();
   /** a newest read answered or failed: the kept read is never laid out after it */
   let settled = false;
+  /** a read without the chat's commands (deferred) asked for the next read: once until they come */
+  let commandsAsked = false;
   const fetchRead = (before?: string): Promise<HostChatRead> => fetchHostChat(machineId, session, before, undefined, { keep: options.keep === true });
   let holders = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -205,6 +209,12 @@ export function hostSource(machineId: string, session: string, options: { keep?:
       let read: HostChatRead;
       try { read = await fetchRead(); } finally { settled = true; }
       heard(read);
+      // a first open's tail came without the "/" list: read once more at once, which brings it
+      if (read.commands_deferred !== true) commandsAsked = false;
+      else if (!commandsAsked) {
+        commandsAsked = true;
+        queueMicrotask(() => { for (const listener of [...changeListeners]) listener(); });
+      }
       return newestAnswer(read, page);
     },
     // the read this device kept, laid out as the newest page before the network answers; nothing
