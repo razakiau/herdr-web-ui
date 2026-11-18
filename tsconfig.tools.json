@@ -49,6 +49,7 @@
     "scripts/terminal-cjk-punctuation-regression.ts",
     "scripts/pane-paging-demo-regression.ts",
     "scripts/omp-question-compat.ts",
+    "scripts/chat-consistency.ts",
     "app/scripts/build-web.ts"
   ],
   "include": []
