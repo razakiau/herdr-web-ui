@@ -207,6 +207,13 @@ export interface HostChatRead {
   delta?: { from: number };
   /** `commands` is left out: they are the ones the client's `commands` digest names */
   commands_same?: true;
+  /**
+   * The turns start past the window's start, at its turn `offset` (a tail read, ZAC-340 part 2):
+   * the turns before are paged in (`page_before`). Absent: from the window's start.
+   */
+  offset?: number;
+  /** a delta against a base past the window's start: where the base's first turn (its anchor) is now */
+  anchor_at?: number;
 }
 
 /**

@@ -2597,3 +2597,32 @@ describe("host chat reads that send only what changed (ZAC-340)", () => {
     expect(Array.isArray(older.commands)).toBe(true);
   });
 });
+
+describe("a host chat's first open: its last turns, the older ones paged in (ZAC-340 part 2)", () => {
+  const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
+  const texts = (turns: HostChatRead["turns"]) => turns.filter((t) => t.role === "user").map((t) => (t.parts[0] as { text: string }).text);
+  const twelve = Array.from({ length: 12 }, (_, i) => turn(`t${i}`, `FICTIONAL ${i}`));
+
+  it("tail=1 answers the last 10 host turns; page_before pages the rest in; a read without tail is whole", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: twelve }), [chatUri(2)]: chatState(2) } });
+    const whole = (await call(r, path)).json as HostChatRead;
+    expect(whole.turns).toHaveLength(24);
+    expect(whole.offset).toBeUndefined();
+    const first = (await call(r, `${path}&tail=1`)).json as HostChatRead;
+    expect(first.offset).toBe(4);
+    expect(texts(first.turns)).toEqual(Array.from({ length: 10 }, (_, i) => `FICTIONAL ${i + 2}`));
+    expect(first.base).toMatchObject({ from: 4, n: 24, anchor: "t2" });
+    const page = (await call(r, `${path}&page_before=t2`)).json;
+    expect(page).toMatchObject({ page: true, offset: 0, message_ids: ["t0", "t1"], cursor: null });
+    expect([...page.turns, ...first.turns]).toEqual(whole.turns);
+    const again = (await call(r, `${path}&tail=1&known=${first.base!.from}.${first.base!.n}.${first.base!.hash}&anchor=t2`)).json as HostChatRead;
+    expect(again.delta).toEqual({ from: 24 });
+    expect(again.turns).toEqual([]);
+  });
+
+  it("a page before a turn the chat no longer has is 409 history_changed", async () => {
+    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: twelve }), [chatUri(2)]: chatState(2) } });
+    const gone = await call(r, `${path}&page_before=t-gone`);
+    expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "history_changed" });
+  });
+});

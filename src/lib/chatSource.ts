@@ -11,7 +11,7 @@ import type { HostChatRead, HostEditDiff } from "../../shared/host-chats.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError, getJson, type ConversationPageQuery } from "./api.ts";
-import { fetchHostChat, flushHostChat, storedHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
+import { fetchHostChat, fetchHostChatPage, firstHeldTurn, flushHostChat, storedHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
 
 export interface ChatSource {
@@ -72,6 +72,9 @@ const storedSignature = (signature: string): string => `${signature}#stored`;
 export const keepShownRead = (current: HostChatRead | null, next: HostChatRead): HostChatRead =>
   current !== null && current.signature === next.signature ? current : next;
 
+/** A cursor past a tail read's start: the page before the host turn of this id (never one the host gives). */
+const PAGE_CURSOR = "ovis-page:";
+
 const changed = (detail: string): ApiError => new ApiError("host-chats/chat", 409, detail, "history_changed");
 
 /**
@@ -116,11 +119,21 @@ export function hostSource(machineId: string, session: string, options: { keep?:
     for (const listener of [...readListeners]) listener(read);
   };
   /** the ids of the host turns the read holds, in order (pending messages come after them) */
-  const turnIds = (read: HostChatRead): string[] => (read.message_ids ?? []).slice(0, Math.floor(read.turns.length / 2));
+  const turnIds = (read: HostChatRead): string[] => {
+    // a tail read's turns start at its offset in the window, as its ids do
+    const first = (read.offset ?? 0) / 2;
+    return (read.message_ids ?? []).slice(first, first + Math.floor(read.turns.length / 2));
+  };
+  /** the cursor for the turns before a read's: the window's own, or past a tail the page before its first turn */
+  const windowCursor = (read: HostChatRead): string | null => {
+    const first = turnIds(read)[0];
+    return (read.offset ?? 0) > 0 && first !== undefined ? `${PAGE_CURSOR}${first}` : read.cursor;
+  };
   /** where turn `id` is in the read's turns; null (a chat with no turn yet) is the start */
   const at = (read: HostChatRead, id: string | null): number => id === null ? 0 : turnIds(read).indexOf(id);
   const remember = (read: HostChatRead): void => {
-    if (read.cursor !== null) starts.set(read.cursor, turnIds(read)[0] ?? null);
+    const cursor = windowCursor(read);
+    if (cursor !== null) starts.set(cursor, turnIds(read)[0] ?? null);
   };
   const answer = (read: HostChatRead, from: number, to: number, cursor: string | null): ConversationResponse => ({
     source: "agent-host",
@@ -129,6 +142,26 @@ export function hostSource(machineId: string, session: string, options: { keep?:
     cursor,
     metadata: { model: read.model?.id ?? null, reasoning_effort: read.model?.effort ?? null },
   });
+
+  /**
+   * The page before host turn `id`, past a tail read's start (ZAC-340 part 2): the bridge's page of
+   * turns before it, under the cursor for the page before that (the window's own once it starts at
+   * the window's start). A kept read takes the page in, and is heard (the screen's read grows).
+   */
+  const olderPage = async (id: string): Promise<ConversationResponse> => {
+    let got: Awaited<ReturnType<typeof fetchHostChatPage>>;
+    try { got = await fetchHostChatPage(machineId, session, id); }
+    catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) throw changed(`the chat no longer holds turn ${id}`);
+      throw cause;
+    }
+    const { page, read } = got;
+    if (read !== null && lastRead !== null && firstHeldTurn(lastRead) === id) heard(read);
+    const first = page.message_ids[0];
+    const cursor = page.offset > 0 && first !== undefined ? `${PAGE_CURSOR}${first}` : page.cursor;
+    if (cursor !== null) starts.set(cursor, first ?? null);
+    return { source: "agent-host", history_id: session, turns: page.turns, cursor, metadata: { model: lastRead?.model?.id ?? null, reasoning_effort: lastRead?.model?.effort ?? null } };
+  };
 
   /** The newest page (or one `from` a cursor) out of a newest read. */
   const newestAnswer = (read: HostChatRead, page: ConversationPageQuery): ConversationResponse => {
@@ -141,10 +174,10 @@ export function hostSource(machineId: string, session: string, options: { keep?:
       const first = turnIds(read)[0] ?? null;
       const moved = newest === null || newest.id === null || at(read, newest.id) < 0
         // anchored at the chat's beginning: the window must still start there, with no cursor
-        || (newest.cursor === null && (read.cursor !== null || first !== newest.id));
+        || (newest.cursor === null && (windowCursor(read) !== null || first !== newest.id));
       if (moved || newest === null) {
         remember(read);
-        newest = { cursor: read.cursor, id: first };
+        newest = { cursor: windowCursor(read), id: first };
       }
       from = newest;
     }
@@ -161,6 +194,7 @@ export function hostSource(machineId: string, session: string, options: { keep?:
       if (page.before !== undefined) {
         const start = starts.get(page.before);
         if (start === undefined) throw changed(`no such cursor: ${page.before}`);
+        if (page.before.startsWith(PAGE_CURSOR)) return olderPage(page.before.slice(PAGE_CURSOR.length));
         const read = await fetchRead(page.before);
         heard(read);
         const end = at(read, start);

@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import type { HostChatRead } from "../../shared/host-chats.ts";
 import type { ConversationTurn } from "../../shared/protocol.ts";
-import { applyDelta, knownParam } from "../../shared/host-chat-delta.ts";
+import { applyDelta, knownParam, knownQuery, prependPage, TAIL_MAX_CHARS } from "../../shared/host-chat-delta.ts";
 import { handleMachineRequest } from "../machine-api.ts";
 import type { MachineManager } from "../machines.ts";
-import { DELTA_HEADER, deltaRead, prefixHashes } from "./chat-delta.ts";
+import { DELTA_HEADER, DELTA_LEVEL, deltaRead, pageBefore, prefixHashes, WindowMoved } from "./chat-delta.ts";
 
 const turnPair = (i: number, words = `FICTIONAL message ${i}`): ConversationTurn[] => [
   { role: "user", parts: [{ kind: "text", text: words }] } as ConversationTurn,
@@ -115,11 +115,122 @@ describe("CT 208's proxy for a bridge before ZAC-340", () => {
 
   it("passes a new bridge's answer and an older page on as they are", async () => {
     const answered = deltaRead(chatRead(2), new URLSearchParams());
-    const fresh = bridge(() => answered, { [DELTA_HEADER]: "1" });
+    const fresh = bridge(() => answered, { [DELTA_HEADER]: DELTA_LEVEL });
     expect(await fresh.get(`?session=s&${query(answered).toString()}`)).toEqual(answered);
     const old = bridge(() => chatRead(2));
     const page = await old.get(`?session=s&before=c1&${query(answered).toString()}`);
     expect(page.base).toBeUndefined();
     expect(page.turns).toHaveLength(4);
+  });
+});
+
+describe("the first open of a chat: its last turns, the older ones paged in (ZAC-340 part 2)", () => {
+  const big = (i: number, chars: number) => turnPair(i, `FICTIONAL ${i} ${"w".repeat(chars)}`);
+  const sized = (pairs: number, chars: (i: number) => number, overrides: Partial<HostChatRead> = {}) =>
+    chatRead(pairs, { turns: Array.from({ length: pairs }, (_, i) => big(i, chars(i))).flat(), ...overrides });
+  const tail = new URLSearchParams({ tail: "1" });
+  const chars = (turns: unknown[]) => turns.reduce<number>((sum, turn) => sum + JSON.stringify(turn).length, 0);
+
+  it("a tail holds the last 10 host turns, fewer past 150 KB, and never less than the last host turn", () => {
+    const small = deltaRead(chatRead(30), tail);
+    expect(small.offset).toBe(40);
+    expect(small.turns).toEqual(chatRead(30).turns.slice(40));
+    expect(small.base).toEqual({ from: 40, n: 60, hash: expect.any(String), anchor: "t20" });
+    const heavy = sized(30, () => 40_000);
+    const cut = deltaRead(heavy, tail);
+    expect(cut.turns.length).toBeLessThan(20);
+    expect(chars(cut.turns)).toBeLessThanOrEqual(TAIL_MAX_CHARS);
+    expect(chars(heavy.turns.slice(cut.offset! - 2))).toBeGreaterThan(TAIL_MAX_CHARS);
+    const huge = deltaRead(sized(5, () => 400_000), tail);
+    expect(huge.turns).toHaveLength(2);
+    expect(huge.offset).toBe(8);
+    // a chat with fewer turns than a tail is read whole
+    expect(deltaRead(chatRead(3), tail).offset).toBeUndefined();
+  });
+
+  it("paging the turns before the tail back in gives the full read's turns, deep equal", () => {
+    const whole = sized(40, (i) => (i * 7919) % 30_000);
+    let held = deltaRead(whole, tail);
+    expect(held.offset).toBeGreaterThan(0);
+    let pages = 0;
+    while ((held.offset ?? 0) > 0) {
+      const page = pageBefore(whole, held.message_ids[held.offset! / 2]!);
+      expect(chars(page.turns) <= TAIL_MAX_CHARS || page.turns.length === 2).toBe(true);
+      held = prependPage(held, page)!;
+      pages += 1;
+    }
+    expect(pages).toBeGreaterThan(1);
+    expect(held.turns).toEqual(whole.turns);
+    expect(held.offset).toBeUndefined();
+  });
+
+  it("a tail chat read again is a delta from its range, idle, busy, and after the window grew before it", () => {
+    const before = deltaRead(chatRead(30), tail);
+    const known = (read: HostChatRead) => new URLSearchParams({ ...knownQuery(read.base!), commands: read.commands_hash!, tail: "1" });
+    // idle, unchanged
+    const same = deltaRead(chatRead(30), known(before));
+    expect(same.delta).toEqual({ from: 60 });
+    expect(same.anchor_at).toBe(40);
+    expect(same.turns).toEqual([]);
+    expect(applyDelta(before, same)).toEqual(before);
+    // a new host turn, then busy with it running
+    const grown = deltaRead(chatRead(31, { busy: true, status: "working" }), known(before));
+    expect(grown.turns).toEqual(chatRead(31).turns.slice(60));
+    const held = applyDelta(before, grown)!;
+    expect(held.turns).toEqual(chatRead(31).turns.slice(40));
+    expect(held.base).toEqual({ from: 40, n: 60, hash: expect.any(String), anchor: "t20" });
+    // the host loaded 4 older host turns ahead of the window: the held turns move with their anchor
+    const older = chatRead(35, { message_ids: [...["o1", "o2", "o3", "o4"], ...Array.from({ length: 31 }, (_, i) => `t${i}`)] });
+    older.turns = [...chatRead(4).turns, ...chatRead(31).turns];
+    const moved = deltaRead(older, known(held));
+    expect(moved.anchor_at).toBe(48);
+    const after = applyDelta(held, moved)!;
+    expect(after.offset).toBe(48);
+    expect(after.turns).toEqual(older.turns.slice(48));
+  });
+
+  it("a page before a turn the window no longer has is refused: 409 history_changed at the route", () => {
+    expect(() => pageBefore(chatRead(5), "t-gone")).toThrow(WindowMoved);
+    // a pending message's id is no turn
+    expect(() => pageBefore(chatRead(2, { message_ids: ["t0", "t1", "pending-1"] }), "pending-1")).toThrow(WindowMoved);
+  });
+});
+
+describe("CT 208's proxy, first open, for a bridge before bundle 1105", () => {
+  const servers: { stop(force?: boolean): void }[] = [];
+  afterEach(() => { for (const server of servers.splice(0)) server.stop(true); });
+  const proxy = (read: () => HostChatRead, headers: Record<string, string> = {}) => {
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(JSON.stringify(read()), { headers: { "content-type": "application/json", ...headers } }) });
+    servers.push(server);
+    const manager = { endpoint: () => ({ url: `http://127.0.0.1:${server.port}`, token: "FICTIONAL-token" }), trackTerminal: () => () => {} } as unknown as MachineManager;
+    return async (search: string) => {
+      const response = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc/host-chats/chat?session=s&${search}`), manager);
+      return { status: response.status, body: await response.json() as any };
+    };
+  };
+
+  it("cuts the tail, pages, and answers a range's delta itself; a page past the window is 409", async () => {
+    for (const headers of [{}, { [DELTA_HEADER]: "1" }] as Record<string, string>[]) {
+      // bundle 1104 adds a plain base to its whole read; older bundles none
+      const answer = () => "x-ovis-chat-base" in headers ? deltaRead(chatRead(30), new URLSearchParams()) : chatRead(30);
+      const get = proxy(answer, headers);
+      const first = (await get("tail=1")).body as HostChatRead;
+      expect(first.offset).toBe(40);
+      expect(first.turns).toEqual(chatRead(30).turns.slice(40));
+      const again = (await get(new URLSearchParams({ ...knownQuery(first.base!), tail: "1" }).toString())).body as HostChatRead;
+      expect(again.delta).toEqual({ from: 60 });
+      expect(again.turns).toEqual([]);
+      const page = (await get("page_before=t20")).body;
+      expect(page).toMatchObject({ page: true, offset: 20, message_ids: Array.from({ length: 10 }, (_, i) => `t${i + 10}`) });
+      expect(page.turns).toEqual(chatRead(30).turns.slice(20, 40));
+      const gone = await get("page_before=t-gone");
+      expect({ status: gone.status, code: gone.body.error.code }).toEqual({ status: 409, code: "history_changed" });
+    }
+  });
+
+  it("a 1105 bridge's tail goes through as it is", async () => {
+    const made = deltaRead(chatRead(30), new URLSearchParams({ tail: "1" }));
+    const get = proxy(() => made, { [DELTA_HEADER]: DELTA_LEVEL });
+    expect((await get("tail=1")).body).toEqual(made);
   });
 });

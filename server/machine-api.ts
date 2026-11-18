@@ -8,7 +8,7 @@ import { MachineManager } from "./machines.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { crossSiteFileRead } from "./file-view.ts";
-import { deltaRead, DELTA_HEADER } from "./agent-host/chat-delta.ts";
+import { chatAnswer, DELTA_HEADER, DELTA_LEVEL, WindowMoved } from "./agent-host/chat-delta.ts";
 import { parseJson, readCapped, REMOTE_LIMITS, RemoteResponseInvalid, RemoteResponseTooLarge } from "./remote-json.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
@@ -227,12 +227,19 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
           if (answer.outcomes) answer.outcomes = answer.outcomes.map(({ preview: _preview, result_text: _resultText, ...outcome }) => outcome);
           body = new TextEncoder().encode(JSON.stringify(answer));
         }
-        // a bridge before ZAC-340 answers a newest chat read whole and without its `base`: the delta
-        // against the phone's `known` is made here, so the leg to the phone carries only what changed
-        if (path === "host-chats/chat" && request.method === "GET" && response.ok && body && !url.searchParams.has("before") && !response.headers.has(DELTA_HEADER)) {
+        // a bridge before bundle 1105 answers a newest chat read whole, or deltas only from the window's
+        // start: the tail, a range's delta and a page are made here against the phone's query, so the
+        // leg to the phone carries only what it asked for (ZAC-340)
+        if (path === "host-chats/chat" && request.method === "GET" && response.ok && body && !url.searchParams.has("before") && response.headers.get(DELTA_HEADER) !== DELTA_LEVEL) {
           const answer = parseJson<HostChatRead>(body);
-          // an answer with its base or a delta already came from a bridge that made it: never twice
-          if (Array.isArray(answer.turns) && answer.base === undefined && answer.delta === undefined) body = new TextEncoder().encode(JSON.stringify(deltaRead(answer, url.searchParams)));
+          // an answer that already is a delta or a tail was made by the bridge: never twice
+          if (Array.isArray(answer.turns) && answer.delta === undefined && answer.offset === undefined) {
+            try { body = new TextEncoder().encode(JSON.stringify(chatAnswer(answer, url.searchParams))); }
+            catch (error) {
+              if (error instanceof WindowMoved) return fail("history_changed", error.message, 409);
+              throw error;
+            }
+          }
         }
         return new Response(body, { status: response.status, headers: {
           "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", ...(etag ? { etag } : {}),
