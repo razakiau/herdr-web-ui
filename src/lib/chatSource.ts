@@ -74,6 +74,9 @@ export const keepShownRead = (current: HostChatRead | null, next: HostChatRead):
   // the signature does not cover the commands: a read that brings them deferred replaces one without
   current !== null && current.signature === next.signature && current.commands_deferred === next.commands_deferred ? current : next;
 
+/** How many reads a host chat asks for at once while its commands stay deferred: then it waits for the next push. */
+export const COMMANDS_FOLLOW_UPS = 2;
+
 /** A cursor past a tail read's start: the page before the host turn of this id (never one the host gives). */
 const PAGE_CURSOR = "ovis-page:";
 
@@ -112,8 +115,8 @@ export function hostSource(machineId: string, session: string, options: { keep?:
   const changeListeners = new Set<() => void>();
   /** a newest read answered or failed: the kept read is never laid out after it */
   let settled = false;
-  /** a read without the chat's commands (deferred) asked for the next read: once until they come */
-  let commandsAsked = false;
+  /** the reads asked for at once while the chat's commands stay deferred (COMMANDS_FOLLOW_UPS at most) */
+  let commandsAsked = 0;
   const fetchRead = (before?: string): Promise<HostChatRead> => fetchHostChat(machineId, session, before, undefined, { keep: options.keep === true });
   let holders = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -210,9 +213,10 @@ export function hostSource(machineId: string, session: string, options: { keep?:
       try { read = await fetchRead(); } finally { settled = true; }
       heard(read);
       // a first open's tail came without the "/" list: read once more at once, which brings it
-      if (read.commands_deferred !== true) commandsAsked = false;
-      else if (!commandsAsked) {
-        commandsAsked = true;
+      // (a read meant to bring them that fell back to a deferred tail asks once more: two at most)
+      if (read.commands_deferred !== true) commandsAsked = 0;
+      else if (commandsAsked < COMMANDS_FOLLOW_UPS) {
+        commandsAsked += 1;
         queueMicrotask(() => { for (const listener of [...changeListeners]) listener(); });
       }
       return newestAnswer(read, page);

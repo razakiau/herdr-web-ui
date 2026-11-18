@@ -3,6 +3,7 @@ import type { AgentRowTokens } from "../shared/pane-tokens.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
 import type { PanePromptResponse } from "../shared/protocol.ts";
 import type { HostChatRead } from "../shared/host-chats.ts";
+import { ANCHOR_PARAM, COMMANDS_PARAM, KNOWN_PARAM, parseKnown } from "../shared/host-chat-delta.ts";
 import type { SeenFinish } from "../shared/seen.ts";
 import { MachineManager } from "./machines.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
@@ -10,6 +11,20 @@ import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { crossSiteFileRead } from "./file-view.ts";
 import { chatAnswer, DELTA_HEADER, DELTA_LEVEL, WindowMoved } from "./agent-host/chat-delta.ts";
 import { parseJson, readCapped, REMOTE_LIMITS, RemoteResponseInvalid, RemoteResponseTooLarge } from "./remote-json.ts";
+
+/** What each bridge (by its URL) last said its newest chat reads do (DELTA_HEADER): "2" answers tails and ranges itself. */
+const bridgeLevels = new Map<string, string>();
+
+/**
+ * A newest chat read's query as a bridge before bundle 1105 understands it: a `known` range past
+ * the window's start (and its anchor) is not one it can match, and a commands digest would let it
+ * leave the commands out of a whole read the proxy then has to cut. Both go; the proxy makes the
+ * delta, the tail and commands_same itself.
+ */
+function oldBridgeQuery(query: URLSearchParams): void {
+  query.delete(COMMANDS_PARAM);
+  if ((parseKnown(query.get(KNOWN_PARAM))?.from ?? 0) > 0) { query.delete(KNOWN_PARAM); query.delete(ANCHOR_PARAM); }
+}
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
 
@@ -207,6 +222,10 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const watchedPrompt = readOnly && path === "pane/prompt";
       const target = new URL(`${endpoint.url}/api/${path}${url.search}`);
       if (watchedPrompt) target.searchParams.set("plan", "0");
+      // a newest chat read (ZAC-340): a bridge not yet seen to answer tails and ranges itself is asked
+      // only what bundle 1104 understands, and the rest is made here from its answer
+      const chatRead = path === "host-chats/chat" && request.method === "GET" && !url.searchParams.has("before");
+      if (chatRead && bridgeLevels.get(endpoint.url) !== DELTA_LEVEL) oldBridgeQuery(target.searchParams);
       const untrack = manager.trackTerminal(id, () => abort.abort());
       // a move's PC reads its roster again once the move is confirmed, so its receipt is soon shown
       const moved = path === "workspace/move" && request.method === "POST" ? manager.refreshAfterMove(id) : null;
@@ -230,7 +249,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         // a bridge before bundle 1105 answers a newest chat read whole, or deltas only from the window's
         // start: the tail, a range's delta and a page are made here against the phone's query, so the
         // leg to the phone carries only what it asked for (ZAC-340)
-        if (path === "host-chats/chat" && request.method === "GET" && response.ok && body && !url.searchParams.has("before") && response.headers.get(DELTA_HEADER) !== DELTA_LEVEL) {
+        if (chatRead && response.ok) bridgeLevels.set(endpoint.url, response.headers.get(DELTA_HEADER) ?? "0");
+        if (chatRead && response.ok && body && response.headers.get(DELTA_HEADER) !== DELTA_LEVEL) {
           const answer = parseJson<HostChatRead>(body);
           // an answer that already is a delta or a tail was made by the bridge: never twice
           if (Array.isArray(answer.turns) && answer.delta === undefined && answer.offset === undefined && answer.commands_deferred === undefined && answer.commands_same === undefined) {

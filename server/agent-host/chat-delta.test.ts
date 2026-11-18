@@ -253,6 +253,30 @@ describe("CT 208's proxy, first open, for a bridge before bundle 1105", () => {
     }
   });
 
+  it("a 1104 bridge is asked only what it understands: a tail chat's third read is still a delta, never the whole window", async () => {
+    const asked: URLSearchParams[] = [];
+    // bundle 1104: plain `known` and `commands` only, a ranged known not one (a whole read, commands left out if they match)
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => {
+      const query = new URL(request.url).searchParams;
+      asked.push(query);
+      const plain = /^\d+\.[A-Za-z0-9_-]{8,64}$/.test(query.get("known") ?? "");
+      const old = new URLSearchParams({ ...(plain ? { known: query.get("known")! } : {}), ...(query.has("commands") ? { commands: query.get("commands")! } : {}) });
+      return new Response(JSON.stringify(deltaRead(chatRead(30), old)), { headers: { "content-type": "application/json", [DELTA_HEADER]: "1" } });
+    } });
+    servers.push(server);
+    const manager = { endpoint: () => ({ url: `http://127.0.0.1:${server.port}`, token: "FICTIONAL-token" }), trackTerminal: () => () => {} } as unknown as MachineManager;
+    const get = async (query: Record<string, string>) => await (await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc/host-chats/chat?${new URLSearchParams({ session: "s", ...query }).toString()}`), manager)).json() as HostChatRead;
+    const first = await get({ tail: "1" });
+    expect(first).toMatchObject({ offset: 40, commands_deferred: true });
+    const second = await get({ ...knownQuery(first.base!), tail: "1" });
+    expect(second).toMatchObject({ delta: { from: 60 }, turns: [] });
+    expect(second.commands).toEqual(chatRead(30).commands);
+    const third = await get({ ...knownQuery(second.base!), commands: second.commands_hash!, tail: "1" });
+    expect(third).toMatchObject({ delta: { from: 60 }, turns: [], commands_same: true });
+    // the bridge never saw the range nor the digest
+    expect(asked.map((query) => [query.has("known"), query.has("anchor"), query.has("commands")])).toEqual([[false, false, false], [false, false, false], [false, false, false]]);
+  });
+
   it("a 1105 bridge's tail goes through as it is", async () => {
     const made = deltaRead(chatRead(30), new URLSearchParams({ tail: "1" }));
     const get = proxy(() => made, { [DELTA_HEADER]: DELTA_LEVEL });

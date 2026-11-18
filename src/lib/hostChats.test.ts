@@ -5,7 +5,8 @@ import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
 import { chatAge, fetchChatCost, fetchHostCosts, flushHostChat, keptInMemory, KEPT_MEMORY_BUDGET, setHostReadStore, storedHostChat, STORE_BUSY_EVERY_MS } from "./hostChats.ts";
-import { STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
+import { parseStoredRead, STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
+import { chatAnswer } from "../../server/agent-host/chat-delta.ts";
 import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, sendHostPendingNow, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -961,5 +962,34 @@ describe("a chat read moves only what changed (ZAC-340)", () => {
       expect(await read()).toEqual(next);
     }
     near();
+  });
+
+  it("a kept tail read (past the window's start) survives a reload from the device's store, and goes on with deltas", async () => {
+    const { store, rows, puts } = memoryStore();
+    setHostReadStore(store);
+    const chat: HostChatRead = { ...full(30, "unused"), base: undefined, commands_hash: undefined };
+    const asked: URLSearchParams[] = [];
+    const answers: HostChatRead[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const query = new URL(String(input), "http://x").searchParams;
+      asked.push(query);
+      const answer = chatAnswer(chat, query) as HostChatRead;
+      answers.push(answer);
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const first = await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    expect(first.offset).toBe(40);
+    await settle();
+    expect(puts).toEqual(["desk\ns1"]);
+    // the app reloads: memory is empty, the store holds the tail
+    setHostReadStore(store);
+    const stored = parseStoredRead(rows.get("desk\ns1")!);
+    expect(stored).not.toBeNull();
+    expect(await storedHostChat("desk", "s1")).toEqual(first);
+    const again = await fetchHostChat("desk", "s1", undefined, undefined, KEEP);
+    expect(asked[1]!.get("known")).toMatch(/^40\.60\./);
+    expect(answers[1]).toMatchObject({ delta: { from: 60 }, turns: [] });
+    expect(again.turns).toEqual(chat.turns.slice(40));
+    expect(again.commands).toEqual(chat.commands);
   });
 });

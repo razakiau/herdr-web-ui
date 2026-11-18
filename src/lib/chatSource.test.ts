@@ -504,6 +504,21 @@ describe("hostSource: a chat's first open pages its older turns in (ZAC-340 part
     expect(rereads).toBe(1);
   });
 
+  it("a read meant to bring the commands that is deferred again asks once more, and no more than twice", async () => {
+    setHostReadStore(null);
+    const chat = hostRead(ids, null, { commands: [{ name: "FICTIONAL-skill" }] as unknown as HostChatRead["commands"] });
+    // a bridge that never matched what the phone holds: every read a first open's tail
+    globalThis.fetch = (async () => new Response(JSON.stringify(chatAnswer(chat, new URLSearchParams({ tail: "1" }))), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    const source = hostSource("m", "s", { keep: true });
+    let rereads = 0;
+    source.onChange(() => { rereads += 1; });
+    for (const expected of [1, 2, 2, 2]) {
+      await source.read();
+      await Promise.resolve();
+      expect(rereads).toBe(expected);
+    }
+  });
+
   it("a page whose turn the chat no longer has is history_changed: ChatView drops its older pages and reads again", async () => {
     setHostReadStore(null);
     let chat = hostRead(ids, null);
