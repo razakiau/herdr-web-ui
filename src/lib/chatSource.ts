@@ -11,7 +11,7 @@ import type { HostChatRead, HostEditDiff } from "../../shared/host-chats.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError, getJson, type ConversationPageQuery } from "./api.ts";
-import { fetchHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
+import { fetchHostChat, storedHostChat, onHostChatMessage, onHostChatResume, resumeHost, watchHostChat } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
 
 export interface ChatSource {
@@ -31,6 +31,8 @@ export interface ChatSource {
   resume?(): Promise<void>;
   /** host: one edit's two sides, by the ref its tool part lists it under */
   editDiff?(ref: string, signal?: AbortSignal): Promise<HostEditDiff>;
+  /** host: the newest page from the read this device kept (ZAC-340), shown until the network answers; null when none */
+  stored?(): Promise<ConversationResponse | null>;
 }
 
 /** A herdr pane's chat: the reads ChatView made before there were two sources. */
@@ -116,6 +118,30 @@ export function hostSource(machineId: string, session: string): HostChatSource {
     metadata: { model: read.model?.id ?? null, reasoning_effort: read.model?.effort ?? null },
   });
 
+  /** The newest page (or one `from` a cursor) out of a newest read. */
+  const newestAnswer = (read: HostChatRead, page: ConversationPageQuery): ConversationResponse => {
+    let from: { cursor: string | null; id: string | null };
+    if (page.from !== undefined) {
+      const start = starts.get(page.from);
+      if (start === undefined || at(read, start) < 0) throw changed(`no such cursor: ${page.from}`);
+      from = { cursor: page.from, id: start };
+    } else {
+      const first = turnIds(read)[0] ?? null;
+      const moved = newest === null || newest.id === null || at(read, newest.id) < 0
+        // anchored at the chat's beginning: the window must still start there, with no cursor
+        || (newest.cursor === null && (read.cursor !== null || first !== newest.id));
+      if (moved || newest === null) {
+        remember(read);
+        newest = { cursor: read.cursor, id: first };
+      }
+      from = newest;
+    }
+    if (lastPage !== null && lastPage.from === page.from && lastPage.signature === read.signature && lastPage.answer.cursor === from.cursor) return lastPage.answer;
+    const shown = answer(read, at(read, from.id), -1, from.cursor);
+    lastPage = { from: page.from, signature: read.signature, answer: shown };
+    return shown;
+  };
+
   return {
     key: `host:${machineId}:${session}`,
     async read(page = {}) {
@@ -132,26 +158,18 @@ export function hostSource(machineId: string, session: string): HostChatSource {
       }
       const read = await fetchRead();
       heard(read);
-      let from: { cursor: string | null; id: string | null };
-      if (page.from !== undefined) {
-        const start = starts.get(page.from);
-        if (start === undefined || at(read, start) < 0) throw changed(`no such cursor: ${page.from}`);
-        from = { cursor: page.from, id: start };
-      } else {
-        const first = turnIds(read)[0] ?? null;
-        const moved = newest === null || newest.id === null || at(read, newest.id) < 0
-          // anchored at the chat's beginning: the window must still start there, with no cursor
-          || (newest.cursor === null && (read.cursor !== null || first !== newest.id));
-        if (moved || newest === null) {
-          remember(read);
-          newest = { cursor: read.cursor, id: first };
-        }
-        from = newest;
-      }
-      if (lastPage !== null && lastPage.from === page.from && lastPage.signature === read.signature && lastPage.answer.cursor === from.cursor) return lastPage.answer;
-      const shown = answer(read, at(read, from.id), -1, from.cursor);
-      lastPage = { from: page.from, signature: read.signature, answer: shown };
-      return shown;
+      return newestAnswer(read, page);
+    },
+    // the read this device kept, laid out as the newest page before the network answers; nothing
+    // once a read came (it is newer)
+    async stored() {
+      if (lastRead !== null) return null;
+      const read = await storedHostChat(machineId, session).catch(() => null);
+      if (read === null || lastRead !== null) return null;
+      // a kept question may have been answered since: only the network's read offers one
+      const shown: HostChatRead = { ...read, prompt: null, confirmations: 0 };
+      heard(shown);
+      return newestAnswer(shown, {});
     },
     image: (ref) => machinePath(machineId, `host-chats/image?${query(ref)}`),
     // the read route takes a subagent's chat URI as its `session` once this chat's read found it

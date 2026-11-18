@@ -1844,6 +1844,20 @@ export const ChatView = memo(function ChatView({ paneId, source, label, presenta
       showAnswerDetails(cached);
       showAnswer(cached, conversationState(cached));
     }
+    // a host chat seen before on this device draws from what it kept while the network read runs
+    // (ZAC-340); the first answer from the network wins, and replaces it
+    if (hosted && chat.stored) {
+      const key = scopeId;
+      const generation = olderGeneration.current;
+      const current = (): boolean => shownPane.current === key && lastAnswer.current === null && generation === olderGeneration.current;
+      void chat.stored().then(async (kept) => {
+        if (kept === null || !current()) return;
+        if (loadedChatTimeline() === null) { await loadChatTimeline(); if (!current()) return; }
+        history.current = kept.history_id; setHistoryId(kept.history_id);
+        showAnswerDetails(kept);
+        showAnswer(kept, conversationState(kept));
+      }).catch(() => undefined);
+    }
   }, [paneId, machineId, chat.key]);
 
 

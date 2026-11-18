@@ -17,6 +17,8 @@ import type { HandoffJob, HandoffState, HostAgent, HostAnswer, HostAsyncAnswer, 
 import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 import { daysBack } from "./hostChatGroups.ts";
+import { applyDelta, COMMANDS_PARAM, KNOWN_PARAM, knownParam } from "../../shared/host-chat-delta.ts";
+import { indexedDbReadStore, parseStoredRead, STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
 
 export async function fetchHostChats(machineId: string): Promise<HostChatRow[]> {
   return (await getJson<{ chats: HostChatRow[] }>(machinePath(machineId, "host-chats/chats"))).chats;
@@ -92,14 +94,103 @@ export function chatStatus(row: HostChatRow): "working" | "blocked" | undefined 
 /**
  * GET host-chats/chat: the chat as its PC's host has it; `before` (a read's `cursor`) asks for the
  * turns before. `signal` ends the read early (the group page's timeout); without it the read waits.
+ *
+ * A newest read (no `before`) sends back the last full read's `base` and commands digest kept for
+ * the chat (ZAC-340), and the bridge answers only what changed past them: the full read is rebuilt
+ * here before anyone sees it (applyDelta). A delta that does not join what is kept drops it, and
+ * the chat is read again in full.
  */
 export async function fetchHostChat(machineId: string, session: string, before?: string, signal?: AbortSignal): Promise<HostChatRead> {
-  const query = new URLSearchParams({ session, ...(before ? { before } : {}) });
-  const read = await getJson<HostChatRead>(machinePath(machineId, `host-chats/chat?${query.toString()}`), signal ? { signal } : undefined);
+  const init = signal ? { signal } : undefined;
+  const ask = (query: Record<string, string>): Promise<HostChatRead> =>
+    getJson<HostChatRead>(machinePath(machineId, `host-chats/chat?${new URLSearchParams({ session, ...query }).toString()}`), init);
+  let read: HostChatRead;
+  if (before) read = await ask({ before });
+  else {
+    const key = keptKey(machineId, session);
+    const prev = await keptRead(key);
+    const sent: Record<string, string> = {};
+    if (prev?.base) sent[KNOWN_PARAM] = knownParam(prev.base);
+    if (prev?.commands_hash) sent[COMMANDS_PARAM] = prev.commands_hash;
+    const answer = await ask(sent);
+    let full = answer.delta !== undefined && answer.delta.from !== prev?.base?.n ? null : applyDelta(prev, answer);
+    if (full === null) {
+      forgetKept(key);
+      const again = await ask({});
+      full = applyDelta(null, again) ?? again;
+    }
+    read = full;
+    keep(key, read);
+  }
   // a send whose answer was lost but that went: its id is the chat's now, never to be reused
   const attempt = storedAttempt(machineId, session);
   if (attempt && (read.message_ids ?? []).includes(attempt.id)) dropAttempt(machineId, session, attempt.id);
   return read;
+}
+
+// ─── The reads kept on this device (ZAC-340) ─────────────────────────────────
+
+/** The last full reads in memory, the most recent last; the device's store keeps more. */
+const KEPT_IN_MEMORY = 8;
+const kept = new Map<string, HostChatRead>();
+let readStore: HostReadStore | null | undefined;
+/** How long a read waits for the device's store before it goes without (a full read). */
+const STORE_WAIT_MS = 2_000;
+
+const keptKey = (machineId: string, session: string): string => `${machineId}\n${session}`;
+const store = (): HostReadStore | null => readStore === undefined ? (readStore = indexedDbReadStore()) : readStore;
+
+/** Tests hand in their own store (null: none); kept reads in memory are dropped with it. */
+export function setHostReadStore(next: HostReadStore | null): void {
+  readStore = next;
+  kept.clear();
+}
+
+const remember = (key: string, read: HostChatRead): void => {
+  kept.delete(key);
+  kept.set(key, read);
+  while (kept.size > KEPT_IN_MEMORY) kept.delete(kept.keys().next().value!);
+};
+
+function forgetKept(key: string): void {
+  kept.delete(key);
+  void store()?.delete(key).catch(() => undefined);
+}
+
+/** The read kept for `key`, from memory, else the device's store; null when there is none usable. */
+async function keptRead(key: string): Promise<HostChatRead | null> {
+  const held = kept.get(key);
+  if (held) { remember(key, held); return held; }
+  const from = store();
+  if (!from) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const json = await Promise.race([
+    from.get(key).catch(() => null),
+    new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), STORE_WAIT_MS); }),
+  ]);
+  clearTimeout(timer);
+  if (json === null) return null;
+  const read = parseStoredRead(json);
+  if (read === null) { forgetKept(key); return null; }
+  if (!kept.has(key)) remember(key, read);
+  return kept.get(key)!;
+}
+
+/** Keeps a full newest read with a `base` (a bridge and proxy before ZAC-340 give none: nothing to send back). */
+function keep(key: string, read: HostChatRead): void {
+  if (!read.base) { forgetKept(key); return; }
+  const before = kept.get(key);
+  remember(key, read);
+  const to = store();
+  if (!to || before?.signature === read.signature && before.base?.hash === read.base.hash) return;
+  const json = JSON.stringify(read);
+  if (json.length > STORED_READ_MAX_BYTES) { void to.delete(key).catch(() => undefined); return; }
+  void to.put(key, json).catch(() => undefined);
+}
+
+/** The read this device kept for the chat, to show before the network answers; null when there is none. */
+export function storedHostChat(machineId: string, session: string): Promise<HostChatRead | null> {
+  return keptRead(keptKey(machineId, session));
 }
 
 async function post<T>(machineId: string, path: string, body: unknown): Promise<T> {

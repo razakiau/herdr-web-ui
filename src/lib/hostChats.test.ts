@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { ApiError } from "./api.ts";
 import { HOST_ATTEMPT_TTL_MS, contextMeter, hostChatLive, hostStatusLine, openHostChatClosed, readsOnView, type HostPc } from "./hostChats.ts";
 import { archiveHostChat, deleteHostChat, markHostChatRead, renameHostChat } from "./hostChats.ts";
-import { chatAge, fetchChatCost, fetchHostCosts } from "./hostChats.ts";
+import { chatAge, fetchChatCost, fetchHostCosts, setHostReadStore, storedHostChat } from "./hostChats.ts";
+import { STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
 import { applyNewChatDefaults, hostChatRoster, offeredAgents, attemptFor, choose, chosenFor, createHostChat, discardHostChat, openEmptyHostChat, fetchHostChats, fetchHostState, folderChoices, groupModels, hostLine, isHostChatsOff, keepHostDraft, readHostDraft, fetchHostChat, sendErrorText, sendHost, stopHost, removeHostPending, sendHostPendingNow, noteHostChatMessage, noteHostChatStreamOpen, onHostChatMessage, sessionForFolder, HostPcs, settleChoice, takeHostChatEvent, type HostLast } from "./hostChats.ts";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -774,5 +775,107 @@ describe("an open chat is read", () => {
     expect(readsOnView(undefined, row({ status: "working" }))).toBe(false);
     expect(readsOnView(undefined, row({ unread: false }))).toBe(false);
     expect(readsOnView(undefined, undefined)).toBe(false);
+  });
+});
+
+describe("a chat read moves only what changed (ZAC-340)", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; setHostReadStore(null); });
+  const pair = (i: number, words = `FICTIONAL ${i}`) => [
+    { role: "user", parts: [{ kind: "text", text: words }] },
+    { role: "assistant", parts: [{ kind: "text", text: `FICTIONAL reply ${i}` }] },
+  ] as HostChatRead["turns"];
+  const full = (pairs: number, hash: string, extra: Partial<HostChatRead> = {}): HostChatRead => ({
+    session: "s1", title: "t", status: "idle", turns: Array.from({ length: pairs }, (_, i) => pair(i)).flat(), cursor: null, prompt: null, model: null, agent: null,
+    busy: false, pending: [], commands: [{ name: "FICTIONAL-skill" }] as unknown as HostChatRead["commands"], background: { subagents: 0, commands: 0 }, confirmations: 0,
+    context: null, message_ids: Array.from({ length: pairs }, (_, i) => `t${i}`), checkpoints: [], restored: null, signature: `sig-${pairs}`,
+    base: { n: pairs * 2, hash }, commands_hash: "CMDS0000hash", ...extra,
+  });
+  /** Answers each read in turn, and records what it was asked. */
+  const serve = (...answers: HostChatRead[]) => {
+    const asked: URLSearchParams[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      asked.push(new URL(String(input), "http://x").searchParams);
+      return new Response(JSON.stringify(answers.shift()), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return asked;
+  };
+  const memoryStore = () => {
+    const rows = new Map<string, string>();
+    const puts: string[] = [];
+    const store: HostReadStore = {
+      get: async (key) => rows.get(key) ?? null,
+      put: async (key, json) => { puts.push(key); rows.set(key, json); },
+      delete: async (key) => { rows.delete(key); },
+    };
+    return { rows, puts, store };
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("sends the kept base back and rebuilds the full read from the delta, deep equal to a full read", async () => {
+    setHostReadStore(null);
+    const first = full(3, "HASH3aaaaaaa");
+    const later = full(4, "HASH4aaaaaaa");
+    const { commands: _commands, ...noCommands } = later;
+    const asked = serve(first, { ...noCommands, turns: later.turns.slice(6), delta: { from: 6 }, commands_same: true } as HostChatRead);
+    expect(await fetchHostChat("desk", "s1")).toEqual(first);
+    expect(asked[0]!.has("known")).toBe(false);
+    expect(await fetchHostChat("desk", "s1")).toEqual(later);
+    expect(asked[1]!.get("known")).toBe("6.HASH3aaaaaaa");
+    expect(asked[1]!.get("commands")).toBe("CMDS0000hash");
+  });
+
+  it("a delta that does not join what is kept drops it and reads again in full", async () => {
+    setHostReadStore(null);
+    const first = full(1, "HASH1aaaaaaa");
+    const later = full(5, "HASH5aaaaaaa");
+    const asked = serve(first, { ...later, turns: later.turns.slice(8), delta: { from: 8 } }, later);
+    await fetchHostChat("desk", "s1");
+    expect(await fetchHostChat("desk", "s1")).toEqual(later);
+    expect(asked).toHaveLength(3);
+    expect(asked[2]!.has("known")).toBe(false);
+    expect(asked[2]!.has("commands")).toBe(false);
+  });
+
+  it("an older page (before) sends no known and is not kept", async () => {
+    const { store, puts } = memoryStore();
+    setHostReadStore(store);
+    const page = { ...full(2, "unused"), base: undefined, commands_hash: undefined };
+    const asked = serve(page);
+    await fetchHostChat("desk", "s1", "cursor-1");
+    await settle();
+    expect(asked[0]!.has("known")).toBe(false);
+    expect(asked[0]!.get("before")).toBe("cursor-1");
+    expect(puts).toEqual([]);
+  });
+
+  it("a read kept on the device shows before the network, and its base goes with the first read", async () => {
+    const { store, rows, puts } = memoryStore();
+    setHostReadStore(store);
+    const kept = full(2, "HASH2aaaaaaa");
+    rows.set("desk\ns1", JSON.stringify(kept));
+    expect(await storedHostChat("desk", "s1")).toEqual(kept);
+    const later = full(3, "HASH3aaaaaaa");
+    const asked = serve({ ...later, turns: later.turns.slice(4), delta: { from: 4 } });
+    expect(await fetchHostChat("desk", "s1")).toEqual(later);
+    expect(asked[0]!.get("known")).toBe("4.HASH2aaaaaaa");
+    await settle();
+    expect(puts).toEqual(["desk\ns1"]);
+    expect(JSON.parse(rows.get("desk\ns1")!)).toEqual(later);
+  });
+
+  it("a stored read that is not one is dropped; a read over the size limit is not stored", async () => {
+    const { store, rows, puts } = memoryStore();
+    setHostReadStore(store);
+    rows.set("desk\ns1", "{not json");
+    expect(await storedHostChat("desk", "s1")).toBeNull();
+    await settle();
+    expect(rows.has("desk\ns1")).toBe(false);
+    const big = full(1, "HASHBIGaaaaa", { title: "x".repeat(STORED_READ_MAX_BYTES) });
+    serve(big);
+    await fetchHostChat("desk", "s1");
+    await settle();
+    expect(puts).toEqual([]);
+    expect(rows.has("desk\ns1")).toBe(false);
   });
 });
