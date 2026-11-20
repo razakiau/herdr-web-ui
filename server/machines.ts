@@ -27,6 +27,8 @@ import type { HostChatCost, HostChatRow } from "../shared/host-chats.ts";
  * fires 10 minutes before the expiry, so a last call learnt up to 2 minutes late still leaves 8.
  */
 export const COSTS_POLL_MS = 2 * 60_000;
+/** roster reads in a row that may run out of time before a PC whose observer is open counts as lost (readFailed) */
+export const SLOW_READS_LOST = 3;
 
 interface StoredMachine { id: string; name: string; target: SshTarget; enabled: boolean; snapshot?: SessionSnapshot | null }
 interface Runtime {
@@ -55,6 +57,8 @@ interface Runtime {
   hostChatsRead?: { again: boolean };
   /** its chats' cost logs are read every COSTS_POLL_MS for the cold-cache alert (ZAC-260) */
   costsPoll?: CostsPoller;
+  /** roster reads in a row that ran out of time while its observer stayed open (slowRead) */
+  slowReads?: number;
 }
 interface JobState {
   update: boolean;
@@ -209,6 +213,8 @@ export class MachineManager {
   /** the prices the cold-cache alert weighs a chat with (OmniRoute's, LiteLLM's behind); null: no costs poll */
   private readonly coldPrices: (() => Promise<ColdPrices>) | null;
   private readonly costsPollMs: number;
+  /** how long one roster read (/api/session) may take; a test shortens it */
+  private refreshTimeoutMs = 15_000;
   private sourceToken = 0;
   /** each PC's last health-call start, kept across reconnects for as long as this manager lives */
   private sourceStarts = new Map<string, number>();
@@ -778,11 +784,12 @@ export class MachineManager {
         runtime.refreshQueued = false;
         const revision = runtime.snapshotRevision;
         try {
-          const r = await fetch(endpoint.url + "/api/session", { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(15_000) });
+          const r = await fetch(endpoint.url + "/api/session", { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(this.refreshTimeoutMs) });
           if (!r.ok) { await discard(r); throw new Error(`Remote herdr unavailable (${r.status})`); }
           const { snapshot } = await readCappedJson<{ snapshot: SessionSnapshot }>(r, REMOTE_LIMITS.sessionSnapshot);
           if (generation !== runtime.generation || this.stopped) return;
           if (revision !== runtime.snapshotRevision) { runtime.refreshQueued = true; continue; }
+          runtime.slowReads = 0;
           runtime.machine.error = null;
           if (this.admitRemote(runtime, snapshot)) {
             runtime.machine.snapshot = snapshot;
@@ -808,6 +815,7 @@ export class MachineManager {
   }
   private async observe(runtime: Runtime): Promise<void> {
     const generation = runtime.generation;
+    runtime.slowReads = 0;
     await this.refresh(runtime);
     if (generation !== runtime.generation || this.stopped) throw new Error("Connection cancelled");
     runtime.machine.state = "connected"; runtime.machine.action_required = null; runtime.attempts = 0; runtime.updateCancelled = false;
@@ -838,12 +846,12 @@ export class MachineManager {
       if (message.type === "pane-exited") void this.push.onEnded(message.pane_id, runtime.machine.id).catch(() => {});
       if (message.type === "host-chat-changed" && message.session === null) this.readHostChats(runtime, generation);
       this.emit({ type: "machine-message", machine_id: runtime.machine.id, message });
-      if (["pane-status", "pane-exited", "session-changed"].includes(message.type)) void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e));
+      if (["pane-status", "pane-exited", "session-changed"].includes(message.type)) void this.refresh(runtime).catch((e) => this.readFailed(runtime, generation, e));
     };
     ws.onclose = () => this.lost(runtime, generation, new Error("SSH bridge connection interrupted"));
     ws.onerror = () => ws.close();
     runtime.ssh!.onExit = () => this.lost(runtime, generation, new Error("SSH connection ended"));
-    runtime.poll = setInterval(() => void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e)), 5000);
+    runtime.poll = setInterval(() => void this.refresh(runtime).catch((e) => this.readFailed(runtime, generation, e)), 5000);
     runtime.poll.unref();
   }
   /**
@@ -899,6 +907,23 @@ export class MachineManager {
     runtime.costsPoll?.stop();
     runtime.costsPoll = createCostsPoller({ intervalMs: this.costsPollMs, wanted: () => this.push.wantsCold(), read });
     runtime.costsPoll.start();
+  }
+  /**
+   * A roster read of a connected PC that failed. One that only ran out of time while the PC's
+   * observer socket is still open says the line is busy, not gone: a chat opening 15 pictures over
+   * a slow line (NetBird to a PC at work, then the home ADSL) held /api/session past 15 s, and each
+   * time the whole PC was dropped and set up again, chats and uploads with it (ZAC-340, 3 drops in
+   * 3 minutes on 2026-11-20). It is dropped after SLOW_READS_LOST such reads in a row; any other
+   * failure drops it at once, as before.
+   */
+  private readFailed(runtime: Runtime, generation: number, error: unknown): void {
+    if (generation !== runtime.generation || this.stopped) return;
+    const timedOut = error instanceof Error && error.name === "TimeoutError";
+    if (timedOut && runtime.observer?.readyState === WebSocket.OPEN) {
+      runtime.slowReads = (runtime.slowReads ?? 0) + 1;
+      if (runtime.slowReads < SLOW_READS_LOST) return;
+    }
+    this.lost(runtime, generation, error);
   }
   private lost(runtime: Runtime, generation: number, error: unknown): void {
     if (generation !== runtime.generation || !runtime.machine.enabled || this.stopped) return;
