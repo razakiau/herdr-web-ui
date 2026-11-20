@@ -2157,6 +2157,9 @@ async function markRead(call: Call): Promise<Response> {
   const isRead = flag(call.body["read"], "read");
   const { channel } = await watched(call, session);
   call.host.dispatch(channel, { type: ActionType.ChatIsReadChanged, isRead } as StateAction);
+  // a session's row reads its own flag: on a session the host had to restore for this call, the
+  // default chat's action never reached it (stayed unread, the 2026-11-20 Mac probe), the session's does
+  if (!isFork(call.host, session)) call.host.dispatch(session, { type: ActionType.SessionIsReadChanged, isRead } as StateAction);
   return jsonResponse({ ok: true });
 }
 

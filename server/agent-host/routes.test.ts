@@ -1225,6 +1225,11 @@ describe("host chat read and write routes", () => {
       { channel: chatUri(1), action: { type: "chat/isReadChanged", isRead: true } },
       { channel: chatUri(1), action: { type: "chat/isReadChanged", isRead: false } },
     ]);
+    // the session's own flag too: a restored session's host drops the default chat's (2026-11-20)
+    expect(actions(r.fake, "session/isReadChanged")).toEqual([
+      { channel: sessionUri(1), action: { type: "session/isReadChanged", isRead: true } },
+      { channel: sessionUri(1), action: { type: "session/isReadChanged", isRead: false } },
+    ]);
     const bad = await call(r, "/api/host-chats/chat/read", { session: sessionUri(1), read: "yes" });
     expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_read" });
   });
@@ -2124,6 +2129,7 @@ describe("host chat forks: VS Code's Fork Conversation", () => {
     await call(r, "/api/host-chats/chat/archive", { session: forked, archived: true });
     expect(await on(r, "chat/isArchivedChanged")).toEqual([forked]);
     expect(actions(r.fake, "session/isArchivedChanged")).toEqual([]);
+    expect(actions(r.fake, "session/isReadChanged")).toEqual([]);
     await until("the catalog", () => (r.conn.summaries()[0]!.chats ?? []).some((each) => each.title === "FICTIONAL the other road" && ((each.status ?? 0) & 64) !== 0));
     const listed = await rows(r);
     expect(listed.find((each) => each["session"] === forked)).toMatchObject({ title: "FICTIONAL the other road", unread: false, archived: true });
