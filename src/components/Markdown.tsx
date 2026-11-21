@@ -17,6 +17,7 @@ import { formatBytes } from "../lib/bridgeProgress.ts";
 import { MermaidLightbox } from "./MermaidLightbox.tsx";
 import { copyText } from "../lib/clipboard.ts";
 import { lazyChunk } from "../lib/lazyChunk.ts";
+import { imageQueue, needsTurn } from "../lib/imageQueue.ts";
 import type { SkillMatcher } from "../lib/skillMentions.ts";
 import { previewChunks } from "../lib/textPreview.ts";
 
@@ -136,20 +137,52 @@ export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(
  * shows `fallback`. `src` is null while an address is still being resolved: the slot stands from
  * the first paint.
  */
+/**
+ * The address a picture may load from now: none until it is near the screen and its turn in
+ * imageQueue comes. `done` gives the turn back once it loaded or failed.
+ */
+function useImageTurn(src: string | null): { shown: string | null; target: (element: Element | null) => void; done: () => void } {
+  const free = src === null || !needsTurn(src);
+  const [element, setElement] = useState<Element | null>(null);
+  const [near, setNear] = useState(false);
+  const [granted, setGranted] = useState<string | null>(null);
+  const give = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (free || element === null) return;
+    if (typeof IntersectionObserver === "undefined") { setNear(true); return; }
+    const watch = new IntersectionObserver((entries) => setNear(entries.some((entry) => entry.isIntersecting)), { rootMargin: "400px 0px" });
+    watch.observe(element);
+    return () => watch.disconnect();
+  }, [free, element]);
+  // one that started keeps its turn when scrolled away: it goes on loading
+  const wanted = !free && (near || granted === src);
+  useEffect(() => {
+    if (!wanted || src === null) return;
+    const back = imageQueue.take(() => setGranted(src));
+    give.current = back;
+    return () => { back(); if (give.current === back) give.current = null; };
+  }, [wanted, src]);
+  const done = useCallback(() => give.current?.(), []);
+  return { shown: free ? src : granted === src ? src : null, target: setElement, done };
+}
+
 export function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback }: {
   src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode;
 }) {
   const t = useT();
   // keyed by address: another one starts from the slot again and never takes the old one's answer
   const [settled, setSettled] = useState<{ src: string; failed: boolean } | null>(null);
+  const turn = useImageTurn(src);
   const phase = src !== null && settled?.src === src ? (settled.failed ? "failed" : "decoded") : "loading";
+  const { target, done } = turn;
   // a cached image is complete before `onLoad` can fire
   const complete = useCallback((image: HTMLImageElement | null) => {
-    if (image !== null && src !== null && image.complete && image.naturalWidth > 0) setSettled({ src, failed: false });
-  }, [src]);
+    target(image);
+    if (image !== null && src !== null && image.getAttribute("src") === src && image.complete && image.naturalWidth > 0) { done(); setSettled({ src, failed: false }); }
+  }, [src, target, done]);
   if (phase === "failed" && !slot) return <>{fallback}</>;
-  const image = src === null ? null : <img ref={complete} className={className} src={src} alt={alt} width={width} loading="lazy"
-    onLoad={() => setSettled({ src, failed: false })} onError={() => setSettled({ src, failed: true })} />;
+  const image = src === null ? null : <img ref={complete} className={className} src={turn.shown ?? undefined} data-src={turn.shown === null ? src : undefined} alt={alt} width={width}
+    onLoad={() => { done(); setSettled({ src, failed: false }); }} onError={() => { done(); setSettled({ src, failed: true }); }} />;
   if (!slot) return image;
   if (phase === "failed") {
     return <span className="image-slot is-failed" style={slotStyle}>

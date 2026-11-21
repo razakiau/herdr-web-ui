@@ -7,7 +7,7 @@ import type { Machine } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
 import { handleMachineRequest } from "./machine-api.ts";
-import { bridgeAgentNews, MachineManager, SOURCE_CHECK_INTERVAL_MS } from "./machines.ts";
+import { bridgeAgentNews, MachineManager, SLOW_READS_LOST, SOURCE_CHECK_INTERVAL_MS } from "./machines.ts";
 import type { PushService } from "./push.ts";
 import { REMOTE_LIMITS, RemoteResponseTooLarge } from "./remote-json.ts";
 
@@ -454,6 +454,41 @@ describe("machine snapshot refresh races", () => {
     expect(runtime.retry).toBeDefined();
     expect(sshCloses()).toBe(1);
     expect(terminalCloses()).toBe(1);
+  });
+
+  it("keeps a PC whose roster read runs out of time while its observer is open, until SLOW_READS_LOST in a row", async () => {
+    const { manager, remote, runtime, send, sshCloses } = await remoteFixture();
+    (manager as unknown as { refreshTimeoutMs: number }).refreshTimeoutMs = 30;
+    remote.hold();
+    for (let read = 1; read < SLOW_READS_LOST; read++) {
+      send({ type: "session-changed" });
+      await until(() => remote.waiting() === read);
+      await until(() => !runtime.refreshing);
+      expect(runtime.machine.state).toBe("connected");
+      expect(sshCloses()).toBe(0);
+    }
+    send({ type: "session-changed" });
+    await until(() => runtime.machine.state === "reconnecting");
+    expect(sshCloses()).toBe(1);
+  });
+
+  it("a roster read in time forgets the slow ones before it", async () => {
+    const { manager, remote, runtime, send, sshCloses } = await remoteFixture();
+    (manager as unknown as { refreshTimeoutMs: number }).refreshTimeoutMs = 30;
+    const slow = async () => {
+      remote.hold();
+      const waiting = remote.waiting();
+      send({ type: "session-changed" });
+      await until(() => remote.waiting() === waiting + 1);
+      await until(() => !runtime.refreshing);
+    };
+    for (let read = 1; read < SLOW_READS_LOST; read++) await slow();
+    remote.finish();
+    send({ type: "session-changed" });
+    await until(() => (runtime as unknown as { slowReads: number }).slowReads === 0);
+    await slow();
+    expect(runtime.machine.state).toBe("connected");
+    expect(sshCloses()).toBe(0);
   });
 
   it("does not swallow a current error after retrying an invalidated remote error", async () => {

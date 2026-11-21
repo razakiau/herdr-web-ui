@@ -67,7 +67,7 @@ import { workOf } from "./artifacts.ts";
 import { digestOf } from "../goals/judge.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
-import { deltaRead, DELTA_HEADER } from "./chat-delta.ts";
+import { chatAnswer, DELTA_HEADER, DELTA_LEVEL, WindowMoved } from "./chat-delta.ts";
 import type { AsyncAskStore, AsyncField, AsyncQuestion } from "./async-ask.ts";
 import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff, type HandoffDone } from "./handoff.ts";
 
@@ -631,7 +631,15 @@ async function readChat(call: Call): Promise<Response> {
 }
 
 /** A newest read (no `before`) with its `base`, and only what changed past the client's `known` (ZAC-340). */
-const newestRead = (call: Call, read: HostChatRead): Response => jsonResponse(deltaRead(read, call.url.searchParams), 200, { [DELTA_HEADER]: "1" });
+function newestRead(call: Call, read: HostChatRead): Response {
+  try {
+    return jsonResponse(chatAnswer(read, call.url.searchParams), 200, { [DELTA_HEADER]: DELTA_LEVEL });
+  } catch (error) {
+    // the page's first turn is gone from the window: the phone drops its older pages and reads again
+    if (error instanceof WindowMoved) return conflictResponse("history_changed", error.message);
+    throw error;
+  }
+}
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
 async function refRead(call: Call): Promise<{ chat: ChatState; ref: string }> {
@@ -2149,6 +2157,9 @@ async function markRead(call: Call): Promise<Response> {
   const isRead = flag(call.body["read"], "read");
   const { channel } = await watched(call, session);
   call.host.dispatch(channel, { type: ActionType.ChatIsReadChanged, isRead } as StateAction);
+  // a session's row reads its own flag: on a session the host had to restore for this call, the
+  // default chat's action never reached it (stayed unread, the 2026-11-20 Mac probe), the session's does
+  if (!isFork(call.host, session)) call.host.dispatch(session, { type: ActionType.SessionIsReadChanged, isRead } as StateAction);
   return jsonResponse({ ok: true });
 }
 
