@@ -24,7 +24,7 @@ import type { JudgeChoice } from "../../shared/goal-budget.ts";
 import type { GoalView } from "../../shared/goals.ts";
 import type { HostAgent, HostChatRead, HostChatRow, HostFormAnswer, HostModel, HostSessionConfig } from "../../shared/host-chats.ts";
 import { useT } from "../lib/i18n.ts";
-import { hostSource, keepContext } from "../lib/chatSource.ts";
+import { hostSource, keepContext, keepShownRead } from "../lib/chatSource.ts";
 import {
   agentName, answerHost, archiveHostChat, answerHostForm, choose, discardHostChat, forkHostChat, handOffAndContinue, redoHostCheckpoint, restoreHostCheckpoint, chosenFor, confirmHost, errorText, fetchHostConfig, fetchHostFiles, fetchHostModels, hostDraftKey, removeHostPending, sendHostPendingNow,
   sendErrorText, sendHost, setHostConfig, uploadHostFile, setHostDraftModel, settleChoice, stopHost, stopHostBackground, useMinuteClock, type HostChoice,
@@ -147,7 +147,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   const lookRef = useRef(look); lookRef.current = look;
   const t = useT();
   // the chat's reads, its watch and its pushes: one source for as long as this chat is open
-  const source = useMemo(() => hostSource(machineId, session), [machineId, session]);
+  const source = useMemo(() => hostSource(machineId, session, { keep: true }), [machineId, session]);
   const [chat, setChat] = useState<HostChatRead | null>(() => source.last());
   const { goal, refresh: refreshGoal } = useHostGoal(machineId, session);
   // bumped to read the chat again now (a send, an answer); `sent` also tells the chat a message went
@@ -243,7 +243,7 @@ export function HostChatView({ machineId, session, onTitle, onOpenChat, machineN
   useEffect(() => { if (readTitle !== null) titleRef.current?.(readTitle); }, [readTitle]);
   // what each read says beside the turns; an unchanged one keeps the object shown
   useEffect(() => source.onRead((next) => {
-    if (mounted.current) setChat((current) => current !== null && current.signature === next.signature ? current : next);
+    if (mounted.current) setChat((current) => keepShownRead(current, next));
   }), [source]);
 
   const busy = chat?.busy === true;
