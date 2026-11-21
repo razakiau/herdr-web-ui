@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
 import type { HostChatRead } from "../../shared/host-chats.ts";
 import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { ApiError } from "./api.ts";
-import { forgetKeptContexts, hostSource, keepContext, paneSource, HOST_WATCH_MS } from "./chatSource.ts";
+import { forgetKeptContexts, hostSource, keepContext, keepShownRead, paneSource, HOST_WATCH_MS } from "./chatSource.ts";
 import { ConversationRefresh } from "./conversationRefresh.ts";
-import { noteHostChatMessage, noteHostChatStreamOpen } from "./hostChats.ts";
+import { noteHostChatMessage, noteHostChatStreamOpen, setHostReadStore } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
 
 const realFetch = globalThis.fetch;
@@ -343,5 +343,87 @@ describe("keptContext", () => {
     // another chat, or the same session on another PC, is kept apart
     expect(keepContext("mac", "s2", null, 5000)).toBeNull();
     expect(keepContext("pc", "s1", null, 5000)).toBeNull();
+  });
+});
+
+describe("hostSource: a chat kept on the device (ZAC-340)", () => {
+  afterEach(() => { setHostReadStore(null); });
+  const kept = (read: HostChatRead): void => {
+    const json = JSON.stringify(read);
+    setHostReadStore({ get: async (key) => key === "m\ns" ? json : null, put: async () => {}, delete: async () => {} });
+  };
+
+  it("lays out the kept read as the newest page, without its question, and an unchanged network read is that same page", async () => {
+    const read = hostRead(["t1", "t2"], null, { base: { n: 4, hash: "HASHkeptaaaa" }, commands_hash: "CMDShashaaaa", prompt: { id: "q" } as unknown as HostChatRead["prompt"] });
+    kept(read);
+    const source = hostSource("m", "s", { keep: true });
+    const shown: HostChatRead[] = [];
+    source.onRead((next) => shown.push(next));
+    const stored = await source.stored!();
+    expect(texts(stored!)).toEqual(["FICTIONAL ask t1", "FICTIONAL answer t1", "FICTIONAL ask t2", "FICTIONAL answer t2"]);
+    expect(shown.map((r) => r.prompt)).toEqual([null]);
+    const urls = answering({ ...read, turns: [], delta: { from: 4 } });
+    expect(await source.read()).toBe(stored!);
+    expect(urls[0]).toContain("known=4.HASHkeptaaaa");
+    expect(shown.at(-1)!.prompt).toEqual({ id: "q" } as unknown as HostChatRead["prompt"]);
+    // once the network answered, the kept read is never laid out again
+    expect(await source.stored!()).toBeNull();
+  });
+
+  it("the screen's read: the first network read replaces the kept one even unchanged, so its question shows", async () => {
+    const question = { id: "q" } as unknown as HostChatRead["prompt"];
+    const read = hostRead(["t1"], null, { base: { n: 2, hash: "HASHkeptaaaa" }, commands_hash: "CMDShashaaaa", prompt: question, confirmations: 1 });
+    kept(read);
+    const source = hostSource("m", "s", { keep: true });
+    // as HostChatView holds it
+    let chat: HostChatRead | null = source.last();
+    source.onRead((next) => { chat = keepShownRead(chat, next); });
+    await source.stored!();
+    expect(chat!.prompt).toBeNull();
+    answering({ ...read, turns: [], delta: { from: 2 } });
+    await source.read();
+    expect(chat!.prompt).toEqual(question);
+    expect(chat!.confirmations).toBe(1);
+    expect(chat!.signature).toBe(read.signature);
+    // an unchanged read after that keeps the object shown
+    const shown = chat;
+    await source.read();
+    expect(chat).toBe(shown);
+  });
+
+  it("a network read that failed, before or while the kept read loads, is never covered by it", async () => {
+    const read = hostRead(["t1"], null, { base: { n: 2, hash: "HASHkeptaaaa" }, commands_hash: "CMDShashaaaa" });
+    kept(read);
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: { code: "bad_gateway", message: "FICTIONAL down" } }), { status: 502, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    const failed = hostSource("m", "s", { keep: true });
+    await expect(failed.read()).rejects.toThrow();
+    expect(await failed.stored!()).toBeNull();
+    // the store answers only after the read failed
+    const releases: (() => void)[] = [];
+    const json = JSON.stringify(read);
+    setHostReadStore({ get: (key) => new Promise((resolve) => { releases.push(() => resolve(key === "m\ns" ? json : null)); }), put: async () => {}, delete: async () => {} });
+    const racing = hostSource("m", "s", { keep: true });
+    const stored = racing.stored!();
+    const reading = racing.read();
+    // the network read's own lookup answers first, then the read fails, then the kept read arrives
+    releases[1]!();
+    await expect(reading).rejects.toThrow();
+    releases[0]!();
+    expect(await stored).toBeNull();
+    expect(racing.last()).toBeNull();
+  });
+
+  it("a source that does not keep (a subagent's own chat) has no kept page and sends no known", async () => {
+    kept(hostRead(["t1"], null, { base: { n: 2, hash: "HASHkeptaaaa" }, commands_hash: "CMDShashaaaa" }));
+    const source = hostSource("m", "s");
+    expect(await source.stored!()).toBeNull();
+    const urls = answering(hostRead(["t1"], null));
+    await source.read();
+    expect(urls[0]).not.toContain("known=");
+  });
+
+  it("nothing kept: no page", async () => {
+    setHostReadStore({ get: async () => null, put: async () => {}, delete: async () => {} });
+    expect(await hostSource("m", "s", { keep: true }).stored!()).toBeNull();
   });
 });
