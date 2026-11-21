@@ -585,11 +585,6 @@
   justify-content: flex-end;
 }
 
-/* an arrow with nowhere to go reads as off: the app's 0.7 left it looking like the live one beside it */
-.prompt-card-pager .icon-button:disabled {
-  opacity: 0.3;
-}
-
 .prompt-card-pager-count {
   min-width: 4.5em;
   color: var(--text-dim);

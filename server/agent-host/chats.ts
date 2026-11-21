@@ -99,44 +99,11 @@ function neverSent(summary: SessionSummary): boolean {
   return Number.isFinite(age) && age < DRAFT_AGE_MS;
 }
 
-/** A session's chats as the bridge knows them: the catalog entry and, once seen, its own last change. */
-type TimedChat = NonNullable<SessionSummary["chats"]>[number] & { modifiedAt?: string };
-
-/** A chat's activity bits: what a turn changes, unlike its read and archived flags. */
-const turnBits = (chat: { status?: number } | undefined): number => (chat?.status ?? 0) & ~(SessionStatus.IsRead | SessionStatus.IsArchived);
-
-/**
- * Each chat's own last change, which the host's catalog lacks (SessionChatSummary has no time,
- * VS Code 1.142): a session's time moves with any of its chats, so a fork's turn re-stamped its
- * siblings (2026-11-19, "Adding Goals support" shown at 00:15 for ett-pilot's turn). `times` keeps
- * what was learnt per chat URI: when the session's time moves, it goes to the chats whose activity
- * changed (or `active`, the chat that last did), and the others keep the session's previous time.
- * Returns `after` with each known chat's `modifiedAt` set. A time no chat explains stays the session's.
- */
-export function stampChatTimes(before: SessionSummary | undefined, after: SessionSummary, times: Map<string, string>, active: Map<string, string>): SessionSummary {
-  const chats = after.chats ?? [];
-  if (chats.length < 2) return after;
-  const was = new Map((before?.chats ?? []).map((chat) => [chat.resource, chat]));
-  const moved = chats.filter((chat) => was.has(chat.resource) && turnBits(was.get(chat.resource)) !== turnBits(chat)).map((chat) => chat.resource);
-  if (moved.length > 0) active.set(after.resource, moved[moved.length - 1]!);
-  if (before !== undefined && before.modifiedAt !== after.modifiedAt) {
-    const doers = new Set(moved.length > 0 ? moved : [active.get(after.resource)].filter((uri): uri is string => uri !== undefined));
-    if (doers.size > 0) {
-      for (const chat of chats) {
-        if (doers.has(chat.resource)) times.set(chat.resource, after.modifiedAt);
-        else if (!times.has(chat.resource)) times.set(chat.resource, before.modifiedAt);
-      }
-    }
-  }
-  if (!chats.some((chat) => times.has(chat.resource))) return after;
-  return { ...after, chats: chats.map((chat): TimedChat => (times.has(chat.resource) ? { ...chat, modifiedAt: times.get(chat.resource)! } : chat)) };
-}
-
 /**
  * The chat list: Copilot CLI sessions only, newest first, without the drafts VS Code never sent. A session's other chats a user made (VS
  * Code's Fork Conversation: SessionSummary.chats, origin fork or user) are rows of their own, by
- * their chat URI, beside it: their own title and status, the session's folder, and their own time
- * once the bridge saw it (stampChatTimes; a catalog entry has none), else the session's. Hidden chats and a tool's are not listed, as VS Code lists none of them.
+ * their chat URI, beside it: their own title and status, the session's folder and time (a catalog
+ * entry has none). Hidden chats and a tool's are not listed, as VS Code lists none of them.
  */
 export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
   return summaries
@@ -161,14 +128,12 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
       };
       // a session's status promotes any chat's InputNeeded and Error (AHP's aggregation rule): its
       // row is its default chat, so it reads that chat's own activity, as each fork's row reads its own
-      const ownChat = summary.chats?.find((chat) => chat.resource === summary.defaultChat) as TimedChat | undefined;
-      const own = ownChat?.status;
+      const own = summary.chats?.find((chat) => chat.resource === summary.defaultChat)?.status;
       const row: HostChatRow = {
         session: summary.resource,
         title: summary.title,
         status: statusOf(own ?? summary.status),
-        // its own time once the bridge saw its chats change (stampChatTimes), else the session's
-        modified_at: ownChat?.modifiedAt ?? summary.modifiedAt,
+        modified_at: summary.modifiedAt,
         cwd,
         // the flags beside the activity bits (VS Code's isSessionStatusRead / isSessionStatusArchived)
         unread: (summary.status & SessionStatus.IsRead) === 0,
@@ -185,7 +150,7 @@ export function rowsFrom(summaries: SessionSummary[]): HostChatRow[] {
         // a chat without a status is unknown: neither unread nor archived (AHP's rule)
         const status = chat.status ?? (SessionStatus.Idle | SessionStatus.IsRead);
         return {
-          session: chat.resource, title: chat.title, status: statusOf(status), modified_at: (chat as TimedChat).modifiedAt ?? summary.modifiedAt, cwd,
+          session: chat.resource, title: chat.title, status: statusOf(status), modified_at: summary.modifiedAt, cwd,
           unread: (status & SessionStatus.IsRead) === 0, archived: (status & SessionStatus.IsArchived) !== 0,
           fork_of: summary.resource, ...where,
         };

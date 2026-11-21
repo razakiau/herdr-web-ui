@@ -72,7 +72,6 @@ import { GroupStore } from "./groups-store.ts";
 import { ChatFactsCache, DigestJobs, digestModelAllowed, digestModels, type ChatFacts } from "./group-digest.ts";
 import { createGroupsPoller, GroupsSignal, handleGroupsRequest, remotePcChats, type GroupsPcSource } from "./groups-routes.ts";
 import { rowsFrom } from "./agent-host/chats.ts";
-import { createWarmKeeper } from "./agent-host/warm.ts";
 import { COSTS_POLL_MS } from "./machines.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
@@ -321,15 +320,9 @@ export function createServer(
       broadcastAll(event.kind === "host" ? { type: "host-chat-state", host: agentHostConnection!.state() } : { type: "host-chat-changed", session: event.kind === "chat" ? event.session : null });
       // the list's statuses are what the alerts watch (server/push.ts onHostChats)
       // never a costs read here: a streaming turn fires many; the poller's next tick is soon enough
-      if (event.kind === "chats") {
-        const rows = rowsFrom(agentHostConnection!.summaries());
-        push.onHostChats(rows);
-        warmChats?.onRows(rows);
-      }
+      if (event.kind === "chats") push.onHostChats(rowsFrom(agentHostConnection!.summaries()));
     },
   }) : null;
-  // a chat whose turn just ended stays loaded a while, so opening it from its alert is quick (agent-host/warm.ts)
-  const warmChats = agentHostConnection ? createWarmKeeper(agentHostConnection) : null;
   // this PC's chat cost logs for the cold-cache alert (ZAC-260), read like a remote PC's (server/machines.ts pollCosts)
   // one read at a time, one per COSTS_POLL_MS, none unless the alert is wanted (server/costs-poller.ts);
   // with the server's own smaller read budget, so the first scan is spread over several ticks

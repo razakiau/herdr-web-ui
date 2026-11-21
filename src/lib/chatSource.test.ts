@@ -7,7 +7,6 @@ import { forgetKeptContexts, hostSource, keepContext, keepShownRead, paneSource,
 import { ConversationRefresh } from "./conversationRefresh.ts";
 import { noteHostChatMessage, noteHostChatStreamOpen, setHostReadStore } from "./hostChats.ts";
 import type { MachineApi } from "./machineContext.tsx";
-import { chatAnswer, WindowMoved } from "../../server/agent-host/chat-delta.ts";
 
 const realFetch = globalThis.fetch;
 const globals = globalThis as unknown as { window?: unknown };
@@ -426,109 +425,5 @@ describe("hostSource: a chat kept on the device (ZAC-340)", () => {
   it("nothing kept: no page", async () => {
     setHostReadStore({ get: async () => null, put: async () => {}, delete: async () => {} });
     expect(await hostSource("m", "s", { keep: true }).stored!()).toBeNull();
-  });
-});
-
-describe("hostSource: a chat's first open pages its older turns in (ZAC-340 part 2)", () => {
-  afterEach(() => { setHostReadStore(null); });
-  /** fetch as a bridge of bundle 1105 answers, over the chat `current()` holds */
-  const bridge = (current: () => HostChatRead) => {
-    const asked: URLSearchParams[] = [];
-    const answers: unknown[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const query = new URL(String(input), "http://x").searchParams;
-      asked.push(query);
-      try {
-        const answer = chatAnswer(current(), query);
-        answers.push(answer);
-        return new Response(JSON.stringify(answer), { headers: { "content-type": "application/json" } });
-      } catch (error) {
-        if (!(error instanceof WindowMoved)) throw error;
-        return new Response(JSON.stringify({ error: { code: "history_changed", message: error.message } }), { status: 409, headers: { "content-type": "application/json" } });
-      }
-    }) as typeof fetch;
-    return { asked, answers };
-  };
-  const ids = Array.from({ length: 30 }, (_, i) => `t${i}`);
-
-  it("the first read is the last 10 host turns; scrolling up pages the rest in, deep equal to the whole chat; a re-read is a delta", async () => {
-    setHostReadStore(null);
-    const chat = hostRead(ids, null);
-    const { asked, answers } = bridge(() => chat);
-    const source = hostSource("m", "s", { keep: true });
-    const newest = await source.read();
-    expect(asked[0]!.get("tail")).toBe("1");
-    expect(newest.turns).toEqual(chat.turns.slice(40));
-    expect(newest.cursor).toBe("ovis-page:t20");
-    const middle = await source.read({ before: newest.cursor! });
-    expect(asked[1]!.get("page_before")).toBe("t20");
-    expect(middle.cursor).toBe("ovis-page:t10");
-    const oldest = await source.read({ before: middle.cursor! });
-    expect(oldest.cursor).toBeNull();
-    expect([...oldest.turns, ...middle.turns, ...newest.turns]).toEqual(chat.turns);
-    // the read the chat's screen holds now has every turn, and goes on with deltas
-    expect(source.last()!.turns).toEqual(chat.turns);
-    expect(await source.read()).toBe(newest);
-    expect(asked[3]!.get("known")).toMatch(/^40\.60\./);
-    expect(asked[3]!.get("anchor")).toBe("t20");
-    expect(answers[3]).toMatchObject({ delta: { from: 60 }, turns: [] });
-  });
-
-  it("a first open comes without the \"/\" list and reads once more at once, which brings it to the screen", async () => {
-    setHostReadStore(null);
-    const commands = [{ name: "FICTIONAL-skill", description: "FICTIONAL", kind: "skill" }] as unknown as HostChatRead["commands"];
-    const chat = hostRead(ids, null, { commands });
-    const { asked, answers } = bridge(() => chat);
-    const source = hostSource("m", "s", { keep: true });
-    let shown: HostChatRead | null = null;
-    source.onRead((next) => { shown = keepShownRead(shown, next); });
-    let rereads = 0;
-    source.onChange(() => { rereads += 1; });
-    await source.read();
-    expect(answers[0]).toMatchObject({ commands_deferred: true });
-    expect(shown!.commands).toEqual([]);
-    await Promise.resolve();
-    // the screen's listener reads again: one change, the next read sends no commands digest
-    expect(rereads).toBe(1);
-    await source.read();
-    expect(asked[1]!.has("commands")).toBe(false);
-    expect(asked[1]!.has("known")).toBe(true);
-    expect(shown!.commands).toEqual(commands);
-    expect(shown!.commands_deferred).toBeUndefined();
-    // held now: later reads send the digest, and no more extra reads
-    await source.read();
-    await Promise.resolve();
-    expect(asked[2]!.has("commands")).toBe(true);
-    expect(answers[2]).toMatchObject({ commands_same: true });
-    expect(shown!.commands).toEqual(commands);
-    expect(rereads).toBe(1);
-  });
-
-  it("a read meant to bring the commands that is deferred again asks once more, and no more than twice", async () => {
-    setHostReadStore(null);
-    const chat = hostRead(ids, null, { commands: [{ name: "FICTIONAL-skill" }] as unknown as HostChatRead["commands"] });
-    // a bridge that never matched what the phone holds: every read a first open's tail
-    globalThis.fetch = (async () => new Response(JSON.stringify(chatAnswer(chat, new URLSearchParams({ tail: "1" }))), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
-    const source = hostSource("m", "s", { keep: true });
-    let rereads = 0;
-    source.onChange(() => { rereads += 1; });
-    for (const expected of [1, 2, 2, 2]) {
-      await source.read();
-      await Promise.resolve();
-      expect(rereads).toBe(expected);
-    }
-  });
-
-  it("a page whose turn the chat no longer has is history_changed: ChatView drops its older pages and reads again", async () => {
-    setHostReadStore(null);
-    let chat = hostRead(ids, null);
-    bridge(() => chat);
-    const source = hostSource("m", "s", { keep: true });
-    const newest = await source.read();
-    // the chat was truncated back (a checkpoint restored) and went on elsewhere
-    chat = hostRead(ids.slice(0, 5).map((id) => `${id}-new`), null);
-    const failed = await source.read({ before: newest.cursor! }).catch((error: unknown) => error);
-    expect(failed).toBeInstanceOf(ApiError);
-    expect(failed).toMatchObject({ status: 409, code: "history_changed" });
   });
 });

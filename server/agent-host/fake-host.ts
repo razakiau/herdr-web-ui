@@ -139,9 +139,6 @@ export async function fakeAgentHost(seed: FakeAgentHostSeed): Promise<FakeAgentH
     if (action.type === "session/isArchivedChanged" && owner.resource === channel) {
       const on = (action as { isArchived: boolean }).isArchived;
       notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { status: on ? owner.status | 64 : owner.status & ~64 } });
-    } else if (action.type === "session/isReadChanged" && owner.resource === channel) {
-      const on = (action as { isRead: boolean }).isRead;
-      notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { status: on ? owner.status | 32 : owner.status & ~32 } });
     } else if (action.type === "session/titleChanged" && owner.resource === channel) {
       notice(ROOT, { type: "root/sessionSummaryChanged", session: owner.resource, changes: { title: (action as { title: string }).title } });
     } else if (bit !== 0 && owner.defaultChat === channel) {

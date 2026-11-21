@@ -41,12 +41,10 @@ import { defaultCopilotHome } from "../copilot.ts";
 export const BLANK_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 const BLANK_BYTES = 68;
 /**
- * Records below this are left alone. Was 64 MB, half of the 128 MB message cap (a snapshot came out
- * at about 0.85 x its record). Lowered to 32 MB (ZAC-340, the owner's pick, 2026-11-20): a 62 MB
- * record (58 MB of PDF page pictures) never opened, as the host's own event-log read gives up after
- * 30 s (17 timeouts, 14-20 Nov), and reloading a 56 MB one took 5.1 s against 0.02 s loaded.
+ * Records below this are left alone: half of the 128 MB message cap, as a snapshot came out at
+ * about 0.85 x its record (observed), so a 64 MB record is still well under the cap.
  */
-export const THRESHOLD_BYTES = 32 * 1024 * 1024;
+export const THRESHOLD_BYTES = 64 * 1024 * 1024;
 /** a record written in the last 30 minutes may still be in use: it waits until it rests */
 export const IDLE_MS = 30 * 60_000;
 export const SWEEP_EVERY_MS = 60 * 60_000;

@@ -328,6 +328,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
     setError(null);
     setPage(next);
   };
+  const pageAnswered = (index: number): boolean => draftAnswered(index === page ? current() : drafts.current[index]!);
   const submitForm = async (press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<void> => {
     if (form === null) return;
     drafts.current[page] = current();
@@ -366,9 +367,7 @@ export function PromptCardView({ prompt, submit, onPromptChanged, onAnswered, ty
   const pager = form === null ? null : <>
     <button type="button" className="icon-button" aria-label={t("Previous question")} title={t("Previous question")} disabled={pending || page === 0} onClick={() => goTo(page - 1)}><ChevronLeft aria-hidden="true" /></button>
     <span className="prompt-card-pager-count">{t("{n} of {total}", { n: page + 1, total: form.length })}</span>
-    {/* free to browse ahead: Submit goes back to a required question left empty and says so (a Next
-        held shut on an unanswered page looked live and did nothing, the owner stuck on page 1) */}
-    <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
+    <button type="button" className="icon-button" aria-label={t("Next question")} title={t("Next question")} disabled={pending || lastPage || (form[page]?.required === true && !pageAnswered(page))} onClick={() => goTo(page + 1)}><ChevronRight aria-hidden="true" /></button>
   </>;
   const footPager = form !== null && (pagerAtFoot || lastPage);
   // an optional async question says, under its options, what it goes with when nobody is there (ZAC-326)

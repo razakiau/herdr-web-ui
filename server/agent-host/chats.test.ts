@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatState, RootState, SessionState, SessionSummary, StateAction, ToolCallResult } from "@microsoft/agent-host-protocol";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { TOOL_OUTPUT_CHARS } from "../tool-output.ts";
-import { agentsFrom, asyncQuestionPrompt, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, stampChatTimes, toolOutputOf, turnsFrom } from "./chats.ts";
+import { agentsFrom, asyncQuestionPrompt, commandsFrom, fileEditOf, imageOf, modelsFrom, promptFrom, readFrom, rowsFrom, toolOutputOf, turnsFrom } from "./chats.ts";
 import { parseInline } from "../../src/lib/markdown.ts";
 import { reducedChat, toolCallActions } from "./fake-host.ts";
 
@@ -368,31 +368,6 @@ describe("host chat mappers", () => {
       { session: "copilotcli:/1", title: "FICTIONAL_1", status: "asks", modified_at: "2026-01-01T00:00:01.000Z", cwd: "/tmp/fictional-repo", unread: true, archived: false },
       { session: "copilotcli:/5", title: "FICTIONAL_5", status: "idle", modified_at: "2026-01-01T00:00:00.000Z", cwd: null, unread: false, archived: false },
     ]);
-  });
-
-  it("stampChatTimes: a fork's turn moves its own time; its session's other chats keep theirs (2026-11-19)", () => {
-    const T1 = "2026-01-01T00:00:01.000Z", T2 = "2026-01-01T00:00:02.000Z", T3 = "2026-01-01T00:00:03.000Z";
-    const session = (modifiedAt: string, forkStatus: number, defaultStatus = 1 | 32): SessionSummary => ({
-      resource: "copilotcli:/1", provider: "copilotcli", title: "FICTIONAL_1", status: 1 | 32, createdAt: AT, modifiedAt, defaultChat: "ahp-chat:/d",
-      chats: [{ resource: "ahp-chat:/d", title: "FICTIONAL_1", status: defaultStatus }, { resource: "ahp-chat:/f", title: "FICTIONAL fork", status: forkStatus, origin: { kind: "fork" } }],
-    } as unknown as SessionSummary);
-    const times = new Map<string, string>(), active = new Map<string, string>();
-    const at = (summary: SessionSummary) => Object.fromEntries(rowsFrom([summary]).map((row) => [row.session, row.modified_at]));
-    let now = stampChatTimes(undefined, session(T1, 1 | 32), times, active);
-    // nothing learnt yet: the session's time, as before
-    expect(at(now)).toEqual({ "copilotcli:/1": T1, "ahp-chat:/f": T1 });
-    // the fork starts a turn and the session's time moves with it: only the fork's row does
-    now = stampChatTimes(now, session(T2, 8 | 32), times, active);
-    expect(at(now)).toEqual({ "copilotcli:/1": T1, "ahp-chat:/f": T2 });
-    // its status and the time can come apart: the time still goes to the chat that last worked
-    now = stampChatTimes(now, { ...now, chats: session(T2, 1).chats } as SessionSummary, times, active);
-    now = stampChatTimes(now, session(T3, 1), times, active);
-    expect(at(now)).toEqual({ "copilotcli:/1": T1, "ahp-chat:/f": T3 });
-    // a read flag is not a change of activity
-    now = stampChatTimes(now, session(T3, 1 | 32, 1), times, active);
-    expect(at(now)).toEqual({ "copilotcli:/1": T1, "ahp-chat:/f": T3 });
-    // a fresh list (a reconnect) keeps what was learnt
-    expect(at(stampChatTimes(undefined, session(T3, 1 | 32), times, active))).toEqual({ "copilotcli:/1": T1, "ahp-chat:/f": T3 });
   });
 
   it("rowsFrom says what a working chat is doing, the host's activity, and nothing for one at rest", () => {

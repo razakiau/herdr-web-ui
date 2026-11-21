@@ -103,9 +103,7 @@ export function parseStoredRead(json: string): HostChatRead | null {
     const read = JSON.parse(json) as HostChatRead;
     const usable = typeof read === "object" && read !== null && Array.isArray(read.turns) && Array.isArray(read.commands)
       && typeof read.signature === "string" && typeof read.base?.n === "number" && typeof read.base.hash === "string"
-      // a tail read holds the window's turns from its offset on: its base ends within them
-      && (read.offset ?? 0) >= 0 && read.base.n - (read.offset ?? 0) <= read.turns.length && (read.base.from ?? 0) >= (read.offset ?? 0)
-      && read.delta === undefined && read.commands_same === undefined;
+      && read.base.n <= read.turns.length && read.delta === undefined && read.commands_same === undefined;
     return usable ? read : null;
   } catch { return null; }
 }

@@ -431,9 +431,7 @@
    drawn diagram with no redraw; inline here and in the lightbox, which shares the svg */
 .markdown-mermaid,
 .mermaid-lightbox-canvas {
-  /* the page's own colour, not transparent: Pele also paints text and fills with it (a timeline's
-     period labels on their coloured boxes vanished, 2026-11-20) */
-  --pele-bg: var(--bg);
+  --pele-bg: transparent;
   --pele-fg: var(--text);
   --pele-muted: var(--text-dim);
   --pele-line: var(--text-dim);

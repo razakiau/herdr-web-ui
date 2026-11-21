@@ -1225,11 +1225,6 @@ describe("host chat read and write routes", () => {
       { channel: chatUri(1), action: { type: "chat/isReadChanged", isRead: true } },
       { channel: chatUri(1), action: { type: "chat/isReadChanged", isRead: false } },
     ]);
-    // the session's own flag too: a restored session's host drops the default chat's (2026-11-20)
-    expect(actions(r.fake, "session/isReadChanged")).toEqual([
-      { channel: sessionUri(1), action: { type: "session/isReadChanged", isRead: true } },
-      { channel: sessionUri(1), action: { type: "session/isReadChanged", isRead: false } },
-    ]);
     const bad = await call(r, "/api/host-chats/chat/read", { session: sessionUri(1), read: "yes" });
     expect({ status: bad.status, code: bad.json.error.code }).toEqual({ status: 400, code: "invalid_read" });
   });
@@ -2129,7 +2124,6 @@ describe("host chat forks: VS Code's Fork Conversation", () => {
     await call(r, "/api/host-chats/chat/archive", { session: forked, archived: true });
     expect(await on(r, "chat/isArchivedChanged")).toEqual([forked]);
     expect(actions(r.fake, "session/isArchivedChanged")).toEqual([]);
-    expect(actions(r.fake, "session/isReadChanged")).toEqual([]);
     await until("the catalog", () => (r.conn.summaries()[0]!.chats ?? []).some((each) => each.title === "FICTIONAL the other road" && ((each.status ?? 0) & 64) !== 0));
     const listed = await rows(r);
     expect(listed.find((each) => each["session"] === forked)).toMatchObject({ title: "FICTIONAL the other road", unread: false, archived: true });
@@ -2601,34 +2595,5 @@ describe("host chat reads that send only what changed (ZAC-340)", () => {
     expect(older.base).toBeUndefined();
     expect(older.delta).toBeUndefined();
     expect(Array.isArray(older.commands)).toBe(true);
-  });
-});
-
-describe("a host chat's first open: its last turns, the older ones paged in (ZAC-340 part 2)", () => {
-  const path = `/api/host-chats/chat?session=${encodeURIComponent(sessionUri(1))}`;
-  const texts = (turns: HostChatRead["turns"]) => turns.filter((t) => t.role === "user").map((t) => (t.parts[0] as { text: string }).text);
-  const twelve = Array.from({ length: 12 }, (_, i) => turn(`t${i}`, `FICTIONAL ${i}`));
-
-  it("tail=1 answers the last 10 host turns; page_before pages the rest in; a read without tail is whole", async () => {
-    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: twelve }), [chatUri(2)]: chatState(2) } });
-    const whole = (await call(r, path)).json as HostChatRead;
-    expect(whole.turns).toHaveLength(24);
-    expect(whole.offset).toBeUndefined();
-    const first = (await call(r, `${path}&tail=1`)).json as HostChatRead;
-    expect(first.offset).toBe(4);
-    expect(texts(first.turns)).toEqual(Array.from({ length: 10 }, (_, i) => `FICTIONAL ${i + 2}`));
-    expect(first.base).toMatchObject({ from: 4, n: 24, anchor: "t2" });
-    const page = (await call(r, `${path}&page_before=t2`)).json;
-    expect(page).toMatchObject({ page: true, offset: 0, message_ids: ["t0", "t1"], cursor: null });
-    expect([...page.turns, ...first.turns]).toEqual(whole.turns);
-    const again = (await call(r, `${path}&tail=1&known=${first.base!.from}.${first.base!.n}.${first.base!.hash}&anchor=t2`)).json as HostChatRead;
-    expect(again.delta).toEqual({ from: 24 });
-    expect(again.turns).toEqual([]);
-  });
-
-  it("a page before a turn the chat no longer has is 409 history_changed", async () => {
-    const r = await rig({ chats: { [chatUri(1)]: chatState(1, { turns: twelve }), [chatUri(2)]: chatState(2) } });
-    const gone = await call(r, `${path}&page_before=t-gone`);
-    expect({ status: gone.status, code: gone.json.error.code }).toEqual({ status: 409, code: "history_changed" });
   });
 });
