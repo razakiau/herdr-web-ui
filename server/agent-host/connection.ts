@@ -31,6 +31,7 @@ import { AhpClient, RpcError, type AhpStateMirror, type ClientEvent } from "@mic
 import { WebSocketTransport } from "@microsoft/agent-host-protocol/ws";
 import type { AgentHostState } from "../../shared/host-chats.ts";
 import { findServerCli, startHost as startAgentHost, START_DEADLINE_MS } from "./host-start.ts";
+import { stampChatTimes } from "./chats.ts";
 import { AgentHostMirror } from "./mirror.ts";
 import { liveStandalone, liveStandalones, registryDirs, type HostEntry } from "./registry.ts";
 
@@ -158,6 +159,9 @@ export class AgentHostConnection {
   private readonly store = new AgentHostMirror();
   private current: AgentHostState;
   private sessionList: SessionSummary[] = [];
+  /** Each chat's own last change, by chat URI, and each session's chat that last worked (stampChatTimes). */
+  private readonly chatTimes = new Map<string, string>();
+  private readonly activeChats = new Map<string, string>();
   private readonly watches = new Map<string, Watch>();
   private readonly chatWatches = new Map<string, ChatWatch>();
   /** Per channel: the snapshot's `fromSeq`; an action at or below it is already in the snapshot. */
@@ -480,7 +484,8 @@ export class AgentHostConnection {
         await closed;
         return "no_models";
       }
-      this.sessionList = await this.listAll(client);
+      // a reconnect keeps the chat times this bridge learnt (stampChatTimes)
+      this.sessionList = (await this.listAll(client)).map((summary) => stampChatTimes(undefined, summary, this.chatTimes, this.activeChats));
       this.setState(this.connectedState(init.protocolVersion));
       connected = true;
       this.changed({ kind: "chats" });
@@ -673,7 +678,7 @@ export class AgentHostConnection {
           }
           for (const session of this.watchersOf(channel)) this.changed({ kind: "chat", session });
         } else if (event.type === "sessionAdded") {
-          const added = event.params.summary;
+          const added = stampChatTimes(this.sessionList.find((s) => s.resource === event.params.summary.resource), event.params.summary, this.chatTimes, this.activeChats);
           this.sessionList = [...this.sessionList.filter((s) => s.resource !== added.resource), added];
           this.changed({ kind: "chats" });
         } else if (event.type === "sessionRemoved") {
@@ -681,7 +686,7 @@ export class AgentHostConnection {
           this.changed({ kind: "chats" });
         } else if (event.type === "sessionSummaryChanged") {
           const { session, changes } = event.params;
-          this.sessionList = this.sessionList.map((s) => (s.resource === session ? { ...s, ...changes } : s));
+          this.sessionList = this.sessionList.map((s) => (s.resource === session ? stampChatTimes(s, { ...s, ...changes }, this.chatTimes, this.activeChats) : s));
           this.changed({ kind: "chats" });
         }
       } catch (error) {

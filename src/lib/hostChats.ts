@@ -17,7 +17,7 @@ import type { HandoffJob, HandoffState, HostAgent, HostAnswer, HostAsyncAnswer, 
 import { ApiError, assertAttachable, base64FromBytes, getJson, getJsonSized } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 import { daysBack } from "./hostChatGroups.ts";
-import { applyDelta, COMMANDS_PARAM, KNOWN_PARAM, knownParam } from "../../shared/host-chat-delta.ts";
+import { applyDelta, COMMANDS_PARAM, knownQuery, PAGE_PARAM, prependPage, TAIL_PARAM, type HostChatPage } from "../../shared/host-chat-delta.ts";
 import { indexedDbReadStore, parseStoredRead, STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
 
 export async function fetchHostChats(machineId: string): Promise<HostChatRow[]> {
@@ -110,21 +110,30 @@ export async function fetchHostChat(machineId: string, session: string, before?:
   else {
     const key = keptKey(machineId, session);
     const prev = await keptRead(key);
-    const sent: Record<string, string> = {};
-    if (prev?.read.base) sent[KNOWN_PARAM] = knownParam(prev.read.base);
-    if (prev?.read.commands_hash) sent[COMMANDS_PARAM] = prev.read.commands_hash;
+    // nothing that joins: only the chat's last turns, the older ones paged in as the user scrolls (fetchHostChatPage)
+    const sent: Record<string, string> = { [TAIL_PARAM]: "1" };
+    if (prev?.read.base) Object.assign(sent, knownQuery(prev.read.base));
+    // commands held: their digest; none held (a first open's tail deferred them): the answer brings them
+    if (prev?.read.commands_hash && !prev.read.commands_deferred) sent[COMMANDS_PARAM] = prev.read.commands_hash;
     const { body: answer, size: answered } = await ask(sent);
-    let full = answer.delta !== undefined && answer.delta.from !== prev?.read.base?.n ? null : applyDelta(prev?.read ?? null, answer);
+    // a delta answers the very range sent: its length from the base's first turn, wherever that turn is now
+    const base = prev?.read.base;
+    const joins = answer.delta === undefined || (base !== undefined && answer.delta.from - (answer.anchor_at ?? 0) === base.n - (answer.anchor_at === undefined ? 0 : base.from ?? 0));
+    let full = joins ? applyDelta(prev?.read ?? null, answer) : null;
     // what the full read weighs, without serializing all of it: the kept read less the turns the
     // delta replaces, plus the turns it brings (both a tail: none for an unchanged idle chat, the
     // last host turn for a busy one); write() puts the real size back whenever it serializes
-    let size = answer.delta !== undefined && prev
-      ? Math.max(0, prev.size - JSON.stringify(prev.read.turns.slice(answer.delta.from)).length + JSON.stringify(answer.turns).length)
+    let size = answer.delta !== undefined && prev && full
+      ? Math.max(0, prev.size - JSON.stringify(prev.read.turns.slice(full.turns.length - answer.turns.length)).length + JSON.stringify(answer.turns).length)
       : answered;
     if (full === null) {
       forgetKept(key);
-      const again = await ask({});
+      const again = await ask({ [TAIL_PARAM]: "1" });
       full = applyDelta(null, again.body) ?? again.body;
+      // read again with nothing known, the tail defers the "/" list: the one held stands in (still
+      // deferred, so the next read asks for it), else the screen's list would go empty meanwhile
+      const held = prev?.read.commands;
+      if (full.commands_deferred === true && full.commands.length === 0 && Array.isArray(held) && held.length > 0) full = { ...full, commands: held };
       size = again.size;
     }
     read = full;
@@ -134,6 +143,25 @@ export async function fetchHostChat(machineId: string, session: string, before?:
   const attempt = storedAttempt(machineId, session);
   if (attempt && (read.message_ids ?? []).includes(attempt.id)) dropAttempt(machineId, session, attempt.id);
   return read;
+}
+
+/** The first host turn a read holds: the one its page of older turns ends at. */
+export const firstHeldTurn = (read: HostChatRead): string | null => read.message_ids[(read.offset ?? 0) / 2] ?? null;
+
+/**
+ * The turns before host turn `id` of a chat whose read started past its window's start (a tail,
+ * ZAC-340 part 2), one page. A read kept for the chat that starts at that turn takes the page in
+ * (and keeps it on the device). 409 `history_changed` when the window no longer has the turn.
+ */
+export async function fetchHostChatPage(machineId: string, session: string, id: string): Promise<{ page: HostChatPage; read: HostChatRead | null }> {
+  const { body: page, size } = await getJsonSized<HostChatPage>(machinePath(machineId, `host-chats/chat?${new URLSearchParams({ session, [PAGE_PARAM]: id }).toString()}`));
+  const key = keptKey(machineId, session);
+  const entry = kept.get(key);
+  if (!entry || firstHeldTurn(entry.read) !== id) return { page, read: null };
+  const merged = prependPage(entry.read, page);
+  if (merged === null) return { page, read: null };
+  keep(key, merged, entry.size + size);
+  return { page, read: merged };
 }
 
 // ─── The reads kept on this device (ZAC-340) ─────────────────────────────────
