@@ -50,7 +50,7 @@ import {
   type SessionSummary,
   type StateAction,
 } from "@microsoft/agent-host-protocol";
-import type { AgentHostState, HostChatRead, HostChatRow, HostChanges, HostChatCost, HostCommand, HostCostCall, HostLink, LinkKind } from "../../shared/host-chats.ts";
+import type { AgentHostState, HostChatRow, HostChanges, HostChatCost, HostCommand, HostCostCall, HostLink, LinkKind } from "../../shared/host-chats.ts";
 import { cliSessionOf, defaultAgentSessionDirs, peerChatSdkOf, readSessionTodos, sdkSessionOf } from "./todos.ts";
 import { CostIndex, POLL_BYTES_PER_SCAN, POLL_READS_PER_TICK } from "./costs.ts";
 import { LinkIndex } from "./links.ts";
@@ -67,7 +67,6 @@ import { workOf } from "./artifacts.ts";
 import { digestOf } from "../goals/judge.ts";
 import { agentsFrom, ANSWER_REF, commandsFrom, currentQuestion, editKind, fileEditOf, pathOf, turnEdits, imageOf, modelOutputs, modelSelection, modelsFrom, openRequests, pendingToolCalls, PROVIDER, readFrom, rowsFrom, answerSettled, skillsFrom, subagentChats, toolOutputOf, type ReadContext } from "./chats.ts";
 import { AgentHostError } from "./connection.ts";
-import { deltaRead, DELTA_HEADER } from "./chat-delta.ts";
 import type { AsyncAskStore, AsyncField, AsyncQuestion } from "./async-ask.ts";
 import { askHandoffText, HANDOFF_WAIT_MS, handoffJob, handoffRunning, startContinue, startHandoff, type HandoffDone } from "./handoff.ts";
 
@@ -615,7 +614,7 @@ async function readChat(call: Call): Promise<Response> {
   if (isWorker(call, session)) {
     const chat = await workerChat(call, session);
     // its questions and approvals are its parent's to show: a worker chat's read asks nothing
-    return newestRead(call, { ...readFrom(session, chat.title, chat, contextOf(call.host)), prompt: null });
+    return jsonResponse({ ...readFrom(session, chat.title, chat, contextOf(call.host)), prompt: null });
   }
   const before = call.url.searchParams.get("before");
   let { channel, chat } = await watched(call, session);
@@ -626,12 +625,8 @@ async function readChat(call: Call): Promise<Response> {
   }
   await followSubagents(call, session, chat);
   const skills = await sessionSkills(call.host, session);
-  const read = readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills, call.asks), restoredRead(call.host, session));
-  return before ? jsonResponse(read) : newestRead(call, read);
+  return jsonResponse(readFrom(session, titleOf(call.host, session), call.host.chat(session) ?? chat, contextOf(call.host, session, skills, call.asks), restoredRead(call.host, session)));
 }
-
-/** A newest read (no `before`) with its `base`, and only what changed past the client's `known` (ZAC-340). */
-const newestRead = (call: Call, read: HostChatRead): Response => jsonResponse(deltaRead(read, call.url.searchParams), 200, { [DELTA_HEADER]: "1" });
 
 /** `session` and `ref` of an image or tool-output GET; the chat read the same way a chat GET reads it (its lease). */
 async function refRead(call: Call): Promise<{ chat: ChatState; ref: string }> {

@@ -14,11 +14,9 @@ import { HOST_AGENT_KIND } from "../../shared/supported-agents.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { composerDrafts } from "./composerDraft.ts";
 import type { HandoffJob, HandoffState, HostAgent, HostAnswer, HostAsyncAnswer, HostFormAnswer, HostChanges, HostChatCost, HostChatRead, HostChatRow, HostCostCall, HostCostsAnswer, HostEditDiff, HostConfirm, HostContextUsage, AgentHostState, HostModel, HostNew, HostNewResult, HostSend, HostSendResult, HostSessionConfig } from "../../shared/host-chats.ts";
-import { ApiError, assertAttachable, base64FromBytes, getJson, getJsonSized } from "./api.ts";
+import { ApiError, assertAttachable, base64FromBytes, getJson } from "./api.ts";
 import { currentLocale, type Translate } from "./i18n.ts";
 import { daysBack } from "./hostChatGroups.ts";
-import { applyDelta, COMMANDS_PARAM, KNOWN_PARAM, knownParam } from "../../shared/host-chat-delta.ts";
-import { indexedDbReadStore, parseStoredRead, STORED_READ_MAX_BYTES, type HostReadStore } from "./hostChatStore.ts";
 
 export async function fetchHostChats(machineId: string): Promise<HostChatRow[]> {
   return (await getJson<{ chats: HostChatRow[] }>(machinePath(machineId, "host-chats/chats"))).chats;
@@ -94,153 +92,14 @@ export function chatStatus(row: HostChatRow): "working" | "blocked" | undefined 
 /**
  * GET host-chats/chat: the chat as its PC's host has it; `before` (a read's `cursor`) asks for the
  * turns before. `signal` ends the read early (the group page's timeout); without it the read waits.
- *
- * `keep` (an open chat's reads, ZAC-340): a newest read sends back the last full read's `base` and
- * commands digest kept for the chat, and the bridge answers only what changed past them: the full
- * read is rebuilt here before anyone sees it (applyDelta). A delta that does not join what is kept
- * drops it, and the chat is read again in full. Without `keep` (a group's member read, a subagent's
- * turns) the read is whole, and nothing is kept.
  */
-export async function fetchHostChat(machineId: string, session: string, before?: string, signal?: AbortSignal, options: { keep?: boolean } = {}): Promise<HostChatRead> {
-  const init = signal ? { signal } : undefined;
-  const ask = (query: Record<string, string>) =>
-    getJsonSized<HostChatRead>(machinePath(machineId, `host-chats/chat?${new URLSearchParams({ session, ...query }).toString()}`), init);
-  let read: HostChatRead;
-  if (before || !options.keep) read = (await ask(before ? { before } : {})).body;
-  else {
-    const key = keptKey(machineId, session);
-    const prev = await keptRead(key);
-    const sent: Record<string, string> = {};
-    if (prev?.read.base) sent[KNOWN_PARAM] = knownParam(prev.read.base);
-    if (prev?.read.commands_hash) sent[COMMANDS_PARAM] = prev.read.commands_hash;
-    const { body: answer, size: answered } = await ask(sent);
-    let full = answer.delta !== undefined && answer.delta.from !== prev?.read.base?.n ? null : applyDelta(prev?.read ?? null, answer);
-    // what the full read weighs, without serializing all of it: the kept read less the turns the
-    // delta replaces, plus the turns it brings (both a tail: none for an unchanged idle chat, the
-    // last host turn for a busy one); write() puts the real size back whenever it serializes
-    let size = answer.delta !== undefined && prev
-      ? Math.max(0, prev.size - JSON.stringify(prev.read.turns.slice(answer.delta.from)).length + JSON.stringify(answer.turns).length)
-      : answered;
-    if (full === null) {
-      forgetKept(key);
-      const again = await ask({});
-      full = applyDelta(null, again.body) ?? again.body;
-      size = again.size;
-    }
-    read = full;
-    keep(key, read, size);
-  }
+export async function fetchHostChat(machineId: string, session: string, before?: string, signal?: AbortSignal): Promise<HostChatRead> {
+  const query = new URLSearchParams({ session, ...(before ? { before } : {}) });
+  const read = await getJson<HostChatRead>(machinePath(machineId, `host-chats/chat?${query.toString()}`), signal ? { signal } : undefined);
   // a send whose answer was lost but that went: its id is the chat's now, never to be reused
   const attempt = storedAttempt(machineId, session);
   if (attempt && (read.message_ids ?? []).includes(attempt.id)) dropAttempt(machineId, session, attempt.id);
   return read;
-}
-
-// ─── The reads kept on this device (ZAC-340) ─────────────────────────────────
-
-/** What the reads kept in memory may weigh together (their JSON's size, estimated); the newest is kept whatever it weighs. */
-export const KEPT_MEMORY_BUDGET = 40 * 1024 * 1024;
-/** While a chat is busy its read goes to the device's store at most this often (and when it goes idle, or is left). */
-export const STORE_BUSY_EVERY_MS = 30_000;
-/** How long a read waits for the device's store before it goes without (a full read). */
-const STORE_WAIT_MS = 2_000;
-
-interface Kept {
-  read: HostChatRead; size: number;
-  /** the signature last written to the device's store (null: never), and when */
-  written: string | null; writtenAt: number;
-}
-/** The last full reads in memory, the most recent last; the device's store keeps more. */
-const kept = new Map<string, Kept>();
-let readStore: HostReadStore | null | undefined;
-
-const keptKey = (machineId: string, session: string): string => `${machineId}\n${session}`;
-const store = (): HostReadStore | null => readStore === undefined ? (readStore = indexedDbReadStore()) : readStore;
-
-/** Tests hand in their own store (null: none); kept reads in memory are dropped with it. */
-export function setHostReadStore(next: HostReadStore | null): void {
-  readStore = next;
-  kept.clear();
-}
-
-/** The reads kept in memory, oldest first (for tests). */
-export const keptInMemory = (): { key: string; size: number }[] => [...kept].map(([key, entry]) => ({ key, size: entry.size }));
-
-const remember = (key: string, entry: Kept): void => {
-  kept.delete(key);
-  kept.set(key, entry);
-  let total = 0;
-  for (const { size } of kept.values()) total += size;
-  for (const [oldest, dropped] of kept) {
-    if (total <= KEPT_MEMORY_BUDGET || kept.size <= 1) break;
-    // a busy read not yet on the device goes there as it leaves memory
-    write(oldest, dropped);
-    kept.delete(oldest);
-    total -= dropped.size;
-  }
-};
-
-function forgetKept(key: string): void {
-  kept.delete(key);
-  void store()?.delete(key).catch(() => undefined);
-}
-
-/** Writes a kept read to the device's store, when it changed since its last write. */
-function write(key: string, entry: Kept): void {
-  const to = store();
-  if (!to || entry.written === entry.read.signature) return;
-  entry.written = entry.read.signature;
-  entry.writtenAt = Date.now();
-  // the estimate only spares serializing a read clearly too big; the real length decides
-  if (entry.size > 2 * STORED_READ_MAX_BYTES) { void to.delete(key).catch(() => undefined); return; }
-  const json = JSON.stringify(entry.read);
-  entry.size = json.length;
-  if (json.length > STORED_READ_MAX_BYTES) { void to.delete(key).catch(() => undefined); return; }
-  void to.put(key, json).catch(() => undefined);
-}
-
-/** The read kept for `key`, from memory, else the device's store; null when there is none usable. */
-async function keptRead(key: string): Promise<Kept | null> {
-  const held = kept.get(key);
-  if (held) { remember(key, held); return held; }
-  const from = store();
-  if (!from) return null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const json = await Promise.race([
-    from.get(key).catch(() => null),
-    new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), STORE_WAIT_MS); }),
-  ]);
-  clearTimeout(timer);
-  if (json === null) return null;
-  const read = parseStoredRead(json);
-  if (read === null) { forgetKept(key); return null; }
-  if (!kept.has(key)) remember(key, { read, size: json.length, written: read.signature, writtenAt: Date.now() });
-  return kept.get(key) ?? null;
-}
-
-/**
- * Keeps a full newest read with a `base` (a bridge and proxy before ZAC-340 give none: nothing to
- * send back) in memory, and on the device when the chat is idle, at most every STORE_BUSY_EVERY_MS
- * while it is busy, and when the chat is left (flushHostChat).
- */
-function keep(key: string, read: HostChatRead, size: number): void {
-  if (!read.base) { forgetKept(key); return; }
-  const before = kept.get(key);
-  const entry: Kept = { read, size, written: before?.written ?? null, writtenAt: before?.writtenAt ?? 0 };
-  remember(key, entry);
-  if (!read.busy || Date.now() - entry.writtenAt >= STORE_BUSY_EVERY_MS) write(key, entry);
-}
-
-/** The chat is left (or hidden): its kept read goes to the device's store if it changed since. */
-export function flushHostChat(machineId: string, session: string): void {
-  const key = keptKey(machineId, session);
-  const entry = kept.get(key);
-  if (entry) write(key, entry);
-}
-
-/** The read this device kept for the chat, to show before the network answers; null when there is none. */
-export async function storedHostChat(machineId: string, session: string): Promise<HostChatRead | null> {
-  return (await keptRead(keptKey(machineId, session)))?.read ?? null;
 }
 
 async function post<T>(machineId: string, path: string, body: unknown): Promise<T> {

@@ -3,7 +3,6 @@
  * import it without pulling in the server's AHP client.
  */
 import type { ConversationTurn, InteractivePrompt, FileEditKind } from "./protocol.ts";
-import type { HostChatBase } from "./host-chat-delta.ts";
 
 /** Where a bridge stands with its PC's agent host. */
 export type AgentHostState =
@@ -196,17 +195,6 @@ export interface HostChatRead {
   todos?: HostTodo[];
   /** changes when anything shown changes */
   signature: string;
-  /**
-   * A newest read's (no `before`) first `base.n` turns by their digest, and its commands' digest:
-   * sent back as `known` and `commands`, the next read skips what did not change
-   * (shared/host-chat-delta.ts). Absent from a bridge before ZAC-340 (CT 208's proxy adds them).
-   */
-  base?: HostChatBase;
-  commands_hash?: string;
-  /** this read's `turns` are the turns from `from` on: the ones before are the client's `known` prefix */
-  delta?: { from: number };
-  /** `commands` is left out: they are the ones the client's `commands` digest names */
-  commands_same?: true;
 }
 
 /**

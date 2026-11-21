@@ -285,14 +285,6 @@ export async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** getJson, with the answer's size in characters as it came (what a read weighs kept in memory). */
-export async function getJsonSized<T>(url: string, init?: RequestInit): Promise<{ body: T; size: number }> {
-  const response = await fetch(url, init);
-  if (!response.ok) throw await errorFrom(url, response);
-  const text = await response.text();
-  return { body: JSON.parse(text) as T, size: text.length };
-}
-
 export async function fetchSession(machineId = "local"): Promise<SessionSnapshot> {
   const body = await getJson<{ snapshot: SessionSnapshot }>(machinePath(machineId, "session"));
   return body.snapshot;
